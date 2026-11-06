@@ -71,7 +71,15 @@ export async function ensureAccount(page: Page) {
 }
 
 const open = async (page: Page) => { await page.goto(`${base}/connections`); await page.getByRole("heading", { name: "Connections" }).waitFor() }
-const app = () => env("E2E_APP")
+/**
+ * The app whose account the suite connects, renames and disconnects. It must be the disposable
+ * fixture app (Executor app `norn-e2e`, an API-key account no other app uses), never a real one.
+ */
+const app = () => {
+  const name = env("E2E_APP")
+  if (!/^norn-e2e(-|$)/.test(name)) throw new Error(`E2E_APP must be the disposable norn-e2e fixture app, got ${JSON.stringify(name)}`)
+  return name
+}
 
 type Spec = (page: Page, did: (verb: string) => void) => Promise<void>
 const SPECS: Record<keyof typeof MATRIX, Spec> = {
@@ -90,7 +98,6 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).click(); await gatewaySignIn(page)
   },
   "App account": async (page, did) => {
-    page.on("dialog", (dialog) => void dialog.accept())
     await open(page)
     const section = page.getByRole("region", { name: app() })
     await section.waitFor()
@@ -129,7 +136,6 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
   },
   "Tool binding": async (page, did) => {
     // E2E_TOOL is a tool of E2E_APP with a string input E2E_TOOL_FIELD; the signed-in person is an admin.
-    page.on("dialog", (dialog) => void dialog.accept())
     // The gateway lists an app's tools only for a caller with its account connected.
     await ensureAccount(page)
     const tool = env("E2E_TOOL"), field = env("E2E_TOOL_FIELD"), name = `e2e binding ${Date.now()}`
@@ -138,7 +144,8 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     const editor = page.getByRole("form", { name: `Bind ${tool}` })
     await editor.getByLabel("Binding name").fill(name)
     await editor.getByLabel(`Fix ${field}`).check()
-    await editor.getByLabel(field).fill("fixed-by-e2e")
+    // Exactly the field's input, not its "Fix <field>" checkbox.
+    await editor.getByLabel(field, { exact: true }).fill("fixed-by-e2e")
     await editor.getByRole("button", { name: "Add binding" }).click()
     const row = page.locator(`[data-binding]:has-text("${name}")`)
     await row.waitFor(); did("add")
@@ -161,6 +168,8 @@ const { chromium } = await import("playwright-core" as string) as { chromium: { 
 const browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/usr/bin/google-chrome", args: ["--no-sandbox"] })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await context.newPage() as Page
+// One handler for the whole run: every confirmation the suite triggers (disconnect, remove) is accepted once.
+page.on("dialog", (dialog) => void dialog.accept())
 await signIn(page)
 let failed = 0
 for (const [kind, verbs] of Object.entries(MATRIX) as [keyof typeof MATRIX, Readonly<Record<string, VerbSupport>>][]) {

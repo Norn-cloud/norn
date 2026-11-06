@@ -41,6 +41,8 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
   const [runRole, setRunRole] = useState<RunRole>(binding?.runRole ?? "member")
   const [fixed, setFixed] = useState<Record<string, string>>(Object.fromEntries(Object.entries(binding?.inputMapping ?? {}).map(([name, { fixed: value }]) => [name, show(value)])))
   const [problem, setProblem] = useState<string | null>(null)
+  // Fixed inputs the tool's schema no longer declares: the server refuses them, so saving drops them, and the editor says so first.
+  const dropped = Object.keys(binding?.inputMapping ?? {}).filter((name) => !fields.some((field) => field.name === name))
   const save = useMutation({
     mutationFn: (inputMapping: InputMapping) => binding === undefined
       ? api<{ binding: Binding }>("/bindings", { method: "POST", body: { app: tool.app, tool: tool.name, label, runRole, inputMapping } })
@@ -81,6 +83,7 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
           </div>
         ))}
       </fieldset>
+      {dropped.length > 0 && <p role="status" className="text-sm text-amber-700 dark:text-amber-400">The tool no longer takes {dropped.join(", ")}; saving removes {dropped.length === 1 ? "that fixed input" : "those fixed inputs"} from this binding.</p>}
       <div className="flex gap-2">
         <Button size="sm" type="submit" disabled={save.isPending}>{binding === undefined ? "Add binding" : "Save binding"}</Button>
         <Button size="sm" variant="ghost" type="button" onClick={onDone}>Cancel</Button>
@@ -146,14 +149,22 @@ function BindingRow({ binding, manage }: { readonly binding: Binding; readonly m
         <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 px-4 pb-3 text-meta">
           <dt className="text-muted-foreground">Fixed inputs</dt>
           <dd>{Object.keys(binding.inputMapping).length === 0 ? "none" : Object.entries(binding.inputMapping).map(([name, { fixed }]) => `${name} = ${show(fixed)}`).join(", ")}</dd>
+          <dt className="text-muted-foreground">Connector</dt><dd className="font-mono">{binding.connectorRef}</dd>
+          <dt className="text-muted-foreground">In the cell</dt>
+          <dd>{binding.definition === null ? "Kept by Studio until this deployment's cell stores bindings" : <span className="font-mono">{binding.definition.id} · v{binding.definition.version}</span>}</dd>
+          <dt className="text-muted-foreground">Manifest</dt><dd className="truncate font-mono" title={binding.manifestDigest}>{binding.manifestDigest}</dd>
           <dt className="text-muted-foreground">Last changed</dt><dd>{new Date(binding.updatedAt).toLocaleString()}</dd>
           <dt className="text-muted-foreground">Input schema</dt>
           <dd><pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{tools.isPending ? "Loading…" : JSON.stringify(tool?.inputSchema ?? null, null, 2)}</pre></dd>
         </dl>
       )}
+      {mode !== null && mode !== "view" && tools.isPending && <p className="border-t px-4 py-3 text-sm text-muted-foreground">Loading the tool…</p>}
       {mode !== null && mode !== "view" && tools.isError && <ConnectorProblem error={tools.error} />}
+      {mode !== null && mode !== "view" && tools.isSuccess && tool === undefined && (
+        <p role="alert" className="border-t px-4 py-3 text-sm text-destructive">The gateway no longer lists {binding.app}.{binding.tool}. Remove this binding, or bind the tool again once the app serves it.</p>
+      )}
       {mode === "edit" && tool && <BindingEditor tool={tool} binding={binding} onDone={() => setMode(null)} />}
-      {mode === "run" && !tools.isPending && !tools.isError && <TestRun binding={binding} tool={tool} />}
+      {mode === "run" && tool && <TestRun binding={binding} tool={tool} />}
       {remove.isError && <ConnectorProblem error={remove.error} />}
     </div>
   )
