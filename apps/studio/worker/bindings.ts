@@ -1,3 +1,5 @@
+import canonicalize from "canonicalize"
+
 /**
  * Tool bindings (#772): the organization's record that one gateway tool may be run from Norn, with
  * a label, fixed input values and the least role that may run it. This is all Norn stores about a
@@ -86,12 +88,15 @@ export interface ToolManifest {
 export const toolManifest = (tool: { readonly app: string; readonly name: string; readonly inputSchema: unknown; readonly outputSchema: unknown }): ToolManifest =>
   ({ format: "norn.connector-tool-manifest/1", gateway: "executor", app: tool.app, tool: tool.name, inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null })
 
-/** JSON with object keys sorted at every level and no whitespace (RFC 8785 for the JSON schemas carry). */
+/**
+ * RFC 8785 (JCS) canonical JSON: keys sorted by UTF-16 code units, ECMAScript number spelling,
+ * no whitespace. The cell recomputes the digest the same way; the shared golden vectors are
+ * tools/norn-ts/src/builder/fixtures/binding-manifest-digest.vectors.json.
+ */
 export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null"
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  const entries = Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`
+  const text = canonicalize(value)
+  if (text === undefined) throw new Error("A manifest must be JSON")
+  return text
 }
 
 /** `sha256:<hex>` of the manifest's canonical JSON. */

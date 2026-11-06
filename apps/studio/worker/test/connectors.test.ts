@@ -234,6 +234,17 @@ test("the gateway subject comes from introspection with Studio's client credenti
   expect(await gatewaySubject(client, undefined, answer({}))).toBeNull()
 })
 
+test("the manifest digest matches the shared RFC 8785 golden vectors", async () => {
+  const file = JSON.parse(readFileSync(join(import.meta.dir, "../../../../tools/norn-ts/src/builder/fixtures/binding-manifest-digest.vectors.json"), "utf8")) as { vectors: { name: string; manifestJson: string; canonical: string; manifestDigest: string; version: string }[] }
+  expect(file.vectors.length).toBeGreaterThanOrEqual(5)
+  for (const vector of file.vectors) {
+    const manifest = JSON.parse(vector.manifestJson) as Parameters<typeof manifestDigest>[0]
+    expect(canonicalJson(manifest)).toBe(vector.canonical)
+    expect(await manifestDigest(manifest)).toBe(vector.manifestDigest)
+    expect(connectorVersion(null, vector.manifestDigest)).toBe(vector.version)
+  }
+})
+
 test("the manifest digest is over canonical JSON: key order does not change it, the contract does", async () => {
   expect(canonicalJson({ b: [1, { d: true, c: null }], a: "x" })).toBe('{"a":"x","b":[1,{"c":null,"d":true}]}')
   const a = await manifestDigest(toolManifest({ app: "github", name: "t", inputSchema: { type: "object", properties: { x: { type: "string" } } }, outputSchema: null }))
