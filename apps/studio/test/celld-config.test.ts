@@ -42,5 +42,7 @@ test("the tool gateway reaches the Worker only whole, as an https origin with St
   expect(celldConfig(celldStudio({ ...BASE, ...tool })).vars).toEqual({ BETTER_AUTH_SECRET: SECRET, BETTER_AUTH_URL: "https://demo.norn.cloud", AUTH_SCRYPT: "js", STUDIO_BUILD: BUILD, ...tool })
   expect(celldConfig(celldStudio(BASE)).vars).not.toHaveProperty("TOOL_GATEWAY_URL")
   expect(() => celldStudio({ ...BASE, TOOL_GATEWAY_URL: tool.TOOL_GATEWAY_URL })).toThrow("go together")
+  expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_CLIENT_ID: "" })).toThrow("non-empty")
+  expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_CLIENT_SECRET: "" })).toThrow("non-empty")
   expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: "http://127.0.0.1:9878" })).toThrow("https origin")
 })

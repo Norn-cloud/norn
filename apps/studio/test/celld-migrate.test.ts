@@ -10,7 +10,7 @@ function host(files: Record<string, string>, apply: { status: number; output: st
   const remote: Remote = (command, input) => {
     commands.push(command)
     if (command.includes("migrations apply")) return apply
-    const name = /migrations\/([^ ]+\.sql)/.exec(command)?.[1] ?? ""
+    const name = /migrations\/([^ ;"]+\.sql)/.exec(command)?.[1] ?? ""
     if (files[name] !== undefined) return { status: 0, output: `${files[name]}\n` }
     files[name] = new Bun.CryptoHasher("sha256").update(input ?? "").digest("hex")
     return { status: 0, output: "installed\n" }
@@ -50,4 +50,17 @@ test("only known stages and NNNN_name.sql files are migrated", () => {
   const any = host({}, { status: 0, output: "Applied" })
   expect(() => migrate(any.remote, "prod", [m])).toThrow("no operator project")
   expect(() => migrate(any.remote, "next", [{ ...m, name: "../x.sql" }])).toThrow("NNNN_name.sql")
+})
+
+test("a new migration is published atomically: temporary file, hash check, no-overwrite link", () => {
+  const fresh = host({}, { status: 0, output: "Applied 0002_connector_binding.sql\n" })
+  migrate(fresh.remote, "next", [m])
+  const copy = fresh.commands[0] ?? ""
+  expect(copy).toContain('mktemp "$t.partial.XXXXXX"')
+  expect(copy).toContain(`= "${m.sha256}" ]`)
+  expect(copy).toContain('ln "$tmp" "$t"')
+  expect(copy).not.toContain("install -m")
+  // A copy whose bytes arrive wrong fails before anything is published or applied.
+  const mangled: Remote = (command) => command.includes("migrations apply") ? { status: 0, output: "Applied" } : { status: 4, output: "copy hash mismatch" }
+  expect(() => migrate(mangled, "next", [m])).toThrow("copying 0002_connector_binding.sql failed")
 })

@@ -46,15 +46,17 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   const { AI_GATEWAY_URL: gatewayUrl, AI_GATEWAY_TOKEN: gatewayToken } = env
   if ((gatewayUrl === undefined) !== (gatewayToken === undefined)) throw new Error("AI_GATEWAY_URL and AI_GATEWAY_TOKEN go together")
   const { TOOL_GATEWAY_URL: toolUrl, TOOL_GATEWAY_CLIENT_ID: toolClient, TOOL_GATEWAY_CLIENT_SECRET: toolSecret } = env
-  const toolSettings = [toolUrl, toolClient, toolSecret].filter((value) => value !== undefined).length
-  if (toolSettings !== 0 && toolSettings !== 3) throw new Error("TOOL_GATEWAY_URL, TOOL_GATEWAY_CLIENT_ID and TOOL_GATEWAY_CLIENT_SECRET go together")
+  // An empty value counts as missing: an empty client id or secret must refuse, not deploy.
+  const toolSettings = [toolUrl, toolClient, toolSecret].filter((value) => value !== undefined && value !== "").length
+  const toolDeclared = [toolUrl, toolClient, toolSecret].some((value) => value !== undefined)
+  if (toolDeclared && toolSettings !== 3) throw new Error("TOOL_GATEWAY_URL, TOOL_GATEWAY_CLIENT_ID and TOOL_GATEWAY_CLIENT_SECRET go together, each non-empty")
   if (toolUrl !== undefined && !/^https:\/\/[a-z0-9.-]+$/.test(toolUrl)) throw new Error("TOOL_GATEWAY_URL must be an https origin without a path")
   return {
     stage, build, authUrl, authSecret,
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },
     ...host === undefined ? {} : { host },
     ...gatewayUrl === undefined || gatewayToken === undefined ? {} : { agent: { gatewayUrl, gatewayToken } },
-    ...toolUrl === undefined || toolClient === undefined || toolSecret === undefined ? {} : { toolGateway: { url: toolUrl, clientId: toolClient, clientSecret: toolSecret } },
+    ...!toolDeclared || toolUrl === undefined || toolClient === undefined || toolSecret === undefined ? {} : { toolGateway: { url: toolUrl, clientId: toolClient, clientSecret: toolSecret } },
   }
 }
 

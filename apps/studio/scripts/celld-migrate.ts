@@ -38,8 +38,15 @@ export function migrate(remote: Remote, stage: string, migrations: readonly Migr
   for (const migration of migrations) {
     if (!NAME.test(migration.name)) throw new Error(`${migration.name} is not NNNN_name.sql`)
     const target = `${ops.project}/migrations/${migration.name}`
-    // Install only when absent; an existing file must match byte for byte.
-    const copy = remote(`set -e; if [ -e ${target} ]; then sha256sum ${target} | cut -d' ' -f1; else install -m 0644 /dev/stdin ${target} && echo installed; fi`, migration.sql)
+    // An existing file must match byte for byte. A new one is written to a temporary file, checked
+    // against the commit's hash, then published with a hard link, which never overwrites: an
+    // interrupted copy leaves no partial migration behind.
+    const copy = remote([
+      `set -e; t=${target}; if [ -e "$t" ]; then sha256sum "$t" | cut -d' ' -f1; exit 0; fi`,
+      `tmp=$(mktemp "$t.partial.XXXXXX"); trap 'rm -f "$tmp"' EXIT; cat > "$tmp"; chmod 0644 "$tmp"`,
+      `[ "$(sha256sum "$tmp" | cut -d' ' -f1)" = "${migration.sha256}" ] || { echo "copy hash mismatch" >&2; exit 4; }`,
+      `if ln "$tmp" "$t" 2>/dev/null; then echo installed; else sha256sum "$t" | cut -d' ' -f1; fi`,
+    ].join("; "), migration.sql)
     if (copy.status !== 0) throw (unreachable(copy.output) ? new D1Unreachable(`host unreachable: ${copy.output.trim()}`) : new Error(`copying ${migration.name} failed: ${copy.output.trim()}`))
     const answer = copy.output.trim()
     if (answer !== "installed" && answer !== migration.sha256) throw new Error(`${migration.name} on the host differs from the commit's (${answer.slice(0, 12)} vs ${migration.sha256.slice(0, 12)}): an applied migration is never edited; add a new one`)
