@@ -269,7 +269,8 @@ jobs:
     if: >-
       always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
       !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    # The required verdict stays hosted: it must report even when Boat cannot start a VM.
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - env:

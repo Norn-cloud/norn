@@ -1307,10 +1307,11 @@ def workflow_context_canaries(source: str) -> None:
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
             for event in ("pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'pull_request'", repr(event)))
-            if name in ("core", "plan", "test", "full"):
+            if name in ("core", "plan", "test"):
                 unsafe += ["ubuntu-24.04", merge_only]
             else:
-                # Rights authority stays on hosted runners in every form.
+                # The required verdict and rights authority stay hosted in every form: a
+                # verdict queued for a Boat VM that cannot start would never report.
                 unsafe += [runner, merge_only]
             for value in unsafe:
                 if value == workflow["jobs"][name]["runs-on"]:
@@ -1319,7 +1320,7 @@ def workflow_context_canaries(source: str) -> None:
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
         document = copy.deepcopy(workflow)
-        for name in ("core", "plan", "test", "full"):
+        for name in ("core", "plan", "test"):
             document["jobs"][name]["runs-on"] = runner
         candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         validator.validate_workflow_integrity([], formal_path=candidate)
