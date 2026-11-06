@@ -151,7 +151,7 @@ pub fn ports_from_schema(schema: &Value) -> Result<PortType, Unsupported> {
         root: schema,
         stack: Vec::new(),
     }
-    .lower(schema, String::new(), 0)
+    .lower(schema, "", 0)
 }
 
 struct Lowering<'a> {
@@ -184,25 +184,22 @@ fn string_set(values: &[Value], path: &str) -> Result<Vec<String>, Unsupported> 
 }
 
 impl Lowering<'_> {
-    fn lower(
-        &mut self,
-        schema: &Value,
-        path: String,
-        depth: usize,
-    ) -> Result<PortType, Unsupported> {
+    fn lower(&mut self, schema: &Value, path: &str, depth: usize) -> Result<PortType, Unsupported> {
         if depth > MAX_DEPTH {
-            return refuse(&path, Reason::TooDeep);
+            return refuse(path, Reason::TooDeep);
         }
         let object = match schema {
             Value::Object(object) => object,
-            Value::Bool(_) => return refuse(&path, Reason::Untyped),
-            _ => return refuse(&path, Reason::NotASchema),
+            Value::Bool(_) => return refuse(path, Reason::Untyped),
+            Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) => {
+                return refuse(path, Reason::NotASchema);
+            }
         };
         if let Some(keyword) = COMBINATORS.iter().find(|k| object.contains_key(**k)) {
-            return refuse(&path, Reason::Combinator((*keyword).to_owned()));
+            return refuse(path, Reason::Combinator((*keyword).to_owned()));
         }
         if let Some(target) = object.get("$ref") {
-            return self.reference(target, &path, depth);
+            return self.reference(target, path, depth);
         }
         for keyword in ["anyOf", "oneOf"] {
             if let Some(Value::Array(members)) = object.get(keyword) {
@@ -212,13 +209,13 @@ impl Lowering<'_> {
         if let Some(constant) = object.get("const") {
             return Ok(PortType::Enum(string_set(
                 std::slice::from_ref(constant),
-                &path,
+                path,
             )?));
         }
         if let Some(Value::Array(values)) = object.get("enum") {
             let nullable = values.iter().any(Value::is_null);
             let strings: Vec<Value> = values.iter().filter(|v| !v.is_null()).cloned().collect();
-            let port = PortType::Enum(string_set(&strings, &path)?);
+            let port = PortType::Enum(string_set(&strings, path)?);
             return Ok(if nullable {
                 PortType::Nullable(Box::new(port))
             } else {
@@ -226,25 +223,25 @@ impl Lowering<'_> {
             });
         }
         match object.get("type") {
-            None => refuse(&path, Reason::Untyped),
-            Some(Value::String(name)) => self.named(name, object, &path, depth),
+            None => refuse(path, Reason::Untyped),
+            Some(Value::String(name)) => self.named(name, object, path, depth),
             Some(Value::Array(names)) => {
                 let nullable = names.iter().any(|n| n == "null");
                 let rest: Vec<&Value> = names.iter().filter(|n| *n != "null").collect();
                 match rest.as_slice() {
                     [Value::String(name)] => {
-                        let port = self.named(name, object, &path, depth)?;
+                        let port = self.named(name, object, path, depth)?;
                         Ok(if nullable {
                             PortType::Nullable(Box::new(port))
                         } else {
                             port
                         })
                     }
-                    [] => refuse(&path, Reason::UnknownType("null".to_owned())),
-                    _ => refuse(&path, Reason::Union),
+                    [] => refuse(path, Reason::UnknownType("null".to_owned())),
+                    _ => refuse(path, Reason::Union),
                 }
             }
-            Some(_) => refuse(&path, Reason::NotASchema),
+            Some(_) => refuse(path, Reason::NotASchema),
         }
     }
 
@@ -273,7 +270,7 @@ impl Lowering<'_> {
         self.stack.push(target.to_owned());
         let port = self.lower(
             resolved,
-            target.trim_start_matches('#').to_owned(),
+            target.trim_start_matches('#'),
             depth.saturating_add(1),
         );
         self.stack.pop();
@@ -296,7 +293,7 @@ impl Lowering<'_> {
         let [(index, member)] = rest.as_slice() else {
             return refuse(path, Reason::Union);
         };
-        let port = self.lower(member, format!("{path}/{index}"), depth.saturating_add(1))?;
+        let port = self.lower(member, &format!("{path}/{index}"), depth.saturating_add(1))?;
         Ok(if nullable {
             PortType::Nullable(Box::new(port))
         } else {
@@ -323,7 +320,7 @@ impl Lowering<'_> {
             "array" => match object.get("items") {
                 Some(items @ Value::Object(_)) => PortType::List(Box::new(self.lower(
                     items,
-                    format!("{path}/items"),
+                    &format!("{path}/items"),
                     depth.saturating_add(1),
                 )?)),
                 _ => return refuse(path, Reason::UntypedItems),
@@ -346,7 +343,7 @@ impl Lowering<'_> {
             return match additional {
                 Some(value @ Value::Object(_)) => Ok(PortType::Map(Box::new(self.lower(
                     value,
-                    format!("{path}/additionalProperties"),
+                    &format!("{path}/additionalProperties"),
                     depth.saturating_add(1),
                 )?))),
                 _ => refuse(path, Reason::Untyped),
@@ -361,7 +358,7 @@ impl Lowering<'_> {
         for (name, schema) in properties {
             let port = self.lower(
                 schema,
-                format!("{path}/properties/{}", escape(name)),
+                &format!("{path}/properties/{}", escape(name)),
                 depth.saturating_add(1),
             )?;
             fields.insert(
