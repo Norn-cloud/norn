@@ -1,37 +1,36 @@
 import { useQuery } from "@tanstack/react-query"
-import { useMemo, useState } from "react"
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
-import { Redo2, Undo2 } from "lucide-react"
+import { useCallback } from "react"
+import { Handle, MarkerType, Position, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
-import { automationKinds, branchesOf, inputsOf, lower, type Condition, type Problem } from "./lib/canvas/automation.ts"
+import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
+import { SAVE_BLOCKED } from "./canvas.tsx"
+import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
 import { words } from "./lib/format.ts"
 
 const META = { id: "studio.automation", version: "0.1.0" }
-const KINDS = { start: "Start", perform: "Tool", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
+export const STEP_KINDS = { start: "Start", perform: "Tool", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
+export const RUN_BLOCKED = "Running happens in the cell with receipts; the run route is not live yet."
 
-type StepNode = Node<{ kind: string; title: string; detail: string; problems: readonly Problem[]; outs: readonly string[] }, "step">
+type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly string[] }, "step">
 
-function StepBox({ data, selected }: NodeProps<StepNode>) {
-  const failing = data.problems.length > 0
+export function StepBox({ data, selected }: NodeProps<StepNode>) {
+  const failing = data.issues.length > 0
   return (
-    <div title={data.problems.map(({ message }) => message).join("\n")} className={cn("relative w-44 rounded-lg border-2 bg-background px-3 py-2 text-sm", selected ? "border-primary" : "border-border", failing && "border-destructive")}>
+    <div title={data.issues.map(({ message }) => message).join("\n")} className={cn("relative w-44 rounded-lg border-2 bg-background px-3 py-2 text-sm", selected ? "border-primary ring-2 ring-primary/30" : "border-border", failing && "border-destructive")}>
       {data.kind !== "start" && <Handle type="target" position={Position.Left} id="in" />}
-      <div className="text-meta text-muted-foreground">{KINDS[data.kind as keyof typeof KINDS] ?? data.kind}</div>
-      <div className="font-medium">{data.title}</div>
+      <div className="text-meta text-muted-foreground">{STEP_KINDS[data.kind as keyof typeof STEP_KINDS] ?? data.kind}</div>
+      <div className="font-medium break-words">{data.title}</div>
       {data.detail && <div className="truncate text-meta text-muted-foreground">{data.detail}</div>}
-      {failing && <div className="text-meta text-destructive">{data.problems.length} {data.problems.length === 1 ? "problem" : "problems"}</div>}
+      {failing && <div className="text-meta text-destructive">{data.issues.length} {data.issues.length === 1 ? "problem" : "problems"}</div>}
       {data.outs.map((port, index) => (
-        <Handle key={port} type="source" position={Position.Right} id={port} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }}>
-          <span className="pointer-events-none absolute left-2 -translate-y-1/2 text-[10px] text-muted-foreground">{port === "next" ? "" : port}</span>
-        </Handle>
+        <Handle key={port} type="source" position={Position.Right} id={port} title={port} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
       ))}
     </div>
   )
@@ -39,121 +38,151 @@ function StepBox({ data, selected }: NodeProps<StepNode>) {
 
 const NODE_TYPES = { step: StepBox }
 
-/** `invoice.status == paid and invoice.amountMinor > 0`, one branch per line. */
-const formatBranches = (branches: Condition[][]) => branches.map((all) => all.map(({ left, op, right }) => `${left} ${op} ${right}`).join(" and ")).join("\n")
-const parseBranches = (text: string): Condition[][] => text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => line.split(/\s+and\s+/).map((part) => {
-  const [, left = "", op = "==", right = ""] = /^(\S+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/.exec(part.trim()) ?? [, part, "==", ""]
+const formatCondition = (all: readonly Condition[]) => all.map(({ left, op, right }) => `${left} ${op} ${right}`).join(" and ")
+const parseCondition = (line: string): Condition[] => line.split(/\s+and\s+/).map((part) => part.trim()).filter(Boolean).map((part) => {
+  const [, left = part, op = "==", right = ""] = /^(\S+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/.exec(part) ?? []
   return { left, op: op as Condition["op"], right }
-}))
+})
 
-/** Edit an automation as a flow of steps; every edit lowers it and runs the checker over what it lowers to. */
-export function AutomationEditor() {
-  const [state, setState] = useState(() => g.history(EXAMPLE))
-  const [selected, setSelected] = useState<string>()
-  const [selectedEdge, setSelectedEdge] = useState<string>()
-  const [refusal, setRefusal] = useState<g.Refusal | null>(null)
-  const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
-  const graph = state.present
-  const edit = (next: g.Graph) => { setRefusal(null); setState((current) => g.commit(current, next)) }
-
-  const problems = useMemo((): readonly Problem[] => {
-    const { lowered, problems } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
-    if (!lowered || !checker.data) return problems
-    // The checker's findings name generated states; each state belongs to the step that lowered to it.
-    const owner = (message: string) => [...lowered.states].find(([, states]) => states.some((name) => message.includes(`"${name}"`)))?.[0]
-    return checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message }) => ({ code, message, ...(owner(message) ? { node: owner(message) } : {}) }))
-  }, [graph, checker.data])
-
-  const nodes: StepNode[] = graph.nodes.map((node) => ({
-    id: node.id, type: "step", position: node.position, selected: selected === node.id,
-    data: {
-      kind: node.kind, title: words(node.id), problems: problems.filter((problem) => problem.node === node.id),
-      detail: node.kind === "perform" ? node.config.tool ?? "" : node.kind === "sleep" ? `${node.config.millis ?? 0} ms` : node.kind === "succeed" ? node.config.outcome ?? "" : "",
-      outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id }) => id),
-    },
-  }))
-  const edges: Edge[] = graph.edges.map((edge) => ({
-    id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected: selectedEdge === edge.id,
-    markerEnd: { type: MarkerType.ArrowClosed }, style: selectedEdge === edge.id ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined, label: edge.sourcePort === "next" ? undefined : edge.sourcePort,
-    labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: "var(--foreground)", fontSize: 11 },
-  }))
-  const node = graph.nodes.find(({ id }) => id === selected)
-  const tool = RECORDED_TOOLS.find(({ id }) => id === node?.config.tool)
-  const add = (kind: keyof typeof KINDS) => {
-    const id = g.freshId(graph, kind === "perform" ? "call" : kind)
-    edit(g.addNode(graph, { id, kind, position: { x: 40, y: 360 + graph.nodes.length * 10 }, config: kind === "perform" ? { tool: RECORDED_TOOLS[0]?.id ?? "", input: "{}" } : kind === "route" ? { branches: "[[]]" } : {} }))
-    setSelected(id)
-  }
-  const unplaced = problems.filter(({ node }) => !node)
-
+/** A route's branches: edit each condition, add, delete and reorder; exits follow their branch. */
+function Branches({ editing, id, branches }: { readonly editing: Editing; readonly id: string; readonly branches: Condition[][] }) {
+  const { graph, edit } = editing
+  const set = (order: number[], next = order.map((at) => branches[at] ?? [])) => edit(setBranches(graph, id, next, order))
+  const indices = branches.map((_, index) => index)
+  const swap = (a: number, b: number) => { const order = [...indices]; order[a] = b; order[b] = a; set(order) }
   return (
-    <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_22rem]">
-      <Panel label="Automation" action={
-        checker.isError ? <span className="text-destructive">Checker not loaded: lowering findings only</span>
-          : problems.length === 0 ? <Badge variant="outline">{checker.data ? "Checker: no findings" : "Lowered; loading the checker…"}</Badge>
-            : <Badge variant="destructive">{problems.length} {problems.length === 1 ? "finding" : "findings"}</Badge>
-      }>
-        <div className="flex flex-wrap gap-1.5 px-2.5 pb-2">
-          {(Object.keys(KINDS) as (keyof typeof KINDS)[]).filter((kind) => kind !== "start").map((kind) => <Button key={kind} size="sm" variant="outline" onClick={() => add(kind)}>+ {KINDS[kind]}</Button>)}
-          <Button size="sm" variant="outline" aria-label="Undo" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
-          <Button size="sm" variant="outline" aria-label="Redo" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
-          <Button size="sm" disabled title="Saving goes through server admission and a governed install; the route is not live yet.">Save</Button>
-          <Button size="sm" disabled title="Running happens in the cell with receipts; the run route is not live yet.">Run</Button>
-          {refusal && <span className="self-center text-meta text-destructive">{refusal.message}</span>}
+    <div className="space-y-2">
+      <div className="text-meta text-muted-foreground">Branches, first match wins. Exits b0, b1, … then otherwise, then next (continue after the route).</div>
+      {branches.map((all, index) => (
+        <div key={`${id}:${index}:${formatCondition(all)}`} className="flex items-center gap-1">
+          <span className="w-6 font-mono text-xs text-muted-foreground">b{index}</span>
+          <Input aria-label={`Branch b${index}`} className="font-mono text-xs" defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
+            onBlur={(event) => { const next = branches.map((one, at) => at === index ? parseCondition(event.target.value) : one); if (formatCondition(next[index] ?? []) !== formatCondition(all)) set(indices, next) }} />
+          <Button size="icon" variant="ghost" aria-label={`Move b${index} up`} disabled={index === 0} onClick={() => swap(index - 1, index)}><ArrowUp /></Button>
+          <Button size="icon" variant="ghost" aria-label={`Move b${index} down`} disabled={index === branches.length - 1} onClick={() => swap(index, index + 1)}><ArrowDown /></Button>
+          <Button size="icon" variant="ghost" aria-label={`Delete b${index}`} onClick={() => set(indices.filter((at) => at !== index))}><Trash2 /></Button>
         </div>
-        <Well>
-          <div className="h-[36rem] w-full">
-            <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
-              onConnect={({ source, target, sourceHandle, targetHandle }) => {
-                const next = g.connect(graph, automationKinds, { id: `${source}.${sourceHandle ?? "next"}`, source, target, sourcePort: sourceHandle ?? "next", targetPort: targetHandle ?? "in", config: {} })
-                if (g.isRefusal(next)) setRefusal(next); else edit(next)
-              }}
-              onNodeClick={(_, { id }) => { setSelected(id); setSelectedEdge(undefined) }} onEdgeClick={(_, { id }) => { setSelectedEdge(id); setSelected(undefined) }}
-              onPaneClick={() => { setSelected(undefined); setSelectedEdge(undefined) }}
-              onNodeDragStart={() => setState(g.checkpoint)}
-              onNodesChange={(changes) => changes.forEach((change) => { if (change.type === "position" && change.position) setState((current) => g.replace(current, g.moveNode(current.present, change.id, change.position as g.CanvasNode["position"]))) })}
-              onDelete={({ nodes: gone, edges: cut }) => edit(g.remove(graph, gone.map(({ id }) => id).filter((id) => id !== "start"), cut.map(({ id }) => id)))}>
-              <Background /><Controls showInteractive={false} />
-            </ReactFlow>
-          </div>
-        </Well>
-      </Panel>
-      <div className="space-y-3">
-        <Panel label={node ? KINDS[node.kind as keyof typeof KINDS] ?? "Step" : "Configure"}>
-          <Well className="space-y-3 p-3 text-sm">
-            {!node && <p className="text-muted-foreground">Select a step. Drag from a step's right edge to the next one; a route has one exit per branch, one for otherwise and one to continue after it.</p>}
-            {node?.kind === "perform" && <>
-              <label className="block space-y-1"><span className="text-meta text-muted-foreground">Tool</span>
-                <select className="w-full rounded-md border bg-background px-2 py-1" value={node.config.tool} onChange={(event) => edit(g.configureNode(graph, node.id, { tool: event.target.value, input: "{}" }))}>
-                  {RECORDED_TOOLS.map(({ id }) => <option key={id} value={id}>{id}</option>)}
-                </select></label>
-              <label className="block space-y-1"><span className="text-meta text-muted-foreground">Name its result</span>
-                <Input key={`${node.id}:bind:${node.config.bind}`} defaultValue={node.config.bind} onBlur={(event) => edit(g.configureNode(graph, node.id, { bind: event.target.value.trim() }))} /></label>
-              {Object.entries(tool?.input.properties ?? {}).map(([field, schema]) => (
-                <label key={`${node.id}:${node.config.tool}:${field}:${inputsOf(node)[field]}`} className="block space-y-1"><span className="text-meta text-muted-foreground">{field} <span className="font-mono">({String(schema.type)})</span></span>
-                  <Input defaultValue={inputsOf(node)[field]} placeholder="a value, or result.field" onBlur={(event) => edit(g.configureNode(graph, node.id, { input: JSON.stringify({ ...inputsOf(node), [field]: event.target.value }) }))} /></label>
-              ))}
-            </>}
-            {node?.kind === "route" && <label className="block space-y-1"><span className="text-meta text-muted-foreground">Branches, one per line (b0, b1, …)</span>
-              <Textarea key={`${node.id}:branches:${node.config.branches}`} className="font-mono text-xs" defaultValue={formatBranches(branchesOf(node))} onBlur={(event) => edit(g.configureNode(graph, node.id, { branches: JSON.stringify(parseBranches(event.target.value)) }))} /></label>}
-            {node?.kind === "sleep" && <label className="block space-y-1"><span className="text-meta text-muted-foreground">Wait (milliseconds)</span>
-              <Input key={`${node.id}:millis:${node.config.millis}`} type="number" defaultValue={node.config.millis} onBlur={(event) => edit(g.configureNode(graph, node.id, { millis: event.target.value }))} /></label>}
-            {node?.kind === "succeed" && <label className="block space-y-1"><span className="text-meta text-muted-foreground">Outcome</span>
-              <Input key={`${node.id}:outcome:${node.config.outcome}`} defaultValue={node.config.outcome} onBlur={(event) => edit(g.configureNode(graph, node.id, { outcome: event.target.value }))} /></label>}
-            {node && problems.filter((problem) => problem.node === node.id).map((problem, index) => <Finding key={index} problem={problem} />)}
-          </Well>
-        </Panel>
-        {unplaced.length > 0 && <Panel label="Whole automation"><Well className="space-y-2 p-3">{unplaced.map((problem, index) => <Finding key={index} problem={problem} />)}</Well></Panel>}
-      </div>
+      ))}
+      <Button size="sm" variant="outline" onClick={() => set([...indices, -1], [...branches, []])}><Plus />Branch</Button>
     </div>
   )
 }
 
-function Finding({ problem }: { readonly problem: Problem }) {
+function Inspector({ editing, issues }: { readonly editing: Editing; readonly issues: readonly Issue[] }) {
+  const { graph, selection, edit, select } = editing
+  const count = selection.nodes.length + selection.edges.length
+  const removable = selection.nodes.filter((id) => graph.nodes.find((node) => node.id === id)?.kind !== "start")
+  const remove = () => { edit(g.remove(graph, removable, selection.edges)); select({ nodes: [], edges: [] }) }
+  if (count === 0) return (
+    <>
+      <p className="text-muted-foreground">Select a step. Drag from a step's right edge to the next one, or drag a connection's end to reconnect it.</p>
+      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · Delete removes</p>
+    </>
+  )
+  if (count > 1) return (
+    <>
+      <p>{selection.nodes.length} steps and {selection.edges.length} connections selected.</p>
+      <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete selected</Button>
+    </>
+  )
+  const edge = graph.edges.find(({ id }) => id === selection.edges[0])
+  if (edge) return (
+    <>
+      <p>{words(edge.source)} ({edge.sourcePort}) → {words(edge.target)}</p>
+      <p className="text-meta text-muted-foreground">A connection carries no settings of its own; drag either end to reconnect it.</p>
+      <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete</Button>
+    </>
+  )
+  const node = graph.nodes.find(({ id }) => id === selection.nodes[0])
+  if (!node) return null
+  const tool = RECORDED_TOOLS.find(({ id }) => id === node.config.tool)
+  const field = (label: string, key: string, value: string | undefined, onSave: (text: string) => void, extra: { type?: string; placeholder?: string } = {}) => (
+    <label className="block space-y-1"><span className="text-meta text-muted-foreground">{label}</span>
+      <Input aria-label={label} key={`${node.id}:${key}:${value ?? ""}`} defaultValue={value} onBlur={(event) => onSave(event.target.value)} {...extra} /></label>
+  )
   return (
-    <div className="space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-meta">
-      <div className="font-mono text-xs text-destructive">{problem.code}</div>
-      <div>{problem.message}</div>
+    <>
+      <div className="text-meta text-muted-foreground">{STEP_KINDS[node.kind as keyof typeof STEP_KINDS]} · {node.id}</div>
+      {node.kind === "start" && <p className="text-muted-foreground">Every automation has one start. Connect it to the first step.</p>}
+      {node.kind === "perform" && <>
+        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Tool</span>
+          <select aria-label="Tool" className="w-full rounded-md border bg-background px-2 py-1" value={node.config.tool} onChange={(event) => edit(g.configureNode(graph, node.id, { tool: event.target.value, input: "{}" }))}>
+            {!tool && <option value={node.config.tool}>{node.config.tool} (not connected)</option>}
+            {RECORDED_TOOLS.map(({ id }) => <option key={id} value={id}>{id}</option>)}
+          </select></label>
+        {field("Name its result", "bind", node.config.bind, (text) => edit(g.configureNode(graph, node.id, { bind: text.trim() })))}
+        {Object.entries(tool?.input.properties ?? {}).map(([name, schema]) => (
+          <div key={name}>{field(`${name} (${String(schema.type)})`, `input.${name}`, inputsOf(node)[name], (text) => edit(g.configureNode(graph, node.id, { input: JSON.stringify({ ...inputsOf(node), [name]: text }) })), { placeholder: "a value, or result.field" })}</div>
+        ))}
+      </>}
+      {node.kind === "route" && <Branches editing={editing} id={node.id} branches={branchesOf(node)} />}
+      {node.kind === "sleep" && field("Wait (milliseconds)", "millis", node.config.millis, (text) => edit(g.configureNode(graph, node.id, { millis: text })), { type: "number" })}
+      {node.kind === "succeed" && field("Outcome", "outcome", node.config.outcome, (text) => edit(g.configureNode(graph, node.id, { outcome: text })))}
+      {node.kind !== "start" && <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete</Button>}
+      {issues.filter((issue) => issue.node === node.id).map((issue, index) => <IssueCard key={index} issue={issue} />)}
+    </>
+  )
+}
+
+const DEFAULTS: Record<string, Record<string, string>> = {
+  perform: { tool: RECORDED_TOOLS[0]?.id ?? "", input: "{}" },
+  route: { branches: "[[]]" },
+  sleep: { millis: "60000" },
+  succeed: { outcome: "done" },
+}
+
+/** The frame's props for an automation; the sheet renders the same props with fixed findings. */
+export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.Graph = EXAMPLE): CanvasFrameProps {
+  return {
+    draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, issues,
+    saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
+    fixed: (node) => node.kind === "start",
+    toNode: (node, found, selected): StepNode => ({
+      id: node.id, type: "step", position: node.position, selected,
+      data: {
+        kind: node.kind, title: words(node.id), issues: found,
+        detail: node.kind === "perform" ? node.config.tool ?? "" : node.kind === "sleep" ? `${node.config.millis ?? 0} ms` : node.kind === "succeed" ? node.config.outcome ?? "" : node.kind === "route" ? `${branchesOf(node).length} branches` : "",
+        outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id }) => id),
+      },
+    }),
+    toEdge: (edge, found, selected): Edge => ({
+      id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
+      markerEnd: { type: MarkerType.ArrowClosed }, label: edge.sourcePort === "next" ? undefined : edge.sourcePort,
+      style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
+      labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: "var(--foreground)", fontSize: 11 },
+    }),
+    newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) =>
+      ({ id: g.freshName(graph.edges.map(({ id }) => id), `${source}.${sourceHandle ?? "next"}`), source, target, sourcePort: sourceHandle ?? "next", targetPort: targetHandle ?? "in", config: {} }),
+    palette: ({ graph, edit, select }) => Object.keys(DEFAULTS).map((kind) => (
+      <Button key={kind} size="sm" variant="outline" onClick={() => {
+        const base = graph.nodes.some((node) => node.kind === "start") ? graph : g.addNode(graph, { id: "start", kind: "start", position: { x: 0, y: 120 }, config: {} })
+        const id = g.freshId(base, kind === "perform" ? "call" : kind)
+        edit(g.addNode(base, { id, kind, position: { x: 40, y: 360 + graph.nodes.length * 10 }, config: { ...DEFAULTS[kind] } }))
+        select({ nodes: [id], edges: [] })
+      }}><Plus />{STEP_KINDS[kind as keyof typeof STEP_KINDS]}</Button>
+    )),
+    inspector: (editing, found) => <Inspector editing={editing} issues={found} />,
+  }
+}
+
+/** Edit an automation: every change lowers it through lowerFlow and runs the checker over what it lowers to. */
+export function AutomationEditor() {
+  const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
+  const issues = useCallback((graph: g.Graph) => {
+    const { lowered, problems } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
+    const own: Issue[] = problems.map(({ code, message, node }) => ({ code, message, ...(node ? { node } : {}) }))
+    if (!lowered) return { issues: own, status: <Badge variant="destructive">{own.length} {own.length === 1 ? "finding" : "findings"}</Badge> }
+    if (checker.isError) return { issues: own, status: <span className="text-destructive" role="alert">Checker not loaded: lowering findings only</span> }
+    if (!checker.data) return { issues: own, status: <span role="status">Lowered; loading the checker…</span> }
+    // The checker's findings name generated states; each state belongs to the step that lowered to it.
+    const owner = (message: string) => [...lowered.states].find(([, states]) => states.some((name) => message.includes(`"${name}"`)))?.[0]
+    const found: Issue[] = checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message }) => ({ code, message, ...(owner(message) ? { node: owner(message) } : {}) }))
+    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no findings</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
+  }, [checker.isError, checker.data])
+  return (
+    <div className="space-y-2">
+      <CanvasFrame {...automationFrame(issues)} />
+      <div className="flex justify-end"><Button size="sm" disabled title={RUN_BLOCKED}>Run in the cell</Button></div>
     </div>
   )
 }

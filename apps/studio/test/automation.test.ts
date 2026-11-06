@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { loadInvoice, notify } from "../../../tools/norn-ts/fixtures/flows/support/billing.builder.ts"
-import { CANVAS_EXTENSION, lower, redraw, type Condition } from "../src/lib/canvas/automation.ts"
+import { CANVAS_EXTENSION, branchesOf, lower, redraw, setBranches, type Condition } from "../src/lib/canvas/automation.ts"
 import type { CanvasEdge, CanvasNode, Graph } from "../src/lib/canvas/graph.ts"
 
 const tools = [loadInvoice, notify]
@@ -65,4 +65,14 @@ test("a lowering finding lands on the step that caused it", () => {
   const wrong: Graph = { ...route, nodes: route.nodes.map((one) => one.id === "remind" ? { ...one, config: { ...one.config, input: JSON.stringify({ invoiceId: "invoice.amountMinor", outcome: "overdue" }) } } : one) }
   const { problems } = lower(wrong, tools, meta)
   expect(problems.map(({ code, node }) => `${code}@${node}`)).toContain("NORN-FLOW-VALUE@remind")
+})
+
+test("reordering a route's branches carries each branch's exit; removing a branch removes its exit", () => {
+  const settled = route.nodes.find(({ id }) => id === "settled")!
+  const [paid, draft] = branchesOf(settled) as [Condition[], Condition[]]
+  const swapped = setBranches(route, "settled", [draft, paid], [1, 0])
+  expect(swapped.edges.filter(({ source, sourcePort }) => source === "settled" && sourcePort.startsWith("b")).map(({ sourcePort, target }) => `${sourcePort}->${target}`).sort()).toEqual(["b0->draft", "b1->paid"])
+  expect(lower(swapped, tools, meta, options).problems).toEqual([])
+  const dropped = setBranches(route, "settled", [draft], [1])
+  expect(dropped.edges.filter(({ source }) => source === "settled").map(({ sourcePort, target }) => `${sourcePort}->${target}`).sort()).toEqual(["b0->draft", "next->overdue"])
 })

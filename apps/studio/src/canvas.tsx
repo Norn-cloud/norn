@@ -1,33 +1,35 @@
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo, useState } from "react"
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
-import "@xyflow/react/dist/style.css"
-import { Plus, Redo2, Undo2 } from "lucide-react"
+import { useCallback, useMemo, useState } from "react"
+import { Handle, MarkerType, Position, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { Network, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
+import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { loadChecker } from "./lib/canvas/checker.ts"
-import { introduced, place, type Placed } from "./lib/canvas/diagnostics.ts"
+import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { AutomationEditor } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
 import { recordedTransport, type Envelope } from "./lib/transport.ts"
 
-type StateNode = Node<{ label: string; flags: string; findings: readonly Placed[] }, "state">
+export const SAVE_BLOCKED = "Saving to the server needs its admission and governed-install route, which is not live yet."
 
-function StateBox({ data, selected }: NodeProps<StateNode>) {
-  const failing = data.findings.length > 0
+type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }, "state">
+
+export function StateBox({ data, selected }: NodeProps<StateNode>) {
+  const failing = data.issues.length > 0
   return (
-    <div title={data.findings.map(({ finding }) => finding.message).join("\n")} className={cn("w-36 rounded-lg border-2 bg-background px-3 py-2 text-center text-sm", selected ? "border-primary" : "border-border", failing && "border-destructive")}>
+    <div data-testid={`node-${data.label}`} title={data.issues.map(({ message }) => message).join("\n")} className={cn("w-36 rounded-lg border-2 bg-background px-3 py-2 text-center text-sm", selected ? "border-primary ring-2 ring-primary/30" : "border-border", failing && "border-destructive")}>
       <Handle type="target" position={Position.Left} id="in" />
       <Handle type="source" position={Position.Right} id="out" />
       <div className="font-medium">{data.label}</div>
       {data.flags && <div className="text-meta text-muted-foreground">{data.flags}</div>}
-      {failing && <div className="text-meta text-destructive">{data.findings.length} {data.findings.length === 1 ? "problem" : "problems"}</div>}
+      {failing && <div className="text-meta text-destructive">{data.issues.length} {data.issues.length === 1 ? "problem" : "problems"}</div>}
     </div>
   )
 }
@@ -35,146 +37,125 @@ function StateBox({ data, selected }: NodeProps<StateNode>) {
 const NODE_TYPES = { state: StateBox }
 const FLAGS = ["initial", "terminal", "immutable"] as const
 
-/** Edit one lifecycle: drag, connect and configure states and steps; the checker runs on every change. */
-function Editor({ definitions, envelope, lifecycle }: { readonly definitions: readonly Envelope[]; readonly envelope: Envelope; readonly lifecycle: LifecycleRef }) {
-  const kinds = useMemo(() => lifecycleKinds(lifecycle), [lifecycle])
-  const [state, setState] = useState(() => g.history(decompile(envelope, lifecycle)))
-  const [selected, setSelected] = useState<{ node?: string; edge?: string }>({})
-  const [refusal, setRefusal] = useState<g.Refusal | null>(null)
-  const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
-  const graph = state.present
-  const edit = (next: g.Graph) => { setRefusal(null); setState((current) => g.commit(current, next)) }
-
-  const compiled = useMemo(() => compile(envelope, lifecycle, graph), [envelope, lifecycle, graph])
-  // What the loaded definitions already fail on, so the canvas leads with what this edit changed.
-  const baseline = useMemo(() => checker.data?.(definitions).diagnostics.diagnostics, [checker.data, definitions])
-  const findings = useMemo(() => {
-    if (!checker.data || !baseline) return undefined
-    const set = definitions.map((other) => other.artifactId === envelope.artifactId ? compiled.envelope : other)
-    const placed = place(checker.data(set).diagnostics.diagnostics, envelope.artifactId, compiled.origins, new Set(graph.nodes.map(({ id }) => id)))
-    return introduced(placed, baseline)
-  }, [checker.data, baseline, definitions, envelope.artifactId, compiled, graph.nodes])
-  const on = (key: "node" | "edge", id: string) => findings?.added.filter((placed) => placed[key] === id) ?? []
-
-  useEffect(() => {
-    const keys = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z" || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
-      event.preventDefault()
-      setState((current) => event.shiftKey ? g.redo(current) : g.undo(current))
-    }
-    window.addEventListener("keydown", keys)
-    return () => window.removeEventListener("keydown", keys)
-  }, [])
-
-  const nodes: StateNode[] = graph.nodes.map((node) => ({
-    id: node.id, type: "state", position: node.position, selected: selected.node === node.id,
-    data: { label: words(node.id), flags: FLAGS.filter((flag) => node.config[flag] === "yes").join(" · "), findings: on("node", node.id) },
-  }))
-  const edges: Edge[] = graph.edges.map((edge) => {
-    const failing = on("edge", edge.id).length > 0
-    const stroke = failing ? "var(--destructive)" : selected.edge === edge.id ? "var(--primary)" : "var(--muted-foreground)"
-    return {
-      id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort,
-      label: words(edge.config.transition ?? edge.id), selected: selected.edge === edge.id,
-      markerEnd: { type: MarkerType.ArrowClosed, color: stroke }, style: { stroke, strokeWidth: failing ? 2 : 1 },
-      labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: failing ? "var(--destructive)" : "var(--foreground)", fontSize: 12 },
-    }
-  })
-
-  const onConnect = ({ source, target, sourceHandle, targetHandle }: Connection) => {
-    const transition = g.freshName(graph.edges.map(({ config }) => config.transition ?? ""), `${source}_to_${target}`)
-    const id = g.freshName(graph.edges.map((edge) => edge.id), edgeId(transition, source))
-    const next = g.connect(graph, kinds, { id, source, target, sourcePort: sourceHandle ?? "out", targetPort: targetHandle ?? "in", config: { transition, guards: "", description: "" } })
-    if (g.isRefusal(next)) setRefusal(next); else edit(next)
-  }
-  const node = graph.nodes.find(({ id }) => id === selected.node)
-  const edge = graph.edges.find(({ id }) => id === selected.edge)
+/** Selected states and steps: rename, flags, rules, or delete. */
+function Inspector({ editing, issues, standing }: { readonly editing: Editing; readonly issues: readonly Issue[]; readonly standing: readonly Finding[] }) {
+  const { graph, selection, edit, select } = editing
+  const count = selection.nodes.length + selection.edges.length
+  const remove = () => { edit(g.remove(graph, selection.nodes, selection.edges)); select({ nodes: [], edges: [] }) }
+  if (count === 0) return (
+    <>
+      <p className="text-muted-foreground">Select a state or a step. Drag from a state's right edge to another state to add a step, or drag a step's end to reconnect it. Shift-click or shift-drag selects several.</p>
+      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · Delete removes</p>
+      {standing.length > 0 && (
+        <details className="text-meta text-muted-foreground">
+          <summary className="cursor-pointer select-none">{standing.length} findings the loaded definitions already had</summary>
+          <div className="space-y-2 pt-2">{standing.map((finding, index) => <IssueCard key={index} issue={finding} />)}</div>
+        </details>
+      )}
+    </>
+  )
+  if (count > 1) return (
+    <>
+      <p>{selection.nodes.length} states and {selection.edges.length} steps selected.</p>
+      <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete selected</Button>
+    </>
+  )
+  const node = graph.nodes.find(({ id }) => id === selection.nodes[0])
+  const edge = graph.edges.find(({ id }) => id === selection.edges[0])
   const siblings = edge ? graph.edges.filter(({ config }) => config.transition === edge.config.transition).map(({ id }) => id) : []
-  const unplaced = findings?.added.filter((placed) => !placed.node && !placed.edge) ?? []
-
+  const own = issues.filter((issue) => (node && issue.node === node.id) || (edge && issue.edge === edge.id))
   return (
-    <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_22rem]">
-      <Panel label={`${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`} action={
-        checker.isError ? <span className="text-destructive">Checker not loaded: no diagnostics</span>
-          : !findings ? "Loading the checker…"
-            : findings.added.length === 0 ? <Badge variant="outline">Checker: no new findings</Badge> : <Badge variant="destructive">Checker: {findings.added.length} new {findings.added.length === 1 ? "finding" : "findings"}</Badge>
-      }>
-        <div className="flex flex-wrap gap-1.5 px-2.5 pb-2">
-          <Button size="sm" variant="outline" onClick={() => edit(g.addNode(graph, { id: g.freshId(graph, "new_state"), kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} }))}><Plus />State</Button>
-          <Button size="sm" variant="outline" aria-label="Undo" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
-          <Button size="sm" variant="outline" aria-label="Redo" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
-          <Button size="sm" disabled title="Saving goes through server admission and a governed install; the route is not live yet.">Save</Button>
-          {refusal && <span className="self-center text-meta text-destructive">{refusal.message}</span>}
-        </div>
-        <Well>
-          <div className="h-[36rem] w-full">
-            <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
-              isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { id: "probe", source: connection.source, target: connection.target, sourcePort: connection.sourceHandle ?? "out", targetPort: connection.targetHandle ?? "in", config: {} }))}
-              onConnect={onConnect}
-              onNodeClick={(_, { id }) => setSelected({ node: id })} onEdgeClick={(_, { id }) => setSelected({ edge: id })} onPaneClick={() => setSelected({})}
-              onNodeDragStart={() => setState(g.checkpoint)}
-              onNodesChange={(changes) => changes.forEach((change) => { if (change.type === "position" && change.position) setState((current) => g.replace(current, g.moveNode(current.present, change.id, change.position as g.CanvasNode["position"]))) })}
-              onDelete={({ nodes: gone, edges: cut }) => edit(g.remove(graph, gone.map(({ id }) => id), cut.map(({ id }) => id)))}>
-              <Background /><Controls showInteractive={false} />
-            </ReactFlow>
-          </div>
-        </Well>
-      </Panel>
-      <div className="space-y-3">
-        <Panel label={node ? "State" : edge ? "Step" : "Configure"}>
-          <Well className="space-y-3 p-3 text-sm">
-            {!node && !edge && <p className="text-muted-foreground">Select a state or a step. Drag from a state's right edge to another state to add a step; press Backspace to delete.</p>}
-            {node && <>
-              <label className="block space-y-1"><span className="text-meta text-muted-foreground">Name</span>
-                <Input defaultValue={node.id} key={`name:${node.id}`} onBlur={(event) => {
-                  const to = event.target.value.trim()
-                  if (!to || to === node.id) return
-                  if (graph.nodes.some(({ id }) => id === to)) { setRefusal({ code: "canvas.node.duplicate", message: `There is already a state named ${to}` }); event.target.value = node.id; return }
-                  edit(g.renameNode(graph, node.id, to)); setSelected({ node: to })
-                }} /></label>
-              {FLAGS.map((flag) => (
-                <label key={flag} className="flex items-center gap-2"><input type="checkbox" checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
-              ))}
-            </>}
-            {edge && <>
-              <label className="block space-y-1"><span className="text-meta text-muted-foreground">Step id</span>
-                <Input defaultValue={edge.config.transition} key={`${edge.id}:id:${edge.config.transition}`} onBlur={(event) => { const id = event.target.value.trim(); if (id) edit(g.configureEdges(graph, siblings, { transition: id })) }} /></label>
-              <label className="block space-y-1"><span className="text-meta text-muted-foreground">Allowed only when (one rule per line)</span>
-                <Textarea defaultValue={edge.config.guards} key={`${edge.id}:guards:${edge.config.guards}`} className="font-mono text-xs" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
-              <label className="block space-y-1"><span className="text-meta text-muted-foreground">Description</span>
-                <Input defaultValue={edge.config.description} key={`${edge.id}:description:${edge.config.description}`} onBlur={(event) => edit(g.configureEdges(graph, siblings, { description: event.target.value }))} /></label>
-            </>}
-            {[...(node ? on("node", node.id) : []), ...(edge ? on("edge", edge.id) : [])].map(({ finding }, index) => <Problem key={index} placed={{ finding }} />)}
-          </Well>
-        </Panel>
-        {unplaced.length > 0 && <Panel label="Whole definition"><Well className="space-y-2 p-3">{unplaced.map((placed, index) => <Problem key={index} placed={placed} />)}</Well></Panel>}
-        {findings && findings.standing.length > 0 && (
-          <Panel label="Already in the loaded definitions">
-            <Well className="p-3 text-meta text-muted-foreground">
-              <details>
-                <summary className="cursor-pointer select-none">{findings.standing.length} findings the definitions had before this edit</summary>
-                <div className="space-y-2 pt-2">{findings.standing.map((placed, index) => <Problem key={index} placed={placed} />)}</div>
-              </details>
-            </Well>
-          </Panel>
-        )}
-      </div>
-    </div>
+    <>
+      {node && <>
+        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Name</span>
+          <Input aria-label="Name" defaultValue={node.id} key={`name:${node.id}`} onBlur={(event) => {
+            const to = event.target.value.trim()
+            if (!to || to === node.id) return
+            if (graph.nodes.some(({ id }) => id === to)) { edit({ code: "canvas.node.duplicate", message: `There is already a state named ${to}` }); event.target.value = node.id; return }
+            edit(g.renameNode(graph, node.id, to)); select({ nodes: [to], edges: [] })
+          }} /></label>
+        {FLAGS.map((flag) => (
+          <label key={flag} className="flex items-center gap-2"><input type="checkbox" aria-label={words(flag)} checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
+        ))}
+      </>}
+      {edge && <>
+        <p className="text-meta text-muted-foreground">{words(edge.source)} → {words(edge.target)}</p>
+        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Step id</span>
+          <Input aria-label="Step id" defaultValue={edge.config.transition} key={`${edge.id}:id:${edge.config.transition}`} onBlur={(event) => { const id = event.target.value.trim(); if (id) edit(g.configureEdges(graph, siblings, { transition: id })) }} /></label>
+        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Allowed only when (one rule per line)</span>
+          <Textarea aria-label="Guards" defaultValue={edge.config.guards} key={`${edge.id}:guards:${edge.config.guards}`} className="font-mono text-xs" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
+        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Description</span>
+          <Input aria-label="Description" defaultValue={edge.config.description} key={`${edge.id}:description:${edge.config.description}`} onBlur={(event) => edit(g.configureEdges(graph, siblings, { description: event.target.value }))} /></label>
+      </>}
+      <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete</Button>
+      {own.map((issue, index) => <IssueCard key={index} issue={issue} />)}
+    </>
   )
 }
 
-function Problem({ placed: { finding } }: { readonly placed: Placed }) {
-  return (
-    <div className="space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-meta">
-      <div className="font-mono text-xs text-destructive">{finding.code}</div>
-      <div>{finding.message}</div>
-    </div>
-  )
+/** The frame's props for one lifecycle; the sheet renders the same props with fixed findings. */
+export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issues: CanvasFrameProps["issues"], standing: readonly Finding[]): CanvasFrameProps {
+  return {
+    draftKey: `lifecycle:${lifecycle.artifactId}:${lifecycle.index}`,
+    label: `${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`,
+    initial: decompile(envelope, lifecycle), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
+    empty: "This lifecycle has no states. Add one to start.",
+    toNode: (node, found, selected): StateNode => ({ id: node.id, type: "state", position: node.position, selected, data: { label: words(node.id), flags: FLAGS.filter((flag) => node.config[flag] === "yes").join(" · "), issues: found } }),
+    toEdge: (edge, found, selected): Edge => {
+      const stroke = found.length > 0 ? "var(--destructive)" : selected ? "var(--primary)" : "var(--muted-foreground)"
+      return {
+        id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
+        label: words(edge.config.transition || edge.id), markerEnd: { type: MarkerType.ArrowClosed, color: stroke }, style: { stroke, strokeWidth: found.length > 0 || selected ? 2 : 1 },
+        labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: found.length > 0 ? "var(--destructive)" : "var(--foreground)", fontSize: 12 },
+      }
+    },
+    newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) => {
+      const transition = g.freshName(graph.edges.map(({ config }) => config.transition ?? ""), `${source}_to_${target}`)
+      return { id: g.freshName(graph.edges.map(({ id }) => id), edgeId(transition, source)), source, target, sourcePort: sourceHandle ?? "out", targetPort: targetHandle ?? "in", config: { transition, guards: "", description: "" } }
+    },
+    copyEdgeConfig: (edge, taken) => ({ ...edge.config, transition: g.freshName(taken, `${edge.config.transition || "step"}_copy`) }),
+    palette: ({ graph, edit, select }) => (
+      <Button size="sm" variant="outline" onClick={() => { const id = g.freshId(graph, "new_state"); edit(g.addNode(graph, { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} })); select({ nodes: [id], edges: [] }) }}><Plus />State</Button>
+    ),
+    inspector: (editing, found) => <Inspector editing={editing} issues={found} standing={standing} />,
+  }
+}
+
+/** Edit one lifecycle: every change compiles the entity again and the checker runs over the definition set. */
+function Editor({ definitions, envelope, lifecycle }: { readonly definitions: readonly Envelope[]; readonly envelope: Envelope; readonly lifecycle: LifecycleRef }) {
+  const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
+  // What the loaded definitions already fail on, so the canvas leads with what an edit changed.
+  const baseline = useMemo(() => checker.data?.(definitions).diagnostics.diagnostics, [checker.data, definitions])
+
+  const issues = useCallback((graph: g.Graph) => {
+    if (checker.isError) return { issues: [], status: <span className="text-destructive" role="alert">Checker not loaded: no diagnostics</span> }
+    if (!checker.data || !baseline) return { issues: [], status: <span role="status">Loading the checker…</span> }
+    const compiled = compile(envelope, lifecycle, graph)
+    const set = definitions.map((other) => other.artifactId === envelope.artifactId ? compiled.envelope : other)
+    const placed = place(checker.data(set).diagnostics.diagnostics, envelope.artifactId, compiled.origins, new Set(graph.nodes.map(({ id }) => id)))
+    const found: Issue[] = introduced(placed, baseline).added.map(({ finding: { code, message }, node, edge }) => ({ code, message, ...(node ? { node } : {}), ...(edge ? { edge } : {}) }))
+    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no new findings</Badge> : <Badge variant="destructive">Checker: {found.length} new {found.length === 1 ? "finding" : "findings"}</Badge> }
+  }, [checker.isError, checker.data, baseline, definitions, envelope, lifecycle])
+
+  const props = useMemo(() => lifecycleFrame(envelope, lifecycle, issues, baseline?.filter(({ artifactId }) => artifactId === envelope.artifactId) ?? []), [envelope, lifecycle, issues, baseline])
+  return <CanvasFrame {...props} />
+}
+
+/** The page's states, from the definitions read; the sheet renders each directly. */
+export interface DefinitionsRead {
+  readonly isPending: boolean
+  readonly error: Error | null
+  readonly data: readonly Envelope[] | undefined
 }
 
 export function CanvasPage() {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions })
-  const envelopes = useMemo(() => definitions.data?.map(({ document }) => document) ?? [], [definitions.data])
+  const data = useMemo(() => definitions.data?.map(({ document }) => document), [definitions.data])
+  return <CanvasPageView definitions={{ isPending: definitions.isPending, error: definitions.error, data }} />
+}
+
+export function CanvasPageView({ definitions }: { readonly definitions: DefinitionsRead }) {
+  const envelopes = useMemo(() => definitions.data ?? [], [definitions.data])
   const found = useMemo(() => lifecyclesIn(envelopes), [envelopes])
   const [chosen, setChosen] = useState(0)
   const [kind, setKind] = useState<"lifecycle" | "automation">("lifecycle")
@@ -190,8 +171,10 @@ export function CanvasPage() {
         {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{words(ref.objectType)}</Button>)}
         <Button size="sm" variant={kind === "automation" ? "default" : "outline"} onClick={() => setKind("automation")}>Automation</Button>
       </div>
-      {definitions.isError && <p className="text-destructive">{definitions.error.message}</p>}
       {kind === "automation" && <AutomationEditor />}
+      {definitions.isPending && <Panel label="Canvas"><Well><p className="p-6 text-sm text-muted-foreground" role="status">Reading definitions…</p></Well></Panel>}
+      {definitions.error && <Panel label="Canvas"><Well><p className="p-6 text-sm text-destructive" role="alert">The definitions could not be read: {definitions.error.message}</p></Well></Panel>}
+      {definitions.data && found.length === 0 && <Panel label="Canvas"><Well><EmptyState icon={Network}>No admitted definition declares a lifecycle yet.</EmptyState></Well></Panel>}
       {kind === "lifecycle" && lifecycle && envelope && <Editor key={`${lifecycle.artifactId}:${lifecycle.index}`} definitions={envelopes} envelope={envelope} lifecycle={lifecycle} />}
     </section>
   )
