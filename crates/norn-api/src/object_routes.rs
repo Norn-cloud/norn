@@ -312,9 +312,10 @@ pub fn get_object<E: SqlEngine>(
     Ok(row.into())
 }
 
-/// Rows one grid query reads at most. A sort or filter needs every row before
-/// its first page, so over a larger collection it refuses rather than order a
-/// part; an unsorted, unfiltered page streams by id and counts approximately.
+/// Visible rows one grid query reads at most. A sort or filter needs every
+/// row before its first page, so over a larger visible collection it refuses
+/// rather than order a part; an unsorted, unfiltered page streams by id and
+/// counts approximately. Rows the caller may not see never count toward it.
 pub const MAX_QUERY_SCAN: usize = 10_000;
 
 /// One row a grid query lists: Population held; `readable` when Values is too.
@@ -323,7 +324,7 @@ struct Listed {
     readable: bool,
 }
 
-/// The rows one snapshot holds after `after`, up to `max`, with what the
+/// The rows one snapshot holds after `after`, up to the visible bound, with what the
 /// caller may see of each.
 struct Scan {
     listed: Vec<Listed>,
@@ -394,8 +395,8 @@ fn locked<E: SqlEngine, T>(
     Ok(value)
 }
 
-/// Scan the type's rows after `after` under one snapshot, reading at most
-/// `max` rows and stopping once `want` rows are listed. Authorization runs
+/// Scan the type's rows after `after` under one snapshot, stopping once more
+/// than `max` visible rows are read or `want` rows are listed. Authorization runs
 /// outside the cell lock, as for HOST-READ-2 pages. A readable row is held
 /// back when quarantined; a withheld row is listed whatever its evidence,
 /// which is value-level and not the caller's to see (D67).
@@ -414,10 +415,8 @@ fn scan_listed<E: SqlEngine>(
         version: (0, None),
     };
     let mut cursor = after.map(str::to_owned);
-    let mut scanned = 0;
     loop {
-        // One row past the bound tells a full collection from a larger one.
-        let take = SCAN_BATCH.min(max.saturating_add(1).saturating_sub(scanned));
+        let take = SCAN_BATCH;
         let batch = locked(host, access, &mut start, |reader| {
             if !reader.model().has_type(object_type) {
                 return Err(not_found());
@@ -427,7 +426,6 @@ fn scan_listed<E: SqlEngine>(
                 .map_err(Refusal::host)
         })?;
         let ended = batch.len() < take;
-        scanned = scanned.saturating_add(batch.len());
         if let Some(last) = batch.last() {
             cursor = Some(last.id.clone());
         }
@@ -463,7 +461,12 @@ fn scan_listed<E: SqlEngine>(
             scan.exhausted = true;
             return Ok(scan);
         }
-        if scanned > max || scan.listed.len() >= want {
+        // The bound counts only rows the caller may see: a bound on raw rows
+        // would reveal how many it may not (HOST-READ-2).
+        let visible = u64::try_from(scan.listed.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(scan.quarantined);
+        if visible > u64::try_from(max).unwrap_or(u64::MAX) || scan.listed.len() >= want {
             return Ok(scan);
         }
     }
@@ -487,7 +490,7 @@ fn queried(listed: &Listed) -> NornQueriedRecord {
     }
 }
 
-/// The 413 for a sort or filter over more rows than one scan reads.
+/// The 413 for a sort or filter over more visible rows than one scan reads.
 fn scan_bound_exceeded() -> Refusal {
     Refusal::new(
         http::StatusCode::PAYLOAD_TOO_LARGE,
@@ -514,7 +517,7 @@ fn continued(text: Option<&str>, bound: [&str; 4]) -> Result<Option<Cursor>, Ref
 /// A denied gate (the opaque 403), an undeclared type (404), an invalid query
 /// (400 with every violation), a cursor that does not continue it (400
 /// `query.cursor_invalid`), a commit since the cursor (409
-/// `object.snapshot_moved`), a sort or filter over more rows than one scan
+/// `object.snapshot_moved`), a sort or filter over more visible rows than one scan
 /// (413), or a host failure.
 pub fn get_object_query<E: SqlEngine>(
     host: &DevHost<E>,

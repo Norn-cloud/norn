@@ -48,7 +48,7 @@ fn scope() -> ScopeQuery {
 }
 
 /// `full` reads everything; `pop` reads every row's existence and the values
-/// of every row but [`WITHHELD`].
+/// of every row but [`WITHHELD`]; `few` reads only the `R-` rows.
 struct Policy;
 impl Authorizer for Policy {
     fn authorize(&self, _: &AccessRequest<'_>) -> Result<(), Refusal> {
@@ -58,6 +58,7 @@ impl Authorizer for Policy {
         let resource = request.access.resource.id.as_str();
         let allowed = match request.access.principal.subject_id.as_str() {
             "full" => true,
+            "few" => resource == TYPE || resource.starts_with("R-"),
             "pop" => {
                 request.capability == ReadCapability::Population || !WITHHELD.contains(&resource)
             }
@@ -557,4 +558,21 @@ fn the_collection_gate_comes_first() {
     )
     .unwrap_err();
     assert_eq!(undeclared.status, 404);
+}
+
+/// The scan bound counts only rows the caller may see: rows hidden from it
+/// never turn its sorted query into a 413, which would reveal that they exist.
+#[test]
+fn rows_hidden_from_the_caller_never_count_toward_the_scan_bound() {
+    let hidden = norn_api::object_routes::MAX_QUERY_SCAN + 50;
+    let mut rows = writes([(Some("512"), Some("gold")), (Some("8"), None)]);
+    rows.extend((0..hidden).map(|index| row(&format!("H-{index:05}"), Some("1"), Some("gold"))));
+    let (host, _dir) = host_of(rows);
+    let sorted = params(None, Some("input:desc"), None);
+    let page = query(&host, "few", &sorted).unwrap();
+    assert_eq!(page.records.len(), 8);
+    let total = page.total.unwrap();
+    assert_eq!((total.count, total.approximate), (8, false));
+    let refused = query(&host, "full", &sorted).unwrap_err();
+    assert_eq!((refused.status, refused.code.as_str()), (413, "object.scan_bound_exceeded"));
 }
