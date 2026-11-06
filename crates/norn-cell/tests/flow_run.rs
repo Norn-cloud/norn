@@ -73,10 +73,11 @@ fn store() -> CellStore {
     store
 }
 
-fn refusal(error: CellError) -> &'static str {
-    match error {
-        CellError::RunRefused(code) => code,
-        other => panic!("not a run refusal: {other}"),
+fn refusal(error: CellError) -> Option<&'static str> {
+    if let CellError::RunRefused(code) = error {
+        Some(code)
+    } else {
+        None
     }
 }
 
@@ -145,7 +146,7 @@ fn a_start_without_its_creating_write_or_a_repeated_start_commits_nothing() {
     let orphan = store
         .commit(&batch(10, Vec::new(), &[start("run-1", "flow.a")]))
         .expect_err("no creating write");
-    assert_eq!(refusal(orphan), "run.start_invalid");
+    assert_eq!(refusal(orphan), Some("run.start_invalid"));
     assert_eq!(ledger(&store), 0);
     assert!(
         store
@@ -161,7 +162,7 @@ fn a_start_without_its_creating_write_or_a_repeated_start_commits_nothing() {
     let refused = store
         .commit(&batch(10, vec![put("run-1", "started")], &[wrong_type]))
         .expect_err("another type");
-    assert_eq!(refusal(refused), "run.start_invalid");
+    assert_eq!(refusal(refused), Some("run.start_invalid"));
     assert_eq!(ledger(&store), 0);
     assert!(
         store
@@ -187,7 +188,7 @@ fn a_start_without_its_creating_write_or_a_repeated_start_commits_nothing() {
             &[start("run-1", "flow.a")],
         ))
         .expect_err("already started");
-    assert_eq!(refusal(repeated), "run.exists");
+    assert_eq!(refusal(repeated), Some("run.exists"));
     assert_eq!(ledger(&store), committed);
 
     let mut malformed = batch(12, vec![put("run-2", "started")], &[]);
@@ -197,7 +198,7 @@ fn a_start_without_its_creating_write_or_a_repeated_start_commits_nothing() {
     )]))];
     assert_eq!(
         refusal(store.commit(&malformed).expect_err("malformed")),
-        "run.start_invalid"
+        Some("run.start_invalid")
     );
     assert!(
         store
@@ -244,7 +245,7 @@ fn runs_page_by_id_and_filter_by_flow_and_state() {
     assert_eq!(ids(&first), ["run-0", "run-3"]);
     let next = RunFilter {
         after: Some("run-3".to_owned()),
-        ..first.clone()
+        ..first
     };
     assert_eq!(ids(&next), ["run-4"]);
     assert_eq!(
