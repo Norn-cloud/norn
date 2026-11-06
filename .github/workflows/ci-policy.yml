@@ -20,8 +20,8 @@ permissions:
 # its merge group, so only the latest main head needs the health/cache run.
 # Every other event (merge-queue groups, the comment and trusted lanes) gets a
 # group of its own, so workflow-level concurrency never cancels or holds it
-# back. The trusted-policy job has a separate per-PR/issue group that can
-# cancel an older trusted-policy run.
+# back. Rights writers and trusted evaluations use their own shared authority
+# mutex; test jobs never acquire it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
@@ -32,6 +32,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
+      NORN_CI_HEAD: ${{ github.event.merge_group.head_sha || github.sha }}
     runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
@@ -112,6 +113,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
+      NORN_CI_HEAD: ${{ github.event.merge_group.head_sha || github.sha }}
       NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}
       NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
@@ -211,7 +213,103 @@ jobs:
           [ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
           ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
+  rights-capture:
+    name: Capture immutable rights event ${{ github.event.issue.pull_request && 'pull' || 'issue' }} ${{ (contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights')) && 'possible' || 'none' }}
+    if: github.event_name == 'issue_comment'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      heads: ${{ steps.payload.outputs.heads }}
+      kind: ${{ steps.payload.outputs.kind }}
+      comment: ${{ steps.payload.outputs.comment }}
+      payload: ${{ steps.payload.outputs.payload }}
+    steps:
+      - name: Capture the saved rights payload
+        id: payload
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const p = context.payload, c = p.comment;
+            if (!c || !Number.isSafeInteger(c.id)) throw new Error('Missing saved comment identity');
+            const kind = p.issue?.pull_request ? 'pull' : 'issue', entries = [];
+            if (kind === 'pull') {
+              if (!['created', 'edited', 'deleted'].includes(p.action)) throw new Error('Unknown rights event action');
+              for (const body of [c.body, p.changes?.body?.from]) {
+                const match = (body || '').trim().match(/^\/(ack|revoke)-rights ([0-9a-f]{40})$/);
+                if (!match) continue;
+                const decision = match[1] === 'revoke' ? 'revoke' : p.action === 'created' ? 'ack' : 'withdraw';
+                if (!entries.some(e => e.head === match[2] && e.kind === decision)) entries.push({head:match[2],kind:decision});
+              }
+            }
+            const heads = [...new Set(entries.map(e => e.head))].sort().join(',') || 'none';
+            core.setOutput('kind', kind); core.setOutput('heads', heads); core.setOutput('comment', String(c.id));
+            core.setOutput('payload', JSON.stringify({kind,heads,comment:c.id,author:c.user?.login || null,created_at:c.created_at,entries}));
+      - name: Rights event ${{ steps.payload.outputs.heads }} comment ${{ steps.payload.outputs.comment }}
+        run: "true"
+  rights-revocation:
+    name: Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}
+    needs: rights-capture
+    if: >-
+      !cancelled() && needs.rights-capture.result == 'success' && needs.rights-capture.outputs.kind == 'pull' && needs.rights-capture.outputs.heads != 'none'
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
+    concurrency:
+      group: rights-authority-v4
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Persist the target rights ledger
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RIGHTS_EVENT: ${{ needs.rights-capture.outputs.payload }}
+        with:
+          retries: 3
+          script: |
+            const {owner,repo} = context.repo, event = JSON.parse(process.env.RIGHTS_EVENT);
+            const attempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error('Missing rights attempt');
+            const {data:run}=await github.rest.actions.getWorkflowRunAttempt({owner,repo,run_id:context.runId,attempt_number:attempt});
+            if(run.run_attempt!==attempt)throw new Error('Wrong rights attempt');
+            const started=Date.parse(attempt>1?run.run_started_at:run.created_at);
+            const expired=!Number.isFinite(started)||Date.now()-started>7200000;
+            const refuse=async(head,tree)=>{
+              const rows=await github.paginate(github.rest.repos.listCommitStatusesForRef,{owner,repo,ref:head,per_page:100});
+              const checkpoint=rows.find(row=>row.creator?.login==='github-actions[bot]'&&row.context.startsWith(`rights-checkpoint/target/${tree}/`));
+              const d=checkpoint?JSON.parse(checkpoint.description).d:'0'.repeat(64);
+              const f=Math.max(0,...rows.filter(row=>row.creator?.login==='github-actions[bot]'&&row.context==='trusted-policy'&&['failure','error'].includes(row.state)).map(row=>row.id));
+              await github.rest.repos.createCommitStatus({owner,repo,sha:head,state:'failure',context:'trusted-policy',description:JSON.stringify({v:4,d,f})});
+            };
+            const heads = [...new Set(event.entries.map(e => e.head))].sort().join(',') || 'none';
+            if (heads !== event.heads || !Number.isSafeInteger(event.comment)) throw new Error('Saved rights target mismatch');
+            if (event.kind !== 'pull' || heads === 'none') return;
+            const actor = attempt > 1 ? process.env.GITHUB_TRIGGERING_ACTOR : event.author;
+            const permission = actor ? (await github.rest.repos.getCollaboratorPermissionLevel({owner,repo,username:actor})
+              .catch(error => {if (error.status === 404) return {data:{permission:'none'}}; throw error;})).data.permission : 'none';
+            if (attempt > 1 && permission !== 'admin') throw new Error('Rights reconciliation requires an admin');
+            for (const head of heads.split(',')) {
+              if (!/^[0-9a-f]{40}$/.test(head)) throw new Error('Invalid saved rights head');
+              const {data:commit} = await github.rest.repos.getCommit({owner,repo,ref:head}), tree = commit.commit.tree.sha;
+              if (!/^[0-9a-f]{40}$/.test(tree)) throw new Error('Invalid immutable rights tree');
+              if(expired){await refuse(head,tree);throw new Error('Rights writer queue deadline exceeded')}
+              const decisions = attempt > 1 ? ['revoke'] : permission === 'admin'
+                ? event.entries.filter(e => e.head === head).map(e => e.kind) : ['ignore'];
+              for (const kind of decisions) {
+                await github.rest.repos.createCommitStatus({owner,repo,sha:head,state:'success',
+                  context:`rights-ledger/${tree}/${context.runId}/${attempt}`,
+                  description:JSON.stringify({v:1,r:context.runId,a:attempt,c:event.comment,k:kind,t:event.created_at})});
+              }
+              if (decisions.some(kind => kind === 'revoke' || kind === 'withdraw')) {
+                await refuse(head,tree);
+              }
+            }
   trusted-policy:
+    needs: rights-revocation
     # Comment runs attach their job checks to the default branch. Keep the
     # PR-target job check distinct from the head-bound commit status below,
     # so cancelling it cannot leave a second required check cancelled (#127).
@@ -219,6 +317,7 @@ jobs:
     # Write access serves only the last step, which removes a failing pull
     # request from the merge queue. No step runs candidate code.
     permissions:
+      actions: read
       contents: write
       issues: read
       pull-requests: write
@@ -232,15 +331,14 @@ jobs:
       !cancelled() && (
       github.event_name == 'pull_request_target' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-      (contains(github.event.comment.body, '/approve-gates') ||
-      (github.event.action == 'edited' && contains(github.event.changes.body.from, '/approve-gates')))))
-    # One trusted-policy run per pull request at a time: a newer run (a push, or
-    # an approval posted, edited or deleted) cancels the older one, whose
-    # always() reporter then writes failure, so a stale approval run can never
-    # publish success after a revocation.
+      (contains(github.event.comment.body, '/approve-gates') || contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') ||
+      (github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))
+    # One rights authority spans every target and both workflows. Keep this
+    # job's collection, validation and publication in the same exclusive lease.
     concurrency:
-      group: trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}
-      cancel-in-progress: true
+      group: rights-authority-v4
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -259,82 +357,368 @@ jobs:
             core.setOutput('base_sha', data.base.sha);
             core.setOutput('head_sha', data.head.sha);
             core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
+            // A pull_request_target event for an older head: the newer head has its own
+            // queued pull_request_target evaluation, so this run writes nothing.
+            const superseded = context.eventName === 'pull_request_target' && event.head.sha !== data.head.sha;
+            core.setOutput('superseded', String(superseded));
+            if (superseded) core.notice(`Head ${event.head.sha} superseded by ${data.head.sha}; its own evaluation decides`);
+      - name: Require durable revocation recording
+        if: steps.pr.outputs.superseded != 'true'
+        env:
+          RESULT: ${{ needs.rights-revocation.result }}
+        run: test "$RESULT" = success || test "$RESULT" = skipped
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pr.outputs.superseded != 'true'
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
           path: trusted
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pr.outputs.superseded != 'true'
         with:
           repository: ${{ steps.pr.outputs.head_repository }}
           ref: ${{ steps.pr.outputs.head_sha }}
           path: candidate
           persist-credentials: false
+          fetch-depth: 0
       # Workflow and gate changes need a same-repository head and an unedited
       # `/approve-gates <head sha>` comment from an admin; comment events re-evaluate it.
       # Without this evidence such changes fail closed; data-only PRs
       # never need it.
       - name: Record admin approvals of the exact PR head
-        continue-on-error: true
+        if: steps.pr.outputs.superseded != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { owner, repo } = context.repo;
-            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: Number('${{ steps.pr.outputs.number }}') });
-            // A commenter the API does not know as a user (a bot) has no
-            // permission; any other API failure fails closed.
-            const permissions = new Map();
-            const permission = async (username) => {
-              if (!permissions.has(username)) {
-                const level = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })
-                  .then(({ data }) => data.permission, (error) => {
-                    if (error.status === 404) return 'none';
-                    throw error;
-                  });
-                permissions.set(username, level);
+            const collect=async function collectRights(github, context, core, parameters, probe) {
+              const fs=require('fs'), crypto=require('crypto'), {owner,repo}=context.repo;
+              const digest=value=>{
+                const hash=crypto.createHash('sha256').update('norn-rights-checkpoint-v4\0');
+                const count=n=>{const bytes=Buffer.alloc(8);bytes.writeBigUInt64BE(BigInt(n));hash.update(bytes)};
+                const walk=v=>{
+                  if(v===null){hash.update(Buffer.from([0]));return}
+                  if(typeof v==='boolean'){hash.update(Buffer.from([v?2:1]));return}
+                  if(typeof v==='number'){
+                    if(!Number.isSafeInteger(v))throw new Error('Unsafe checkpoint number');
+                    const bytes=Buffer.from(String(v));hash.update(Buffer.from([3]));count(bytes.length);hash.update(bytes);return;
+                  }
+                  if(typeof v==='string'){const bytes=Buffer.from(v);hash.update(Buffer.from([4]));count(bytes.length);hash.update(bytes);return}
+                  if(Array.isArray(v)){hash.update(Buffer.from([5]));count(v.length);for(const item of v)walk(item);return}
+                  const keys=Object.keys(v).sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)));
+                  hash.update(Buffer.from([6]));count(keys.length);for(const key of keys){walk(key);walk(v[key])}
+                };
+                walk(value);return hash.digest('hex');
+              };
+              const sha=s=>typeof s==='string'&&/^[0-9a-f]{40}$/.test(s);
+              const anchor='69ffae65225a6784ebcb96696fc88c65d810fa4f', retention='heads/ci/rights-ledger-v1';
+              const statusRows=async head=>github.paginate(github.rest.repos.listCommitStatusesForRef,{owner,repo,ref:head,per_page:100});
+              const trusted=rows=>rows.filter(s=>s.creator?.login==='github-actions[bot]').sort((a,b)=>b.id-a.id);
+              const failure=rows=>Math.max(0,...trusted(rows).filter(s=>s.context==='trusted-policy'&&['failure','error'].includes(s.state)).map(s=>s.id));
+              const checkpointRow=(rows,tree,kind)=>trusted(rows).find(s=>s.context.toLowerCase().startsWith(`rights-checkpoint/${kind}/${tree}/`));
+              if (probe) {
+                if(Date.now()>probe.authority_deadline)throw new Error('Rights publication expired');
+                for (const [head,trees] of Object.entries(probe.rights)) for (const [tree,ledger] of Object.entries(trees)) {
+                  const rows=await statusRows(head), row=checkpointRow(rows,tree,'target');
+                  if (!row||row.state!=='success'||JSON.parse(row.description).d!==ledger.checkpoint.digest||failure(rows)!==ledger.failure_version)
+                    throw new Error('Rights checkpoint changed before publication');
+                }
+                const p=probe.publication, rows=await statusRows(p.head_sha), row=checkpointRow(rows,p.tree_sha,'publication');
+                if (!row||row.state!=='success'||JSON.parse(row.description).d!==p.digest||failure(rows)!==p.failure_version)
+                  throw new Error('Publication checkpoint changed');
+                return probe;
               }
-              return permissions.get(username);
+              const sourceId=context.payload.workflow_run?.id||context.runId;
+              const {data:source}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:sourceId});
+              const attempt=Number(process.env.GITHUB_RUN_ATTEMPT);
+              if(!Number.isSafeInteger(attempt)||attempt<1)throw new Error('Missing authority attempt');
+              const {data:authority}=await github.rest.actions.getWorkflowRunAttempt({owner,repo,run_id:context.runId,attempt_number:attempt});
+              if(authority.run_attempt!==attempt)throw new Error('Wrong authority attempt');
+              const started=Date.parse(attempt>1?authority.run_started_at:authority.created_at), deadline=started+7200000;
+              if (!Number.isFinite(started)||Date.now()>deadline) throw new Error('Rights authority queue deadline exceeded');
+              const until=()=>{if(Date.now()>deadline)throw new Error('Rights authority deadline exceeded')};
+              const permissionCache=new Map(), permission=async username=>{
+                if(!permissionCache.has(username))permissionCache.set(username,(await github.rest.repos.getCollaboratorPermissionLevel({owner,repo,username})
+                  .catch(e=>{if(e.status===404)return {data:{permission:'none'}};throw e})).data.permission);
+                return permissionCache.get(username);
+              };
+              const {data:anchorCommit}=await github.rest.repos.getCommit({owner,repo,ref:anchor});
+              const anchorTree=anchorCommit.commit.tree.sha;
+              if(!sha(anchorTree))throw new Error('Invalid checkpoint anchor');
+              let prior=null, metadata={version:4,parent:null,cursor:null}, treeBase=null;
+              let rootReceipt;
+              for(let page=1;!rootReceipt;page++){
+                until();
+                const {data:rows}=await github.rest.repos.listCommitStatusesForRef({owner,repo,ref:anchor,per_page:100,page});
+                rootReceipt=trusted(rows).find(s=>s.context.toLowerCase().startsWith(`rights-cursor/${anchorTree}/`));
+                if(rows.length<100)break;
+              }
+              if(rootReceipt){
+                const row=JSON.parse(rootReceipt.description);
+                if(rootReceipt.state!=='success'||row.v!==4||!sha(row.c)||!Number.isSafeInteger(row.r))throw new Error('Invalid rights cursor');
+                const {data:producer}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:row.r});
+                if(!['issue_comment','pull_request_target','workflow_run'].includes(producer.event)||
+                    producer.repository?.full_name!==`${owner}/${repo}`)throw new Error('Untrusted checkpoint producer');
+                const {data:commit}=await github.rest.git.getCommit({owner,repo,commit_sha:row.c});
+                const {data:file}=await github.rest.repos.getContent({owner,repo,path:'metadata.json',ref:row.c});
+                metadata=JSON.parse(Buffer.from(file.content,'base64').toString('utf8'));
+                if(!sha(metadata.policy_sha))throw new Error('Missing checkpoint policy identity');
+                const {data:comparison}=await github.rest.repos.compareCommits({owner,repo,base:metadata.policy_sha,head:producer.repository.default_branch||'main'});
+                if(!['ahead','identical'].includes(comparison.status))throw new Error('Checkpoint policy is not base-owned');
+                const {data:definition}=await github.rest.repos.getContent({owner,repo,path:producer.event==='workflow_run'?'.github/workflows/trusted-merge-group.yml':'.github/workflows/ci-policy.yml',ref:metadata.policy_sha});
+                if(definition.type!=='file'||definition.encoding!=='base64'||
+                    !Buffer.from(definition.content,'base64').toString('utf8').includes('rights-authority-v4'))throw new Error('Checkpoint producer policy unavailable');
+                if(metadata.version!==4||!metadata.cursor||!Number.isSafeInteger(metadata.cursor.number)||
+                    !Number.isSafeInteger(metadata.cursor.id)||metadata.parent!==row.p||
+                    (row.p&&!commit.parents.some(p=>p.sha===row.p)))throw new Error('Unbound rights checkpoint');
+                prior=row.c;treeBase=commit.tree.sha;
+              }
+              const cache=new Map(), changed=new Set(), definitions=new Map(), seen=new Set(), suffix=[];
+              let expected, witnessed=false, boundary=false;
+              const before=metadata.cursor;let top=before?.number,floor;
+              // Listing is by id, which can disagree with run_number for runs created together.
+              // Above a cursor: any order, read 10 minutes of runs past the cursor run, then
+              // require exactly the numbers before.number+1..top.
+              for(let page=1;!boundary;page++){
+                until();
+                const {data}=await github.rest.actions.listWorkflowRuns({owner,repo,workflow_id:'ci-policy.yml',per_page:100,page});
+                if(!Array.isArray(data.workflow_runs))throw new Error('Rights history checkpoint unavailable');
+                if(!data.workflow_runs.length){if(before&&floor&&suffix.length===top-before.number)break;throw new Error('Rights history checkpoint unavailable')}
+                for(const run of data.workflow_runs){
+                  if(seen.has(run.id))continue;
+                  seen.add(run.id);
+                  if(!Number.isSafeInteger(run.run_number)||run.run_number<1||(before&&suffix.some(r=>r.run_number===run.run_number))||
+                      (!before&&expected!==undefined&&run.run_number!==expected))throw new Error('Incomplete rights event history');
+                  witnessed||=run.id===sourceId;
+                  if(before){
+                    if(run.id<=before.id)floor??=Date.parse(run.created_at)-600000;
+                    if(run.run_number>before.number){suffix.push(run);top=Math.max(top,run.run_number)}
+                    continue;
+                  }
+                  expected=run.run_number-1;
+                  if(run.event==='issue_comment'&&!before){
+                    if(!definitions.has(run.head_sha)){
+                      const {data:file}=await github.rest.repos.getContent({owner,repo,path:'.github/workflows/ci-policy.yml',ref:run.head_sha});
+                      if(file.type!=='file'||file.encoding!=='base64')throw new Error('Unavailable rights protocol');
+                      definitions.set(run.head_sha,Buffer.from(file.content,'base64').toString('utf8').includes('rights-authority-v4'));
+                    }
+                    if(!definitions.get(run.head_sha)){boundary=true;break}
+                  }
+                  suffix.push(run);
+                  if(run.run_number===1){boundary=true;break}
+                }
+                if(before&&floor&&suffix.length===top-before.number&&Date.parse(data.workflow_runs.at(-1).created_at)<floor)boundary=true;
+              }
+              suffix.sort((a,b)=>b.run_number-a.run_number);
+              if(!witnessed&&(!before||source.run_number>before.number))throw new Error('Missing admission event');
+              const readTarget=async head=>{
+                if(!cache.has(head)){
+                  let value={head_sha:head,events:[]};
+                  if(prior){
+                    const result=await github.rest.repos.getContent({owner,repo,path:`targets/${head}.json`,ref:prior})
+                      .catch(e=>{if(e.status===404)return null;throw e});
+                    if(result){
+                      const file=result.data;
+                      if(file.type!=='file'||file.encoding!=='base64')throw new Error('Unavailable target checkpoint');
+                      value=JSON.parse(Buffer.from(file.content,'base64').toString('utf8'));
+                      if(value.head_sha!==head||!Array.isArray(value.events))throw new Error('Wrong target checkpoint');
+                    }
+                  }
+                  cache.set(head,value);
+                }
+                return cache.get(head);
+              };
+              const jobsFor=async run=>{
+                const waitUntil=Math.min(deadline,Date.now()+30000), ledgerUntil=Math.min(deadline,Date.now()+5000);
+                let jobs;
+                for(;;){
+                  jobs=await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt,
+                    {owner,repo,run_id:run.id,attempt_number:run.run_attempt,per_page:100});
+                  const captures=jobs.filter(j=>/^Capture immutable rights event (pull|issue) (none|possible)$/.test(j.name));
+                  const journals=jobs.filter(j=>j.name.startsWith('Rights ledger '));
+                  if(captures.length===1&&(/ event issue /.test(captures[0].name)||captures[0].name.endsWith(' none')))return {jobs,plain:true};
+                  const stamp=captures[0]?.steps?.find(step=>step.name.startsWith('Rights event '));
+                  const tag=stamp?.name.match(/^Rights event (none|[0-9a-f]{40}(?:,[0-9a-f]{40})?) comment (\d+)$/);
+                  const captured=captures.length===1&&captures[0].status==='completed'&&captures[0].conclusion==='success'&&stamp?.conclusion==='success'&&tag;
+                  if(captured&&(tag[1]==='none'||journals[0]?.status==='completed'||Date.now()>=Math.min(waitUntil,ledgerUntil)))
+                    return {jobs,plain:false,tag};
+                  if(Date.now()>=waitUntil||run.status==='completed')throw new Error('Rights capture incomplete after bounded wait');
+                  await new Promise(resolve=>setTimeout(resolve,1000));until();
+                }
+              };
+              for(const run of [...suffix].reverse()){
+                if(run.event!=='issue_comment')continue;
+                const {plain,tag}=await jobsFor(run);if(plain)continue;
+                if(!tag)throw new Error('Invalid saved rights event');
+                if(tag[1]==='none')continue;
+                for(const head of tag[1].split(',')){
+                  const state=await readTarget(head), row={run:run.id,comment:Number(tag[2])};
+                  const old=state.events.find(e=>e.run===row.run);
+                  if(old&&old.comment!==row.comment)throw new Error('Changed saved rights identity');
+                  if(!old){state.events.push(row);changed.add(head)}
+                }
+              }
+              const newest=suffix[0];
+              if(newest&&(!before||newest.run_number>before.number)){
+                const policy=process.env.GITHUB_WORKFLOW_SHA;
+                if(!sha(policy))throw new Error('Missing trusted workflow commit');
+                const next={version:4,parent:prior,policy_sha:policy,cursor:{id:newest.id,number:newest.run_number}};
+                const nodes=[];
+                const put=async(path,value)=>{
+                  const {data:blob}=await github.rest.git.createBlob({owner,repo,content:JSON.stringify(value),encoding:'utf-8'});
+                  nodes.push({path,mode:'100644',type:'blob',sha:blob.sha});
+                };
+                for(const head of changed)await put(`targets/${head}.json`,cache.get(head));
+                await put('metadata.json',next);
+                const {data:tree}=await github.rest.git.createTree({owner,repo,...(treeBase?{base_tree:treeBase}:{}),tree:nodes});
+                const retained=await github.rest.git.getRef({owner,repo,ref:retention}).catch(e=>{if(e.status===404)return null;throw e});
+                const parents=[...new Set([retained?.data.object.sha,prior].filter(Boolean))];
+                const {data:commit}=await github.rest.git.createCommit({owner,repo,message:'Record reconciled rights event index',tree:tree.sha,parents});
+                if(retained)await github.rest.git.updateRef({owner,repo,ref:retention,sha:commit.sha,force:false});
+                else await github.rest.git.createRef({owner,repo,ref:`refs/${retention}`,sha:commit.sha});
+                await github.rest.repos.createCommitStatus({owner,repo,sha:anchor,state:'success',
+                  context:`rights-cursor/${anchorTree}/${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`,
+                  description:JSON.stringify({v:4,c:commit.sha,p:prior,r:context.runId})});
+                prior=commit.sha;metadata=next;
+              }
+              const rights={}, commentsById=new Map(), statusesByHead=new Map();
+              const rowsFor=async head=>{
+                if(!statusesByHead.has(head))statusesByHead.set(head,await statusRows(head));
+                return statusesByHead.get(head);
+              };
+              const targetLedger=async head=>{
+                if(rights[head])return;
+                until();
+                const {data:commit}=await github.rest.repos.getCommit({owner,repo,ref:head}), tree=commit.commit.tree.sha;
+                if(!sha(tree))throw new Error('Invalid rights target tree');
+                const state=await readTarget(head), sources=new Map(), pending=[], entries=[];
+                for(const event of state.events){
+                  const {data:run}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:event.run});
+                  const {jobs,tag}=await jobsFor(run);
+                  const writer=jobs.find(j=>j.name.startsWith('Rights ledger '));
+                  if(!tag||!tag[1].split(',').includes(head)||Number(tag[2])!==event.comment)throw new Error('Checkpoint source changed');
+                  const complete=writer?.status==='completed'&&writer.conclusion==='success';
+                  sources.set(event.run,{...event,attempt:run.run_attempt,complete});
+                  if(!complete)pending.push(event.run);
+                }
+                const rows=await rowsFor(head), recorded=new Set();
+                for(const status of trusted(rows)){
+                  const key=status.context.toLowerCase();
+                  if(!key.startsWith('rights-ledger/'))continue;
+                  const tag=key.match(/^rights-ledger\/([0-9a-f]{40})\/(\d+)\/(\d+)$/);
+                  if(!tag||tag[1]!==tree||status.state!=='success')throw new Error('Wrong rights receipt target');
+                  const row=JSON.parse(status.description), node=sources.get(row.r);
+                  if(row.v!==1||!node||node.comment!==row.c||row.r!==Number(tag[2])||row.a!==Number(tag[3])||
+                      !['ack','revoke','withdraw','ignore'].includes(row.k))throw new Error('Unbound rights receipt');
+                  recorded.add(`${row.r}/${row.a}`);
+                  let comment=null;
+                  if(row.k==='ack'){
+                    if(!commentsById.has(row.c))commentsById.set(row.c,await github.rest.issues.getComment({owner,repo,comment_id:row.c})
+                      .then(({data})=>data,e=>{if(e.status===404)return null;throw e}));
+                    const live=commentsById.get(row.c);
+                    if(live?.user)comment={id:live.id,user:live.user.login,body:live.body,created_at:live.created_at,
+                      updated_at:live.updated_at,permission:await permission(live.user.login)};
+                  }
+                  entries.push({id:status.id,run_id:row.r,attempt:row.a,comment_id:row.c,kind:row.k,
+                    created_at:row.t,recorded_at:status.created_at,comment});
+                }
+                for(const node of sources.values())if(!recorded.has(`${node.run}/${node.attempt}`))pending.push(node.run);
+                const data={head_sha:head,tree_sha:tree,pending:[...new Set(pending)].sort((a,b)=>a-b),
+                  entries:entries.sort((a,b)=>a.id-b.id),failure_version:failure(rows)};
+                const d=digest(data);
+                await github.rest.repos.createCommitStatus({owner,repo,sha:head,state:'success',
+                  context:`rights-checkpoint/target/${tree}/${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`,
+                  description:JSON.stringify({v:4,d,f:data.failure_version})});
+                rights[head]={[tree]:{...data,checkpoint:{digest:d},verdicts:trusted(rows).filter(s=>s.context==='trusted-policy')}};
+              };
+              const gateComments=async number=>{
+                const result=[];
+                for(const c of await github.paginate(github.rest.issues.listComments,{owner,repo,issue_number:number,per_page:100}))
+                  if(c.user&&(c.body||'').trim().startsWith('/approve-gates'))result.push({user:c.user.login,body:c.body,
+                    created_at:c.created_at,updated_at:c.updated_at,permission:await permission(c.user.login)});
+                return result;
+              };
+              let evidence;
+              if(parameters.kind==='pr'){
+                await targetLedger(parameters.head);
+                evidence={repository:`${owner}/${repo}`,head_repository:parameters.repository,head_sha:parameters.head,
+                  base_sha:parameters.base,comments:await gateComments(parameters.number),rights};
+              }else{
+                const pull_requests=[];let current=parameters.head;
+                for(let i=0;current!==parameters.base&&i<64;i++){
+                  const {data:commit}=await github.rest.repos.getCommit({owner,repo,ref:current});
+                  if(commit.parents.length!==2)break;
+                  const h=commit.parents[1].sha;
+                  const {data:pulls}=await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:h});
+                  await targetLedger(h);
+                  for(const p of pulls.filter(p=>p.head.sha===h))pull_requests.push({number:p.number,head_repository:p.head.repo?.full_name||null,
+                    head_sha:h,base_sha:p.base.sha,comments:await gateComments(p.number)});
+                  current=commit.parents[0].sha;
+                }
+                evidence={repository:`${owner}/${repo}`,merge_group:{base_sha:parameters.base,head_sha:parameters.head},pull_requests,rights};
+              }
+              const {data:headCommit}=await github.rest.repos.getCommit({owner,repo,ref:parameters.head});
+              const rows=await rowsFor(parameters.head), p={head_sha:parameters.head,tree_sha:headCommit.commit.tree.sha,
+                failure_version:failure(rows),targets:Object.fromEntries(Object.entries(rights).map(([h,trees])=>[h,Object.values(trees)[0].checkpoint.digest]))};
+              const d=digest(p);
+              await github.rest.repos.createCommitStatus({owner,repo,sha:parameters.head,state:'success',
+                context:`rights-checkpoint/publication/${p.tree_sha}/${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`,
+                description:JSON.stringify({v:4,d,f:p.failure_version})});
+              evidence.publication={...p,digest:d,verdicts:trusted(rows).filter(s=>s.context==='trusted-policy')};
+              evidence.authority_deadline=deadline;
+              return evidence;
             };
-            const comments = [];
-            for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
-              if (!comment.user || !(comment.body || '').trim().startsWith('/approve-gates')) continue;
-              comments.push({ user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
-            }
-            require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
-              repository: `${owner}/${repo}`,
-              head_repository: pr.head.repo ? pr.head.repo.full_name : null,
-              head_sha: pr.head.sha,
-              comments
-            }));
+            const parameters={kind:'pr',number:Number('${{ steps.pr.outputs.number }}'),head:'${{ steps.pr.outputs.head_sha }}',base:'${{ steps.pr.outputs.base_sha }}',repository:'${{ steps.pr.outputs.head_repository }}'};
+            const fs=require('fs'), prefix=process.env.RUNNER_TEMP;
+            fs.rmSync(prefix+'/maintainer-approval.json',{force:true});
+            fs.writeFileSync(prefix+'/rights-authority.cjs','module.exports='+collect.toString());
+            fs.writeFileSync(prefix+'/rights-parameters.json',JSON.stringify(parameters));
+            const opening=await collect(github,context,core,parameters);
+            await collect(github,context,core,parameters,opening);
+            await github.rest.repos.createCommitStatus({...context.repo,sha:parameters.head,state:'failure',context:'trusted-policy',
+              description:JSON.stringify({v:4,d:opening.publication.digest,f:opening.publication.failure_version})});
+            const evidence=await collect(github,context,core,parameters);
+            fs.writeFileSync(prefix+'/maintainer-approval.json',JSON.stringify(evidence));
+            fs.writeFileSync(prefix+'/rights-decision.json',JSON.stringify(evidence.publication));
       - name: Validate candidate as data with base-owned policy
-        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
+        if: steps.pr.outputs.superseded != 'true'
+        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" --rights-evidence "$RUNNER_TEMP/maintainer-approval.json" --head "${{ steps.pr.outputs.head_sha }}" --repository "${{ github.repository }}"
       - name: Report trusted policy on the exact PR head
-        if: always()
+        if: always() && steps.pr.outputs.superseded != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           retries: 3
           script: |
-            // If resolution failed there is no validated head: look it up again so
-            // the failure still replaces any earlier success on that head.
-            let sha = '${{ steps.pr.outputs.head_sha }}';
-            if (!sha) {
-              const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
-              sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
-            }
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha,
-              state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
-              context: 'trusted-policy',
-              description: 'Base-owned policy over candidate data',
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
-            });
+            let head='${{ steps.pr.outputs.head_sha }}';
+            if(!head){const number=context.payload.pull_request?.number||context.payload.issue.number;
+            head=(await github.rest.pulls.get({...context.repo,pull_number:number})).data.head.sha;}
+            const fs=require('fs'), prefix=process.env.RUNNER_TEMP;
+            let state='failure', d='0'.repeat(64), f=0;
+            try{
+              const collect=require(prefix+'/rights-authority.cjs'), parameters=JSON.parse(fs.readFileSync(prefix+'/rights-parameters.json'));
+              const current=await collect(github,context,core,parameters);
+              d=current.publication.digest;f=current.publication.failure_version;
+              const decision=JSON.parse(fs.readFileSync(prefix+'/rights-decision.json'));
+              const pending=Object.values(current.rights).some(trees=>Object.values(trees).some(ledger=>ledger.pending.length));
+              await collect(github,context,core,parameters,current);
+              if('${{ job.status }}'==='success'&&!pending&&decision.digest===d&&Date.now()<=current.authority_deadline)state='success';
+            }catch(error){core.warning('Rights publication refused: checkpoint unavailable, changed or expired')}
+            try{
+              const {data:commit}=await github.rest.repos.getCommit({...context.repo,ref:head});
+              const rows=await github.paginate(github.rest.repos.listCommitStatusesForRef,{...context.repo,ref:head,per_page:100});
+              const cp=rows.filter(row=>row.creator?.login==='github-actions[bot]'&&row.state==='success'&&row.context.toLowerCase().startsWith('rights-checkpoint/publication/'+commit.commit.tree.sha+'/')).sort((a,b)=>b.id-a.id)[0];
+              const latestFailure=Math.max(0,...rows.filter(row=>row.creator?.login==='github-actions[bot]'&&row.context==='trusted-policy'&&['failure','error'].includes(row.state)).map(row=>row.id));
+              if(state==='success'&&(!cp||JSON.parse(cp.description).d!==d||latestFailure!==f))state='failure';
+              if(state==='failure'){d=cp?JSON.parse(cp.description).d:'0'.repeat(64);f=latestFailure}
+            }catch(error){state='failure';d='0'.repeat(64)}
+            await github.rest.repos.createCommitStatus({...context.repo,sha:head,state,context:'trusted-policy',
+              description:JSON.stringify({v:4,d,f}),
+              target_url:context.serverUrl+'/'+context.repo.owner+'/'+context.repo.repo+'/actions/runs/'+context.runId});
+            if(state!=='success')core.setFailed('Rights authority refused publication');
       # A pull request whose head fails trusted-policy (for example after its
       # approval is revoked) leaves the merge queue, so no queued group built
-      # from it lands on an earlier success. Inside this job, the per-PR
-      # concurrency group orders it with every newer verdict; a superseded
-      # (cancelled) run never dequeues.
+      # from it lands on an earlier success. The authority mutex orders every
+      # verdict, and the live head check below prevents an old head's refusal
+      # from dequeuing a newer candidate.
       - name: Remove a failing pull request from the merge queue
         if: failure() && steps.pr.outputs.head_sha != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

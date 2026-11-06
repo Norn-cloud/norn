@@ -41,7 +41,7 @@ pub(crate) fn validate_model<'a>(
                         EffectiveKind::Base(
                             PropertyType::Text { .. }
                                 | PropertyType::Enum { .. }
-                                | PropertyType::Integer {}
+                                | PropertyType::Integer { .. }
                                 | PropertyType::Boolean {}
                         )
                     )

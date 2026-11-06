@@ -404,3 +404,11 @@ CURRENT commands, from `tools/norn-ts`: `bun src/cli.ts profile <file.ts>`, then
 
 
 CURRENT exact action/rule schemas use the same `Norn.decimal` / `Norn.rate` declarations: the compiler emits `{type: "number", nornType: <the existing Decimal>}`. Declare a fixed singleton currency sibling with `Schema.Literal("USD")`; a bare `Schema.Number` keeps legacy arithmetic and cannot enter an exact computation. Decimal options accept explicit `rounding` (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`), defaulting to Refuse. Direct decision callbacks lower each declared numeric destination to the shared rescale site; exact callbacks with sub-decisions or loop/table transforms currently refuse. Keep gram/rate working scales within the exact profile maximum of 18. Returned quantities/money retain their destination bindings; mixed currencies, denominator codes and Rate × Rate refuse.
+
+Path equation declarations on `Norn.type` use `pathEquations: [{ id: "provider",
+left: ["fulfils", "provider"], right: ["provider"] }]`. These compile to typed
+EntityIR extension data and lower to the existing chase EGDs (PATH-EQ-1 in Core
+05). Both endpoints must have the same concrete type and every link must be
+functional. Optional paths assert equality only when both exist. Declaration
+validation is structural evidence; mapping-preservation admission and #712's
+four schema-level mutation scenarios remain TARGET until their bridge qualifies.

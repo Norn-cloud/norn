@@ -5915,6 +5915,195 @@ fn mapping_bundle_processing_refuses_delete_and_diagnostics_without_consumption(
     }
 }
 
+/// MAPPING-PLAN-1: a warm plan equals a cold derivation, and a changed row misses.
+#[test]
+fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("plan.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let input = bundle_input();
+    store
+        .inject_mapping_bundle(&bundle_raw("WARM", "1.250"), &input)
+        .expect("first capture builds the plan");
+    store
+        .inject_mapping_bundle(&bundle_raw("REUSED", "1.500"), &input)
+        .expect("second capture reuses the plan");
+    let pending = store.read().pending_observations().expect("inbox");
+    assert_eq!(pending.len(), 2);
+    let bundles: Vec<norn_cell::mapping_bundle::MappingBundle> = pending
+        .iter()
+        .map(|row| {
+            let observed: norn_kernel::Observed<Value> =
+                norn_ir::runtime::decode(&row.observed).expect("observed");
+            norn_ir::runtime::decode(&observed.input).expect("bundle")
+        })
+        .collect();
+    let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("cold connection");
+    for bundle in &bundles {
+        store
+            .read()
+            .recheck_mapping_bundle(bundle)
+            .expect("warm plan");
+        cold.read()
+            .recheck_mapping_bundle(bundle)
+            .expect("cold plan");
+    }
+    drop(cold);
+    let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
+    tamper
+        .execute(
+            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
+            &[SqlValue::from("[]")],
+        )
+        .expect("tamper retained artifact bytes");
+    drop(tamper);
+    assert!(
+        store.read().recheck_mapping_bundle(&bundles[0]).is_err(),
+        "a changed retained row must not reuse the plan"
+    );
+}
+
+/// Warm a store's mapping plan, apply `tamper` to the database file, and return
+/// the refusal from the warm store and from a cold store (opened before the
+/// tamper, never evaluated a bundle) on the same file. A store opened after the
+/// tamper must also refuse, at open or at recheck.
+fn warm_and_fresh_refusals(
+    tamper: impl FnOnce(&CellStore, &NativeEngine, u64),
+) -> (String, String) {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("plan.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    store
+        .inject_mapping_bundle(&bundle_raw("WARM", "1.250"), &bundle_input())
+        .expect("capture builds the plan");
+    let row = store
+        .read()
+        .pending_observations()
+        .expect("inbox")
+        .pop()
+        .expect("pending");
+    let observed: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&row.observed).expect("observed");
+    let bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&observed.input).expect("bundle");
+    store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect("warm plan before tamper");
+    let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("cold connection");
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
+    tamper(&store, &engine, bundle.definitions_version);
+    drop(engine);
+    let warm = store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect_err("warm store must refuse the tampered evidence");
+    let cold = cold
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect_err("cold store must refuse the tampered evidence");
+    if let Ok(reopened) = CellStore::open(&path, store.model().clone(), StoreOptions::default()) {
+        assert!(
+            reopened.read().recheck_mapping_bundle(&bundle).is_err(),
+            "a store opened after the tamper must refuse"
+        );
+    }
+    (format!("{warm:?}"), format!("{cold:?}"))
+}
+
+/// MAPPING-PLAN-REUSE: every check the full retained proof performs refuses a
+/// warm plan exactly as it refuses a fresh store, for keyed columns, columns
+/// outside the old key, and the journal and receipt rows outside the table.
+#[test]
+fn mapping_plan_hit_refuses_like_a_fresh_store() {
+    const COMMIT: &str =
+        "(SELECT \"commit_seq\" FROM \"_norn_definition_version\" WHERE \"version\" = ?V)";
+    let cases = [
+        (
+            "model_hash",
+            "UPDATE \"_norn_definition_version\" SET \"model_hash\" = 'f' || \"model_hash\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "receipt_sha256",
+            "UPDATE \"_norn_definition_version\" SET \"receipt_sha256\" = 'f' || \"receipt_sha256\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "ddl_hash",
+            "UPDATE \"_norn_definition_version\" SET \"ddl_hash\" = 'f' || \"ddl_hash\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "receipt tamper",
+            format!("UPDATE \"_norn_receipt\" SET \"receipt_hash\" = 'f' || \"receipt_hash\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+        (
+            "receipt delete",
+            format!("DELETE FROM \"_norn_receipt\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+        (
+            "journal delete",
+            format!("DELETE FROM \"_norn_export_journal\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+    ];
+    for (name, tamper) in cases {
+        let (warm, cold) = warm_and_fresh_refusals(|_, engine, version| {
+            engine
+                .execute(&tamper.replace("?V", &version.to_string()), &[])
+                .expect("tamper");
+        });
+        assert_eq!(warm, cold, "{name}: warm and cold refusals differ");
+    }
+    // The only hit-specific guard: the installed row, journal record hash and
+    // receipt all still verify, but the journal's model snapshot differs from
+    // the one the plan was proven on.
+    let (warm, cold) = warm_and_fresh_refusals(|store, engine, version| {
+        let commit = store
+            .read()
+            .installed_definitions(Some(version))
+            .expect("definitions")
+            .expect("installed")
+            .commit_seq;
+        let record = store
+            .export_record(commit)
+            .expect("journal")
+            .expect("install record");
+        let mut value = serde_json::to_value(&record).expect("record JSON");
+        let properties = value["definitionInstall"]["model"]["objectTypes"][0]["properties"]
+            .as_array_mut()
+            .expect("snapshot properties");
+        assert!(
+            properties.pop().is_some(),
+            "snapshot has a property to drop"
+        );
+        let tampered: norn_cell::export::ExportRecord =
+            serde_json::from_value(value).expect("tampered record");
+        assert_ne!(
+            tampered.definition_install.as_ref().map(|i| &i.model),
+            record.definition_install.as_ref().map(|i| &i.model)
+        );
+        engine
+            .execute(
+                "UPDATE \"_norn_export_journal\" SET \"record\" = ?1, \"hash\" = ?2 WHERE \"commit_seq\" = ?3",
+                &[
+                    SqlValue::from(serde_json::to_string(&tampered).expect("record text")),
+                    SqlValue::from(tampered.hash().expect("record hash")),
+                    SqlValue::from(i64::try_from(commit).expect("commit")),
+                ],
+            )
+            .expect("rewrite the journal model snapshot");
+        assert_eq!(
+            store
+                .export_record(commit)
+                .expect("the rewritten journal record still verifies")
+                .expect("install record"),
+            tampered,
+            "only the model snapshot may differ, so the hit-specific guard is what refuses"
+        );
+    });
+    assert_eq!(warm, cold, "model snapshot: warm and cold refusals differ");
+}
+
 #[test]
 fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
     let dir = tempfile::tempdir().expect("directory");
@@ -7282,6 +7471,117 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
                 .expect("capture a correction under a different event")
         );
     }
+}
+
+fn additivity_migration_model(integer: bool, scale: u64, additive: bool) -> Model {
+    let mut snapshot = model(false).definitions_snapshot();
+    let additivity = if additive {
+        norn_ir::PropertyAdditivity::Additive {}
+    } else {
+        norn_ir::PropertyAdditivity::Undeclared {}
+    };
+    let kind = if integer {
+        norn_ir::PropertyType::Integer { additivity }
+    } else {
+        norn_ir::PropertyType::Decimal {
+            scale: norn_ir::WholeNumber(scale),
+            additivity,
+            rounding: None,
+            unit: None,
+            currency_source: None,
+            per_unit: None,
+        }
+    };
+    snapshot.object_types[0].properties.push(norn_ir::Property {
+        id: norn_ir::PropertyId("amount".into()),
+        property_type: kind,
+        protected: false,
+        description: None,
+        constraints: norn_ir::PropertyConstraints::default(),
+        default: None,
+        markings: vec![],
+        computed: None,
+    });
+    Model::from_snapshot(&snapshot).expect("numeric model")
+}
+
+fn additivity_migration_store(original: &Model) -> CellStore {
+    let mut store = CellStore::open_in_memory(original.clone()).expect("store");
+    store
+        .install_definitions(
+            original.clone(),
+            install_input("additivity-v1", 1, original),
+            Some(0),
+            "org_demo/dev",
+        )
+        .expect("initial definition");
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: "org_demo/dev".into(),
+            logical_time: 2,
+            writes: (0..4_097)
+                .map(|index| FactWriteRow::Put {
+                    object_type: "defs.Item".into(),
+                    key: format!("row-{index}"),
+                    values: BTreeMap::from([
+                        ("name".into(), Value::from("item")),
+                        ("amount".into(), integer_value(1)),
+                    ]),
+                })
+                .collect(),
+            ..CommitBatch::default()
+        })
+        .expect("4,097 valid values");
+    store
+}
+
+#[test]
+fn additivity_only_change_skips_live_scan_over_4096_rows() {
+    for integer in [false, true] {
+        let original = additivity_migration_model(integer, 3, false);
+        let candidate = additivity_migration_model(integer, 3, true);
+        let mut store = additivity_migration_store(&original);
+        let before = store.read().verify_ledger().expect("ledger");
+        let input = install_input("additivity-v2", 3, &candidate);
+        let checked = store
+            .check_definitions(&candidate, &input, Some(1))
+            .expect("aggregation-only change needs no value scan");
+        assert_eq!(
+            store.read().verify_ledger().expect("read-only check"),
+            before
+        );
+        assert_eq!(
+            checked,
+            store
+                .install_definitions(candidate, input, Some(1), "org_demo/dev")
+                .expect("aggregation contract update installs over 4,097 rows")
+        );
+        assert_eq!(checked.version, 2);
+    }
+}
+
+#[test]
+fn additivity_change_with_value_narrowing_still_scans_live_rows() {
+    let original = additivity_migration_model(false, 3, false);
+    let candidate = additivity_migration_model(false, 2, true);
+    let mut store = additivity_migration_store(&original);
+    let before = store.read().verify_ledger().expect("ledger");
+    let input = install_input("additivity-and-scale-v2", 3, &candidate);
+    let checked = store.check_definitions(&candidate, &input, Some(1));
+    assert!(
+        matches!(checked, Err(CellError::DefinitionMigrationRefused(message))
+        if message.contains("4,096-row migration scan limit"))
+    );
+    let installed = store.install_definitions(candidate, input, Some(1), "org_demo/dev");
+    assert!(
+        matches!(installed, Err(CellError::DefinitionMigrationRefused(message))
+        if message.contains("4,096-row migration scan limit"))
+    );
+    assert_eq!(
+        store.read().verify_ledger().expect("atomic refusal"),
+        before
+    );
 }
 
 #[test]

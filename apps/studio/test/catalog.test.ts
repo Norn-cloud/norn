@@ -9,13 +9,13 @@ import type { Artifact } from "../src/lib/transport.ts"
 const source = readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8")
 const catalog = catalogOf(readDocument<readonly Artifact[]>(source, "recorded").document)
 
-test("three systems feed one business model", () => {
-  expect(catalog.systems.map(({ name }) => name).sort()).toEqual(["ERPNext", "Odoo", "Shopify"])
+test("the connected systems feed one business model", () => {
+  expect(catalog.systems.map(({ name }) => name).sort()).toEqual(["ERPNext", "Shopify"])
   for (const system of catalog.systems) expect(system.feeds).toContain("canon.Holding")
   expect(catalog.concepts.filter(({ kind }) => kind === "concept").length).toBe(8)
   const holding = catalog.byName.get("canon.Holding")
   expect(holding?.kind).toBe("concept")
-  expect([...new Set(holding?.feeds.map(({ system }) => system))].sort()).toEqual(["ERPNext", "Odoo", "Shopify"])
+  expect([...new Set(holding?.feeds.map(({ system }) => system))].sort()).toEqual(["ERPNext", "Shopify"])
 })
 
 test("a concept states its facts, relationships and parents as declared", () => {
@@ -26,7 +26,7 @@ test("a concept states its facts, relationships and parents as declared", () => 
   ])
   const field = (id: string) => holding?.fields.find((candidate) => candidate.id === id)
   expect(field("quantity")?.type).toBe("Exact number, 6 decimal places")
-  expect(field("stock_cost")).toEqual({ id: "stock_cost", type: "Exact number, 6 decimal places, currency from cost currency", optional: true })
+  expect(field("stock_cost")).toEqual({ id: "stock_cost", type: "Exact number, 6 decimal places, currency from cost currency", optional: true, decimal: { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" } })
   expect(field("quantity_basis")?.type).toBe("One of: on hand, available")
 })
 
@@ -46,7 +46,7 @@ test("each system's declared source for a fact, including a declared gap", () =>
 test("repeated links, nested rows, lifecycle states and gap reasons keep what is declared", () => {
   const artifacts = [
     { kind: "entity", artifactId: "demo.Thing.entity", name: "Thing", payload: { entityVersion: "2.0", objectType: { name: "demo.Thing", properties: [] } } },
-    { kind: "source_schema", artifactId: "demo.source", payload: { source: { system: "synthetic-odoo" } } },
+    { kind: "source_schema", artifactId: "demo.source", payload: { source: { system: "synthetic-erpnext" } } },
     { kind: "mapping", artifactId: "demo.mapping", payload: { source: { schemaId: "demo.source" }, maps: [{ source: { dataset: "Thing" }, target: { entity: "demo.Thing.entity" }, links: [{ link: "party", key: "input.a" }, { link: "party", key: "input.b" }],
       properties: [{ property: "amount", value: "input.amount", nested: { dataset: "Lines", field: "lines", where: "row.kind == 'gold'" } }],
       lifecycles: [{ property: "status", state: "input.state" }, { property: "phase", transition: "input.event" }], gaps: [{ member: "cost", reason: "deferred" }] }] } },
@@ -77,4 +77,12 @@ test("a mapping target resolves through its entity artifact's declared name, wha
     { kind: "mapping", artifactId: "demo.mapping", payload: { source: { schemaId: "demo.source" }, maps: [{ source: { dataset: "Thing" }, target: { entity: "demo.things.v2" }, properties: [] }] } },
   ] as unknown as readonly Artifact[]
   expect(catalogOf(artifacts).byName.get("demo.Thing")?.feeds.map(({ system }) => system)).toEqual(["ERPNext"])
+})
+
+test("an object type no system feeds is still an object type, not a shared interface", () => {
+  const restatement = catalog.byName.get("core.analytics.Restatement")
+  expect(restatement?.definition).toBe("object type")
+  expect(restatement?.kind).toBe("core idea")
+  expect(catalog.byName.get("core.Agent")?.definition).toBe("interface")
+  expect(catalog.byName.get("canon.Holding")?.definition).toBe("object type")
 })

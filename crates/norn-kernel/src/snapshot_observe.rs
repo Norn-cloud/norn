@@ -190,13 +190,33 @@ pub enum ObservationRefusal {
     Overflow,
 }
 
-/// Durable authority over one observed output's outgoing relations.
-/// Mapping versions may advance within the same admitted mapping identity.
+/// A prepared claim's standing within its contribution for this turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimStanding {
+    Current,
+    Superseded,
+    Contested,
+}
+
+/// One claim's evidence in this turn, with its canonical endpoints fixed at
+/// preparation so standing can be resolved wherever the commit is validated.
+#[derive(Debug, Clone, PartialEq)]
+struct PreparedClaim {
+    supersedes: BTreeSet<String>,
+    values: JsonObject,
+    contribution: String,
+    role: norn_ir::LinkId,
+    source: FactKey,
+    target: Option<FactKey>,
+}
+
+/// Retained source namespace protecting authored mutations of observed outputs.
+/// Canonical observed claims converge without acquiring this namespace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ObservedSourceOwner {
     /// The source system admitted by this mapping. Individual source records
-    /// carry lineage; the mapping declaration owns the relation namespace.
+    /// carry lineage; this marker protects the retained authored namespace.
     pub source_system: String,
     /// The mapping artifact identity, without its version suffix.
     pub mapping: String,
@@ -234,6 +254,10 @@ pub struct ObservationAuthorization {
     reference_targets: BTreeSet<FactKey>,
     source_scopes: Vec<(FactExpectation, ObservedSourceOwner)>,
     links: Vec<LinkWrite>,
+    /// Edge changes proposed by a sealed claim. They carry no authority until
+    /// resolved against the final claim set by [`Self::convergent_links`].
+    claim_intents: Vec<(FactKey, LinkWrite)>,
+    claims: BTreeMap<FactKey, PreparedClaim>,
     owner_recreations: Vec<(FactKey, ObservedSourceOwner, FactWrite)>,
     pending_writes: Vec<FactWrite>,
     pending_sources: BTreeSet<FactKey>,
@@ -299,6 +323,8 @@ impl ObservationAuthorization {
             reference_targets: BTreeSet::new(),
             source_scopes: Vec::new(),
             links: Vec::new(),
+            claim_intents: Vec::new(),
+            claims: BTreeMap::new(),
             owner_recreations: Vec::new(),
             pending_writes: Vec::new(),
             pending_sources: BTreeSet::new(),
@@ -369,7 +395,10 @@ impl ObservationAuthorization {
             observation_id,
             failures,
         )?;
-        if !findings.is_empty() {
+        // Claim authority retains the checked values even when no finding is emitted.
+        if !findings.is_empty()
+            || expectation.key.object_type.as_str() == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+        {
             self.read_findings.push(AuthorizedObservedReadFinding {
                 key: expectation.key.clone(),
                 expected: expectation.expected,
@@ -391,6 +420,8 @@ impl ObservationAuthorization {
         self.snapshot_chunks = None;
         self.source_scopes.extend(other.source_scopes);
         self.links.extend(other.links);
+        self.claim_intents.extend(other.claim_intents);
+        self.claims.extend(other.claims);
         self.owner_recreations.extend(other.owner_recreations);
         self.pending_writes.extend(other.pending_writes);
         self.pending_sources.extend(other.pending_sources);
@@ -672,6 +703,196 @@ impl ObservationAuthorization {
         Ok(())
     }
 
+    /// OBS-LINK-CONVERGE-1: seal one recomputed canonical relation claim.
+    /// The trusted mapping boundary authenticates its retained bundle and pins.
+    /// This proposes only its exact edge changes, with a CAS-bound source; it
+    /// confers no ownership on a source system and exempts no endpoint/type law.
+    /// Sealing records intent only: standing and edge support are decided over
+    /// the final claim set, so claims merged later can still refuse the edge.
+    ///
+    /// The kernel sees prepared claims only. No production caller may land before
+    /// the #877 planner prepares every retained claim of the edge and contribution.
+    ///
+    /// # Errors
+    /// Missing source expectation, undeclared role, or an unrelated mutation.
+    pub fn seal_observed_link_claim<E, C, T>(
+        &mut self,
+        catalog: &TypeCatalog<'_>,
+        claim: &norn_ir::mapping::ObservedLinkClaim,
+        source: FactExpectation,
+        commit: &CellCommit<E, C, T>,
+    ) -> Result<(), ObservationRefusal> {
+        let model = crate::CommitModel::new(catalog);
+        let key = FactKey::new(claim.source_type.as_str(), &claim.source_key);
+        let claim_key = FactKey::new(
+            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+            claim
+                .id()
+                .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?,
+        );
+        let values = claim
+            .values()
+            .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+        let values = effective_observed_values(catalog, &claim_key, &values)?;
+        let retained = self
+            .read_findings
+            .iter()
+            .any(|read| read.key == claim_key && read.values == values);
+        let written = self.writes.iter().any(|write| write.write.key == claim_key
+            && matches!(&write.write.mutation, FactMutation::Put { values: prepared } if prepared == &values));
+        if !self
+            .claims
+            .get(&claim_key)
+            .is_some_and(|prepared| prepared.values == values)
+            || (!retained && !written)
+        {
+            return Err(ObservationRefusal::Encoding(
+                "claim has no prepared immutable evidence".into(),
+            ));
+        }
+        if source.key != key
+            || (!commit.reads.contains(&source)
+                && !commit
+                    .writes
+                    .iter()
+                    .any(|w| w.key == key && w.expected == source.expected))
+        {
+            return Err(ObservationRefusal::Encoding(
+                "claim source has no CAS evidence".into(),
+            ));
+        }
+        model
+            .link(&key.object_type, claim.role.as_str())
+            .ok_or_else(|| ObservationRefusal::Encoding("claim role is undeclared".into()))?;
+        let target = claim
+            .target
+            .as_ref()
+            .map(|t| FactKey::new(t.object_type.as_str(), &t.key));
+        let mut intents = Vec::new();
+        for write in commit.links.iter().filter(|w| {
+            model.canonical(&w.key.source) == model.canonical(&key)
+                && w.key.link == claim.role.as_str()
+                && target
+                    .as_ref()
+                    .is_some_and(|t| model.canonical(t) == model.canonical(&w.key.target))
+        }) {
+            // Claims carry no link properties: a convergent edge holds defaults only.
+            if let LinkMutation::Add { values } = &write.mutation {
+                let defaults = catalog
+                    .effective_link_values(
+                        &key.object_type,
+                        claim.role.as_str(),
+                        &JsonObject::new(),
+                    )
+                    .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+                if *values != defaults {
+                    continue;
+                }
+            }
+            intents.push((claim_key.clone(), write.clone()));
+        }
+        // Every fallible check has passed: a refused seal records nothing.
+        if !self.source_scopes.iter().any(|(scope, _)| scope == &source) {
+            self.source_scopes.push((
+                source.clone(),
+                ObservedSourceOwner::from_provenance(&claim.provenance),
+            ));
+            self.prepared_items = self.prepared_items.saturating_add(1);
+            if !commit.writes.iter().any(|w| w.key == key) {
+                self.observed_reads.push(source);
+            }
+        }
+        if let Some(target) = &target {
+            self.reference_targets.insert(target.clone());
+            self.reference_targets.insert(model.canonical(target));
+        }
+        for intent in intents {
+            if !self.claim_intents.contains(&intent) {
+                self.claim_intents.push(intent);
+            }
+        }
+        Ok(())
+    }
+
+    /// OBS-LINK-CONTRIBUTION-1: every prepared claim's standing in the final set.
+    /// Only a recorded `supersedes` entry from the same contribution orders two
+    /// claims, and retained evidence never supersedes a fresh claim. Rivals left
+    /// unordered are contested and authorize no edge change.
+    fn claim_standings(&self) -> BTreeMap<&FactKey, ClaimStanding> {
+        // A fresh claim is one this turn's final authorized writes create.
+        let fresh: BTreeSet<&FactKey> = self.writes.iter().map(|w| &w.write.key).collect();
+        let superseded: BTreeSet<&FactKey> = self
+            .claims
+            .iter()
+            .filter(|(key, claim)| {
+                self.claims.iter().any(|(other_key, other)| {
+                    other.contribution == claim.contribution
+                        && other.supersedes.contains(&key.key)
+                        && (fresh.contains(other_key) || !fresh.contains(key))
+                })
+            })
+            .map(|(key, _)| key)
+            .collect();
+        self.claims
+            .iter()
+            .map(|(key, claim)| {
+                let rival = self.claims.iter().any(|(other_key, other)| {
+                    other.contribution == claim.contribution
+                        && other.target != claim.target
+                        && !superseded.contains(other_key)
+                });
+                let standing = if superseded.contains(key) {
+                    ClaimStanding::Superseded
+                } else if rival {
+                    ClaimStanding::Contested
+                } else {
+                    ClaimStanding::Current
+                };
+                (key, standing)
+            })
+            .collect()
+    }
+
+    /// The sealed edge changes the final claim set authorizes: a current claim
+    /// adds; a superseded claim withdraws only while no other prepared claim for
+    /// the same edge stands. Contested support holds an edge until a fresh claim
+    /// records its order.
+    pub(crate) fn convergent_links(&self) -> Vec<&LinkWrite> {
+        if self.claim_intents.is_empty() {
+            return Vec::new();
+        }
+        let standings = self.claim_standings();
+        let stands = |key: &FactKey| standings.get(key) != Some(&ClaimStanding::Superseded);
+        self.claim_intents
+            .iter()
+            .filter(|(key, write)| {
+                let Some(claim) = self.claims.get(key) else {
+                    return false;
+                };
+                match write.mutation {
+                    LinkMutation::Add { .. } => standings.get(key) == Some(&ClaimStanding::Current),
+                    LinkMutation::Remove => {
+                        !stands(key)
+                            && !self.claims.iter().any(|(other_key, other)| {
+                                other_key != key
+                                    && other.role == claim.role
+                                    && other.source == claim.source
+                                    && other.target == claim.target
+                                    && stands(other_key)
+                            })
+                    }
+                }
+            })
+            .map(|(_, write)| write)
+            .collect()
+    }
+
+    pub(crate) fn authorizes_claim_write(&self, write: &FactWrite) -> bool {
+        write.expected == FactVersion(0)
+            && matches!(&write.mutation, FactMutation::Put { values } if self.claims.get(&write.key).is_some_and(|claim| &claim.values == values))
+            && self.authorizes_write(write)
+    }
+
     /// Seal pending-record changes from trusted mapping preparation. Retained
     /// entries may be copied; every added or removed intent must belong to an
     /// opaque prepared source scope. The original record is CAS-bound too.
@@ -837,6 +1058,7 @@ impl ObservationAuthorization {
     /// match an exact sealed mapping or pending-resolution intent.
     #[must_use]
     pub fn validates<E, C, T>(&self, commit: &CellCommit<E, C, T>) -> bool {
+        let convergent = self.convergent_links();
         if !commit.effects.is_empty()
             || self.source_scopes.iter().any(|(scope, _)| {
                 !commit.reads.contains(scope)
@@ -845,7 +1067,10 @@ impl ObservationAuthorization {
                         .iter()
                         .any(|write| write.key == scope.key && write.expected == scope.expected)
             })
-            || commit.links.iter().any(|write| !self.links.contains(write))
+            || commit
+                .links
+                .iter()
+                .any(|write| !self.links.contains(write) && !convergent.contains(&write))
             || commit.writes.iter().any(|write| {
                 write.key.object_type.as_str() == "norn.PendingLinks"
                     && !self.pending_writes.contains(write)
@@ -1184,6 +1409,31 @@ pub struct PreparedObservation {
 }
 
 impl PreparedObservation {
+    /// Compose a prepared snapshot into the same atomic observation turn.
+    ///
+    /// # Errors
+    /// The destination consumes a different delivery.
+    pub fn append_to(
+        self,
+        commit: &mut CellCommit<ObservationEvent, JsonObject, JsonObject>,
+        authorization: &mut ObservationAuthorization,
+    ) -> Result<(), ObservationRefusal> {
+        if self.commit.consumes != commit.consumes {
+            return Err(ObservationRefusal::Encoding(
+                "snapshot composition changed its delivery".into(),
+            ));
+        }
+        let (part, authority) = self.into_parts();
+        commit.reads.extend(part.reads);
+        commit.writes.extend(part.writes);
+        commit.events.extend(part.events);
+        commit.effects.extend(part.effects);
+        commit.links.extend(part.links);
+        commit.link_reads.extend(part.link_reads);
+        authorization.merge(authority);
+        Ok(())
+    }
+
     /// Split the public commit from its opaque observation authorization.
     #[must_use]
     pub fn into_parts(
@@ -1273,7 +1523,24 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
-    let facts = property_changes(catalog, key, &original_for_changes, values);
+    for snapshot in lifecycles {
+        if catalog
+            .effective_type(&key.object_type)
+            .and_then(|effective| effective.property(snapshot.property.as_str()))
+            .is_some_and(norn_checker::EffectiveProperty::protected)
+            && effective_original
+                .as_ref()
+                .and_then(|values| values.get(snapshot.property.as_str()))
+                .and_then(JsonValue::as_str)
+                != Some(snapshot.state.as_str())
+        {
+            return Err(invalid(
+                &snapshot.property,
+                "protected lifecycle properties are writable only by rules",
+            ));
+        }
+    }
+    let facts = property_changes(key, &original_for_changes, values);
     let ordinary = prepare_observed_properties::<Infallible>(catalog, slice, turn, &facts)
         .map_err(|error| ObservationRefusal::Properties(Box::new(error)))?;
     let mut current = effective_original.clone().unwrap_or_default();
@@ -1387,6 +1654,66 @@ pub fn prepare_observed_snapshot(
         },
         authorization,
     })
+}
+
+/// OBS-LINK-CLAIM-1: retain a claim as an ordinary observed registry object.
+/// The mapping boundary authenticates the claim against its retained bundle.
+///
+/// # Errors
+/// Invalid claim identity/properties or ordinary observation preparation failure.
+pub fn prepare_observed_link_claim_snapshot(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    claim: &norn_ir::mapping::ObservedLinkClaim,
+) -> Result<PreparedObservation, ObservationRefusal> {
+    let key = FactKey::new(
+        norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+        claim
+            .id()
+            .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?,
+    );
+    let values = claim
+        .values()
+        .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+    let values = effective_observed_values(catalog, &key, &values)?;
+    if slice.get(&key).is_some_and(|state| {
+        state.version != FactVersion(0) && state.values.as_ref() != Some(&values)
+    }) {
+        return Err(ObservationRefusal::Encoding(
+            "immutable claim changed".into(),
+        ));
+    }
+    let contribution = claim
+        .contribution_id()
+        .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+    let mut prepared = prepare_observed_snapshot(
+        catalog,
+        slice,
+        turn,
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &[],
+            provenance: &claim.provenance,
+        },
+    )?;
+    let model = crate::CommitModel::new(catalog);
+    prepared.authorization.claims.insert(
+        key,
+        PreparedClaim {
+            supersedes: claim.supersedes.clone(),
+            values,
+            contribution,
+            role: claim.role.clone(),
+            source: model.canonical(&FactKey::new(claim.source_type.as_str(), &claim.source_key)),
+            target: claim
+                .target
+                .as_ref()
+                .map(|t| model.canonical(&FactKey::new(t.object_type.as_str(), &t.key))),
+        },
+    );
+    Ok(prepared)
 }
 
 fn effective_observed_values(
@@ -1522,6 +1849,7 @@ pub fn prepare_observed_delete(
     if buried.exists() {
         return unchanged();
     }
+    reject_protected_observed_delete(catalog, key)?;
     let before = effective_observed_values(catalog, key, values)?;
     let mut current = before.clone();
     let reached = reach_on_delete(catalog, key, &mut current, lifecycles)?;
@@ -1594,6 +1922,31 @@ pub fn prepare_observed_delete(
         },
         authorization,
     })
+}
+
+fn reject_protected_observed_delete(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+) -> Result<(), ObservationRefusal> {
+    if let Some(property) = catalog
+        .effective_type(&key.object_type)
+        .and_then(|effective| {
+            effective
+                .properties
+                .iter()
+                .find(|property| property.protected())
+        })
+    {
+        return Err(ObservationRefusal::Properties(Box::new(
+            DecisionRefusal::InvalidOutput {
+                reason: format!(
+                    "protected property `{}` of {key} may be deleted only by rules",
+                    property.id.as_str()
+                ),
+            },
+        )));
+    }
+    Ok(())
 }
 
 fn append_observed_modification(
@@ -1715,26 +2068,12 @@ fn tombstone_values(
     ]))
 }
 
-fn property_changes(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    original: &FactState,
-    values: &JsonObject,
-) -> Vec<FactChange> {
+fn property_changes(key: &FactKey, original: &FactState, values: &JsonObject) -> Vec<FactChange> {
     let Some(existing) = &original.values else {
-        let mut initial = values.clone();
-        for lifecycle in catalog.lifecycles(&key.object_type).into_values() {
-            if let [state] = lifecycle.initial.as_slice() {
-                initial.insert(
-                    lifecycle.property.as_str().to_owned(),
-                    JsonValue::String(state.clone()),
-                );
-            }
-        }
         return vec![FactChange::Create {
             object_type: key.object_type.clone(),
             key: key.key.clone(),
-            values: initial,
+            values: values.clone(),
         }];
     };
     values

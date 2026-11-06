@@ -36,7 +36,7 @@
 
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entitlement::EntitlementStatus;
 use crate::members::present_non_null;
@@ -155,6 +155,9 @@ pub struct MappingIr {
     pub interfaces: Vec<String>,
     /// The object maps, in evaluation order.
     pub maps: Vec<ObjectMap>,
+    /// Required path preservation obligations over the named entity artifacts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_mappings: Vec<PathMappingBinding>,
     /// Declarative permission-row maps. These emit ordinary upsert actions
     /// for `core.Entitlement`; joins are applied only from a caller-declared
     /// complete snapshot of every `requiredSnapshot` dataset.
@@ -173,6 +176,19 @@ pub struct MappingIr {
     )]
     #[schemars(with = "JsonObject")]
     pub extensions: Option<JsonObject>,
+}
+
+/// Catalog bindings for a required path mapping. Admission binds evidence to
+/// the exact envelopes (including equations), and the enclosing MappingIR.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PathMappingBinding {
+    /// Source entity artifact IDs.
+    pub source_entities: Vec<String>,
+    /// Target entity artifact IDs.
+    pub target_entities: Vec<String>,
+    /// Declared object and link images.
+    pub mapping: crate::entity::PathMapping,
 }
 
 /// A checked, declarative projection of source permission rows into the
@@ -766,6 +782,115 @@ pub struct LinkPatch {
     pub provenance: InstanceProvenance,
 }
 
+/// OBS-LINK-CLAIM-1: source evidence about a canonical concept's relation.
+/// A nullable target is an explicit clear, not a missing resolution result.
+/// Claims confer no mutation authority; the observation boundary rechecks pins.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObservedLinkClaim {
+    /// Content-addressed observation retaining the raw input and mapping pins.
+    pub observation_id: String,
+    /// Capture namespace derived from the existing connector/partition/source identity.
+    pub source_scope: String,
+    /// Canonical source type produced by the admitted mapping.
+    pub source_type: ObjectTypeName,
+    /// Canonical source key, never a source-system alias.
+    pub source_key: String,
+    /// Relation declared by the canonical source concept.
+    pub role: LinkId,
+    /// Explicit canonical target, or an observed nullable-role clear.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub target: Option<ObservedLinkTarget>,
+    /// Source row, mapping version and exact relation rule.
+    pub provenance: InstanceProvenance,
+    /// OBS-LINK-CONTRIBUTION-1: identities of the earlier claims of this
+    /// contribution that this claim replaces. Mapping evaluation leaves it empty;
+    /// the claim planner fills it from retained claims. It is part of the
+    /// evidence preimage, so retained claims stay ordered by a content-addressed,
+    /// necessarily acyclic chain. An empty set is absent from the preimage.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub supersedes: BTreeSet<String>,
+}
+
+/// Registry concept used for immutable, ordinary claim snapshots.
+pub const OBSERVED_LINK_CLAIM_TYPE: &str = "norn.ObservedLinkClaim";
+
+/// An endpoint emitted by the existing pinned mapping identity resolver.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObservedLinkTarget {
+    /// Target type admitted by the relation declaration.
+    pub object_type: ObjectTypeName,
+    /// Canonical target key; its object may not have arrived yet.
+    pub key: String,
+}
+
+impl ObservedLinkClaim {
+    /// Project the typed claim into its registry-declared scalar properties.
+    /// `evidence` holds the exact canonical JSON of the typed preimage
+    /// (sorted keys, verbatim strings and numbers), as UTF-8 text.
+    ///
+    /// # Errors
+    /// The complete evidence preimage has no exact canonical encoding.
+    pub fn values(&self) -> Result<crate::RuntimeObject, crate::canonical::CanonicalJsonError> {
+        let evidence =
+            String::from_utf8(norn_canonical::canonical_json_exact_of(self)?).map_err(|error| {
+                crate::canonical::CanonicalJsonError::Serialize {
+                    message: error.to_string(),
+                }
+            })?;
+        let text = |value: &str| crate::RuntimeValue::from(value);
+        let nullable = |value: Option<&str>| value.map_or(crate::RuntimeValue::Null, text);
+        Ok(crate::RuntimeObject::from([
+            ("observation_id".into(), text(&self.observation_id)),
+            ("source_scope".into(), text(&self.source_scope)),
+            ("source_type".into(), text(self.source_type.as_str())),
+            ("source_key".into(), text(&self.source_key)),
+            ("role".into(), text(self.role.as_str())),
+            (
+                "target_type".into(),
+                nullable(self.target.as_ref().map(|t| t.object_type.as_str())),
+            ),
+            (
+                "target_key".into(),
+                nullable(self.target.as_ref().map(|t| t.key.as_str())),
+            ),
+            ("evidence".into(), text(&evidence)),
+        ]))
+    }
+
+    /// OBS-LINK-CONTRIBUTION-1: one source row/role contributes through a mapping.
+    /// A new occurrence or mapping version replaces that contribution, preserving
+    /// every earlier claim as evidence.
+    ///
+    /// # Errors
+    /// The contribution cannot be canonically encoded.
+    pub fn contribution_id(&self) -> Result<String, crate::canonical::CanonicalJsonError> {
+        let mapping = self.provenance.mapping_version.as_str();
+        let mapping_id = mapping.split_once('@').map_or(mapping, |(id, _)| id);
+        crate::canonical::domain_hash_hex(
+            b"norn.link.contribution.v1\0",
+            &(
+                &self.source_scope,
+                &self.source_type,
+                &self.source_key,
+                &self.role,
+                &self.provenance.source,
+                mapping_id,
+            ),
+        )
+    }
+
+    /// Replay-stable evidence identity. Different sources remain distinct claims
+    /// even when their endpoints converge to one canonical relation.
+    ///
+    /// # Errors
+    /// Noncanonical evidence cannot acquire a claim identity.
+    pub fn id(&self) -> Result<String, crate::canonical::CanonicalJsonError> {
+        crate::canonical::domain_hash_hex(b"norn.observed.link.claim.v1\0", self)
+    }
+}
+
 /// What a source delete of one record means under one [`ObjectMap`]
 /// (#3013): the object it removes and, when the map declares `onDelete`
 /// states, the terminal lifecycle states it reaches.
@@ -815,6 +940,44 @@ pub struct MappedRecord {
     pub provenance: InstanceProvenance,
 }
 
+impl MappedRecord {
+    /// OBS-LINK-CLAIM-1: retain every declared link output, including clears.
+    /// Endpoint identity and per-rule provenance come from mapping evaluation.
+    #[must_use]
+    pub fn link_claims(&self, observation_id: &str, source_scope: &str) -> Vec<ObservedLinkClaim> {
+        self.links
+            .iter()
+            .map(|patch| ObservedLinkClaim {
+                observation_id: observation_id.to_owned(),
+                source_scope: source_scope.to_owned(),
+                source_type: patch.object_type.clone(),
+                source_key: patch.key.clone(),
+                role: patch.link.clone(),
+                target: Some(ObservedLinkTarget {
+                    object_type: patch.target_type.clone(),
+                    key: patch.target_key.clone(),
+                }),
+                provenance: patch.provenance.clone(),
+                supersedes: BTreeSet::new(),
+            })
+            .chain(self.cleared_links.iter().map(|role| ObservedLinkClaim {
+                observation_id: observation_id.to_owned(),
+                source_scope: source_scope.to_owned(),
+                source_type: self.object_type.clone(),
+                source_key: self.key.clone(),
+                role: role.clone(),
+                target: None,
+                provenance: {
+                    let mut provenance = self.provenance.clone();
+                    provenance.transform = Some(format!("{}.{}", self.map, role.as_str()));
+                    provenance
+                },
+                supersedes: BTreeSet::new(),
+            }))
+            .collect()
+    }
+}
+
 impl MappingIr {
     /// The map with id `id`.
     #[must_use]
@@ -831,4 +994,20 @@ pub fn mapping_ir_schema() -> Schema {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+/// Closed finite Boolean write-back declaration in `norn.write-back/0.1.0`.
+/// Evidence covers only these source states and grants no mutation authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FiniteWriteBackLens {
+    /// Existing direct, unguarded object map id.
+    pub map: String,
+    /// Existing property projection supplying Get.
+    pub property: String,
+    /// Closed domain of unique, same-shaped Boolean source records.
+    pub sources: Vec<BTreeMap<String, bool>>,
+    /// For each source, destination indices for false then true, encoded as
+    /// decimal strings to avoid floating-point interpretation in extension JSON.
+    pub put: Vec<[String; 2]>,
 }

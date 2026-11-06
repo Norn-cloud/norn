@@ -1732,6 +1732,7 @@ type CandidateValidator<E> = fn(&StoreReader<'_, E>, &CommitBatch, bool) -> Resu
 #[derive(Debug)]
 pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) conn: E,
+    pub(crate) transparency: RefCell<crate::transparency::ReceiptLog>,
     pub(crate) instance_identity: Arc<()>,
     model: Model,
     candidate_validator: Cell<Option<CandidateValidator<E>>>,
@@ -1741,6 +1742,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
+    mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
@@ -2014,6 +2016,9 @@ impl<E: SqlEngine> CellStore<E> {
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
+            store
+                .transparency
+                .replace(crate::transparency::load(&store.conn)?);
         }
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -2108,6 +2113,7 @@ impl<E: SqlEngine> CellStore<E> {
     fn unverified(conn: E, model: Model) -> Self {
         Self {
             conn,
+            transparency: RefCell::new(crate::transparency::ReceiptLog::new()),
             instance_identity: Arc::new(()),
             model,
             candidate_validator: Cell::new(None),
@@ -2115,6 +2121,7 @@ impl<E: SqlEngine> CellStore<E> {
             export_notify: Arc::new(Notify::new()),
             verified: RefCell::new(LedgerHead::genesis()),
             source_disputes: RefCell::default(),
+            mapping_plans: RefCell::default(),
             quantity_boundary: Cell::new(None),
         }
     }
@@ -2195,6 +2202,9 @@ impl<E: SqlEngine> CellStore<E> {
         })?;
         store.verified.replace(head);
         store.quantity_boundary.set(boundary);
+        store
+            .transparency
+            .replace(crate::transparency::load(&store.conn)?);
         Ok(store)
     }
 
@@ -2383,6 +2393,7 @@ impl<E: SqlEngine> CellStore<E> {
     pub fn read(&self) -> StoreReader<'_, E> {
         StoreReader::new(&self.conn, &self.model)
             .with_source_disputes(&self.source_disputes)
+            .with_mapping_plans(&self.mapping_plans)
             .with_quantity_boundary(self.quantity_boundary.get())
     }
 
@@ -2752,7 +2763,8 @@ impl<E: SqlEngine> CellStore<E> {
             )?;
             admitted_boundary.set(boundary.or(new_boundary));
             let quality_disputes = RefCell::default();
-            let quality_reader = StoreReader::new(&self.conn, &self.model).with_transaction_source_disputes(&quality_disputes);
+            let quality_reader = StoreReader::new(&self.conn, &self.model)
+                .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&quality_disputes);
             let quality_cutoff = prior_receipt.as_ref().map_or_else(|| quality_reader.next_commit_seq(), |receipt| Ok(receipt.body.commit_seq))?;
             crate::observation_quality::deduplicate(&quality_reader, &mut quantity_batch, quality_cutoff)?;
             let effective_batch = &quantity_batch;
@@ -2769,7 +2781,8 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(CellError::IdempotencyConflict(key.clone()).into());
             }
             let transaction_disputes = RefCell::default();
-            let reader = StoreReader::new(&self.conn, &self.model).with_transaction_source_disputes(&transaction_disputes);
+            let reader = StoreReader::new(&self.conn, &self.model)
+                .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&transaction_disputes);
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
@@ -2867,7 +2880,10 @@ impl<E: SqlEngine> CellStore<E> {
             if let Some(validate) = self.candidate_validator.get() {
                 let validator_disputes = RefCell::default();
                 validate(
-                    &writer.reader().with_transaction_source_disputes(&validator_disputes),
+                    &writer
+                        .reader()
+                        .with_mapping_plans(&self.mapping_plans)
+                        .with_transaction_source_disputes(&validator_disputes),
                     effective_batch,
                     installation.is_some(),
                 )?;
@@ -2950,6 +2966,12 @@ impl<E: SqlEngine> CellStore<E> {
                 Ok((admitted, CommitOutcome::Replayed(receipt)))
             }
             (admitted, CommitOutcome::Committed(receipt)) => {
+                if self.transparency.borrow().len().checked_add(1) == Some(receipt.body.commit_seq)
+                {
+                    self.transparency.borrow_mut().push(receipt.hash.clone());
+                } else if let Err(error) = self.refresh_transparency() {
+                    tracing::warn!(%error, "committed receipt; transparency cache refresh deferred");
+                }
                 #[cfg(feature = "native")]
                 self.export_notify.notify_one();
                 tracing::debug!(
@@ -3101,6 +3123,7 @@ mod identity_history_tests {
                 extends: None,
                 implements: vec![],
                 properties: vec![norn_ir::entity_v2::object::Property {
+                    protected: false,
                     id: PropertyId("code".into()),
                     description: None,
                     property_type: PropertyType::Text { format: None },
