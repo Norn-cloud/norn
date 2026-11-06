@@ -168,7 +168,7 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
     }),
     toEdge: (edge, found, selected, graph): Edge => ({
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
-      markerEnd: { type: MarkerType.ArrowClosed }, label: edge.sourcePort === "next" ? undefined : edge.sourcePort,
+      markerEnd: { type: MarkerType.ArrowClosed }, label: (() => { const text = exitLabel(graph.nodes.find(({ id: node }) => node === edge.source), edge.sourcePort); return text === undefined ? undefined : short(text) })(),
       style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
       labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: "var(--foreground)", fontSize: 11 },
     }),
