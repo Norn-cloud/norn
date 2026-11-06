@@ -48,6 +48,7 @@ fn call(
         path,
         query,
         authorization,
+        body: "",
         now: 0,
     };
     server::handle_with(&cell.0, &cell.2, Some(&cell.1), &request)

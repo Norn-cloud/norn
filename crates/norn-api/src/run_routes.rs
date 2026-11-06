@@ -161,42 +161,46 @@ fn installed_flow<E: SqlEngine>(
         .ok_or_else(flow_not_found)?;
     let artifacts: Vec<serde_json::Value> =
         serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
+    let text = |value: &serde_json::Value, pointer: &str| {
+        value.pointer(pointer).and_then(serde_json::Value::as_str)
+    };
     let find = |id: &str, kind: &str| {
-        artifacts
-            .iter()
-            .find(|artifact| artifact["artifactId"] == id && artifact["kind"] == kind)
+        artifacts.iter().find(|artifact| {
+            text(artifact, "/artifactId") == Some(id) && text(artifact, "/kind") == Some(kind)
+        })
     };
     let rule = find(flow, "rule").ok_or_else(flow_not_found)?;
-    let entity = rule["dependencies"]
-        .as_array()
+    let entity = rule
+        .pointer("/dependencies")
+        .and_then(serde_json::Value::as_array)
         .and_then(|dependencies| {
             let mut entities = dependencies
                 .iter()
-                .filter(|dependency| dependency["kind"] == "entity");
+                .filter(|dependency| text(dependency, "/kind") == Some("entity"));
             let only = entities.next();
             only.filter(|_| entities.next().is_none())
         })
-        .and_then(|dependency| dependency["artifactId"].as_str())
+        .and_then(|dependency| text(dependency, "/artifactId"))
         .and_then(|id| find(id, "entity"))
         .ok_or_else(flow_not_found)?;
-    let object = &entity["payload"]["objectType"];
-    let lifecycles = object["lifecycles"].as_array().ok_or_else(flow_not_found)?;
-    let (Some(object_type), [lifecycle], Some(version)) = (
-        object["name"].as_str(),
+    let lifecycles = entity
+        .pointer("/payload/objectType/lifecycles")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(flow_not_found)?;
+    let (Some(object_type), [lifecycle], Some(version), Some("decide"), Some(payload)) = (
+        text(entity, "/payload/objectType/name"),
         lifecycles.as_slice(),
-        rule["version"].as_str(),
+        text(rule, "/version"),
+        text(rule, "/payload/contract"),
+        rule.pointer("/payload"),
     ) else {
         return Err(flow_not_found());
     };
-    if rule["payload"]["contract"] != "decide" {
-        return Err(flow_not_found());
-    }
     Ok(InstalledFlow {
-        rule: serde_json::from_value(rule["payload"].clone()).map_err(|_| flow_not_found())?,
+        rule: serde_json::from_value(payload.clone()).map_err(|_not_a_rule| flow_not_found())?,
         version: version.to_owned(),
         object_type: object_type.to_owned(),
-        state_property: lifecycle["property"]
-            .as_str()
+        state_property: text(lifecycle, "/property")
             .ok_or_else(flow_not_found)?
             .to_owned(),
         environment_hash: active.receipt_sha256,
@@ -250,6 +254,21 @@ pub fn start_run<E: SqlEngine>(
             ))
         };
     }
+    commit_start(&mut cell, body)?;
+    let row = cell
+        .store()
+        .read()
+        .flow_run(world, &body.run_id)
+        .map_err(Refusal::host)?
+        .ok_or_else(|| Refusal::host("a committed run start left no ledger row"))?;
+    Ok((StatusCode::CREATED, row.into()))
+}
+
+/// Evaluate the installed flow's start turn and commit it with its run.
+fn commit_start<E: SqlEngine>(
+    cell: &mut crate::host::ActionCell<E>,
+    body: &StartRunRequest,
+) -> Result<(), Refusal> {
     let flow = installed_flow(cell.store(), &body.flow)?;
     let output =
         norn_kernel::flow_start::flow_start(&flow.rule, &flow.environment_hash, &body.run_id)
@@ -313,13 +332,7 @@ pub fn start_run<E: SqlEngine>(
                 error.to_string(),
             ),
         })?;
-    let row = cell
-        .store()
-        .read()
-        .flow_run(world, &body.run_id)
-        .map_err(Refusal::host)?
-        .ok_or_else(|| Refusal::host("a committed run start left no ledger row"))?;
-    Ok((StatusCode::CREATED, row.into()))
+    Ok(())
 }
 
 /// `GET /v1/runs/{id}`.
