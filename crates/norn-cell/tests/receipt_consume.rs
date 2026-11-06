@@ -394,7 +394,14 @@ fn status(cell: &DurableReceiptCell) -> (Option<JsonValue>, Option<JsonValue>) {
         .unwrap()
         .values
         .unwrap_or_default();
-    (values.get("status").cloned(), values.get("choice").cloned())
+    (
+        values.get("status").cloned(),
+        // The durable host stores an unset nullable property as null.
+        values
+            .get("choice")
+            .cloned()
+            .filter(|choice| *choice != JsonValue::Null),
+    )
 }
 
 fn waiting() -> (Option<JsonValue>, Option<JsonValue>) {
