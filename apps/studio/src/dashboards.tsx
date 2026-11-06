@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { list, type Issue } from "@/lib/editor"
 import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
-import { QuestionBuilder, draftOf, readCatalog, type QuestionCatalog } from "./builder.tsx"
+import { QuestionBuilder, UNEDITABLE, draftOf, readCatalog, windowFitsDraft, type QuestionCatalog } from "./builder.tsx"
 import { RunQuestion } from "./run.tsx"
 
 const EMPTY: Dashboard = { title: "", tiles: [] }
@@ -201,7 +201,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
             <SheetTitle>{open ? `Edit "${questionTitle(open)}"` : "Add a question"}</SheetTitle>
             <SheetDescription>The server's checker must admit the question before it joins the dashboard.</SheetDescription>
           </SheetHeader>
-          <div className="p-4">{editing !== undefined && <QuestionBuilder key={String(editing)} catalog={catalog} initial={open ? draftOf(open.question, open.title) : undefined} onUse={use} />}</div>
+          <div className="p-4">{editing !== undefined && <QuestionBuilder key={String(editing)} catalog={catalog} initial={open ? draftOf(open.question, open.title) : undefined} unsupported={open && !windowFitsDraft(open.question) ? UNEDITABLE : undefined} onUse={use} />}</div>
         </SheetContent>
       </Sheet>
     </div>
