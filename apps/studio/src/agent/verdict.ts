@@ -52,11 +52,15 @@ export function sessionId(storage: Pick<Storage, "getItem" | "setItem"> | undefi
  * Prompts from the stress corpus of invalid proposals (fixtures/stress/invalid-proposals.json),
  * worded as an economist would ask; the checker should refuse each one.
  */
+// Each is recorded with its change and the checker's decision in fixtures/demo/jewelry-proposals.json.
+/** Requests the model turns into a proposal; the checker admits both. */
 export const SUGGESTIONS = [
-  // Each is recorded with its change and the checker's decision in fixtures/demo/jewelry-proposals.json:
-  // the first two are admitted, the last two refused, naming the fine-mass law.
   "Record each melt's purity in parts per thousand",
   "Make the fine-mass law a yield floor: output at least 95% of input",
+] as const
+
+/** Example proposals: the server checks their recorded typed change directly, without the model; both are refused, naming the fine-mass law. */
+export const EXAMPLES = [
   "Subtract a refining loss in the fine-mass law",
   "Let a melt post straight from measured, skipping approval",
 ] as const

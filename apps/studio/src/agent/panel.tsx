@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionCard, VerdictCard } from "./cards.tsx"
-import { SUGGESTIONS, sessionId, verdictOf } from "./verdict.ts"
+import { EXAMPLES, SUGGESTIONS, sessionId, verdictOf, type Verdict } from "./verdict.ts"
 
 const ALTERNATIVE = "Suggest a different change that keeps the intent but that the checker would admit, and propose it."
 
@@ -57,11 +57,32 @@ export function AgentPanel() {
   const send = (text: string) => { if (text.trim() === "" || busy) return; clearError(); void sendMessage({ text }); setInput("") }
   const submit = (event: FormEvent) => { event.preventDefault(); send(input) }
   const last = messages.at(-1)
+  // Example proposals are checked by the server as recorded, without the model.
+  const [examples, setExamples] = useState<readonly { readonly chip: string; readonly verdict: Verdict | "pending" | string }[]>([])
+  const runExample = async (chip: string) => {
+    setExamples((list) => [...list, { chip, verdict: "pending" }])
+    const settle = (verdict: Verdict | string) => setExamples((list) => list.map((entry) => entry.chip === chip && entry.verdict === "pending" ? { chip, verdict } : entry))
+    try {
+      const response = await fetch("/api/agent/example", { method: "POST", headers: { "content-type": "application/json", "x-norn-session": sessionId(globalThis.sessionStorage) }, body: JSON.stringify({ chip }) })
+      const body: unknown = await response.json().catch(() => null)
+      settle((response.ok ? verdictOf(body) : undefined) ?? reason(new Error(JSON.stringify(body))))
+    } catch {
+      settle("The checker could not be reached.")
+    }
+  }
   return (
     <div className="flex h-full min-h-0 flex-col">
       <StickToBottom className="relative min-h-0 flex-1 overflow-y-hidden" initial="smooth" resize="smooth" role="log">
         <StickToBottom.Content className="flex flex-col gap-4 p-4">
-          {messages.length === 0 && (
+          {examples.map(({ chip, verdict }, index) => (
+            <div key={`${chip}:${index}`} className="flex flex-col gap-2 text-sm">
+              <div className="ms-auto max-w-[85%] rounded-2xl bg-muted px-3 py-2"><Badge variant="outline" className="me-2">Example proposal</Badge>{chip}</div>
+              {verdict === "pending"
+                ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Asking the checker…</p>
+                : typeof verdict === "string" ? <p className="text-sm text-destructive">{verdict}</p> : <VerdictCard verdict={verdict} />}
+            </div>
+          ))}
+          {messages.length === 0 && examples.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-10 text-center">
               <Bot className="size-8 text-muted-foreground" />
               <div className="font-medium">Propose a change</div>
@@ -87,10 +108,17 @@ export function AgentPanel() {
       </StickToBottom>
       <div className="space-y-2 border-t p-3">
         {messages.length === 0 && (
-          <div className="flex flex-wrap gap-2">{SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}</div>
+          <div className="flex flex-wrap gap-2">
+            {SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}
+            {EXAMPLES.map((chip) => (
+              <Button key={chip} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => void runExample(chip)} title="Sends this recorded proposal straight to the checker, without the model.">
+                <span className="text-muted-foreground">Example proposal:</span> {chip}
+              </Button>
+            ))}
+          </div>
         )}
         <form onSubmit={submit} className="flex items-end gap-2">
-          <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. let Approve skip Submit" rows={2} className="min-h-0 resize-none"
+          <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. record each melt's purity" rows={2} className="min-h-0 resize-none"
             onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(input) } }} />
           {busy
             ? <Button type="button" variant="outline" onClick={() => void stop()}>Stop</Button>
