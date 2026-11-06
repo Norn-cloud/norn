@@ -1,0 +1,26 @@
+{
+  "source": "crates/norn-checker/tests/fixtures/jewelry_demo.json",
+  "note": "The Studio assistant's suggestion chips, each with the change it stands for and what the checker decides. test/agent-jewelry.test.ts runs every case through the real checker.",
+  "cases": [
+    {
+      "chip": "Record each melt's purity in parts per thousand",
+      "artifact": "demo.Melt.entity", "pointer": "/payload/objectType/properties/-", "value": { "id": "purity_ppt", "type": { "kind": "decimal", "scale": 1 } },
+      "admitted": true
+    },
+    {
+      "chip": "Make the fine-mass law a yield floor: output at least 95% of input",
+      "artifact": "demo.fine_mass_conservation.law", "pointer": "/payload/response/expression", "value": "self.output_fine_g >= self.input_fine_g * 0.95",
+      "admitted": true
+    },
+    {
+      "chip": "Subtract a refining loss in the fine-mass law",
+      "artifact": "demo.fine_mass_conservation.law", "pointer": "/payload/response/expression", "value": "self.input_fine_g == self.output_fine_g + self.refining_loss_g",
+      "admitted": false, "code": "law.model.predicate_type", "text": "`refining_loss_g` is not a member of `demo.Melt`", "law": "demo.fine_mass_conservation.law"
+    },
+    {
+      "chip": "Let a melt post straight from measured, skipping approval",
+      "artifact": "demo.Melt.entity", "pointer": "/payload/objectType/lifecycles/0/transitions/3/from", "value": ["measured"],
+      "admitted": false, "code": "lifecycle.validation.dead_end_state", "text": "state \"approved\" has no outgoing transition", "law": "demo.fine_mass_conservation.law"
+    }
+  ]
+}

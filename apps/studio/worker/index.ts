@@ -1,5 +1,6 @@
 import { gatewayModel, respond, type AgentRequest } from "./agent.ts"
 import type { AgentBudget } from "./budget.ts"
+import { boundedText } from "./body.ts"
 import type { Scope } from "./limits.ts"
 
 export { AgentBudget } from "./budget.ts"
@@ -50,10 +51,30 @@ async function agent(request: Request, env: Env, ctx: ExecutionContext): Promise
   return respond(model, body, (tokens) => ctx.waitUntil(Promise.all(ledgers.map(([, ledger]) => ledger.spend(tokens)))), request.signal)
 }
 
+/** One recorded example proposal, checked by the server's checker without the model: `{chip}` names it. */
+async function example(request: Request): Promise<Response> {
+  if (request.method !== "POST") return refuse(405, "Use POST.", { allow: "POST" })
+  // Unauthenticated, so the body is bounded while it is read, before it is parsed.
+  const text = await boundedText(request, MAX_BODY)
+  if (text === undefined) return refuse(413, "The request is too large.")
+  let body: { chip?: unknown } | null
+  try {
+    body = JSON.parse(text) as { chip?: unknown } | null
+  } catch {
+    body = null
+  }
+  if (typeof body?.chip !== "string") return refuse(400, "Expected {chip}.")
+  // Loaded on first use, like the assistant: the checker's WebAssembly is not needed elsewhere.
+  const [{ exampleVerdict }, { check }] = await Promise.all([import("./examples.ts"), import("./checker.ts")])
+  const verdict = exampleVerdict(body.chip, check)
+  return verdict === undefined ? refuse(404, "No such example.") : Response.json(verdict, { headers: { "cache-control": "no-store" } })
+}
+
 export default {
   async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url)
     if (pathname === "/api/agent") return agent(request, env, ctx)
+    if (pathname === "/api/agent/example") return example(request)
     if (pathname.startsWith("/api/")) return refuse(404, "No such endpoint.")
     return env.ASSETS.fetch(request)
   },
