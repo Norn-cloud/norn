@@ -21,7 +21,10 @@ export type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 /** One original record behind an answer bucket (the host's `NornNumericContribution`). */
 export interface Contribution {
   readonly fact: Schemas["NornIrFactRef"]
-  readonly amounts: readonly (number | null)[]
+  /** Sum or numerator/denominator. Absent or null when the reader may not see this row's values (ruling D52). */
+  readonly amounts?: readonly (number | null)[] | null
+  /** The newer name for the row's contribution; `null` when withheld from the reader's role. */
+  readonly contributes?: unknown
   readonly receiptHash: string
   readonly factDigest: string | null
   readonly source: { readonly status: "resolved" | "restricted" | "unavailable" }
@@ -66,7 +69,14 @@ export const liveAnswer = (question: string, fetcher?: Fetch) =>
 export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) =>
   hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${DEMO}&environmentId=analytics&lineageRef=${encodeURIComponent(lineageRef)}&bucket=${encodeURIComponent(bucket)}`, fetcher)
 
-/** A contribution's amounts as the exact number texts the server sent. */
-export const amountTexts = (read: Read<Trace>, index: number): readonly (string | null)[] =>
-  (read.document.contributions[index]?.amounts ?? []).map((amount, at) =>
-    amount === null ? null : read.numbers.get(`/contributions/${index}/amounts/${at}`) ?? String(amount))
+/**
+ * A contribution's amounts as the exact number texts the server sent, or `null`
+ * when it sent none: the row's contribution is withheld from the reader's role
+ * (`contributes: null`, or no amounts). Nothing is ever computed in its place.
+ */
+export function amountTexts(read: Read<Trace>, index: number): readonly (string | null)[] | null {
+  const contribution = read.document.contributions[index]
+  const amounts = contribution?.amounts
+  if (contribution === undefined || contribution.contributes === null || amounts == null || amounts.every((amount) => amount === null)) return null
+  return amounts.map((amount, at) => amount === null ? null : read.numbers.get(`/contributions/${index}/amounts/${at}`) ?? String(amount))
+}

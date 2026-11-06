@@ -9,7 +9,7 @@ import { amountTexts, hostRead, liveTrace, type Trace } from "../src/lib/live.ts
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { QuestionPage } = await import("../src/questions.tsx")
+const { LiveRecords, QuestionPage } = await import("../src/questions.tsx")
 
 const answers = join(import.meta.dir, "../../../fixtures/demo/answers")
 const text = (name: string) => readFileSync(join(answers, name), "utf8")
@@ -71,4 +71,31 @@ test("a refused live read shows the server's reason over the recorded snapshot",
   expect(html).toContain(">Refused:<")
   expect(html).toContain("authz.denied")
   expect(html).toContain(">Recorded snapshot<")
+})
+
+// D52: a restricted row's contribution is a row Value; the host sends none for a reader without Values.
+const withheldText = (shape: string) => `{"result":${answerText},"bucket":${JSON.stringify(bucket)},"contributions":[
+  {"fact":{"key":"SYN-MELT-00-0","objectType":"demo.Conversion","version":1},${shape}"receiptHash":"c4c6464b07aa","factDigest":null,"source":{"status":"restricted"},"commitSeq":7,"recordedAtMs":1,"restricted":true,"values":null},
+  {"fact":{"key":"SYN-MELT-00-1","objectType":"demo.Conversion","version":1},"amounts":[55.917,57.071],"receiptHash":"d5d7","factDigest":"f","source":{"status":"resolved","provenance":{}},"commitSeq":8,"recordedAtMs":1,"restricted":false,"values":{}}]}`
+
+test("a contribution the server withholds has no amount, whatever field says so; none is computed", () => {
+  for (const shape of ['"contributes":null,', '"amounts":null,', "", '"amounts":[null,null],']) {
+    const read = readDocument<Trace>(withheldText(shape), "live")
+    expect({ shape, texts: amountTexts(read, 0) }).toEqual({ shape, texts: null })
+    expect(amountTexts(read, 1)).toEqual(["55.917", "57.071"])
+  }
+})
+
+test("the drawer shows Withheld for that row and keeps its record, receipt and commit", () => {
+  const client = new QueryClient()
+  const lineageRef = "lineage-1"
+  client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(withheldText('"contributes":null,'), "live") })
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
+  const rows = html.split("<tr").slice(2)
+  expect(rows[0]).toContain("SYN-MELT-00-0")
+  expect(rows[0]).toContain(">Withheld<")
+  expect(rows[0]).toContain("Copy c4c6464b07aa")
+  expect(rows[0]).toContain("commit 7")
+  expect(rows[0]).not.toMatch(/\d+\.\d+ \/ /)
+  expect(rows[1]).toContain("55.917 / 57.071")
 })

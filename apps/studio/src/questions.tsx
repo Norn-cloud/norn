@@ -14,7 +14,8 @@ import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answe
 import { conceptTitle } from "./lib/catalog.ts"
 import { chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
-import { amountTexts, liveAnswer, liveTrace, type Refusal } from "./lib/live.ts"
+import { amountTexts, liveAnswer, liveTrace, type Refusal, type Trace } from "./lib/live.ts"
+import type { Read } from "./lib/exact.ts"
 import { transport, type QuestionAnswer } from "./lib/transport.ts"
 import { CopyId } from "@/components/copy-id"
 import { RestatementCard } from "./restatement.tsx"
@@ -26,8 +27,14 @@ function Exact({ value, totals }: { readonly value: string; readonly totals: rea
     : <b className="tabular-nums">{value}</b>
 }
 
+/** One record's contribution as the server sent it, or "Withheld" when it sent none for this reader. */
+function amounts(read: Read<Trace>, index: number) {
+  const texts = amountTexts(read, index)
+  return texts === null ? <span className="text-muted-foreground" title="The server withheld this record's contribution from your role.">Withheld</span> : fraction(texts)
+}
+
 /** A bucket's records from the live trace: who contributed, under which receipt, and what the server withheld. */
-function LiveRecords({ question, lineageRef, bucket }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket }) {
+export function LiveRecords({ question, lineageRef, bucket }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket }) {
   const trace = useQuery({ queryKey: ["live-trace", question, lineageRef, bucket.key], queryFn: () => liveTrace(question, lineageRef, bucket.key), retry: false })
   const data = trace.data
   if (trace.isPending) return <p className="text-sm text-muted-foreground">Reading the records…</p>
@@ -41,7 +48,7 @@ function LiveRecords({ question, lineageRef, bucket }: { readonly question: stri
         {read.document.contributions.map((contribution, index) => (
           <TableRow key={`${contribution.fact.key}@${contribution.fact.version}`}>
             <TableCell className="font-mono">{contribution.fact.key}{contribution.restricted && <Badge variant="outline" className="ms-2 font-sans" title="The server withheld this record's values from your role.">Values withheld</Badge>}</TableCell>
-            <TableCell className="text-right tabular-nums">{fraction(amountTexts(read, index))}</TableCell>
+            <TableCell className="text-right tabular-nums">{amounts(read, index)}</TableCell>
             <TableCell><CopyId value={contribution.receiptHash} short={10} /><div className="text-xs text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
           </TableRow>
         ))}
