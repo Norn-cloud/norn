@@ -23,9 +23,9 @@ const render = (stored?: StoredDashboard) => renderToStaticMarkup(<QueryClientPr
 
 test("the editor shows its empty state, and a reopened dashboard shows every tile with its verbs, view and an honest not-run note", () => {
   const empty = render()
-  for (const text of ["No questions on this dashboard yet", "Add question", 'aria-label="Undo"', "All changes saved"]) expect(empty).toContain(text)
+  for (const text of ["No questions on this dashboard yet", "Add question", 'aria-label="Undo"', "Not saved"]) expect(empty).toContain(text)
   const html = render({ id: "dash-1", version: 3, dashboard: { title: "Refinery weekly", tiles: [tile("a"), { ...tile("b", 1), title: "Loss table", view: { kind: "table" } }] } })
-  for (const text of ['value="Refinery weekly"', "Version 3", "Gold Yield, weekly", "Loss table", 'aria-label="Move tile 2 up"', 'aria-label="Duplicate tile 1"', 'aria-label="Remove tile 2"', "Edit question", ">Run<"]) expect(html).toContain(text)
+  for (const text of ['value="Refinery weekly"', "Saved · version 3", "Gold Yield, weekly", "Loss table", 'aria-label="Move tile 2 up"', 'aria-label="Duplicate tile 1"', 'aria-label="Remove tile 2"', "Edit question", ">Run<"]) expect(html).toContain(text)
   expect(html).toMatch(/aria-label="Tile 2 view"[^]*?<option value="table" selected/)
 })
 
