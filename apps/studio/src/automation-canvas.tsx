@@ -128,18 +128,18 @@ export function AutomationEditor() {
                   {RECORDED_TOOLS.map(({ id }) => <option key={id} value={id}>{id}</option>)}
                 </select></label>
               <label className="block space-y-1"><span className="text-meta text-muted-foreground">Name its result</span>
-                <Input key={`${node.id}:bind`} defaultValue={node.config.bind} onBlur={(event) => edit(g.configureNode(graph, node.id, { bind: event.target.value.trim() }))} /></label>
+                <Input key={`${node.id}:bind:${node.config.bind}`} defaultValue={node.config.bind} onBlur={(event) => edit(g.configureNode(graph, node.id, { bind: event.target.value.trim() }))} /></label>
               {Object.entries(tool?.input.properties ?? {}).map(([field, schema]) => (
-                <label key={`${node.id}:${node.config.tool}:${field}`} className="block space-y-1"><span className="text-meta text-muted-foreground">{field} <span className="font-mono">({String(schema.type)})</span></span>
+                <label key={`${node.id}:${node.config.tool}:${field}:${inputsOf(node)[field]}`} className="block space-y-1"><span className="text-meta text-muted-foreground">{field} <span className="font-mono">({String(schema.type)})</span></span>
                   <Input defaultValue={inputsOf(node)[field]} placeholder="a value, or result.field" onBlur={(event) => edit(g.configureNode(graph, node.id, { input: JSON.stringify({ ...inputsOf(node), [field]: event.target.value }) }))} /></label>
               ))}
             </>}
             {node?.kind === "route" && <label className="block space-y-1"><span className="text-meta text-muted-foreground">Branches, one per line (b0, b1, …)</span>
-              <Textarea key={`${node.id}:branches`} className="font-mono text-xs" defaultValue={formatBranches(branchesOf(node))} onBlur={(event) => edit(g.configureNode(graph, node.id, { branches: JSON.stringify(parseBranches(event.target.value)) }))} /></label>}
+              <Textarea key={`${node.id}:branches:${node.config.branches}`} className="font-mono text-xs" defaultValue={formatBranches(branchesOf(node))} onBlur={(event) => edit(g.configureNode(graph, node.id, { branches: JSON.stringify(parseBranches(event.target.value)) }))} /></label>}
             {node?.kind === "sleep" && <label className="block space-y-1"><span className="text-meta text-muted-foreground">Wait (milliseconds)</span>
-              <Input key={`${node.id}:millis`} type="number" defaultValue={node.config.millis} onBlur={(event) => edit(g.configureNode(graph, node.id, { millis: event.target.value }))} /></label>}
+              <Input key={`${node.id}:millis:${node.config.millis}`} type="number" defaultValue={node.config.millis} onBlur={(event) => edit(g.configureNode(graph, node.id, { millis: event.target.value }))} /></label>}
             {node?.kind === "succeed" && <label className="block space-y-1"><span className="text-meta text-muted-foreground">Outcome</span>
-              <Input key={`${node.id}:outcome`} defaultValue={node.config.outcome} onBlur={(event) => edit(g.configureNode(graph, node.id, { outcome: event.target.value }))} /></label>}
+              <Input key={`${node.id}:outcome:${node.config.outcome}`} defaultValue={node.config.outcome} onBlur={(event) => edit(g.configureNode(graph, node.id, { outcome: event.target.value }))} /></label>}
             {node && problems.filter((problem) => problem.node === node.id).map((problem, index) => <Finding key={index} problem={problem} />)}
           </Well>
         </Panel>
