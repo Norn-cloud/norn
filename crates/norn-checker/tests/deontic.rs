@@ -1212,6 +1212,7 @@ fn normative_subject_names_cannot_be_installed_twice() {
     );
 }
 
+/// An admissible LAW-WITHIN-1 requirement: paid within 30 days of `post`.
 #[allow(clippy::expect_used, reason = "test-only LAW-WITHIN-1 fixture")]
 fn within_requirement() -> norn_ir::deontic::StructuredRequirement {
     use norn_ir::deontic::{RequirementTiming, RetriggerPolicy, WithinTiming};
@@ -1237,12 +1238,14 @@ fn within_requirement() -> norn_ir::deontic::StructuredRequirement {
     r
 }
 
+/// Replace the `within` window with raw decimal text.
 fn set_millis(r: &mut norn_ir::deontic::StructuredRequirement, millis: &str) {
     r.norm.law.timing = Some(norn_ir::LawTiming::Within {
         millis: millis.into(),
     });
 }
 
+/// LAW-WITHIN-1 admits one exact shape and refuses every variation with a typed reason.
 #[test]
 fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
     use norn_checker::deontic::RequirementRefusal as R;
@@ -1340,11 +1343,13 @@ fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
         assert_eq!(check_requirement(&r, &env), Err(refusal), "case {index}");
     }
     let mut missing = within_requirement();
-    missing
-        .wording
-        .0
-        .values_mut()
-        .for_each(|w| w.terms.within = None);
+    if let Some(w) = missing.wording.0.values_mut().last() {
+        w.terms.within = None;
+    }
+    assert_eq!(
+        check_requirement(&missing, &env),
+        Err(R::Wording("law.wording.incomplete_locale"))
+    );
     let view = norn_ir::requirement_display::RequirementView {
         requirement: missing,
         locale: "en".into(),

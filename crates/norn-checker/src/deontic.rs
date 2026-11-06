@@ -201,6 +201,15 @@ pub fn check_requirement(
         if within.trigger.trim().is_empty() || within.accountable.trim().is_empty() {
             return Err(R::InvalidBinding);
         }
+        // LAW-WORDING-LOCALE-1: every declared locale must render the window.
+        if requirement
+            .wording
+            .0
+            .values()
+            .any(|w| w.terms.within.is_none())
+        {
+            return Err(R::Wording("law.wording.incomplete_locale"));
+        }
     }
     let mut exceptions = std::collections::BTreeSet::new();
     let mut ids = [&law.id, &law.owner, &law.subject, root]
