@@ -472,7 +472,7 @@ impl ObjectAccess for CommitsInside {
         let section = self
             .sections
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
+            .saturating_add(1);
         if section == self.nth {
             let mut store = CellStore::open(
                 &self.path,
