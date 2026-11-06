@@ -62,7 +62,7 @@ export function decompile(envelope: Envelope, ref: LifecycleRef): Graph {
       id: state,
       kind: "state",
       // A column is a state card and a gap wide enough for a step's label between ports (STATE_SPACING).
-      position: { x: at.column * 264, y: at.row * 110 },
+      position: { x: at.column * 280, y: at.row * 110 },
       config: {
         initial: yes(lifecycle.initial.includes(state)),
         terminal: yes(lifecycle.terminal?.includes(state) ?? false),

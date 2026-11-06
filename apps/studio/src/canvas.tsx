@@ -47,7 +47,7 @@ export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, da
   const routed = laneRoute({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })
   const shift = routed.label.anchor === "middle" ? "-50%" : routed.label.anchor === "end" ? "-100%" : "0"
   // A straight step's label stays inside the gap, clear of both ports.
-  const room = routed.straight ? Math.max(0, targetX - sourceX - 24) : 160
+  const room = routed.straight ? Math.max(0, targetX - sourceX - 20) : 160
   return (
     <>
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
