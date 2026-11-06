@@ -113,10 +113,9 @@ impl<E> ReceiptBindingError<E> {
         Some(match self {
             Self::Unknown => "action.receipt_unknown",
             Self::Replayed => "action.receipt_replayed",
-            Self::Mismatch => "action.receipt_binding_mismatch",
+            Self::Mismatch | Self::Canonical(_) => "action.receipt_binding_mismatch",
             Self::NotAccepted => "action.receipt_not_accepted",
             Self::ResultType => "action.receipt_result_type",
-            Self::Canonical(_) => "action.receipt_binding_mismatch",
             Self::Store(_) => return None,
         })
     }

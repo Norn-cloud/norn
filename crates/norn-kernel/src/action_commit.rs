@@ -40,7 +40,7 @@
 //!    input's `set` changes. Both go through [`crate::prepare_decision`]. The
 //!    target's prepared `put` is canonicalized with the shared effective-value
 //!    builder, then authorized as the proposed state.
-//! 8a. **Receipt acceptance** (RECEIPT-EFFECT-1 / RECEIPT-CONSUME-1, Core 07):
+//!    **Receipt acceptance** (RECEIPT-EFFECT-1 / RECEIPT-CONSUME-1, Core 07):
 //!    a `fire_transition` declaring `acceptReceipt` resolves its input's
 //!    receipt digest through [`CellHost::resolve_accepted_receipt`], checks the
 //!    receipt is bound to the target run and its current generation, and adds
@@ -3925,7 +3925,8 @@ where
     let mut consumes = prepared.consumes;
     let receipt_delivery = match receipt {
         Some(acceptance) => {
-            let delivery = consume_receipt::<H::Error>(consumes, &acceptance, &writes, &mut reads)?;
+            let delivery =
+                consume_receipt::<H::Error>(consumes.is_some(), &acceptance, &writes, &mut reads)?;
             consumes = Some(delivery.clone());
             Some(delivery)
         }
@@ -3995,17 +3996,18 @@ where
                 generated_key,
             },
         )
-        .map_err(|refusal| match refusal {
+        .map_err(|refusal| {
             // RECEIPT-EFFECT-1: the receipt's delivery was already consumed
             // or is not the run's current generation; nothing committed.
-            ActionRefusal::Decision(DecisionRefusal::NotPending { consumed })
-                if receipt_delivery.as_ref() == Some(&consumed) =>
+            if let ActionRefusal::Decision(DecisionRefusal::NotPending { consumed }) = &refusal
+                && receipt_delivery.as_ref() == Some(consumed)
             {
                 ActionRefusal::ReceiptRefused {
                     code: "action.receipt_not_pending",
                 }
+            } else {
+                refusal
             }
-            refusal => refusal,
         }),
     }
 }
@@ -4015,7 +4017,7 @@ where
 /// check makes this the receipt's only consumption; a refused commit applies
 /// neither the transition nor the consumption.
 fn consume_receipt<X>(
-    consumes: Option<crate::cell_host::Consumed>,
+    already_consumes: bool,
     acceptance: &crate::result_reconciliation::Acceptance,
     writes: &[FactWrite],
     reads: &mut Vec<FactExpectation>,
@@ -4023,7 +4025,7 @@ fn consume_receipt<X>(
     let mismatch = ActionRefusal::ReceiptRefused {
         code: "action.receipt_binding_mismatch",
     };
-    if consumes.is_some() {
+    if already_consumes {
         return Err(mismatch);
     }
     for pin in &acceptance.reads {
