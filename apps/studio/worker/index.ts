@@ -1,5 +1,6 @@
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
+import { connectors } from "./connectors.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -13,6 +14,10 @@ export interface Env {
   readonly EMAIL_FROM?: string
   /** The Norn cell host (service binding); absent until a host is connected to this stage. */
   readonly NORN_HOST?: Fetcher
+  /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
+  readonly GATEWAY_URL?: string
+  readonly GATEWAY_CLIENT_ID?: string
+  readonly GATEWAY_CLIENT_SECRET?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -31,7 +36,9 @@ function auth(env: Env): Auth {
   const sendMagicLink = mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
     await mail.send({ to, from, subject: "Sign in to Norn Studio", text: `Sign in to Norn Studio: ${url}\n\nThe link expires in 10 minutes. If you did not ask for it, ignore this email.` })
   }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, ...sendMagicLink === undefined ? {} : { sendMagicLink } })
+  const { GATEWAY_URL: url, GATEWAY_CLIENT_ID: clientId, GATEWAY_CLIENT_SECRET: clientSecret } = env
+  const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
+  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...gateway === undefined ? {} : { gateway } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
@@ -74,6 +81,11 @@ export default {
       if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
+    }
+    if (pathname.startsWith("/api/connectors/")) {
+      // A gateway URL without its OAuth client is not a gateway this stage can use.
+      const gatewayEnv = env.GATEWAY_CLIENT_ID === undefined || env.GATEWAY_CLIENT_SECRET === undefined ? { ...env, GATEWAY_URL: undefined } : env
+      return connectors(request, gatewayEnv, auth(env), pathname.slice("/api/connectors".length), { db: env.AUTH_DB })
     }
     const session = await auth(env).api.getSession({ headers: request.headers })
     if (session === null) return refuse(401, "Sign in first.")
