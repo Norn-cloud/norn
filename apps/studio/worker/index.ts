@@ -108,6 +108,17 @@ async function agent(request: Request, env: Env, ctx: ExecutionContext): Promise
   return respond(model, body, (tokens) => ctx.waitUntil(Promise.all(ledgers.map(([, ledger]) => ledger.spend(tokens)))), request.signal)
 }
 
+/** One recorded example proposal, checked by the server's checker without the model: `{chip}` names it. */
+async function example(request: Request): Promise<Response> {
+  if (request.method !== "POST") return refuse(405, "Use POST.", { allow: "POST" })
+  const body = await request.json().catch(() => null) as { chip?: unknown } | null
+  if (typeof body?.chip !== "string") return refuse(400, "Expected {chip}.")
+  // Loaded on first use, like the assistant: the checker's WebAssembly is not needed elsewhere.
+  const [{ exampleVerdict }, { check }] = await Promise.all([import("./examples.ts"), import("./checker.ts")])
+  const verdict = exampleVerdict(body.chip, check)
+  return verdict === undefined ? refuse(404, "No such example.") : Response.json(verdict, { headers: { "cache-control": "no-store" } })
+}
+
 export default {
   async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url)
@@ -124,13 +135,14 @@ export default {
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
     }
-    if (pathname === "/api/agent") {
+    // The assistant and its example proposals: signed-in users only, from the Studio itself.
+    if (pathname === "/api/agent" || pathname === "/api/agent/example") {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
       // The assistant is for people; organization API keys may not spend its budget.
       if (actor.actorKind !== "user") return refuse(403, "The assistant is for signed-in users, not API keys.")
       if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
-      return agent(request, env, ctx)
+      return pathname === "/api/agent" ? agent(request, env, ctx) : example(request)
     }
     const session = await auth(env).api.getSession({ headers: request.headers })
     if (session === null) return refuse(401, "Sign in first.")

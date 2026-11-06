@@ -40,3 +40,16 @@ test.skipIf(pkg === undefined)("each chip's change gets the decision the corpus 
     expect({ chip, law: verdict.refusals.some((found) => found.law?.artifactId === law) }).toEqual({ chip, law: true })
   }
 })
+
+test.skipIf(pkg === undefined)("an example proposal is the recorded typed change, checked without the model", async () => {
+  const { EXAMPLES, exampleVerdict } = await import("../worker/examples.ts")
+  const checker = await import(join(pkg ?? "", "norn_checker_wasm.js")) as { initSync: (m: { module: Uint8Array }) => void; checkArtifactSet: (a: string, c: string) => string }
+  checker.initSync({ module: readFileSync(join(pkg ?? "", "norn_checker_wasm_bg.wasm")) })
+  const check = (artifacts: readonly Envelope[], context: string) => JSON.parse(checker.checkArtifactSet(JSON.stringify(artifacts), context)) as CheckResult
+  expect(EXAMPLES.map(({ chip }) => chip)).toEqual(corpus.cases.map(({ chip }) => chip))
+  const refused = exampleVerdict("Subtract a refining loss in the fine-mass law", check)
+  if (refused === undefined || "error" in refused) throw new Error("a verdict")
+  expect(refused.admitted).toBe(false)
+  expect(refused.refusals.some(({ law }) => law?.artifactId === "demo.fine_mass_conservation.law")).toBe(true)
+  expect(exampleVerdict("Something nobody recorded", check)).toBeUndefined()
+})
