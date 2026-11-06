@@ -42,6 +42,19 @@ export interface Inventory {
 }
 export interface Requirement { readonly requirement: string; readonly account: string | null; readonly state: string | null }
 export interface AccountDetail extends Account { readonly apps: readonly string[]; readonly health: string | null }
+export type RunRole = "member" | "admin"
+export type InputMapping = Readonly<Record<string, { readonly fixed: unknown }>>
+export interface Binding {
+  readonly id: string
+  readonly app: string
+  readonly tool: string
+  readonly label: string
+  readonly inputMapping: InputMapping
+  readonly runRole: RunRole
+  readonly updatedBy: string
+  readonly updatedAt: number
+}
+
 export interface Tool {
   readonly app: string
   readonly name: string
@@ -76,6 +89,7 @@ export const MATRIX = {
   },
   "App account": { connect: "supported", view: "supported", reconnect: "supported", rename: "supported", disconnect: "supported" },
   "Connector error": { show: "supported", fix: "supported" },
+  "Tool binding": { add: "supported", view: "supported", edit: "supported", remove: "supported", "test-run": "supported" },
 } as const satisfies Record<string, Partial<Record<string, VerbSupport>>>
 
 /** The matrix as Markdown, for PR bodies: ✓, or N/A with its reason. */

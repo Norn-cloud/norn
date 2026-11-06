@@ -1,7 +1,7 @@
 // One end-to-end test per object kind on Connections, in a real browser against a deployment.
 // Each test records the verbs it exercised; a ✓ verb of the matrix left unexercised fails the run.
-// Usage (on Boat only): E2E_BASE=https://next.norn.cloud E2E_EMAIL=… E2E_PASSWORD=… \
-//   E2E_GATEWAY_EMAIL=… E2E_GATEWAY_PASSWORD=… E2E_APP=… bun test/e2e/connections.e2e.ts
+// Usage (on Boat only): E2E_BASE=https://next.norn.cloud E2E_EMAIL=… E2E_PASSWORD=… (an org admin) \
+//   E2E_GATEWAY_EMAIL=… E2E_GATEWAY_PASSWORD=… E2E_APP=… E2E_APP_KEY=… E2E_TOOL=… E2E_TOOL_FIELD=… bun test/e2e/connections.e2e.ts
 // Credentials come from Infisical by name into the environment; nothing is printed or written.
 import { MATRIX, type VerbSupport } from "../../src/lib/connectors.ts"
 
@@ -16,7 +16,7 @@ type Page = {
   on(event: "dialog", listener: (dialog: { accept(): Promise<void> }) => void): void
   request: { get(url: string): Promise<{ status(): number; json(): Promise<{ code?: string; action?: { kind: string } }> }> }
 }
-type Locator = { click(): Promise<void>; fill(value: string): Promise<void>; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
+type Locator = { click(): Promise<void>; fill(value: string): Promise<void>; check(): Promise<void>; selectOption(value: string): Promise<unknown>; getByLabel: Page["getByLabel"]; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
 
 const env = (name: string) => {
   const value = process.env[name]
@@ -103,6 +103,32 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     did("show")
     await page.getByRole("button", { name: "Sign in to the gateway" }).click()
     await gatewaySignIn(page); await page.getByText("Signed in").waitFor(); did("fix")
+  },
+  "Tool binding": async (page, did) => {
+    // E2E_TOOL is a tool of E2E_APP with a string input E2E_TOOL_FIELD; the signed-in person is an admin.
+    page.on("dialog", (dialog) => void dialog.accept())
+    await open(page)
+    const tool = env("E2E_TOOL"), field = env("E2E_TOOL_FIELD"), name = `e2e binding ${Date.now()}`
+    await page.getByLabel("App").selectOption(app())
+    await page.getByRole("button", { name: `Bind ${tool}` }).click()
+    const editor = page.getByRole("form", { name: `Bind ${tool}` })
+    await editor.getByLabel("Binding name").fill(name)
+    await editor.getByLabel(`Fix ${field}`).check()
+    await editor.getByLabel(field).fill("fixed-by-e2e")
+    await editor.getByRole("button", { name: "Add binding" }).click()
+    const row = page.locator(`[data-binding]:has-text("${name}")`)
+    await row.waitFor(); did("add")
+    await row.getByRole("button", { name: "View" }).click()
+    await row.getByText(`${field} = fixed-by-e2e`).waitFor(); did("view")
+    await row.getByRole("button", { name: "Edit" }).click()
+    await page.getByRole("form", { name: `Edit ${name}` }).getByLabel("Who may run it").selectOption("admin")
+    await page.getByRole("form", { name: `Edit ${name}` }).getByRole("button", { name: "Save binding" }).click()
+    await row.getByText("Admins only").waitFor(); did("edit")
+    await row.getByRole("button", { name: "Test run" }).click()
+    await page.getByRole("form", { name: `Test run ${name}` }).getByRole("button", { name: "Run" }).click()
+    await row.getByLabel("Result").waitFor({ timeout: 30_000 }); did("test-run")
+    await row.getByRole("button", { name: "Remove" }).click()
+    await row.waitFor({ state: "detached" }); did("remove")
   },
 }
 
