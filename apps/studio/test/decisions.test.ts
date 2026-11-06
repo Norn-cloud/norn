@@ -91,6 +91,10 @@ test("a run's phase comes from its steps, and sets how often it is read again", 
   expect(phaseOf({ steps: [step("done"), step("done", "succeed")], decision: null, state: "x" })).toBe("succeeded")
   expect(phaseOf({ steps: [step("failed"), step("skipped", "succeed")], decision: null, state: "x" })).toBe("failed")
   expect([refreshEvery("running"), refreshEvery("waiting"), refreshEvery("succeeded")]).toEqual([2_000, 15_000, false])
+  // RUNS's first cut: no steps, no decision. The state alone says whether it may still move.
+  expect(phaseOf({ state: "awaiting_perform_ask", decision: undefined })).toBe("active")
+  expect(phaseOf({ state: null })).toBe("ended")
+  expect(refreshEvery("active")).toBe(5_000)
   expect(runTitle({ flow: { ruleId: "canon.cycle_count.flow.rule", version: 1, title: null } })).toBe("Cycle count")
   expect(newRunId()).toMatch(/^run_[0-9a-f-]{36}$/)
 })

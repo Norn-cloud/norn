@@ -177,6 +177,23 @@ test("run view: a waiting run links to its decision; Run again starts a new run 
   await expect(page.getByText("There is no such run you can read.")).toBeVisible()
 })
 
+test("run view, first cut: without steps the run shows its state, flow and generation, says step details are coming, and is read again with plain 200s", async ({ page }) => {
+  await session(page)
+  await decisionCell(page, { legacy: true })
+  let reads = 0
+  page.on("request", (request) => { if (request.url().includes("/api/host/v1/runs/run_restock_7")) reads += 1 })
+  await page.goto("/runs/run_restock_7")
+  await expect(page.getByRole("heading", { name: "Restock gold" })).toBeVisible()
+  const card = page.getByRole("region", { name: "Run" })
+  await expect(card).toContainText("awaiting_perform_ask_manager")
+  await expect(card).toContainText("Generation")
+  await expect(card).toContainText("Step details are coming soon")
+  await expect(page.getByRole("list", { name: "Steps" })).toHaveCount(0)
+  await expect(page.getByText("In progress")).toBeVisible()
+  await shoot(page, "run-first-cut")
+  await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThan(1)
+})
+
 test("not served and no cell: the inbox and the run view say why, and call nothing", async ({ page }) => {
   await session(page)
   await page.route("**/api/host/v1/decisions**", (route) => route.fulfill({ status: 404, body: "" }))

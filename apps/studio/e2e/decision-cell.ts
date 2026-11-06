@@ -82,7 +82,8 @@ export function fixtures(now = START) {
   return { decisions, runs }
 }
 
-export async function decisionCell(page: Page, options: { readonly empty?: boolean; readonly capped?: boolean } = {}): Promise<DecisionCell> {
+/** `legacy`: runs as RUNS first ships them: no `steps`, no `decision`, no ETag (a plain 200 each read). */
+export async function decisionCell(page: Page, options: { readonly empty?: boolean; readonly capped?: boolean; readonly legacy?: boolean } = {}): Promise<DecisionCell> {
   const { decisions: all, runs } = fixtures()
   const decisions = options.empty ? [] : all
   let now = START
@@ -177,6 +178,10 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
       const next = run.steps.find((s) => s.status === "pending")
       if (next) Object.assign(next, { status: "running", startedAtMs: now + run.reads * 1000 })
       run.version += 1
+    }
+    if (options.legacy) {
+      const { steps: _steps, decision: _decision, ...first } = document(run)
+      return route.fulfill({ json: first })
     }
     const etag = `"${run.generation}:${run.version}"`
     if (route.request().headers()["if-none-match"] === etag) return route.fulfill({ status: 304, headers: { etag } })

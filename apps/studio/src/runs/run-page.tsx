@@ -20,7 +20,7 @@ const STATUS: Readonly<Record<StepStatus, { readonly icon: LucideIcon; readonly 
   skipped: { icon: MinusCircle, label: "Skipped", tone: "text-muted-foreground" },
 }
 
-const PHASE: Readonly<Record<Phase, string>> = { running: "Running", waiting: "Waiting on a decision", succeeded: "Succeeded", failed: "Failed", ended: "Ended" }
+const PHASE: Readonly<Record<Phase, string>> = { running: "Running", waiting: "Waiting on a decision", succeeded: "Succeeded", failed: "Failed", ended: "Ended", active: "In progress" }
 
 const KIND: Readonly<Record<RunStep["kind"], string>> = { perform: "Step", decide: "Ask a person", route: "Route", wait: "Wait", succeed: "Outcome", fail: "Outcome" }
 
@@ -102,17 +102,28 @@ export function RunPage() {
         <p className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <span>Run</span><CopyId value={run.id} />
           <span>· started {new Date(run.createdAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</span>
-          {technical && <span>· {run.flow.ruleId} v{run.flow.version} · generation {run.generation} · version {run.version}</span>}
+          {technical && <span>· {run.flow.ruleId} v{run.flow.version}{run.steps !== undefined && ` · generation ${run.generation}`} · version {run.version}</span>}
         </p>
       </header>
-      {run.decision !== null && (
+      {run.steps === undefined && (
+        <section aria-label="Run" className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
+          <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2 text-sm">
+            <dt className="text-muted-foreground">State</dt><dd>{run.state === null ? <span className="text-muted-foreground">Ended (the run object is gone)</span> : <code className="text-xs">{run.state}</code>}</dd>
+            <dt className="text-muted-foreground">Flow</dt><dd>{runTitle(run)} <span className="text-meta text-muted-foreground">v{run.flow.version}</span></dd>
+            <dt className="text-muted-foreground">Generation</dt><dd className="tabular-nums">{run.generation}</dd>
+            <dt className="text-muted-foreground">Updated</dt><dd>{new Date(run.updatedAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}</dd>
+          </dl>
+          <p className="rounded-lg border border-dashed border-node-border px-3 py-2 text-meta text-muted-foreground">Step details are coming soon: this cell doesn't send a run's steps yet.</p>
+        </section>
+      )}
+      {(run.decision ?? null) !== null && (
         <div className="flex flex-wrap items-center gap-3 rounded-node border border-[color-mix(in_oklab,var(--tint-ask)_35%,transparent)] bg-[color-mix(in_oklab,var(--tint-ask)_8%,var(--card))] px-4 py-3 text-sm">
           <Hourglass className="size-4 text-[var(--tint-ask)]" aria-hidden />
           <span>This run waits on a person's decision.</span><span className="flex-1" />
-          <Link to="/decisions" search={{ open: run.decision.id } as never} className="font-medium underline-offset-4 hover:underline">Open decision</Link>
+          <Link to="/decisions" search={{ open: run.decision!.id } as never} className="font-medium underline-offset-4 hover:underline">Open decision</Link>
         </div>
       )}
-      <ol aria-label="Steps" className="grid gap-2">
+      {run.steps !== undefined && <ol aria-label="Steps" className="grid gap-2">
         {run.steps.map((step, index) => {
           const s = STATUS[step.status]
           const Icon = s.icon
@@ -154,7 +165,7 @@ export function RunPage() {
             </li>
           )
         })}
-      </ol>
+      </ol>}
     </div>
   )
 }
