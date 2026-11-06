@@ -37,3 +37,18 @@ test("a refused question shows the checker's reason; only the Worker's question 
   expect(questionVerdictOf(refused)).toBe(refused)
   expect(questionVerdictOf({ admitted: true })).toBeUndefined()
 })
+
+test("null, primitives and an admitted verdict without a readable plan are not question verdicts", () => {
+  for (const output of [null, undefined, "question", 7, [], { ...admitted, plan: null }, { ...admitted, plan: { grain: "demo.Conversion" } }]) {
+    expect(questionVerdictOf(output)).toBeUndefined()
+  }
+  expect(questionVerdictOf(admitted)).toBe(admitted)
+})
+
+test("a filter whose operator has no Business word reads as matches, never undefined", () => {
+  const plan = admitted.plan ?? (() => { throw new Error("plan") })()
+  for (const operator of [undefined, "like"]) {
+    const words = Object.fromEntries(planWords({ ...plan, question: { ...plan.question, filter: [{ path: { property: "metal" }, operator, value: "gold" }] } }))
+    expect(words["Only where"]).toBe("metal matches gold")
+  }
+})
