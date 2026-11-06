@@ -139,6 +139,124 @@ fn valid_pointer(pointer: &str) -> bool {
     true
 }
 
+/// `LawTiming::Within` text rule: positive canonical u64 decimal (no sign,
+/// leading zero or overflow). The one parser for every admission path.
+#[must_use]
+pub fn canonical_positive_millis(text: &str) -> Option<u64> {
+    text.parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0 && value.to_string() == text)
+}
+
+/// Largest admitted `within` window: 2^63 ms. The cell's committed clock is a
+/// nonnegative SQLite INTEGER, so `t ≤ 2^63 − 1` and `t + millis ≤ u64::MAX`:
+/// opening an activation can never overflow, so no deadline law can refuse a
+/// business commit.
+pub const MAX_WITHIN_MILLIS: u64 = 1 << 63;
+
+/// Why a structured requirement's timing has no admitted shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimingShapeError {
+    /// Any temporal pairing other than the safety fragment or LAW-WITHIN-1.
+    Unsupported,
+    /// The normative grade contradicts its temporal wrapper.
+    GradeMismatch,
+    /// `law.timing.millis` is not positive canonical u64 decimal text, or it
+    /// exceeds [`MAX_WITHIN_MILLIS`].
+    InvalidDuration,
+}
+
+impl TimingShapeError {
+    /// Stable locale-independent diagnostic identity.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Unsupported => "law.validation.unsupported_temporal",
+            Self::GradeMismatch | Self::InvalidDuration => "law.validation.invalid_document",
+        }
+    }
+}
+
+/// LAW-WITHIN-1 shape. `within` pairs only with an obligation to eventually
+/// respond under `law.timing = within {millis}`, returning the window in
+/// milliseconds; every other requirement timing is the untimed always/never
+/// fragment whose grade matches its wrapper.
+///
+/// # Errors
+/// Any other temporal pairing, a contradicting grade, or a zero,
+/// non-canonical, over-cap or overflowing duration.
+pub fn within_shape(
+    requirement: &norn_ir::deontic::StructuredRequirement,
+) -> Result<Option<(&norn_ir::deontic::WithinTiming, u64)>, TimingShapeError> {
+    use TimingShapeError as E;
+    use norn_ir::LawTiming as T;
+    use norn_ir::deontic::RequirementTiming as RT;
+    let law = &requirement.norm.law;
+    match (&requirement.timing, &law.modality, &law.timing) {
+        (RT::Within(within), LawModality::Eventually {}, Some(T::Within { millis })) => {
+            if requirement.norm.modality != DeonticModality::Obligation {
+                return Err(E::GradeMismatch);
+            }
+            // The ordinary LawIR text rule, plus the no-overflow cap.
+            let value = canonical_positive_millis(millis)
+                .filter(|v| *v <= MAX_WITHIN_MILLIS)
+                .ok_or(E::InvalidDuration)?;
+            Ok(Some((within, value)))
+        }
+        (RT::Within(_), _, _)
+        | (_, LawModality::Eventually {} | LawModality::Until { .. }, _)
+        | (_, _, Some(_)) => Err(E::Unsupported),
+        (_, modality, None) => {
+            if (requirement.norm.modality == DeonticModality::Prohibition)
+                != matches!(modality, LawModality::Never {})
+            {
+                return Err(E::GradeMismatch);
+            }
+            Ok(None)
+        }
+    }
+}
+
+/// LAW-WORDING-LOCALE-1 for one requirement: every locale is complete,
+/// including the optional terms its root (`pack`) and timing (`within`) render.
+///
+/// # Errors
+/// The wording's own refusal, or `law.wording.incomplete_locale`.
+pub fn check_wording(
+    requirement: &norn_ir::deontic::StructuredRequirement,
+) -> Result<(), &'static str> {
+    requirement.wording.validate()?;
+    let pack = matches!(requirement.norm.law.scope.root, LawRoot::Pack(_));
+    let within = matches!(
+        requirement.timing,
+        norn_ir::deontic::RequirementTiming::Within(_)
+    );
+    if requirement
+        .wording
+        .0
+        .values()
+        .any(|w| (pack && w.terms.pack.is_none()) || (within && w.terms.within.is_none()))
+    {
+        return Err("law.wording.incomplete_locale");
+    }
+    Ok(())
+}
+
+/// Checked rendering: the admitted timing shape and LAW-WORDING-LOCALE-1 over
+/// every locale, then norn-ir's render-only projection. Refusal codes for
+/// pre-existing cases are unchanged.
+///
+/// # Errors
+/// The first timing, wording or rendering refusal.
+pub fn render_requirement(
+    view: &norn_ir::requirement_display::RequirementView,
+) -> Result<Vec<norn_ir::requirement_display::RequirementSlot>, &'static str> {
+    within_shape(&view.requirement).map_err(TimingShapeError::code)?;
+    let slots = view.slots()?;
+    check_wording(&view.requirement)?;
+    Ok(slots)
+}
+
 /// Stable structured-authoring refusal. Success is structural, not admission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequirementRefusal {
@@ -195,14 +313,13 @@ pub fn check_requirement(
 ) -> Result<(), RequirementRefusal> {
     use RequirementRefusal as R;
     use norn_expr::{Expression, Type, check_expression};
-    use norn_ir::deontic::TimingShapeError;
     let rule = &requirement.norm;
     let law = &rule.law;
     let root = match &law.scope.root {
         LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
         LawRoot::Pack(_) => return Err(R::InvalidBinding),
     };
-    let within = requirement.within().map_err(|error| match error {
+    let within = within_shape(requirement).map_err(|error| match error {
         TimingShapeError::Unsupported => R::UnsupportedTiming,
         TimingShapeError::GradeMismatch => R::ModalityMismatch,
         TimingShapeError::InvalidDuration => R::InvalidDuration,
@@ -250,7 +367,7 @@ pub fn check_requirement(
     {
         return Err(R::InvalidBinding);
     }
-    requirement.validate_wording().map_err(R::Wording)?;
+    check_wording(requirement).map_err(R::Wording)?;
     let response = match &law.response {
         LawResponse::Predicate { expression } => Some(expression),
         LawResponse::Invariant {

@@ -102,101 +102,13 @@ pub enum RequirementTiming {
     Within(WithinTiming),
 }
 
-/// Largest admitted `within` window: 2^63 ms. The cell's committed clock is a
-/// nonnegative SQLite INTEGER, so `t ≤ 2^63 − 1` and `t + millis ≤ u64::MAX`:
-/// opening an activation can never overflow, so no deadline law can refuse a
-/// business commit.
-pub const MAX_WITHIN_MILLIS: u64 = 1 << 63;
-
-/// Why a structured requirement's timing has no admitted shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimingShapeError {
-    /// Any temporal pairing other than the safety fragment or LAW-WITHIN-1.
-    Unsupported,
-    /// The normative grade contradicts its temporal wrapper.
-    GradeMismatch,
-    /// `law.timing.millis` is not positive canonical u64 decimal text, or it
-    /// exceeds [`MAX_WITHIN_MILLIS`].
-    InvalidDuration,
-}
-
-impl TimingShapeError {
-    /// Stable locale-independent diagnostic identity.
-    #[must_use]
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::Unsupported => "law.validation.unsupported_temporal",
-            Self::GradeMismatch | Self::InvalidDuration => "law.validation.invalid_document",
-        }
-    }
-}
-
-impl StructuredRequirement {
-    /// LAW-WORDING-LOCALE-1 for this requirement: every locale is complete,
-    /// including the optional terms its root (`pack`) and timing (`within`) render.
-    ///
-    /// # Errors
-    /// The wording's own refusal, or `law.wording.incomplete_locale`.
-    pub fn validate_wording(&self) -> Result<(), &'static str> {
-        self.wording.validate()?;
-        let pack = matches!(self.norm.law.scope.root, crate::LawRoot::Pack(_));
-        let within = matches!(self.timing, RequirementTiming::Within(_));
-        if self
-            .wording
-            .0
-            .values()
-            .any(|w| (pack && w.terms.pack.is_none()) || (within && w.terms.within.is_none()))
-        {
-            return Err("law.wording.incomplete_locale");
-        }
-        Ok(())
-    }
-
-    /// LAW-WITHIN-1 shape. `within` pairs only with an obligation to eventually
-    /// respond under `law.timing = within {millis}`, returning the window in
-    /// milliseconds; every other requirement timing is the untimed
-    /// always/never fragment whose grade matches its wrapper.
-    ///
-    /// # Errors
-    /// Any other temporal pairing, a contradicting grade, or a zero,
-    /// non-canonical or overflowing duration.
-    pub fn within(&self) -> Result<Option<(&WithinTiming, u64)>, TimingShapeError> {
-        use crate::{LawModality as M, LawTiming as T};
-        use TimingShapeError as E;
-        let law = &self.norm.law;
-        match (&self.timing, &law.modality, &law.timing) {
-            (RequirementTiming::Within(within), M::Eventually {}, Some(T::Within { millis })) => {
-                if self.norm.modality != DeonticModality::Obligation {
-                    return Err(E::GradeMismatch);
-                }
-                // The ordinary LawIR text rule, plus the no-overflow cap.
-                let value = crate::canonical_positive_millis(millis)
-                    .filter(|v| *v <= MAX_WITHIN_MILLIS)
-                    .ok_or(E::InvalidDuration)?;
-                Ok(Some((within, value)))
-            }
-            (RequirementTiming::Within(_), _, _)
-            | (_, M::Eventually {} | M::Until { .. }, _)
-            | (_, _, Some(_)) => Err(E::Unsupported),
-            (_, modality, None) => {
-                if (self.norm.modality == DeonticModality::Prohibition)
-                    != matches!(modality, M::Never {})
-                {
-                    return Err(E::GradeMismatch);
-                }
-                Ok(None)
-            }
-        }
-    }
-}
-
 /// Activation policy for `within`; the duration stays in `law.timing`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WithinTiming {
     /// Lifecycle transition identity on the subject that opens an activation.
-    /// `check_requirement` checks only that it is nonblank; resolving it
-    /// against the subject's lifecycle is catalog admission (TARGET).
+    /// Admission (norn-checker) checks it is nonblank; resolving it against the
+    /// subject's lifecycle is catalog admission (TARGET).
     pub trigger: String,
     /// What a trigger does while an activation is already open.
     pub retrigger: RetriggerPolicy,

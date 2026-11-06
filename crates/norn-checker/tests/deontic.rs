@@ -1261,7 +1261,10 @@ fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
         requirement: ok,
         locale: "en".into(),
     };
-    let rendered = view.slots().expect("rendered").remove(4).text;
+    let rendered = norn_checker::deontic::render_requirement(&view)
+        .expect("rendered")
+        .remove(4)
+        .text;
     assert!(rendered.contains("2592000000 ms; post"), "{rendered}");
     let mut missing = within_requirement();
     if let Some(w) = missing.wording.0.values_mut().last() {
@@ -1275,7 +1278,10 @@ fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
         requirement: missing,
         locale: "en".into(),
     };
-    assert_eq!(view.slots().err(), Some("law.wording.incomplete_locale"));
+    assert_eq!(
+        norn_checker::deontic::render_requirement(&view).err(),
+        Some("law.wording.incomplete_locale")
+    );
     // Lowering never drops the activation policy; theorem lowering stays closed.
     let ok = within_requirement();
     assert_eq!(
@@ -1432,7 +1438,7 @@ fn within_refuses_every_variation_with_a_typed_reason() {
     let mut boundary = within_requirement();
     set_millis(
         &mut boundary,
-        &norn_ir::deontic::MAX_WITHIN_MILLIS.to_string(),
+        &norn_checker::deontic::MAX_WITHIN_MILLIS.to_string(),
     );
     check_requirement(&boundary, &env).expect("largest admitted window");
     assert!(norn_checker::deontic::lower_requirement(&requirement()).is_ok());

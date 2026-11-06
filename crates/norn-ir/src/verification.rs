@@ -151,15 +151,6 @@ pub enum LawModality {
     },
 }
 
-/// `LawTiming::Within` text rule: positive canonical u64 decimal (no sign,
-/// leading zero or overflow). The one parser for every admission path.
-#[must_use]
-pub fn canonical_positive_millis(text: &str) -> Option<u64> {
-    text.parse::<u64>()
-        .ok()
-        .filter(|value| *value > 0 && value.to_string() == text)
-}
-
 /// Progress timing. Exact milliseconds are decimal text, avoiding JS number rounding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
