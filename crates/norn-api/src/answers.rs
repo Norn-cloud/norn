@@ -137,9 +137,13 @@ pub struct NornQueryRow {
 pub struct NornQueryMember {
     /// Original cell object version.
     pub version: u64,
-    /// Operand contributions, in `totals` order; null means a predicate excluded the operand.
-    #[schema(schema_with = amounts_schema)]
-    pub amounts: Vec<Option<String>>,
+    /// Operand contributions, in `totals` order; null when withheld (DATA-VALUES-1).
+    #[schema(required = true, schema_with = amounts_schema)]
+    pub amounts: Option<Vec<Option<String>>>,
+    /// The reader holds no Values grant on this member; absent when false.
+    #[serde(default)]
+    #[schema(required = false)]
+    pub restricted: bool,
 }
 
 /// An answer read at a knowledge cutoff, beside its historical world.
@@ -219,8 +223,16 @@ fn totals_schema() -> Schema {
 }
 
 pub(crate) fn amounts_schema() -> Schema {
-    decimal_list(
-        true,
-        "Operand contributions, in `totals` order; null means a predicate excluded the operand.",
-    )
+    let mut array = Array::new(decimal(true, ""));
+    array.description = Some(
+        "Operand contributions, in `totals` order; a null operand means a predicate excluded it. \
+         The whole list is null when the reader may not see the values of every member of the \
+         bucket (DATA-VALUES-1): amounts are row values."
+            .to_owned(),
+    );
+    array.schema_type = utoipa::openapi::schema::SchemaType::from_iter([
+        utoipa::openapi::schema::Type::Array,
+        utoipa::openapi::schema::Type::Null,
+    ]);
+    Schema::Array(array)
 }

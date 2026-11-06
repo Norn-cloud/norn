@@ -19,7 +19,8 @@ fn query_envelope_preserves_exact_contributions_and_unavailable_ratios() {
             "conversion-1".into(),
             Member {
                 version: 7,
-                amounts: vec![Some(amount)],
+                amounts: Some(vec![Some(amount)]),
+                restricted: false,
             },
         )]),
     };
