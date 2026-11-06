@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs"
+import { closeSync, fchmodSync, openSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 // The self-hosted Studio: the same Worker, assets and bindings that alchemy.run.ts
@@ -73,10 +73,32 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   }
 }
 
+/**
+ * Write a config that carries secrets: created exclusively (an existing file,
+ * whatever its permissions, refuses rather than being reused) with mode 0600,
+ * set on the open descriptor before any byte is written. The values travel in
+ * the file only, never in argv, logs or error text.
+ */
+export function writeSecretConfig(path: string, config: Record<string, unknown>): void {
+  let fd: number
+  try {
+    fd = openSync(path, "wx", 0o600)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`${path} already exists; remove the stale file and deploy again`)
+    throw error
+  }
+  try {
+    fchmodSync(fd, 0o600)
+    writeFileSync(fd, `${JSON.stringify(config, null, 2)}\n`)
+  } finally {
+    closeSync(fd)
+  }
+}
+
 // `node celld-config.ts <project-dir>`: write <project-dir>/wrangler.json (mode 0600).
 if (import.meta.main) {
   const dir = process.argv[2]
   if (dir === undefined) throw new Error("usage: celld-config.ts <project-dir>")
-  writeFileSync(join(dir, "wrangler.json"), `${JSON.stringify(celldConfig(celldStudio(process.env)), null, 2)}\n`, { mode: 0o600 })
+  writeSecretConfig(join(dir, "wrangler.json"), celldConfig(celldStudio(process.env)))
   console.log(`wrote ${join(dir, "wrangler.json")} for norn-studio-${process.env.STUDIO_STAGE}`)
 }

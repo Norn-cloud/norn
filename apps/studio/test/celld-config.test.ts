@@ -36,3 +36,21 @@ test("production, weak secrets, email and half an assistant refuse before anythi
   expect(() => celldStudio({ ...BASE, AI_GATEWAY_URL: "https://gw" })).toThrow("together")
   expect(() => celldStudio({ ...BASE, NORN_HOST_SERVICE: "Norn_Cell" })).toThrow("script name")
 })
+
+test("the secret-bearing config is created exclusively, readable by its owner only", async () => {
+  const { mkdtempSync, statSync, writeFileSync, readFileSync, chmodSync } = await import("node:fs")
+  const { join } = await import("node:path")
+  const { tmpdir } = await import("node:os")
+  const { writeSecretConfig } = await import("../celld-config.ts")
+  const dir = mkdtempSync(join(tmpdir(), "celld-config-"))
+  const path = join(dir, "wrangler.json")
+  writeSecretConfig(path, { vars: { BETTER_AUTH_SECRET: SECRET } })
+  expect(statSync(path).mode & 0o777).toBe(0o600)
+  expect(JSON.parse(readFileSync(path, "utf8")).vars.BETTER_AUTH_SECRET).toBe(SECRET)
+  // A stale file is never reused, whatever its permissions; its mode and contents stay as they were.
+  chmodSync(path, 0o644)
+  writeFileSync(path, "{}")
+  expect(() => writeSecretConfig(path, { vars: { BETTER_AUTH_SECRET: SECRET } })).toThrow("already exists")
+  expect(statSync(path).mode & 0o777).toBe(0o644)
+  expect(readFileSync(path, "utf8")).toBe("{}")
+})

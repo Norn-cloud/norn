@@ -41,3 +41,13 @@ test("--app names another Studio checkout to build; anything else refuses", () =
   expect(() => appDir(["--app", "--commit"], own)).toThrow("--app needs a directory")
   expect(() => appDir(["--app", import.meta.dir], own)).toThrow("not a Studio app directory")
 })
+
+test("a stalled origin is a mismatch by the deadline, not a hang", async () => {
+  const stalled = ((_url: string, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+    })) as unknown as typeof fetch
+  const started = Date.now()
+  expect(await awaitServed("https://demo.norn.cloud", "/assets/index-B4eJ2Gv7.js", 300, stalled)).toEqual({ served: undefined, matched: false })
+  expect(Date.now() - started).toBeLessThan(2000)
+})
