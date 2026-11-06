@@ -627,6 +627,7 @@ fn resolved_trace_document() -> SdkDocument {
         context,
         cutoff: None,
         resolved: Arc::new(AtomicUsize::new(0)),
+        min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
     };
     let QuestionAnswer::Live(answer) =
         get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime).expect("mapped answer")
@@ -966,14 +967,24 @@ fn the_public_lineage_handle_is_keyed_and_not_a_guessing_oracle() {
     else {
         panic!("live")
     };
-    let cell = host.cell().expect("cell");
-    let snapshot = runtime.snapshot(cell.store(), &runtime.plan, "reader").expect("snapshot");
-    let internal = cell
-        .store()
-        .evaluate_question(&runtime.plan, snapshot.context, |_| Ok(true))
+    // The internal pin, recomputed from the same rows restored unredacted: an
+    // identically seeded store, the reader's context, every row visible.
+    let (mut store, plan, mut context) = fixture();
+    context.scope = physical().key();
+    store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            writes: fixture_writes(),
+            ..CommitBatch::default()
+        })
+        .expect("K1");
+    let snapshot = runtime.snapshot(&store, &plan, "reader").expect("snapshot");
+    let internal = store
+        .evaluate_question(&plan, snapshot.context, |_| Ok(true))
         .expect("unredacted")
         .lineage_ref;
-    drop(cell);
     assert_ne!(answer.lineage_ref, internal, "the content hash is not published");
     assert_eq!(answer.lineage_ref, keyed_lineage_handle(&HANDLE_KEY, &internal));
     assert_ne!(answer.lineage_ref, keyed_lineage_handle(&[8; 32], &internal));
