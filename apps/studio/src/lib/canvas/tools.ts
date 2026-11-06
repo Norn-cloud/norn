@@ -33,3 +33,23 @@ export const EXAMPLE: Graph = {
     edge("overdue", "b0", "remind"), edge("overdue", "next", "open"),
   ],
 }
+
+/** An automation that asks a person, with a follow-up decision after one option (the decision preview's sheet state). */
+export const DECISION_EXAMPLE: Graph = {
+  nodes: [
+    node("start", "start", 0, 120),
+    node("load", "perform", 200, 120, { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
+    node("chase", "decide", 420, 120, { question: "Invoice is overdue: what should I do?", risk: "high", deciderRoles: "admin", agentPick: "o1", options: JSON.stringify([{ id: "o1", label: "Send a reminder", scope: "Email · the customer" }, { id: "o2", label: "Leave it", scope: "Nothing sent" }]) }),
+    node("remind", "perform", 660, 60, { tool: "billing.notify", input: JSON.stringify({ invoiceId: "invoice.id", outcome: "overdue" }) }),
+    node("escalate", "decide", 880, 60, { question: "Tell the account owner too?", risk: "low", deciderRoles: "admin", agentPick: "o2", options: JSON.stringify([{ id: "o1", label: "Tell the owner", scope: "#accounts · internal" }, { id: "o2", label: "Only the reminder", scope: "Nothing more" }]) }),
+    node("escalated", "succeed", 1100, 0, { outcome: "escalated" }),
+    node("reminded", "succeed", 1100, 120, { outcome: "reminded" }),
+    node("left", "succeed", 660, 220, { outcome: "left" }),
+  ],
+  edges: [
+    edge("start", "next", "load"), edge("load", "next", "chase"),
+    edge("chase", "opt:o1", "remind"), edge("remind", "next", "escalate"),
+    edge("escalate", "opt:o1", "escalated"), edge("escalate", "opt:o2", "reminded"),
+    edge("chase", "opt:o2", "left"),
+  ],
+}

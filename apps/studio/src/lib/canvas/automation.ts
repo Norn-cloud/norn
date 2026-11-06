@@ -9,6 +9,7 @@
 import type { Expr } from "../../../../../tools/norn-ts/src/builder/expr.ts"
 import { X, lowerFlow, type BuildDiagnostic, type EnvelopeOptions, type FlowDef, type FnRef, type Step } from "../../../../../tools/norn-ts/src/builder/index.ts"
 import type { CanvasEdge, CanvasNode, Graph, Kinds, Port } from "./graph.ts"
+import { decisionPorts, decisionSteps, optionPort, optionsOf, rolesOf } from "./decision.ts"
 
 /** Control flow: every step hands on to the next. What a step reads is typed by its tool's schemas, which lowering checks. */
 const FLOW = "flow"
@@ -30,6 +31,7 @@ export const automationKinds: Kinds = {
   perform: () => [input, next],
   sleep: () => [input, next],
   succeed: () => [input],
+  decide: (node) => decisionPorts(node),
   route: (node) => [input, ...branchesOf(node).map((_, index) => ({ id: `b${index}`, type: FLOW, side: "out" as const })), { id: "otherwise", type: FLOW, side: "out" }, next],
 }
 
@@ -96,12 +98,13 @@ export function toFlow(graph: Graph, tools: readonly FnRef[], meta: { readonly i
       if (reached.has(node.id)) { problems.push({ code: "canvas.flow.cycle", message: "This step leads back to itself; a flow only moves forward", node: node.id }); break }
       reached.add(node.id)
       const step = stepOf(node)
-      if (step) steps.push(step)
+      if (Array.isArray(step)) steps.push(...step)
+      else if (step) steps.push(step)
       if (node.kind === "succeed") break
     }
     return steps
   }
-  const stepOf = (node: CanvasNode): Step | undefined => {
+  const stepOf = (node: CanvasNode): Step | Step[] | undefined => {
     const sourceMap = { id: node.id, kind: node.kind === "route" ? "switch" as const : node.kind as "perform" | "sleep" | "succeed" }
     switch (node.kind) {
       case "perform": {
@@ -119,6 +122,15 @@ export function toFlow(graph: Graph, tools: readonly FnRef[], meta: { readonly i
         const branches = conditions.map((all, index) => ({ when: all.length > 0 ? all.map(compare).reduce((both, one) => X.and(both, one)) : X.lit(true), then: sequence(node.id, `b${index}`) }))
         const route: Step = { _tag: "Route", branches, otherwise: sequence(node.id, "otherwise"), at: at(node), sourceMap: { ...sourceMap, branchLabels: conditions.map((_, index) => `b${index}`), otherwiseLabel: "otherwise" } }
         return route
+      }
+      case "decide": {
+        const options = optionsOf(node)
+        if (!(node.config.question ?? "").trim()) problems.push({ code: "canvas.decision.no_question", message: "Say what the person is deciding", node: node.id })
+        if (options.length === 0) problems.push({ code: "canvas.decision.no_options", message: "A decision needs at least one option", node: node.id })
+        if (rolesOf(node).length === 0) problems.push({ code: "canvas.decision.no_decider", message: "Name the roles that may decide", node: node.id })
+        for (const option of options) if (!graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === optionPort(option)) && !graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === "next"))
+          problems.push({ code: "canvas.decision.option_leads_nowhere", message: `Option ${option.id} (${option.label}) leads nowhere; connect it, or continue after the decision`, node: node.id })
+        return decisionSteps(node, (port) => sequence(node.id, port), at(node))
       }
       default: return undefined
     }
