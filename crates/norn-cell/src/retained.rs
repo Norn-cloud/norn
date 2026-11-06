@@ -187,14 +187,15 @@ pub(crate) fn insert(
 /// Lower-case hex SHA-256 of a canonical payload.
 #[must_use]
 pub fn payload_sha256(payload: &str) -> String {
-    use std::fmt::Write as _;
     use transparency_sha2::{Digest, Sha256};
-    Sha256::digest(payload.as_bytes())
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
+    let mut hex = String::with_capacity(64);
+    for byte in Sha256::digest(payload.as_bytes()) {
+        for nibble in [byte >> 4, byte & 0x0f] {
+            // Every nibble is below 16, so a hex digit always exists.
+            hex.push(char::from_digit(u32::from(nibble), 16).unwrap_or('0'));
+        }
+    }
+    hex
 }
 
 fn to_i64(value: u64) -> Result<i64, CellError> {

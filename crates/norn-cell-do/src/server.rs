@@ -1,7 +1,10 @@
-//! Read-only fetch dispatch over `norn_api`'s shared, authorized services.
+//! Fetch dispatch over `norn_api`'s shared, authorized services: the read
+//! routes, F2b's ad-hoc questions, and the retained-definition routes
+//! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
+//! `/v1/definitions/{id}:retire`), whose writes are the only mutations.
 //!
-//! The transport carries method, path, query and the `Authorization` header
-//! only. Scope comes from the explicit query and is admitted against the
+//! The transport carries method, path, query, the `Authorization` header and
+//! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
 //! physical cell; the principal comes from [`PrincipalResolver`]; authority is
 //! the host's [`norn_api::authz::Authorizer`]. No SQL, schema or table name is
 //! ever accepted or returned.
