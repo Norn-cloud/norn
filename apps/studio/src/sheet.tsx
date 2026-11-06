@@ -48,7 +48,9 @@ const SPECIMENS: Record<string, () => ReactNode> = {
   "frame/dirty": () => {
     if (!ORDER || !ORDER_ENVELOPE) return null
     const initial = lifecycleFrame(ORDER_ENVELOPE, ORDER, () => ({ issues: [], status: null }), []).initial
-    writeDraft("sheet:dirty", { graph: g.remove(initial, [], ["cancel:draft"]), at: "2026-11-06T09:00:00.000Z" })
+    // Seed the dirty specimen once; an edit made to it since is kept across reloads.
+    const seeded = (() => { try { return window.localStorage.getItem("norn.canvas.draft.sheet:dirty") !== null } catch { return false } })()
+    if (!seeded) writeDraft("sheet:dirty", { graph: g.remove(initial, [], ["cancel:draft"]), at: "2026-11-06T09:00:00.000Z" })
     return frame("dirty", [], <Badge variant="outline">Checker: no new findings</Badge>)
   },
   "frame/refusal": () => frame("refusal", [], <Badge variant="outline">Checker: no new findings</Badge>, { initialNotice: { tone: "refusal", text: "There is already a state named approved" } }),
