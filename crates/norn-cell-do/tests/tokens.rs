@@ -87,6 +87,7 @@ fn defs(demo: &Demo, authorization: Option<&str>) -> server::Response {
         query: SCOPE,
         authorization,
         now: NOW,
+        body: "",
     };
     server::handle(&demo.host, &demo.tokens, &request)
 }
@@ -190,6 +191,7 @@ fn access(demo: &Demo, query: &str, authorization: Option<&str>) -> server::Resp
         query,
         authorization,
         now: NOW,
+        body: "",
     };
     server::access(
         &demo.host,

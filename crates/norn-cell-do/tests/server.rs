@@ -45,6 +45,7 @@ fn call(
         query,
         authorization,
         now: 0,
+        body: "",
     };
     server::handle(&demo.host, &demo.principals, &request)
 }
