@@ -22,7 +22,7 @@ use norn_api::{
     scope::{CellScope, ScopeQuery},
 };
 use norn_cell::{
-    CellStore, CommitBatch, KnowledgeCutoff, ObjectRecord,
+    CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, ObjectRecord,
     compute::{Freshness, QueryContext, lineage::keyed_lineage_handle},
     engine::NativeEngine,
 };
