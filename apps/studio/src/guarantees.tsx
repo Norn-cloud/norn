@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { useState } from "react"
 import { useRouterState } from "@tanstack/react-router"
 import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, ShieldCheck } from "lucide-react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
@@ -6,7 +7,7 @@ import { Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { cases, field, levelWords, scalar, verdictWords } from "./lib/guarantees.ts"
+import { cases, field, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "./lib/guarantees.ts"
 import { recordedTransport, type Guarantees } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
 
@@ -197,8 +198,15 @@ export function GuaranteesPage() {
   const read = useQuery({ queryKey: ["guarantees"], queryFn: recordedTransport.guarantees })
   const document = (name: string) => read.data?.find((entry) => entry.name === name)?.read.document
   const declared = document("original")
-  // A submenu link to one document opens the details it sits in.
+  // A submenu link to one document opens the details it sits in; any other
+  // hash change keeps the reader's own open or closed choice.
   const hash = useRouterState({ select: (state) => state.location.hash })
+  const [open, setOpen] = useState(() => targetsGuarantee(hash))
+  const [seenHash, setSeenHash] = useState(hash)
+  if (hash !== seenHash) {
+    setSeenHash(hash)
+    setOpen(openAfterHash(open, hash))
+  }
   return (
     <section className="space-y-8">
       <div className="space-y-2">
@@ -209,7 +217,7 @@ export function GuaranteesPage() {
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {declared && <Hero declared={declared} broken={document("mutant")} />}
       {read.data && (
-        <details key={hash} open={hash.startsWith("guarantee-")} className="group/details">
+        <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group/details">
           <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
             <ChevronRight aria-hidden className="size-4 transition-transform group-open/details:rotate-90" />Technical details: each goal, the bounds and the tools
           </summary>

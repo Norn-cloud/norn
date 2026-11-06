@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { cases, field, levelWords, scalar, verdictWords } from "../src/lib/guarantees.ts"
+import { cases, field, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "../src/lib/guarantees.ts"
 import type { Guarantees } from "../src/lib/transport.ts"
 
 // Recorded model-checker documents (fixtures/demo/guarantees).
@@ -33,4 +33,14 @@ test("a scaled coefficient reads as exact decimal text", () => {
 test("the declared bounds name how many cases were checked", () => {
   expect(cases(recorded("original").boundsJson)).toBe(77)
   expect(cases(JSON.stringify({ profile: {} }))).toBeUndefined()
+})
+
+test("a guarantee link opens the details; any other hash keeps the reader's choice", () => {
+  expect(targetsGuarantee("guarantee-original")).toBe(true)
+  expect(targetsGuarantee("")).toBe(false)
+  expect(openAfterHash(false, "guarantee-mutant")).toBe(true)
+  // Back from a guarantee link to the bare page leaves opened details open.
+  expect(openAfterHash(true, "")).toBe(true)
+  // A closed disclosure stays closed on an unrelated anchor.
+  expect(openAfterHash(false, "summary")).toBe(false)
 })
