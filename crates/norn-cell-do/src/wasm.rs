@@ -164,7 +164,14 @@ impl NornCell {
             caller,
             object_types,
             // Dashboards are built in; agents wait for lane CANVAS's checker.
-            kinds: DefinitionKinds::default(),
+            kinds: DefinitionKinds::default()
+                // A binding runs as a role of the cell's declared grant table.
+                .with_roles(
+                    crate::policy::DEMO_GRANTS
+                        .entries
+                        .iter()
+                        .map(|(role, _)| *role),
+                ),
         })
     }
 

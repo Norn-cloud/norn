@@ -704,3 +704,226 @@ fn a_saved_question_is_a_bare_question_ir_admitted_as_a_tile_is() {
     let (_, document) = get(&cell, "/v1/definitions/studio.question.yield", "", VIEWER);
     assert_eq!(document["payload"], question());
 }
+
+const VECTORS: &str = include_str!(
+    "../../../tools/norn-ts/src/builder/fixtures/binding-manifest-digest.vectors.json"
+);
+const ROLES: [&str; 4] = ["viewer", "member", "admin", "owner"];
+
+/// JCS (RFC 8785) over CONNECT's golden vectors, from the raw manifest text.
+#[test]
+fn manifest_digests_match_the_shared_jcs_vectors() {
+    use norn_api::binding_definitions::derived_version;
+    use norn_api::jcs::canonicalize_text;
+    let vectors: Value = serde_json::from_str(VECTORS).unwrap();
+    assert_eq!(
+        vectors["format"],
+        json!("norn.binding-manifest-digest.vectors/1")
+    );
+    let vectors = vectors["vectors"].as_array().unwrap();
+    assert!(vectors.len() >= 5);
+    for vector in vectors {
+        let name = vector["name"].as_str().unwrap();
+        let canonical = canonicalize_text(vector["manifestJson"].as_str().unwrap()).unwrap();
+        assert_eq!(canonical, vector["canonical"].as_str().unwrap(), "{name}");
+        let digest = format!("sha256:{}", sha256(&canonical));
+        assert_eq!(digest, vector["manifestDigest"].as_str().unwrap(), "{name}");
+        assert_eq!(
+            derived_version(&digest),
+            vector["version"].as_str().unwrap(),
+            "{name}"
+        );
+    }
+}
+
+fn binding(label: &str, run_role: &str, mapping: Value) -> Value {
+    let input = json!({ "type": "object", "properties": {
+        "repo": { "type": "string" }, "limit": { "type": "integer" }, "state": { "enum": ["open", "closed"] } } });
+    let output = json!({ "type": "object" });
+    let digest = norn_api::binding_definitions::manifest_digest(
+        "executor",
+        "github",
+        "list_issues",
+        &input,
+        &output,
+    )
+    .unwrap();
+    json!({
+        "connector": { "gateway": "executor", "origin": "https://executor.example", "app": "github",
+            "tool": "list_issues", "version": norn_api::binding_definitions::derived_version(&digest) },
+        "inputSchema": input, "outputSchema": output, "manifestDigest": digest,
+        "label": label, "inputMapping": mapping, "runRole": run_role,
+    })
+}
+
+fn install_binding(cell: &Cell, id: &str, payload: &Value, expected: Option<u64>) -> (u16, Value) {
+    let mut body = json!({ "kind": "binding", "id": id, "payload": payload });
+    if let Some(expected) = expected {
+        body["expectedVersion"] = json!(expected);
+    }
+    post(cell, "/v1/definitions:install", ADMIN, &body)
+}
+
+#[test]
+fn bindings_are_admitted_against_their_recomputed_digest_and_declared_roles() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let good = binding(
+        "Open issues",
+        "member",
+        json!({ "repo": { "fixed": "norn/norn" }, "state": { "fixed": "open" } }),
+    );
+    let (status, installed) = install_binding(&cell, "studio.binding.issues", &good, None);
+    assert_eq!(status, 200, "{installed}");
+    let (_, page) = get(&cell, "/v1/definitions:list", "&kind=binding", VIEWER);
+    assert_eq!(page["items"][0]["title"], json!("Open issues"));
+
+    let mut tampered = good.clone();
+    tampered["inputSchema"]["properties"]["repo"]["type"] = json!("number");
+    let mut versioned = good.clone();
+    versioned["connector"]["version"] = json!("sha256-000000000000");
+    let mut unknown = good.clone();
+    unknown["extra"] = json!(true);
+    for (payload, expected) in [
+        (
+            tampered,
+            ("definition.binding_digest_mismatch", "/manifestDigest"),
+        ),
+        (
+            versioned,
+            ("definition.binding_version_mismatch", "/connector/version"),
+        ),
+        (
+            binding("  ", "member", json!({})),
+            ("definition.binding_label_invalid", "/label"),
+        ),
+        (
+            binding("L", "root", json!({})),
+            ("definition.binding_role_unknown", "/runRole"),
+        ),
+        (
+            binding("L", "member", json!({ "nope": { "fixed": 1 } })),
+            (
+                "definition.binding_mapping_unknown_field",
+                "/inputMapping/nope",
+            ),
+        ),
+        (
+            binding("L", "member", json!({ "limit": { "fixed": "ten" } })),
+            (
+                "definition.binding_mapping_invalid",
+                "/inputMapping/limit/fixed",
+            ),
+        ),
+        (
+            binding("L", "member", json!({ "state": { "fixed": "merged" } })),
+            (
+                "definition.binding_mapping_invalid",
+                "/inputMapping/state/fixed",
+            ),
+        ),
+        (
+            binding("L", "member", json!({ "repo": "norn/norn" })),
+            ("definition.binding_mapping_invalid", "/inputMapping/repo"),
+        ),
+        (unknown, ("definition.binding_invalid_payload", "/extra")),
+    ] {
+        let (status, refused) = install_binding(&cell, "studio.binding.bad", &payload, None);
+        assert_eq!(status, 422, "{expected:?}: {refused}");
+        assert!(
+            pointers(&refused).contains(&(expected.0.to_owned(), expected.1.to_owned())),
+            "{expected:?} in {refused}"
+        );
+    }
+    let mut blank = good.clone();
+    blank["connector"]["app"] = json!(" ");
+    let (_, refused) = install_binding(&cell, "studio.binding.bad", &blank, None);
+    assert!(pointers(&refused).contains(&(
+        "definition.binding_connector_invalid".to_owned(),
+        "/connector/app".to_owned()
+    )));
+    // A cell that declares no roles admits no binding.
+    let bare = cell(DefinitionKinds::default());
+    let (status, refused) = install_binding(&bare, "studio.binding.issues", &good, None);
+    assert_eq!(status, 422, "{refused}");
+}
+
+/// An agent may name only the cell's installed, active bindings, by the
+/// connector string the browser check uses.
+fn binding_agent(payload: &str, context: &AgentAdmissionContext) -> Vec<Diagnostic> {
+    let payload: Value = serde_json::from_str(payload).unwrap();
+    let tool = payload["tools"][0].as_str().unwrap_or_default();
+    match context.bindings.iter().find(|binding| binding.id == tool) {
+        Some(binding)
+            if binding
+                .connector
+                .starts_with("executor:github/list_issues@sha256-") =>
+        {
+            vec![]
+        }
+        _ => vec![Diagnostic {
+            code: DiagnosticCode::new("agent.validation.unbound_tool"),
+            severity: DiagnosticSeverity::Error,
+            message: format!("{tool} is not bound"),
+            span: Some(Span {
+                pointer: "/tools/0".into(),
+                source: None,
+            }),
+            artifact_id: None,
+            remediation: None,
+        }],
+    }
+}
+
+#[test]
+fn agents_see_installed_active_bindings_only() {
+    let context = AgentAdmissionContext {
+        models: BTreeSet::new(),
+        bindings: vec![],
+        laws: BTreeSet::new(),
+        limits: ResourceLimitProfile::norn_limits_v1(),
+    };
+    let cell = cell(
+        DefinitionKinds::default()
+            .with_roles(ROLES)
+            .with_agent(binding_agent, context),
+    );
+    let agent = json!({ "kind": "agent", "id": "studio.agent.triage",
+        "payload": { "title": "Triage", "tools": ["studio.binding.issues"] } });
+    let (status, unbound) = post(&cell, "/v1/definitions:admit", ADMIN, &agent);
+    assert_eq!(
+        (status, unbound["admitted"].clone()),
+        (200, json!(false)),
+        "{unbound}"
+    );
+    assert_eq!(
+        install_binding(
+            &cell,
+            "studio.binding.issues",
+            &binding("Issues", "member", json!({})),
+            None
+        )
+        .0,
+        200
+    );
+    let (_, bound) = post(&cell, "/v1/definitions:admit", ADMIN, &agent);
+    assert_eq!(bound["admitted"], json!(true), "{bound}");
+    let retire = json!({ "expectedVersion": 1 });
+    assert_eq!(
+        post(
+            &cell,
+            "/v1/definitions/studio.binding.issues:retire",
+            ADMIN,
+            &retire
+        )
+        .0,
+        200
+    );
+    let (_, retired) = post(&cell, "/v1/definitions:admit", ADMIN, &agent);
+    assert_eq!(
+        pointers(&retired),
+        [(
+            "agent.validation.unbound_tool".to_owned(),
+            "/tools/0".to_owned()
+        )]
+    );
+}
