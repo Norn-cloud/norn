@@ -61,7 +61,11 @@ def _enrolled(root: Path) -> dict[str, tuple[str, str, int]]:
     found = {}
     for entry in sorted(base.glob(f"*/{FIELD}/*.json")):
         body = json.loads(entry.read_text(encoding="utf-8"))
-        found[body["value"]] = (entry.parent.parent.name, entry.relative_to(root).as_posix(), body["order"])
+        place = (entry.parent.parent.name, entry.relative_to(root).as_posix(), body["order"])
+        if body["value"] in found:
+            # The enrollment gate refuses a source with two owners; a later entry must not hide the first.
+            raise Refused(f"{body['value']}: enrolled twice ({found[body['value']][1]} and {place[1]}); remove one by hand")
+        found[body["value"]] = place
     return found
 
 
@@ -140,18 +144,9 @@ def plan(root: Path) -> dict[str, bytes | None]:
 
 
 def apply(root: Path, updates: dict[str, bytes | None]) -> None:
-    coverage = {p: b for p, b in updates.items() if not p.startswith(PROVENANCE.as_posix() + "/")}
-    if coverage:
-        coverage_manifest.apply_entries(root, coverage)
-    for path, content in updates.items():
-        if path in coverage:
-            continue
-        target = root / path
-        if content is None:
-            target.unlink(missing_ok=True)
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content)
+    """Write every update through `apply_entries`: it validates the staged coverage and rolls back all of them together."""
+    if updates:
+        coverage_manifest.apply_entries(root, updates)
 
 
 def main(argv=None) -> int:

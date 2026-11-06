@@ -90,8 +90,11 @@ class RecordNewFilesTests(unittest.TestCase):
         self.assertEqual(self.record("app/src/main.ts"), {"sha256": sha("export const changed = true\n"), **AUTHORED})
 
     def test_a_deleted_source_loses_its_entry_and_record(self):
+        entry = f"{COVERAGE}/subsystems/app/sourceFiles/{coverage_manifest.entry_id('app/src/other.ts')}.json"
         (self.root / "app/src/other.ts").unlink()
         self.assertEqual(self.run_tool(), 0)
+        self.assertFalse((self.root / entry).exists())
+        self.assertFalse((self.root / PROVENANCE / f"{entry}.json").exists())
         self.assertNotIn("app/src/other.ts", self.enrolled())
         self.assertFalse((self.root / PROVENANCE / "app/src/other.ts.json").exists())
         self.assertEqual(self.run_tool("--check"), 0)
@@ -110,6 +113,15 @@ class RecordNewFilesTests(unittest.TestCase):
                 entry.unlink()
         self.write("elsewhere/new.py", "pass\n")
         self.assertEqual(self.run_tool(), 2)
+
+    def test_a_source_enrolled_twice_is_refused_before_any_write(self):
+        duplicate = f"{COVERAGE}/subsystems/lib/sourceFiles/{coverage_manifest.entry_id('app/src/main.ts')}.json"
+        self.write(duplicate, coverage_manifest.entry_bytes({"order": 5, "value": "app/src/main.ts"}).decode())
+        self.recorded(duplicate)
+        self.write("app/src/new.ts", "export {}\n")
+        self.assertEqual(self.run_tool("--check"), 2)
+        self.assertEqual(self.run_tool(), 2)
+        self.assertFalse((self.root / PROVENANCE / "app/src/new.ts.json").exists())
 
     def test_the_provenance_directory_itself_gets_no_records(self):
         self.assertFalse((self.root / PROVENANCE / ".github/ci/provenance/manifest.json.json").exists())
