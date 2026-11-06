@@ -6,6 +6,9 @@ import { createAuth } from "../auth.ts"
 import { connectors, type ConnectorDeps } from "../connectors.ts"
 import worker, { type Env } from "../index.ts"
 
+// The Worker takes an execution context on the integration line (the assistant spends through ctx.waitUntil).
+const CONTEXT = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
+
 const ORIGIN = "https://studio-next.norn.cloud"
 const GATEWAY = "https://gateway.example"
 const TOKEN = "gateway-grant-never-in-a-response"
@@ -60,7 +63,7 @@ function stage(gatewayClient = false) {
   /** A new person; with `colleagueOf`, a member of that person's organization instead of their own. */
   const signUp = async (email: string, role = "owner", colleagueOf?: string) => {
     const init = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": `198.51.100.${++address % 250}` }, body: JSON.stringify(body) })
-    const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env)
+    const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
     await call("/api/auth/sign-up/email", { email, password: "correct horse battery", name: "Ada" })
     const member = "(SELECT id FROM user WHERE email = ?)"
     if (colleagueOf !== undefined) db.query(`UPDATE member SET organizationId = (SELECT organizationId FROM member WHERE userId = ${member}) WHERE userId = ${member}`).run(colleagueOf, email)
@@ -203,6 +206,6 @@ test("the Worker routes /api/connectors/ through the server-side actor", async (
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, GATEWAY_URL: GATEWAY }
-  const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env)
+  const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
   expect([response.status, ((await response.json()) as { code: string }).code]).toEqual([401, "connectors.sign_in"])
 })
