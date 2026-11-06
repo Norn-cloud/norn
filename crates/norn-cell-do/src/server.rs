@@ -17,6 +17,8 @@ use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
 };
 use norn_api::host::DevHost;
+use norn_api::object_query::ObjectQueryParams;
+use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
     evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
@@ -28,7 +30,7 @@ use norn_cell::engine::SqlEngine;
 
 use norn_api::authz::{ReadCapability, ReadRequest};
 
-use crate::policy::{CallerSlot, DEMO_GRANTS, READ_POLICY_ID, collection_access};
+use crate::policy::{CallerSlot, CellObjectAccess, DEMO_GRANTS, READ_POLICY_ID, collection_access};
 use crate::principal::{PrincipalResolver, RequestScope};
 
 /// One finite HTTP response: a status and a JSON body.
@@ -42,6 +44,10 @@ pub struct Response {
 
 /// Longest accepted query string, in bytes.
 pub const MAX_QUERY_BYTES: usize = 2048;
+
+/// Longest accepted grid query string, in bytes: a filter of eight clauses,
+/// each `in` up to fifty values, percent-encoded.
+pub const MAX_OBJECT_QUERY_BYTES: usize = 8192;
 
 /// One finite HTTP request as the transport delivers it.
 #[derive(Debug, Clone, Copy)]
@@ -112,8 +118,18 @@ pub fn handle_all<E: SqlEngine>(
         .and_then(|rest| rest.split_once('/'))
         .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
+    let object = path
+        .strip_prefix("/v1/objects/")
+        .map(|rest| {
+            rest.split_once('/')
+                .map_or((rest, None), |(kind, id)| (kind, Some(id)))
+        })
+        .filter(|(kind, id)| {
+            !kind.is_empty() && id.is_none_or(|id| !id.is_empty() && !id.contains('/'))
+        });
     let known = path == "/v1/definitions"
         || ad_hoc
+        || object.is_some()
         || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
     let result = if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
@@ -135,6 +151,10 @@ pub fn handle_all<E: SqlEngine>(
         ))
     } else {
         match (question, questions) {
+            (None, _) if object.is_some() => object.map_or_else(
+                || Err(norn_api::authz::read_denied()),
+                |(kind, id)| objects(host, actor, kind, id, query),
+            ),
             (None, _) => definitions_query(query)
                 .and_then(|query| get_defs(host, &query, actor))
                 .and_then(|document| document_json(&document)),
@@ -365,6 +385,64 @@ fn submission<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, Refusal> 
     })
 }
 
+/// HOST-READ-3: `GET /v1/objects/{type}` (a grid query) and
+/// `GET /v1/objects/{type}/{id}`, scoped by the query string.
+fn objects<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    object_type: &str,
+    id: Option<&str>,
+    query: &str,
+) -> Result<String, Refusal> {
+    // Path segments decode percent escapes only; `+` is literal in a path.
+    let decoded = |text: &str| {
+        form_urlencoded::parse(format!("x={}", text.replace('+', "%2B")).as_bytes())
+            .next()
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default()
+    };
+    let object_type = decoded(object_type);
+    if let Some(id) = id {
+        let fields = parse(query, &["orgId", "environmentId"])?;
+        let scope = ScopeQuery {
+            org_id: fields.get("orgId").cloned(),
+            environment_id: fields.get("environmentId").cloned(),
+        };
+        let record = get_queried_object(
+            host,
+            &scope,
+            actor,
+            &object_type,
+            &decoded(id),
+            &CellObjectAccess,
+        )?;
+        return document_json(&record);
+    }
+    let mut fields = parse_within(
+        query,
+        &["orgId", "environmentId", "limit", "sort", "filter", "after"],
+        MAX_OBJECT_QUERY_BYTES,
+    )?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let params = ObjectQueryParams {
+        limit: fields.remove("limit"),
+        sort: fields.remove("sort"),
+        filter: fields.remove("filter"),
+        after: fields.remove("after"),
+    };
+    document_json(&get_object_query(
+        host,
+        &scope,
+        actor,
+        &object_type,
+        &params,
+        &CellObjectAccess,
+    )?)
+}
+
 /// The named-question view of the cell's question runtime.
 fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
     runtime
@@ -394,7 +472,15 @@ fn definitions_query(query: &str) -> Result<DefinitionsQuery, Refusal> {
 
 /// A bounded query string with only `allowed` keys, each at most once.
 fn parse(query: &str, allowed: &[&'static str]) -> Result<BTreeMap<&'static str, String>, Refusal> {
-    if query.len() > MAX_QUERY_BYTES {
+    parse_within(query, allowed, MAX_QUERY_BYTES)
+}
+
+fn parse_within(
+    query: &str,
+    allowed: &[&'static str],
+    max: usize,
+) -> Result<BTreeMap<&'static str, String>, Refusal> {
+    if query.len() > max {
         return Err(Refusal::invalid("the query string exceeds the host bound"));
     }
     let mut fields = BTreeMap::new();
