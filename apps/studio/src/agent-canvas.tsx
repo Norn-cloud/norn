@@ -175,7 +175,8 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
   const bindings = useQuery({ queryKey: ["connectors", "bindings", "agent"], queryFn: bindingsQuery, retry: false })
   const laws = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions, select: (reads) => reads.map(({ document }) => document).filter(({ kind }) => kind === "law").map(({ payload }) => (payload as { id: string }).id) })
   const [open, setOpen] = useState<{ readonly id: string; readonly copyOf?: string } | null>(null)
-  const stored = useQuery({ queryKey: ["definitions", "agent", open?.copyOf ?? open?.id], queryFn: () => store.get(open?.copyOf ?? open?.id ?? ""), enabled: open !== null, retry: false })
+  const stored = useQuery({ queryKey: ["definitions", "agent", open?.copyOf ?? open?.id], // A query may not resolve to undefined: a definition the cell does not have yet is null (a new agent).
+    queryFn: async () => (await store.get(open?.copyOf ?? open?.id ?? "")) ?? null, enabled: open !== null, retry: false })
   const [newName, setNewName] = useState("")
   const [notice, setNotice] = useState<string | null>(null)
   const refresh = () => void client.invalidateQueries({ queryKey: ["definitions", "agent"] })
