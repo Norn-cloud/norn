@@ -8163,7 +8163,15 @@ export interface components {
             };
         };
         /** @description A refused request. */
-        Refusal: {
+        Refusal: (null | {
+            /**
+             * @description The plain-words restatement the host recomputed. Present, with its
+             *     digest, only on `definition.signoff_mismatch`.
+             */
+            restatement?: string;
+            /** @description Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes. */
+            restatementSha256?: string;
+        }) & {
             /** @description What the caller can do about it (the discriminant SDKs switch on). */
             category: components["schemas"]["RefusalCategory"];
             /** @description Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …). */
@@ -8209,6 +8217,16 @@ export interface components {
          * @enum {string}
          */
         RefusalFormat: "norn/refusal@2";
+        /** @description The words a signer can sign: what the host reads the submission as. */
+        RefusalRestatement: {
+            /**
+             * @description The plain-words restatement the host recomputed. Present, with its
+             *     digest, only on `definition.signoff_mismatch`.
+             */
+            restatement?: string;
+            /** @description Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes. */
+            restatementSha256?: string;
+        };
         /** @description A location in the submitted document. */
         RefusalSpan: {
             /** @description RFC 6901 JSON pointer into the submitted document. */

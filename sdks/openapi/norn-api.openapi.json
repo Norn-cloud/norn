@@ -21620,60 +21620,86 @@
         "description": "An execution world."
       },
       "Refusal": {
-        "type": "object",
-        "description": "A refused request.",
-        "required": [
-          "format",
-          "retryable",
-          "reason",
-          "code",
-          "category",
-          "message",
-          "explanation"
-        ],
-        "properties": {
-          "category": {
-            "$ref": "#/components/schemas/RefusalCategory",
-            "description": "What the caller can do about it (the discriminant SDKs switch on)."
-          },
-          "code": {
-            "type": "string",
-            "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
-          },
-          "diagnostics": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RefusalDiagnostic"
-            },
-            "description": "Checker findings for an inadmissible submission (a question or a\ndefinition), each pointing into the submitted document. Absent when\nempty. Only ever produced after the caller is authorized for\neverything the submission reads, so no finding describes an\nungranted resource."
-          },
-          "explanation": {
-            "type": "string",
-            "description": "Why, and what would make the request admissible."
-          },
-          "format": {
-            "$ref": "#/components/schemas/RefusalFormat",
-            "description": "Versioned projection; stored checker receipts keep their original bytes."
-          },
-          "message": {
-            "type": "string",
-            "description": "One-line summary."
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NornIrRefusalReason"
-              },
+        "allOf": [
+          {
+            "oneOf": [
               {
                 "type": "null"
+              },
+              {
+                "type": "object",
+                "description": "The words a signer can sign: what the host reads the submission as.",
+                "properties": {
+                  "restatement": {
+                    "type": "string",
+                    "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
+                  },
+                  "restatementSha256": {
+                    "type": "string",
+                    "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
+                  }
+                }
               }
-            ]
+            ],
+            "description": "On `definition.signoff_mismatch` only: the host's restatement of the\ncaller's own admitted payload, flattened into the refusal as\n`restatement` and `restatementSha256`. Absent otherwise."
           },
-          "retryable": {
-            "type": "boolean",
-            "description": "Engine-defined retryability, false unless explicitly supplied by the engine."
+          {
+            "type": "object",
+            "required": [
+              "format",
+              "retryable",
+              "reason",
+              "code",
+              "category",
+              "message",
+              "explanation"
+            ],
+            "properties": {
+              "category": {
+                "$ref": "#/components/schemas/RefusalCategory",
+                "description": "What the caller can do about it (the discriminant SDKs switch on)."
+              },
+              "code": {
+                "type": "string",
+                "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
+              },
+              "diagnostics": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RefusalDiagnostic"
+                },
+                "description": "Checker findings for an inadmissible submission (a question or a\ndefinition), each pointing into the submitted document. Absent when\nempty. Only ever produced after the caller is authorized for\neverything the submission reads, so no finding describes an\nungranted resource."
+              },
+              "explanation": {
+                "type": "string",
+                "description": "Why, and what would make the request admissible."
+              },
+              "format": {
+                "$ref": "#/components/schemas/RefusalFormat",
+                "description": "Versioned projection; stored checker receipts keep their original bytes."
+              },
+              "message": {
+                "type": "string",
+                "description": "One-line summary."
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NornIrRefusalReason"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "retryable": {
+                "type": "boolean",
+                "description": "Engine-defined retryability, false unless explicitly supplied by the engine."
+              }
+            }
           }
-        }
+        ],
+        "description": "A refused request."
       },
       "RefusalCategory": {
         "type": "string",
@@ -21736,6 +21762,20 @@
         "enum": [
           "norn/refusal@2"
         ]
+      },
+      "RefusalRestatement": {
+        "type": "object",
+        "description": "The words a signer can sign: what the host reads the submission as.",
+        "properties": {
+          "restatement": {
+            "type": "string",
+            "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
+          },
+          "restatementSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
+          }
+        }
       },
       "RefusalSpan": {
         "type": "object",
