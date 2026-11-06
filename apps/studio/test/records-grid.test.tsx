@@ -63,7 +63,7 @@ test("a live page that echoes its query turns sorting on and shows the server's 
     { objectType: "canon.Item", id: "b", scope: "s", version: 3, values: null, withheld: true },
   ]))
   expect(html).not.toContain(inHtml(SERVER_QUERY_UNAVAILABLE))
-  expect(html).toContain("Sort (Shift adds a key)")
+  expect(html).toContain("quantity: sort (Shift adds a key)")
   expect(html).toContain("2 records")
   expect(html).toContain("Alpha")
   expect(html).toMatch(/data-withheld="true"[^]*Withheld: you can&#x27;t see this record&#x27;s values/)
