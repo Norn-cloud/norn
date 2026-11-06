@@ -205,7 +205,11 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
         Mode::Stale => context.now_ms = context.now_ms.checked_add(6000).expect("stale clock"),
         Mode::Incomplete => {
             // An incomplete source watermark, not a caller exclusion (DATA-QUARANTINE).
-            for watermark in context.watermarks.values_mut().flat_map(BTreeMap::values_mut) {
+            for watermark in context
+                .watermarks
+                .values_mut()
+                .flat_map(BTreeMap::values_mut)
+            {
                 watermark.complete = false;
             }
         }
