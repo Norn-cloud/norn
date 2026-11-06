@@ -10,11 +10,13 @@ import { history, modKey, sameValue, type History, type Issue } from "@/lib/edit
  * last saved or opened. Shortcuts: mod+Z undo, mod+Shift+Z or mod+Y redo,
  * mod+S save, mod+Enter run.
  */
-/** Which editor action a keydown asks for; undo and redo only while this editor owns the shortcuts. */
+/** Which editor action a keydown asks for, only while this editor owns the shortcuts. */
 export function shortcutOf(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey">, { shortcuts, save, run }: { readonly shortcuts: boolean; readonly save: boolean; readonly run: boolean }): "undo" | "redo" | "save" | "run" | undefined {
   if (!(event.metaKey || event.ctrlKey)) return undefined
   const key = event.key.toLowerCase()
-  if (key === "z" || key === "y") return !shortcuts ? undefined : key === "z" && !event.shiftKey ? "undo" : "redo"
+  // Another editor (a sheet over this one) owns every shortcut while it is open.
+  if (!shortcuts) return undefined
+  if (key === "z" || key === "y") return key === "z" && !event.shiftKey ? "undo" : "redo"
   if (key === "s" && save) return "save"
   if (key === "enter" && run) return "run"
   return undefined

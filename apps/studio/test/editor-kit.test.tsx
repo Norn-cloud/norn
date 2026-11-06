@@ -90,6 +90,7 @@ test("undo and redo shortcuts go to the editor that owns them; save and run only
   const covered = { ...owner, shortcuts: false }
   expect(shortcutOf(key("z"), covered)).toBeUndefined()
   expect(shortcutOf(key("y"), covered)).toBeUndefined()
+  expect(shortcutOf(key("s"), covered)).toBeUndefined()
 })
 
 test("the dirty check compares maps, sets, dates and cycles, not their JSON", () => {
