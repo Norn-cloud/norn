@@ -247,7 +247,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
         )
         .map_err(Refusal::from_compute)?;
     withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
-    trace.result.lineage_ref = lineage.to_owned();
+    lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)
 }
 
