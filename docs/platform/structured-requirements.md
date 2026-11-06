@@ -9,9 +9,13 @@ exact sources, authority, exceptions and preferences. No second hierarchy.
   Structural identities must be nonblank and all source spans well formed.
 - **SR2 Timing:** only every-committed-state and same-commit safety are supported.
   Both interpret the condition pointwise in the candidate state; same-commit
-  never means an event edge. Eventually, until and any deadline refuse with
-  `law.validation.unsupported_temporal`. Unknown timing tokens fail closed at decode.
-- **SR3 Grade:** obligations and permissions use always; prohibitions use never.
+  never means an event edge. The one deadline form is `within`, an obligation to
+  eventually respond after a trigger transition ([LAW-WITHIN-1](../spec/core/05-laws-authority.md));
+  its wording needs `terms.within` in every locale. Other eventually, until and
+  deadline forms refuse with `law.validation.unsupported_temporal`. Unknown
+  timing tokens fail closed at decode.
+- **SR3 Grade:** obligations and permissions use always (a `within` obligation
+  uses eventually); prohibitions use never.
   A prohibition's response describes the forbidden predicate, not its negation.
   Permission never asserts occurrence or grants runtime authorization. Existing
   executable lowering still refuses permission and defeasible declarations.

@@ -119,6 +119,10 @@ fn valid_pointer(pointer: &str) -> bool {
 pub enum RequirementRefusal {
     /// A progress or deadline declaration is outside the closed fragment.
     UnsupportedTiming,
+    /// A `within` deadline names a business calendar; none is admitted.
+    UnsupportedCalendar,
+    /// A `within` activation is gated, scoped or defeasible; not yet admitted.
+    UnsupportedActivation,
     /// Action and transition occurrence need semantics outside state safety.
     UnsupportedResponse,
     /// The temporal wrapper contradicts the normative grade.
@@ -136,7 +140,9 @@ impl RequirementRefusal {
     #[must_use]
     pub const fn code(self) -> &'static str {
         match self {
-            Self::UnsupportedTiming => "law.validation.unsupported_temporal",
+            Self::UnsupportedTiming | Self::UnsupportedCalendar | Self::UnsupportedActivation => {
+                "law.validation.unsupported_temporal"
+            }
             Self::UnsupportedResponse | Self::ModalityMismatch => "law.validation.invalid_document",
             Self::Wording(code) => code,
             Self::InvalidBinding => "law.model.unknown_binding",
@@ -145,12 +151,15 @@ impl RequirementRefusal {
     }
 }
 
-/// Check pointwise safety/commit slots in the subject's typed environment.
+/// Check pointwise safety/commit slots, or a LAW-WITHIN-1 deadline, in the
+/// subject's typed environment. Structural only: runtime law evaluation still
+/// refuses timed laws until a cell activation monitor is bound.
 /// Exceptions/preferences remain declarations for `norm_precedence` grounding;
 /// they are never erased or converted into unconditional executable laws.
 ///
 /// # Errors
-/// Refuses progress, deadlines, inconsistent grades and non-Boolean predicates.
+/// Refuses unbounded progress, unsupported deadlines, inconsistent grades and
+/// non-Boolean predicates.
 pub fn check_requirement(
     requirement: &norn_ir::deontic::StructuredRequirement,
     env: &norn_expr::ZenTypeEnv,
@@ -163,15 +172,29 @@ pub fn check_requirement(
         LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
         LawRoot::Pack(_) => return Err(R::InvalidBinding),
     };
-    if law.timing.is_some()
-        || !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
-    {
-        return Err(R::UnsupportedTiming);
-    }
-    if matches!(rule.modality, DeonticModality::Prohibition)
-        != matches!(law.modality, LawModality::Never {})
-    {
-        return Err(R::ModalityMismatch);
+    let within = requirement.within().map_err(|code| match code {
+        "law.validation.invalid_document" => R::ModalityMismatch,
+        _ => R::UnsupportedTiming,
+    })?;
+    if let Some((within, _millis)) = within {
+        if within.calendar.is_some() {
+            return Err(R::UnsupportedCalendar);
+        }
+        // Gating, scoping or defeating an activation has no admitted meaning yet.
+        if law.condition.is_some()
+            || !law.scope.lifecycle_states.is_empty()
+            || !law.scope.commitments.is_empty()
+            || !rule.exceptions.is_empty()
+            || !rule.defeated_by.is_empty()
+        {
+            return Err(R::UnsupportedActivation);
+        }
+        if !matches!(law.response, LawResponse::Predicate { .. }) {
+            return Err(R::UnsupportedResponse);
+        }
+        if within.trigger.trim().is_empty() || within.accountable.trim().is_empty() {
+            return Err(R::InvalidBinding);
+        }
     }
     let mut exceptions = std::collections::BTreeSet::new();
     let mut ids = [&law.id, &law.owner, &law.subject, root]
@@ -211,10 +234,12 @@ pub fn check_requirement(
             return Err(R::UnsupportedResponse);
         }
     };
+    let cancel = within.and_then(|(w, _millis)| w.cancel.as_ref());
     for predicate in law
         .condition
         .iter()
         .chain(response)
+        .chain(cancel)
         .chain(rule.exceptions.iter().map(|e| &e.condition))
     {
         let expression = Expression::compile(&predicate.0).map_err(|_error| R::PredicateType)?;

@@ -87,8 +87,9 @@ pub struct StructuredRequirement {
     pub wording: RequirementWording,
 }
 
-/// Closed safety fragment. No event activation, clocks, fairness or progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Closed safety fragment plus one event-activated deadline form. No fairness,
+/// unbounded progress or wall-clock reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementTiming {
     /// Condition and response are evaluated at every applicable committed state.
@@ -96,6 +97,131 @@ pub enum RequirementTiming {
     /// Condition and response refer to the same proposed commit's state.
     /// This is not an edge trigger or a promise to respond in a later commit.
     SameCommit,
+    /// LAW-WITHIN-1: a committed trigger transition opens an activation that a
+    /// later satisfying commit must discharge before `law.timing`'s deadline.
+    Within(WithinTiming),
+}
+
+impl StructuredRequirement {
+    /// LAW-WITHIN-1 shape. `within` pairs only with an obligation to eventually
+    /// respond under `law.timing = within`; every other requirement timing is
+    /// the untimed always/never fragment whose grade matches its wrapper.
+    ///
+    /// # Errors
+    /// `law.validation.unsupported_temporal` for any other temporal pairing,
+    /// `law.validation.invalid_document` for a grade contradicting its wrapper.
+    pub fn within(&self) -> Result<Option<(&WithinTiming, &str)>, &'static str> {
+        use crate::{LawModality as M, LawTiming as T};
+        let law = &self.norm.law;
+        let obligation = self.norm.modality == DeonticModality::Obligation;
+        match (&self.timing, &law.modality, &law.timing) {
+            (RequirementTiming::Within(within), M::Eventually {}, Some(T::Within { millis })) => {
+                if !obligation {
+                    return Err("law.validation.invalid_document");
+                }
+                Ok(Some((within, millis)))
+            }
+            (RequirementTiming::Within(_), _, _) | (_, M::Eventually {} | M::Until { .. }, _) => {
+                Err("law.validation.unsupported_temporal")
+            }
+            (_, _, Some(_)) => Err("law.validation.unsupported_temporal"),
+            (_, modality, None) => {
+                if (self.norm.modality == DeonticModality::Prohibition)
+                    != matches!(modality, M::Never {})
+                {
+                    return Err("law.validation.invalid_document");
+                }
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Activation policy for `within`; the duration stays in `law.timing`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WithinTiming {
+    /// Exact lifecycle transition identity on the subject that opens an activation.
+    pub trigger: String,
+    /// What a trigger does while an activation is already open.
+    pub retrigger: RetriggerPolicy,
+    /// Optional committed-state predicate that closes an open activation unpaid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<ZenExpression>,
+    /// Principal or role answerable for discharge; grants no authority.
+    pub accountable: String,
+    /// Business calendar for the deadline. No calendar is admitted yet: refuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<CalendarPin>,
+}
+
+/// Exact pinned calendar identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CalendarPin {
+    pub id: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetriggerPolicy {
+    /// A trigger while open is recorded as ignored; the first deadline stands.
+    KeepFirst,
+    /// A trigger while open restarts the window from the triggering commit.
+    Restart,
+}
+
+/// One open duty for a law instance and subject. Times are cell clock millis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Activation {
+    /// `law_id` + `subject_id` + `trigger_seq`; unique per cell ledger.
+    pub id: String,
+    pub law_id: String,
+    pub subject_id: String,
+    pub trigger: String,
+    /// Ledger position of the commit that opened (or last restarted) it.
+    pub trigger_seq: u64,
+    pub start_millis: u64,
+    /// Exclusive: a commit at `deadline_millis` no longer discharges.
+    pub deadline_millis: u64,
+    pub retrigger: RetriggerPolicy,
+    pub accountable: String,
+}
+
+/// Recorded monitor outcome; a violation is an event, never a silent pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ActivationEvent {
+    Activated {
+        activation: Activation,
+    },
+    Restarted {
+        activation: Activation,
+        previous_id: String,
+    },
+    RetriggerIgnored {
+        activation_id: String,
+        at_seq: u64,
+    },
+    Discharged {
+        activation_id: String,
+        at_seq: u64,
+        at_millis: u64,
+    },
+    Cancelled {
+        activation_id: String,
+        at_seq: u64,
+        at_millis: u64,
+    },
+    Violated {
+        activation: Activation,
+    },
 }
 
 /// LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
@@ -211,11 +337,9 @@ impl LocalizedRequirement {
         ]
         .iter()
         .any(|s| s.trim().is_empty())
-            || self
-                .terms
-                .pack
-                .as_ref()
-                .is_some_and(|s| s.trim().is_empty())
+            || [&self.terms.pack, &self.terms.within]
+                .iter()
+                .any(|t| t.as_ref().is_some_and(|s| s.trim().is_empty()))
         {
             return Err("law.wording.incomplete_locale");
         }
@@ -309,6 +433,10 @@ pub struct RequirementTerms {
     pub every_committed_state: String,
     #[schemars(pattern(r"\S"))]
     pub grounding: String,
+    /// Required to render a `within` requirement; other timings never read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(pattern(r"\S"))]
+    pub within: Option<String>,
     /// Required to render a pack-rooted law; other roots never read it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(pattern(r"\S"))]

@@ -1211,3 +1211,137 @@ fn normative_subject_names_cannot_be_installed_twice() {
         "{findings:?}"
     );
 }
+
+#[allow(clippy::expect_used, reason = "test-only LAW-WITHIN-1 fixture")]
+fn within_requirement() -> norn_ir::deontic::StructuredRequirement {
+    use norn_ir::deontic::{RequirementTiming, RetriggerPolicy, WithinTiming};
+    let mut r = requirement();
+    r.norm.law.modality = LawModality::Eventually {};
+    r.norm.law.timing = Some(norn_ir::LawTiming::Within {
+        millis: "2592000000".into(),
+    });
+    r.norm.law.condition = None;
+    r.norm.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("input.active".into()),
+    };
+    r.timing = RequirementTiming::Within(WithinTiming {
+        trigger: "post".into(),
+        retrigger: RetriggerPolicy::KeepFirst,
+        cancel: Some(norn_ir::ZenExpression("input.quantity < 0".into())),
+        accountable: "receivables".into(),
+        calendar: None,
+    });
+    for w in r.wording.0.values_mut() {
+        w.terms.within = Some("within".into());
+    }
+    r
+}
+
+#[test]
+fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
+    use norn_checker::deontic::RequirementRefusal as R;
+    use norn_ir::deontic::{CalendarPin, RequirementTiming, StructuredRequirement};
+    let env = requirement_env();
+    let ok = within_requirement();
+    check_requirement(&ok, &env).expect("structural within obligation");
+    let wire = serde_json::to_value(&ok).expect("wire");
+    assert_eq!(wire["timing"]["within"]["retrigger"], "keep_first");
+    let decoded: StructuredRequirement = serde_json::from_value(wire).expect("typed");
+    assert_eq!(decoded, ok);
+    let view = norn_ir::requirement_display::RequirementView {
+        requirement: ok.clone(),
+        locale: "en".into(),
+    };
+    let rendered = view.slots().expect("rendered").remove(4).text;
+    assert!(rendered.contains("2592000000 ms; post"), "{rendered}");
+    type Case = (fn(&mut StructuredRequirement), R);
+    let cases: [Case; 11] = [
+        (
+            |r| r.norm.modality = DeonticModality::Permission,
+            R::ModalityMismatch,
+        ),
+        (|r| r.norm.law.timing = None, R::UnsupportedTiming),
+        (
+            |r| r.norm.law.modality = LawModality::Always {},
+            R::UnsupportedTiming,
+        ),
+        (
+            |r| r.timing = RequirementTiming::SameCommit,
+            R::UnsupportedTiming,
+        ),
+        (
+            |r| r.norm.law.condition = Some(norn_ir::ZenExpression("input.active".into())),
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| r.norm.defeated_by.push("other".into()),
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| {
+                r.norm.law.response = norn_ir::LawResponse::Invariant {
+                    object_type: "t".into(),
+                    invariant_id: "i".into(),
+                }
+            },
+            R::UnsupportedResponse,
+        ),
+        (
+            |r| {
+                if let RequirementTiming::Within(w) = &mut r.timing {
+                    w.calendar = Some(CalendarPin {
+                        id: "c".into(),
+                        version: "1".into(),
+                    });
+                }
+            },
+            R::UnsupportedCalendar,
+        ),
+        (
+            |r| {
+                if let RequirementTiming::Within(w) = &mut r.timing {
+                    w.trigger = " ".into();
+                }
+            },
+            R::InvalidBinding,
+        ),
+        (
+            |r| {
+                if let RequirementTiming::Within(w) = &mut r.timing {
+                    w.accountable = String::new();
+                }
+            },
+            R::InvalidBinding,
+        ),
+        (
+            |r| {
+                if let RequirementTiming::Within(w) = &mut r.timing {
+                    w.cancel = Some(norn_ir::ZenExpression("input.quantity".into()));
+                }
+            },
+            R::PredicateType,
+        ),
+    ];
+    for (index, (mutate, refusal)) in cases.into_iter().enumerate() {
+        let mut r = within_requirement();
+        mutate(&mut r);
+        assert_eq!(check_requirement(&r, &env), Err(refusal), "case {index}");
+    }
+    let mut missing = within_requirement();
+    missing
+        .wording
+        .0
+        .values_mut()
+        .for_each(|w| w.terms.within = None);
+    let view = norn_ir::requirement_display::RequirementView {
+        requirement: missing,
+        locale: "en".into(),
+    };
+    assert_eq!(view.slots().err(), Some("law.wording.incomplete_locale"));
+    // A timed safety wrapper never becomes a deadline, and lowering stays closed.
+    let ok = within_requirement();
+    assert_eq!(
+        norn_checker::deontic::lower_theorem_candidate(&ok.norm),
+        Err(LawLoweringRefusal::UnsupportedProofFragment)
+    );
+}
