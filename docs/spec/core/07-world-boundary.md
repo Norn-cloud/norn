@@ -157,6 +157,26 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 
 FUNCTION-HOST-1: engine built-ins only; never authorable. `implementation.format: host` is reserved for Norn-owned, versioned built-in Functions distributed in the engine and identified by the engine's own built-in namespace. Authored and pack definitions cannot install host Functions, including by imitating that namespace; admission refuses fail-closed with a stable diagnostic. Built-ins are reviewed and qualified like kernel code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The engine must resolve its shipped built-in implementation by these exact pins or refuse.
 
+HOST-TREE-1: `implementation.digest` of a host Function is the source-tree digest
+of its implementing crate directory. The tree is every regular file below that
+directory, except entries whose name starts with `.` and directories named
+`target`; symlinks, non-UTF-8 names and other file kinds refuse. Each file is
+named by its relative `/`-separated path, which is non-empty, relative, and has
+no empty, `.` or `..` component, backslash or control character. Each file
+contributes `{path, size, sha256}`, where `sha256` is the lower-case hex SHA-256 of
+its exact bytes, with no line-ending or encoding normalization. The entries are
+sorted by path bytes, and the digest is `sha256:` followed by the hex SHA-256 of
+`norn.function/source-tree/v1\0` and the canonical JSON of that array. An empty tree
+or a duplicate path refuses. `norn_ir::source_tree::source_tree_digest` is the
+pure implementation, and `norn source-digest <dir>` walks a clean checkout. The
+golden vector in `crates/norn-ir/tests/fixtures/source-tree.digest` was computed
+by an independent reimplementation (Python `hashlib` and `json.dumps` with sorted
+keys and compact separators). Any change to the algorithm needs a new domain
+version. Named scenarios (`crates/norn-ir/tests/source_tree.rs`):
+**HOST-TREE-PINNED**, **HOST-TREE-SENSITIVE** (an edit, rename, removal,
+addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
+(listing order is irrelevant) and **HOST-TREE-REFUSE**.
+
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 
 OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
