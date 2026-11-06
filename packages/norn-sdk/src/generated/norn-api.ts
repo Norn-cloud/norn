@@ -7661,8 +7661,8 @@ export interface components {
         };
         /** @description One original numeric member; enrichment does not enter this list. */
         NornNumericContribution: {
-            /** @description Operand contributions, in `totals` order; null means a predicate excluded the operand. */
-            amounts: (number | null)[];
+            /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
+            amounts: (number | null)[] | null;
             /**
              * Format: int64
              * @description Writer's immutable commit position.
@@ -7751,8 +7751,10 @@ export interface components {
         NornQueryFreshness: "fresh" | "exact" | "stale" | "incomplete";
         /** @description One object version's contribution to a bucket. */
         NornQueryMember: {
-            /** @description Operand contributions, in `totals` order; null means a predicate excluded the operand. */
-            amounts: (number | null)[];
+            /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
+            amounts: (number | null)[] | null;
+            /** @description The reader holds no Values grant on this member; absent when false. */
+            restricted?: boolean;
             /**
              * Format: int64
              * @description Original cell object version.

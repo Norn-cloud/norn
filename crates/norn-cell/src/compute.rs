@@ -122,6 +122,17 @@ pub struct Member {
     pub restricted: bool,
 }
 
+impl Member {
+    /// A member whose amounts the evaluation discloses.
+    const fn visible(version: u64, amounts: Vec<Option<Decimal>>) -> Self {
+        Self {
+            version,
+            amounts: Some(amounts),
+            restricted: false,
+        }
+    }
+}
+
 impl QueryRow {
     /// DATA-VALUES-1: mark `restricted` members and, if any, withhold every
     /// member's amounts in this bucket. Totals and the value are the answer's
@@ -505,14 +516,9 @@ pub(crate) fn finish(
             .iter()
             .map(|n| n.map(|v| decimal(i128::from(v))).transpose())
             .collect::<Result<_, _>>()?;
-        bucket.2.insert(
-            id.clone(),
-            Member {
-                version: *version,
-                amounts: Some(amounts),
-                restricted: false,
-            },
-        );
+        bucket
+            .2
+            .insert(id.clone(), Member::visible(*version, amounts));
     }
     let rows = grouped
         .into_iter()

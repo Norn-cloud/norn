@@ -20011,7 +20011,10 @@
         ],
         "properties": {
           "amounts": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": [
                 "number",
@@ -20019,7 +20022,7 @@
               ],
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
             },
-            "description": "Operand contributions, in `totals` order; null means a predicate excluded the operand."
+            "description": "Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values."
           },
           "commitSeq": {
             "type": "integer",
@@ -20251,7 +20254,10 @@
         ],
         "properties": {
           "amounts": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": [
                 "number",
@@ -20259,7 +20265,11 @@
               ],
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
             },
-            "description": "Operand contributions, in `totals` order; null means a predicate excluded the operand."
+            "description": "Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values."
+          },
+          "restricted": {
+            "type": "boolean",
+            "description": "The reader holds no Values grant on this member; absent when false."
           },
           "version": {
             "type": "integer",
