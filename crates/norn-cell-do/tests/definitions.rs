@@ -165,7 +165,13 @@ fn pointers(document: &Value) -> Vec<(String, String)> {
 #[test]
 fn admit_runs_the_dashboard_validator_without_side_effects() {
     let cell = cell(DefinitionKinds::default());
-    let (_, before) = get(&cell, "/v1/definitions", "", ADMIN);
+    let (status, before) = get(&cell, "/v1/definitions", "", ADMIN);
+    // The analytics cell is provisioned as a governed definitions version.
+    assert_eq!(
+        (status, before["version"].clone()),
+        (200, json!(1)),
+        "{before}"
+    );
     let body = json!({ "kind": "dashboard", "id": "studio.dashboard.a", "payload": dashboard("Refinery") });
     let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
     assert_eq!(status, 200, "{admitted}");

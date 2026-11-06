@@ -219,8 +219,8 @@ fn a_restarted_analytics_cell_answers_identically_without_reloading() {
     let reopened = analytics::provision(open(), &analytics::analytics_scope()).unwrap();
     assert_eq!(
         reopened.store.verified_head().unwrap().commits,
-        1,
-        "K1 loads exactly once"
+        2,
+        "the governed provision and the K1 load each happen exactly once"
     );
     drop(reopened);
     assert_eq!(

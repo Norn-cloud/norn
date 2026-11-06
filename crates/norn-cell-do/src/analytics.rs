@@ -14,7 +14,7 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 use norn_cell::compute::{QueryContext, Watermark};
 use norn_cell::engine::SqlEngine;
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model, ObjectRecord};
+use norn_cell::{CellStore, CommitBatch, FactWriteRow, ObjectRecord};
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
 use norn_ir::metric::{FreshnessPolicy, MetricAdditivity, MetricType, MetricTypeParams};
@@ -73,21 +73,24 @@ pub struct Analytics<E: SqlEngine> {
     pub catalog: EffectiveCatalog,
 }
 
-/// Open the analytics cell, loading the K1 conversions on a fresh engine.
+/// Open the analytics cell: its object type is admitted by the shared
+/// checker and provisioned as the cell's first governed definitions version
+/// (so retained definitions install through the governed path), then the K1
+/// conversions are loaded once.
 ///
 /// # Errors
-/// The question no longer admits, or the engine holds a different cell.
+/// The definitions or the question no longer admit, or the engine holds a
+/// different cell.
 pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics<E>, SeedError> {
     let object = object_type()?;
-    let model = Model::from_definitions(std::slice::from_ref(&object), &[])
-        .map_err(|e| fail("model", e))?;
-    let mut store = CellStore::from_engine(engine, model).map_err(|e| fail("open", e))?;
-    // Loaded in one commit: an empty ledger means the load never happened.
+    let mut store = crate::seed::provision_set(engine, scope, &[entity(&object, scope)?])?;
+    // Provisioning is commit 1; the K1 load is the next, in one commit, so a
+    // store whose ledger holds only the provision never loaded it.
     if store
         .verified_head()
         .map_err(|e| fail("ledger", e))?
         .commits
-        == 0
+        == 1
     {
         store
             .commit(&CommitBatch {
@@ -106,6 +109,24 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics
         definitions,
         catalog,
     })
+}
+
+/// The analytics object type as the entity artifact the checker admits.
+fn entity(object: &ObjectTypeDef, scope: &CellScope) -> Result<ArtifactEnvelope, SeedError> {
+    serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": format!("{TYPE}.entity"),
+        "kind": "entity",
+        "namespace": "demo",
+        "name": "Conversion",
+        "version": "0.1.0",
+        "lifecycle": "active",
+        "scope": { "orgId": scope.org_id, "environmentId": scope.environment_id },
+        "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "crates/norn-cell-do/src/analytics.rs" },
+        "payload": { "entityVersion": "2.0", "objectType": object },
+    }))
+    .map_err(|e| fail("entity artifact", e))
 }
 
 fn conversions() -> Result<Vec<FactWriteRow>, SeedError> {
