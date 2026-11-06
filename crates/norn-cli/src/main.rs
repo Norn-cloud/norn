@@ -195,8 +195,12 @@ fn source_digest(root: &std::path::Path) -> Result<String, String> {
                     .strip_prefix(root)
                     .map_err(|error| error.to_string())?
                     .components()
-                    .map(|part| part.as_os_str().to_str().unwrap_or_default())
-                    .collect::<Vec<_>>()
+                    .map(|part| {
+                        part.as_os_str()
+                            .to_str()
+                            .ok_or_else(|| format!("{}: non-UTF-8 name", path.display()))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
                     .join("/");
                 let bytes =
                     std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
