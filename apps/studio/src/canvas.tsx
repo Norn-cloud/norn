@@ -13,6 +13,7 @@ import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Placed } from "./lib/canvas/diagnostics.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
+import { AutomationEditor } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
 import { recordedTransport, type Envelope } from "./lib/transport.ts"
 
@@ -170,6 +171,7 @@ export function CanvasPage() {
   const envelopes = useMemo(() => definitions.data?.map(({ document }) => document) ?? [], [definitions.data])
   const found = useMemo(() => lifecyclesIn(envelopes), [envelopes])
   const [chosen, setChosen] = useState(0)
+  const [kind, setKind] = useState<"lifecycle" | "automation">("lifecycle")
   const lifecycle = found[chosen]
   const envelope = envelopes.find(({ artifactId }) => artifactId === lifecycle?.artifactId)
   return (
@@ -179,10 +181,12 @@ export function CanvasPage() {
         <p className="max-w-2xl text-muted-foreground">Draw how a process moves. Every change is checked as you make it; saving asks the server, which checks again and decides.</p>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={index === chosen ? "default" : "outline"} onClick={() => setChosen(index)}>{words(ref.objectType)}</Button>)}
+        {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{words(ref.objectType)}</Button>)}
+        <Button size="sm" variant={kind === "automation" ? "default" : "outline"} onClick={() => setKind("automation")}>Automation</Button>
       </div>
       {definitions.isError && <p className="text-destructive">{definitions.error.message}</p>}
-      {lifecycle && envelope && <Editor key={`${lifecycle.artifactId}:${lifecycle.index}`} definitions={envelopes} envelope={envelope} lifecycle={lifecycle} />}
+      {kind === "automation" && <AutomationEditor />}
+      {kind === "lifecycle" && lifecycle && envelope && <Editor key={`${lifecycle.artifactId}:${lifecycle.index}`} definitions={envelopes} envelope={envelope} lifecycle={lifecycle} />}
     </section>
   )
 }
