@@ -17,13 +17,19 @@ const ISSUES = { type: "object", properties: { repo: { type: "string" }, state: 
 const migration = (name: string): string => readFileSync(join(import.meta.dir, "../migrations", name), "utf8")
 
 /** The D1 calls the policy table makes, over bun:sqlite. */
+/** Set to make the next matching write fail once, as a D1 outage between two steps would. */
+const failures: { next: RegExp | null } = { next: null }
+
 function d1(db: Database): D1Database {
   type Statement = { sql: string; args: unknown[] }
   const statement = (sql: string, args: unknown[] = []) => ({
     sql, args,
     bind: (...next: unknown[]) => statement(sql, next),
     all: async () => ({ results: db.query(sql).all(...(args as never[])) }),
-    run: async () => { db.query(sql).run(...(args as never[])); return { success: true } },
+    run: async () => {
+      if (failures.next?.test(sql)) { failures.next = null; throw new Error("D1_ERROR: injected failure") }
+      db.query(sql).run(...(args as never[])); return { success: true }
+    },
   })
   const batch = async (list: Statement[]) => { db.transaction(() => { for (const s of list) db.query(s.sql).run(...(s.args as never[])) })(); return [] }
   return { prepare: (sql: string) => statement(sql), batch } as unknown as D1Database
@@ -36,6 +42,7 @@ function stage(gatewayClient = false) {
   db.exec(migration("0002_connector_binding.sql"))
   db.exec(migration("0003_connector_binding_manifest.sql"))
   db.exec(migration("0004_connector_binding_definition.sql"))
+  db.exec(migration("0005_connector_binding_state.sql"))
   const env: Env = {
     ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
     AUTH_DB: db as unknown as D1Database,
@@ -304,7 +311,7 @@ test("a fixed value for a property without a declared type is left to the gatewa
 function cellHost(answer: (path: string, body: Record<string, unknown>) => Response) {
   const seen: { path: string; query: string; body: Record<string, unknown>; bearer: boolean }[] = []
   const host = { fetch: async (request: Request) => {
-    const body = (await request.json()) as Record<string, unknown>
+    const body = request.method === "GET" ? {} : (await request.json()) as Record<string, unknown>
     const url = new URL(request.url)
     const path = url.pathname
     seen.push({ path, query: url.search, body, bearer: (request.headers.get("authorization") ?? "").startsWith("Bearer ") })
@@ -377,7 +384,7 @@ test("a tool with no gateway version gets sha256- and the first 12 hex of its di
 
 test("the whole link round trip: state cookie, basic client auth, resource, introspection, then a linked grant", async () => {
   const db = new Database(":memory:")
-  for (const file of ["0001_better_auth.sql", "0002_connector_binding.sql", "0003_connector_binding_manifest.sql", "0004_connector_binding_definition.sql"]) db.exec(migration(file))
+  for (const file of ["0001_better_auth.sql", "0002_connector_binding.sql", "0003_connector_binding_manifest.sql", "0004_connector_binding_definition.sql", "0005_connector_binding_state.sql"]) db.exec(migration(file))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
   const jar = new Map<string, string>()
   const keep = (response: Response) => { for (const line of response.headers.getSetCookie()) { const [pair] = line.split(";"); const [name, ...rest] = (pair ?? "").split("="); if (name) jar.set(name, rest.join("=")) } return response }
@@ -457,4 +464,72 @@ test("the cell scope is the organization's declared environment, or null", async
   expect(await cellScope(auth, "org_demo")).toEqual({ orgId: "org_demo", environmentId: "analytics" })
   for (const id of ["org_none", "org_bad", "org_text", "org_missing"]) expect(await cellScope(auth, id)).toEqual({ orgId: id, environmentId: null })
   expect(scopeQuery({ orgId: "org_demo", environmentId: "analytics" })).toBe("orgId=org_demo&environmentId=analytics")
+})
+
+/** A cell that keeps what it installs, answers reads of it, and can be taken down. */
+function liveCell() {
+  const held = new Map<string, { version: number; payload: Record<string, unknown> }>()
+  const state = { down: false }
+  const { host, seen } = cellHost((path, body) => {
+    if (state.down) throw new TypeError("connect refused")
+    const read = /^\/v1\/definitions\/([^:/]+)$/.exec(path)
+    if (read !== null) {
+      const definition = held.get(decodeURIComponent(read[1] ?? ""))
+      return definition === undefined ? Response.json({ code: "definition.not_found" }, { status: 404 }) : Response.json({ id: read[1], version: definition.version, payload: definition.payload })
+    }
+    if (path === "/v1/definitions:install") {
+      const id = String(body.id)
+      const version = (held.get(id)?.version ?? 0) + 1
+      held.set(id, { version, payload: body.payload as Record<string, unknown> })
+      return Response.json({ installed: true, id, version, receipt: {} })
+    }
+    return Response.json({ installed: true, id: "x", version: 1, receipt: {} })
+  })
+  return { host, seen, held, state }
+}
+
+test("a save never ends half-done: each failure point is settled against the cell", async () => {
+  const { send, signUp } = stage()
+  const owner = await signUp("ada@example.com")
+  const cell = liveCell()
+  const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
+  type Binding = { id: string; state: string; definition: { id: string; version: number } | null }
+
+  // 1. Create: the cell installs it, then writing the result locally fails. The row is left
+  //    "creating"; the next read adopts the cell's definition.
+  failures.next = /^UPDATE connector_binding SET label/
+  const failed = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "One" }), cookie: owner }, { host: cell.host })
+  expect(failed).toMatchObject({ status: 500, body: { code: "connectors.internal" } })
+  const [one] = await list()
+  expect(one).toMatchObject({ label: "One", state: "ready", definition: { version: 1 } })
+  expect(cell.held.size).toBe(1)
+
+  // 2. Edit: the cell installs version 2, then the local write fails. The read adopts version 2 and its fields.
+  failures.next = /^UPDATE connector_binding SET label/
+  expect((await send(`/bindings/${one?.id}`, { ...body("PATCH", { label: "One, edited" }), cookie: owner }, { host: cell.host })).status).toBe(500)
+  expect((await list())[0]).toMatchObject({ label: "One, edited", state: "ready", definition: { version: 2 } })
+
+  // 3. Create while the cell is down: the outcome is unknown, so the row stays "creating" and
+  //    cannot run or change; once the cell answers that it holds nothing, the create is undone.
+  cell.state.down = true
+  const unknown = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Two" }), cookie: owner }, { host: cell.host })
+  expect(unknown.body.code).toBe("connectors.cell_unavailable")
+  const pending = (await list()).find((b) => b.label === "Two")
+  expect(pending?.state).toBe("pending")
+  expect((await send(`/bindings/${pending?.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: cell.host })).body.code).toBe("connectors.binding_pending")
+  expect((await send(`/bindings/${pending?.id}`, { method: "DELETE", cookie: owner }, { host: cell.host })).body.code).toBe("connectors.binding_pending")
+  cell.state.down = false
+  expect((await list()).map((b) => b.label)).toEqual(["One, edited"])
+
+  // 4. Edit while the cell is down, which never received it: once the cell answers, the edit is
+  //    undone and the binding is back as it was (version 2, its label).
+  cell.state.down = true
+  await send(`/bindings/${one?.id}`, { ...body("PATCH", { label: "Lost edit" }), cookie: owner }, { host: cell.host })
+  cell.state.down = false
+  expect((await list())[0]).toMatchObject({ label: "One, edited", state: "ready", definition: { version: 2 } })
+
+  // 5. Create refused by the cell: the intent is undone at once, nothing is left.
+  const refusing = cellHost(() => Response.json({ code: "definition.refused", diagnostics: [{ code: "binding.role_undeclared", message: "no such role", span: { pointer: "/payload/runRole" } }] }, { status: 422 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Three" }), cookie: owner }, { host: refusing.host })).body.code).toBe("connectors.binding_refused")
+  expect((await list()).map((b) => b.label)).toEqual(["One, edited"])
 })

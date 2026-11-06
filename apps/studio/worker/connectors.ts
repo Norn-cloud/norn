@@ -2,7 +2,7 @@ import { originAllowed, resolveActor, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
 import { cellScope } from "./scope.ts"
-import { connectorString, connectorVersion, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, saveBinding, toolManifest, type Binding } from "./bindings.ts"
+import { abandonSave, adoptCell, beginCreate, beginEdit, connectorString, connectorVersion, finishSave, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
@@ -147,12 +147,39 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       : outcome.kind === "conflict" ? refusal(409, "connectors.binding_conflict", "Someone changed this binding since it was opened. Reload it and try again.")
         : outcome.kind === "denied" ? refusal(403, "connectors.binding_denied", `The cell does not let you save or remove tool bindings (${outcome.code}).`, { kind: "ask_admin" })
         : null
-  if (route === "GET /bindings") return ok({ bindings: (await listBindings(db, actor.orgId)).map(shown), manage })
+  /**
+   * Settle a binding a save left pending, from what the cell holds: the cell's version and fields
+   * when it has the definition, otherwise undo the save (a create is deleted, an edit restored).
+   * Returns the settled binding, null when it was deleted, or the binding still pending when the
+   * cell cannot be asked now.
+   */
+  const reconcile = async (binding: Binding): Promise<Binding | null> => {
+    if (binding.state !== "pending" || binding.pendingDefinition === null) return binding
+    const cell = cellFor()
+    if (cell === null) return binding
+    let held: Awaited<ReturnType<BindingDefinitions["get"]>>
+    try {
+      held = await cell.get(binding.pendingDefinition)
+    } catch (error) {
+      if (error instanceof CellUnavailable) return binding
+      throw error
+    }
+    if (held.kind === "found" && (binding.definition === null || held.version > binding.definition.version)) await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload)
+    else if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition) === "deleted") return null
+    return await getBinding(db, actor.orgId, binding.id)
+  }
+  const settled = async (id: string) => { const binding = await getBinding(db, actor.orgId, id); return binding === null ? null : await reconcile(binding) }
+  const stillPending = () => refusal(409, "connectors.binding_pending", "This binding is still being saved. Try again in a moment.")
+  if (route === "GET /bindings") {
+    const rows = await Promise.all((await listBindings(db, actor.orgId)).map(reconcile))
+    return ok({ bindings: rows.filter((b): b is Binding => b !== null).map(shown), manage })
+  }
   if (request.method === "DELETE" && bindingRoute !== null) {
     if (!manage) return forbidden("Only an organization admin can remove a tool binding.")
     const id = part(bindingRoute, 1)
-    const existing = await getBinding(db, actor.orgId, id)
+    const existing = await settled(id)
     if (existing === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
+    if (existing.state === "pending") return stillPending()
     // Retire the cell definition first: agents must stop referencing it before the record goes.
     if (existing.definition !== null) {
       const cell = cellFor()
@@ -232,8 +259,9 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
     // Adding or editing a binding checks its input mapping against the tool's live input schema.
     if (route === "POST /bindings" || (request.method === "PATCH" && bindingRoute !== null)) {
       if (!manage) return forbidden("Only an organization admin can add or edit tool bindings.")
-      const existing = bindingRoute === null ? undefined : await getBinding(db, actor.orgId, part(bindingRoute, 1))
+      const existing = bindingRoute === null ? undefined : await settled(part(bindingRoute, 1))
       if (existing === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
+      if (existing?.state === "pending") return stillPending()
       const body = await json(request)
       const target = { app: existing?.app ?? body?.app, tool: existing?.tool ?? body?.tool }
       if (typeof target.app !== "string" || typeof target.tool !== "string") return refusal(400, "connectors.binding_invalid", "Send {app, tool, label?, inputMapping?, runRole?}.", undefined, "tool")
@@ -245,26 +273,36 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const digest = await manifestDigest(toolManifest(tool))
       const connector = { gateway: "executor" as const, origin: gatewayOrigin, app: tool.app, tool: tool.name, version: connectorVersion(tool.version, digest) }
       const id = existing?.id ?? crypto.randomUUID()
-      // The cell installs the binding as a definition (it recomputes the digest); the local record follows it.
+      const definitionId = existing?.definition?.id ?? bindingDefinitionId(id)
       const cell = cellFor()
       if (cell === null) return noEnvironment()
+      // Record the intent first, so a failure at any point below leaves a pending row that
+      // reconciliation settles against the cell, never a half-saved binding.
+      if (existing === undefined) await beginCreate(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector }, id, definitionId)
+      else await beginEdit(db, actor.orgId, id, definitionId)
       let outcome: Install
       try {
-        outcome = await cell.install(existing?.definition?.id ?? bindingDefinitionId(id), { connector, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, manifestDigest: digest, label: draft.label, inputMapping: draft.inputMapping, runRole: draft.runRole }, existing?.definition?.version)
+        outcome = await cell.install(definitionId, { connector, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, manifestDigest: digest, label: draft.label, inputMapping: draft.inputMapping, runRole: draft.runRole }, existing?.definition?.version)
       } catch (error) {
-        if (error instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", error.message)
+        // The outcome is unknown (the cell may have installed it): keep the intent for reconciliation.
+        if (error instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", `${error.message} It will be settled against the cell before it is used.`)
         throw error
       }
       const refused = cellRefusal(outcome)
-      if (refused !== null) return refused
+      if (refused !== null) {
+        // The cell decided no: nothing was installed, so the intent is undone.
+        await abandonSave(db, actor.orgId, id, existing === undefined ? "create" : "edit", existing?.definition ?? null)
+        return refused
+      }
       const definition = outcome.kind === "installed" ? { id: outcome.id, version: outcome.version } : null
-      return ok({ binding: shown(await saveBinding(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector, definition }, id)) })
+      return ok({ binding: shown(await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition })) })
     }
 
     const runRoute = /^\/bindings\/([^/]+)\/run$/.exec(path)
     if (request.method === "POST" && runRoute !== null) {
-      const binding = await getBinding(db, actor.orgId, part(runRoute, 1))
+      const binding = await settled(part(runRoute, 1))
       if (binding === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
+      if (binding.state === "pending") return stillPending()
       if (!mayRun(actor, binding)) return forbidden(`Running ${binding.label} needs the ${binding.runRole} role or above.`)
       const input = (await json(request))?.input
       if (typeof input !== "object" || input === null || Array.isArray(input)) return refusal(400, "connectors.invalid_request", "Send {input: {…}} for the fields the binding does not fix.", undefined, "input")
