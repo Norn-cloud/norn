@@ -54,7 +54,7 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
   await expect(form.getByLabel("Location › Site")).toHaveValue("vault-b")
   await form.getByRole("button", { name: "Next" }).click()
   await form.getByLabel("No value").last().check() // note: an explicit no value
-  await form.getByRole("button", { name: "Review", exact: true }).click()
+  await form.locator('button[type="submit"]', { hasText: "Review" }).click()
   const review = form.getByRole("region", { name: "Review" })
   await expect(review).toContainText("4.250 g")
   await expect(review).toContainText("vault-b")
@@ -72,7 +72,7 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
 test("validate: the cell checks on submit; its refusal opens the first step it names and marks every step with a problem", async ({ page }) => {
   await start(page)
   const form = sheet(page)
-  for (const next of ["Next", "Next", "Review"]) await form.getByRole("button", { name: next, exact: true }).click()
+  for (let i = 0; i < 3; i += 1) await form.locator('button[type="submit"]').click() // Next, Next, Review
   await form.getByRole("button", { name: "Open a holding" }).click()
   await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step")
   await expect(form.locator('[data-pointer="/id"]')).toContainText("Holding id is required.")
@@ -139,7 +139,7 @@ test("edit: from a record's drawer the wizard carries its id, locked, through to
   await form.getByRole("button", { name: "Next" }).click()
   await form.getByLabel("Location › Site").fill("vault-a")
   await form.getByRole("button", { name: "Next" }).click()
-  await form.getByRole("button", { name: "Review", exact: true }).click()
+  await form.locator('button[type="submit"]', { hasText: "Review" }).click()
   await expect(form.getByRole("region", { name: "Review" }).getByLabel("This record")).toBeVisible()
   await form.getByRole("button", { name: "Open a holding" }).click()
   await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0005 opened · just now")

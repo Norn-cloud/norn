@@ -47,7 +47,7 @@ async function fillHolding(page: Page, id: string, quantity: string) {
   await form.getByRole("button", { name: "Next" }).click()
   await form.getByLabel("Location › Site").fill("vault-a")
   await form.getByRole("button", { name: "Next" }).click()
-  await form.getByRole("button", { name: "Review", exact: true }).click()
+  await form.locator('button[type="submit"]', { hasText: "Review" }).click()
 }
 
 test("view: a single-group schema is one page: its titled section, the record's id locked first, the submit bar in view", async ({ page }) => {
@@ -95,7 +95,7 @@ test("validate: the cell's refusal lands on each field it names; fixing them com
   await newRecord(page, "Open a holding")
   const form = sheet(page)
   await form.getByLabel("Quantity").fill("12,5")
-  for (const next of ["Next", "Next", "Review"]) await form.getByRole("button", { name: next, exact: true }).click()
+  for (let i = 0; i < 3; i += 1) await form.locator('button[type="submit"]').click() // Next, Next, Review
   await form.getByRole("button", { name: "Open a holding" }).click()
   // The wizard opens the first step the cell refused something on.
   await expect(form.getByRole("alert").first()).toContainText("The cell refused this input.")
