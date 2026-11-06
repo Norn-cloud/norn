@@ -5,18 +5,24 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  * Contract Studio proposes to CELL-DO (routes 3 and 4), alongside `GET /v1/objects/{type}`:
  *
  *   GET  /v1/actions?orgId&environmentId[&objectKind=T]
- *        200 { items: ActionSummary[] }: only actions this actor may call (the PDP decides; Studio
- *        filters nothing). Each item carries the admitted `inputSchema` (ActionIR's closed input
- *        dialect, unchanged), `effect` and `objectIdField` from its effect program, and `uiEffects`.
+ *        200 { items: ActionSummary[] }: only actions this actor may call and the kernel can run
+ *        (the cell decides; Studio filters nothing). Each item carries the admitted `inputSchema`
+ *        (ActionIR's closed input dialect with DEFS's title, description, enum and x-norn.groups),
+ *        `effect` and `objectIdField` from its effect program, `title` (falls back to `actionId`)
+ *        and `uiEffects`, the kernel's effective effects (always present).
  *
  *   POST /v1/actions/{actionId}?orgId&environmentId
- *        body { input: <object>, idempotencyKey: string }   (1..128 chars, one per draft)
+ *        body { input: <object>, idempotencyKey: string }   (1..128 chars and at most 256 UTF-8
+ *        bytes; Studio sends one random UUID per draft)
  *        200 { outcome: "committed" | "replayed", objectType, objectId, version,
  *              receipt: { receiptHash, commitSeq, recordedAtMs } }
  *        4xx Refusal { code, category, message, diagnostics: [{ code, message, pointer }] }:
  *            every input violation listed, each pointer into the request body (`/input/qty`,
  *            `/input/lines/0/sku`); a rule or precondition refusal has `pointer: null`.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
+ *
+ *   Any 404 or 503, whatever its body (the cell's carries `route.not_found`), means the cell does
+ *   not serve the route: Studio says so and offers no action.
  *
  * Studio never validates input. It encodes what was typed as faithfully as JSON allows and
  * shows the cell's refusal at the field its pointer names.
@@ -29,11 +35,22 @@ export interface ActionSummary {
   readonly title: string
   readonly description: string | null
   readonly objectKind: string
-  readonly effect: "upsert_input_object" | "fire_transition"
+  /** `mutate_parent_with_rows` writes a parent and its owned rows; `objectIdField` is the parent's id. */
+  readonly effect: "upsert_input_object" | "mutate_parent_with_rows" | "fire_transition"
   readonly objectIdField: string
   readonly inputSchema: unknown
-  readonly uiEffects: UiEffects | null
+  /** The kernel's effective effects: destructive can be true without being declared. */
+  readonly uiEffects: UiEffects
 }
+
+/** Whether an action writes a record whole (creating it when the id is new): offered as "New …". */
+export const writesWhole = (action: ActionSummary) => action.effect !== "fire_transition"
+
+/** Whether the form confirms before it calls. */
+export const risky = (action: ActionSummary) => action.uiEffects.destructive || action.uiEffects.irreversible
+
+/** One idempotency key per draft: a random UUID, ASCII and 36 bytes, well inside the cell's 256-byte bound. */
+export const newIdempotencyKey = (): string => crypto.randomUUID()
 
 export interface ActionReceipt {
   readonly outcome: "committed" | "replayed"
@@ -88,6 +105,7 @@ export async function listActions(objectKind: string | undefined, fetcher: Fetch
   const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind })}`
   const response = await call(`/v1/actions${query}`, { headers: { accept: "application/json" } })
   const text = await response.text()
+  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   if (response.ok) {
     let items: unknown
     try { items = (JSON.parse(text) as { items?: unknown }).items } catch { items = undefined }
@@ -96,7 +114,6 @@ export async function listActions(objectKind: string | undefined, fetcher: Fetch
   }
   const refusal = refusalOf(text)
   if (refusal !== null) return { kind: "refused", status: response.status, code: refusal.code, message: refusal.message }
-  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   throw new CellUnavailable(response.status)
 }
 
@@ -110,10 +127,10 @@ export async function callAction(actionId: string, input: string, idempotencyKey
     body: `{"input":${input},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`,
   })
   const text = await response.text()
+  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   if (response.ok) return { kind: "receipt", receipt: JSON.parse(text) as ActionReceipt }
   const refusal = refusalOf(text)
   if (refusal !== null) return { kind: "refused", status: response.status, ...refusal }
-  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   throw new CellUnavailable(response.status)
 }
 

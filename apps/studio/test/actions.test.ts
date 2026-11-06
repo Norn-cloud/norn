@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { callAction, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { callAction, newIdempotencyKey, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING } from "../e2e/action-fixtures.ts"
 
 // Real admitted actions from the cell's own fixtures: an upsert with exact decimals and a transition.
@@ -143,4 +143,25 @@ test("a draft is read and written by pointer, nested records included", () => {
   expect(draftAt(draft, "/location/site")).toBe("vault-a")
   expect(draftAt(draft, "/location/bin")).toBe("")
   expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":10.500,"location":{"site":"vault-a"}}')
+})
+
+test("contract v1 as CELL-DO approved it: any 404 or 503 is not served, whatever its body", async () => {
+  const notFound = () => Response.json({ code: "route.not_found", message: "No such route." }, { status: 404 })
+  expect(await listActions(undefined, cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
+  expect(await callAction("a", "{}", "k", cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
+  expect(await listActions(undefined, cell(() => Response.json({ code: "host.down", message: "down" }, { status: 503 })).fetcher)).toEqual({ kind: "unavailable" })
+})
+
+test("a parent with owned rows is offered as a whole-record write, like an upsert; a transition is not", () => {
+  const base = { actionId: "a", title: "A", description: null, objectKind: "t", objectIdField: "id", inputSchema: {}, uiEffects: { irreversible: false, destructive: false, money: [] } }
+  expect(writesWhole({ ...base, effect: "mutate_parent_with_rows" })).toBe(true)
+  expect(writesWhole({ ...base, effect: "upsert_input_object" })).toBe(true)
+  expect(writesWhole({ ...base, effect: "fire_transition" })).toBe(false)
+})
+
+test("idempotency keys are ASCII UUIDs, far inside the cell's 256-byte bound, and new each draft", () => {
+  const [a, b] = [newIdempotencyKey(), newIdempotencyKey()]
+  expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+  expect(new TextEncoder().encode(a).length).toBeLessThanOrEqual(256)
+  expect(a).not.toBe(b)
 })

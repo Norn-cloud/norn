@@ -18,7 +18,7 @@ import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-source.ts"
 import { transport } from "../lib/transport.ts"
-import { ACTIONS_UNAVAILABLE, type ActionSummary } from "../lib/actions.ts"
+import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
 import { alignRight, Cell, isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
@@ -74,7 +74,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const [acting, setActing] = useState<OpenAction | null>(null)
   const catalog = useActions(name)
   const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
-  const creates = actions.filter((a) => a.effect === "upsert_input_object")
+  const creates = actions.filter(writesWhole)
   // Off with the reason while the cell takes no actions; absent when it offers this reader none.
   const actionsOff = catalog.isError ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message : undefined
@@ -364,7 +364,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
                   ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
                   : <div className="flex flex-wrap gap-2">{actions.map((action) => (
                     <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node" onClick={() => onAction(action, record.id)}>
-                      <Play /> {action.effect === "upsert_input_object" ? `${action.title} (edit)` : action.title}
+                      <Play /> {writesWhole(action) ? `${action.title} (edit)` : action.title}
                     </Button>
                   ))}</div>}
             </section>

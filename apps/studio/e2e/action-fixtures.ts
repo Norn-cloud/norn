@@ -5,6 +5,9 @@
  * Playwright stand-in so both read the same document.
  */
 
+/** The kernel's effective effects; the cell always sends them. */
+const NONE = { irreversible: false, destructive: false, money: [] as string[] }
+
 const decimal = (unit: string, scale: number) => ({ type: "number", nornType: { kind: "decimal", scale, unit: { code: unit, system: "ucum" } } })
 
 /** Upsert: open a holding. Uses all three dialect additions. */
@@ -15,7 +18,7 @@ export const OPEN_HOLDING = {
   objectKind: "canon.Holding",
   effect: "upsert_input_object",
   objectIdField: "id",
-  uiEffects: null,
+  uiEffects: NONE,
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -48,7 +51,7 @@ export const ADJUST_HOLDING = {
   objectKind: "canon.Holding",
   effect: "fire_transition",
   objectIdField: "id",
-  uiEffects: null,
+  uiEffects: NONE,
   inputSchema: {
     type: "object", additionalProperties: false, required: ["id", "quantity", "reason"],
     properties: { id: { type: "string", title: "Holding id" }, quantity: { ...decimal("g", 3), title: "Counted quantity" }, reason: { type: "string", title: "Reason" } },
@@ -67,4 +70,25 @@ export const RETIRE_HOLDING = {
   inputSchema: { type: "object", additionalProperties: false, required: ["id"], properties: { id: { type: "string", title: "Holding id" } } },
 } as const
 
-export const ACTIONS = [OPEN_HOLDING, ADJUST_HOLDING, RETIRE_HOLDING] as const
+/** Parent plus owned rows (`mutate_parent_with_rows`): offered like an upsert on the parent's type. */
+export const RESTOCK_HOLDING = {
+  actionId: "canon.holding.restock",
+  title: "Restock holding",
+  description: "Add lots to a holding; each lot is a row the holding owns.",
+  objectKind: "canon.Holding",
+  effect: "mutate_parent_with_rows",
+  objectIdField: "id",
+  uiEffects: NONE,
+  inputSchema: {
+    type: "object", additionalProperties: false, required: ["id", "lots"],
+    properties: {
+      id: { type: "string", title: "Holding id" },
+      lots: {
+        type: "array", title: "Lots",
+        items: { type: "object", additionalProperties: false, required: ["lot", "quantity"], properties: { lot: { type: "string", title: "Lot" }, quantity: { ...decimal("g", 3), title: "Quantity" } } },
+      },
+    },
+  },
+} as const
+
+export const ACTIONS = [OPEN_HOLDING, RESTOCK_HOLDING, ADJUST_HOLDING, RETIRE_HOLDING] as const

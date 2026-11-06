@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, inputPointer, newIdempotencyKey, risky as isRisky, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type CallResult, type Diagnostic, type Draft, type FormField, type Spec,
 } from "../lib/actions.ts"
 
@@ -21,7 +21,7 @@ type Phase =
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "done"; readonly receipt: ActionReceipt }
 
-const newKey = () => crypto.randomUUID()
+const newKey = newIdempotencyKey
 const control = "h-9 w-full rounded-lg border border-node-border bg-background px-3 text-sm aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20"
 
 /**
@@ -46,7 +46,7 @@ export function ActionForm({ action, prefill = {}, onDirty, onClose, call = call
   const [phase, setPhase] = useState<Phase>({ kind: "editing" })
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && phase.kind !== "done"
   const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
-  const risky = action.uiEffects !== null && (action.uiEffects.destructive || action.uiEffects.irreversible)
+  const risky = isRisky(action)
 
   const edit = (pointer: string, value: Draft) => {
     const next = withDraftAt(draft, pointer, value)
@@ -69,7 +69,7 @@ export function ActionForm({ action, prefill = {}, onDirty, onClose, call = call
   }
 
   if (phase.kind === "done") {
-    return <Receipt action={action} receipt={phase.receipt} onAgain={action.effect === "upsert_input_object" ? () => { setDraft(emptyDraft(fields)); setKey(newKey()); setPhase({ kind: "editing" }) } : undefined} onClose={onClose} />
+    return <Receipt action={action} receipt={phase.receipt} onAgain={writesWhole(action) ? () => { setDraft(emptyDraft(fields)); setKey(newKey()); setPhase({ kind: "editing" }) } : undefined} onClose={onClose} />
   }
 
   const top = unplaced(diagnostics, fields)
@@ -103,8 +103,8 @@ export function ActionForm({ action, prefill = {}, onDirty, onClose, call = call
       {phase.kind === "confirm" && (
         <div role="alertdialog" aria-labelledby="confirm-title" className="grid gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
           <p id="confirm-title" className="flex items-center gap-2 font-medium text-destructive"><AlertTriangle className="size-4" aria-hidden />
-            {action.uiEffects?.irreversible ? "This can't be undone." : "This removes business data."}</p>
-          <p className="text-muted-foreground">{action.title}{action.uiEffects?.destructive && action.uiEffects.irreversible ? ": it removes business data and can't be undone." : "."} The cell still checks it before anything changes.</p>
+            {action.uiEffects.irreversible ? "This can't be undone." : "This removes business data."}</p>
+          <p className="text-muted-foreground">{action.title}{action.uiEffects.destructive && action.uiEffects.irreversible ? ": it removes business data and can't be undone." : "."} The cell still checks it before anything changes.</p>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -124,7 +124,9 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
   readonly onEdit: (pointer: string, value: Draft) => void
 }) {
   const id = useId()
-  const problems = problemsAt(diagnostics, field.pointer)
+  // A record (or a list of records) shows only its own problems; its members show theirs.
+  const own = field.spec.kind === "object" || (field.spec.kind === "array" && field.spec.item.kind === "object")
+  const problems = own ? diagnostics.filter((d) => inputPointer(d) === field.pointer) : problemsAt(diagnostics, field.pointer)
   const value = draftAt(draft, field.pointer)
   const described = [field.description ? `${id}-help` : "", problems.length > 0 ? `${id}-problem` : ""].filter(Boolean).join(" ") || undefined
   const aria = { id, "aria-describedby": described, "aria-invalid": problems.length > 0 || undefined, "aria-required": field.required || undefined }

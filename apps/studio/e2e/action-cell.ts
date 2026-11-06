@@ -10,7 +10,7 @@ import type { ObjectCell } from "./object-cell.ts"
  */
 
 interface Problem { code: string; message: string; pointer: string | null }
-type Schema = { type?: unknown; properties?: Record<string, Schema>; required?: readonly string[]; enum?: readonly string[]; title?: string; additionalProperties?: boolean }
+type Schema = { type?: unknown; properties?: Record<string, Schema>; items?: Schema; required?: readonly string[]; enum?: readonly string[]; title?: string; additionalProperties?: boolean }
 
 function check(schema: Schema, value: unknown, at: string, problems: Problem[]) {
   const types = Array.isArray(schema.type) ? schema.type.map(String) : [String(schema.type)]
@@ -26,6 +26,12 @@ function check(schema: Schema, value: unknown, at: string, problems: Problem[]) 
       if (child === undefined) problems.push({ code: "action.input_unknown", message: `${key} is not an input of this action.`, pointer: `${at}/${key}` })
       else check(child, member, `${at}/${key}`, problems)
     }
+    return
+  }
+  if (type === "array") {
+    if (!Array.isArray(value)) return void problems.push({ code: "action.input_invalid", message: `${name} must be a list.`, pointer: at })
+    if (value.length === 0) return void problems.push({ code: "action.input_invalid", message: `Add at least one to ${name}.`, pointer: at })
+    value.forEach((item, i) => check(schema.items ?? {}, item, `${at}/${i}`, problems))
     return
   }
   if (type === "number" && typeof value !== "number") return void problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
@@ -64,7 +70,7 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     calls.push({ actionId, body })
     if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
     const action = ACTIONS.find((a) => a.actionId === actionId)
-    if (action === undefined) return route.fulfill({ status: 404, json: { code: "action.unknown", message: "No such action.", diagnostics: [] } })
+    if (action === undefined) return route.fulfill({ status: 404, json: { code: "route.not_found", message: "No such route." } })
     const { input, idempotencyKey } = JSON.parse(body) as { input: Record<string, unknown>; idempotencyKey: string }
     const inputText = JSON.stringify(input)
     const known = keys.get(idempotencyKey)
@@ -86,7 +92,8 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     const values = { ...(existing?.values ?? {}) }
     if (actionId === "canon.holding.open") {
       Object.assign(values, { resource_code: String(input["resource_code"]), quantity: rawNumber(body, "quantity") ?? String(input["quantity"]), unit: "g", currency: "USD", valuation_method: String(input["valuation_method"]), location: String((input["location"] as { site: string }).site), quantity_basis: "on_hand", stock_cost: "0.000000", cost_currency: "USD" })
-    } else if (actionId === "canon.holding.adjust") values["quantity"] = rawNumber(body, "quantity") ?? String(input["quantity"])
+    } else if (actionId === "canon.holding.restock") values["lots"] = String((input["lots"] as unknown[]).length)
+    else if (actionId === "canon.holding.adjust") values["quantity"] = rawNumber(body, "quantity") ?? String(input["quantity"])
     else if (actionId === "canon.holding.retire") values["retired"] = "true"
     const row = { id, withheld: false, withheldProperties: [], values, version }
     if (existing) objects.rows[index] = row
