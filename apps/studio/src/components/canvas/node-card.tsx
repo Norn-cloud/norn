@@ -78,12 +78,12 @@ export function InspectorHead({ kind, kindLabel, id }: { readonly kind: string; 
   return (
     <div className="flex items-center gap-2.5 border-b border-node-border pb-3">
       <KindChip kind={kind} />
-      {/* One heading names what the inspector edits; the two visual lines carry the same words. */}
-      <h3 className="sr-only">{`${kindLabel ?? NODE_KINDS[kind]?.label ?? kind} · ${id}`}</h3>
-      <div aria-hidden className="min-w-0">
-        <div className="text-[13px] leading-5 font-semibold">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</div>
-        <div className="truncate font-mono text-[11px] leading-4 text-muted-foreground">{id}</div>
-      </div>
+      {/* One heading names what the inspector edits, written once: the separator is read, not drawn. */}
+      <h3 className="min-w-0">
+        <span className="block text-[13px] leading-5 font-semibold">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</span>
+        <span className="sr-only"> · </span>
+        <span className="block truncate font-mono text-[11px] leading-4 font-normal text-muted-foreground">{id}</span>
+      </h3>
     </div>
   )
 }

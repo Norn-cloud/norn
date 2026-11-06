@@ -44,3 +44,12 @@ export function openingViewport(nodes: readonly Box[], container: { readonly wid
   const at = anchor ?? nodes.reduce((a, b) => (b.x < a.x || (b.x === a.x && b.y < a.y) ? b : a))
   return { x: insets.side - at.x * zoom, y, zoom }
 }
+
+/** Whether no node, at this viewport, lies under the minimap in the container's bottom-right corner. */
+export function clearOfMinimap(nodes: readonly Box[], view: Viewport, container: { readonly width: number; readonly height: number }): boolean {
+  const map = { left: container.width - MINIMAP.margin - MINIMAP.width, top: container.height - MINIMAP.margin - MINIMAP.height, right: container.width - MINIMAP.margin, bottom: container.height - MINIMAP.margin }
+  return nodes.every(({ x, y, width, height }) => {
+    const left = x * view.zoom + view.x, top = y * view.zoom + view.y
+    return left + width * view.zoom <= map.left || left >= map.right || top + height * view.zoom <= map.top || top >= map.bottom
+  })
+}

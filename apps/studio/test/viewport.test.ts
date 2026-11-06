@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { INSET, READABLE, WITH_MINIMAP, fitsReadable, openingViewport } from "../src/lib/canvas/viewport.ts"
+import { INSET, READABLE, WITH_MINIMAP, clearOfMinimap, fitsReadable, openingViewport } from "../src/lib/canvas/viewport.ts"
 
 const card = (x: number, y: number) => ({ x, y, width: 144, height: 58 })
 
@@ -32,4 +32,13 @@ test("the minimap's band is kept clear: a framed graph sits above it", () => {
   const lowest = Math.max(...nodes.map(({ y, height }) => (y + height) * view.zoom + view.y))
   expect(lowest).toBeLessThanOrEqual(container.height - WITH_MINIMAP.bottom)
   expect(fitsReadable([card(0, 0)], container)).toBe(true)
+})
+
+test("a graph wider and taller than the view leaves no clear corner, so the minimap starts hidden", () => {
+  const container = { width: 700, height: 400 }
+  const grid = [0, 1, 2, 3, 4, 5].flatMap((column) => [0, 1, 2, 3, 4].map((row) => card(column * 200, row * 110)))
+  const view = openingViewport(grid, container, grid[0], WITH_MINIMAP)
+  expect(clearOfMinimap(grid, view, container)).toBe(false)
+  const row = [0, 1, 2, 3, 4, 5].map((column) => card(column * 200, 0))
+  expect(clearOfMinimap(row, openingViewport(row, { width: 700, height: 600 }, row[0], WITH_MINIMAP), { width: 700, height: 600 })).toBe(true)
 })

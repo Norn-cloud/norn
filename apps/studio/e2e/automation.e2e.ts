@@ -154,5 +154,5 @@ test("selection and problems: multi-select, copy/paste, delete selected, jump to
   await expect(node(page, "draft_copy")).toBeVisible()
   await clear(page)
   await page.getByTestId("problem").first().click()
-  await expect(page.getByRole("heading", { name: /^Outcome · (paid|draft)_copy$/ })).toBeVisible()
+  await expect(page.getByRole("heading", { name: /^Outcome\s*·\s*(paid|draft)_copy$/ })).toBeVisible()
 })

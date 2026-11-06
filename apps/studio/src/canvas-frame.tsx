@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
-import { INSET, MINIMAP, READABLE, WITH_MINIMAP, fitsReadable, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
+import { INSET, MINIMAP, READABLE, WITH_MINIMAP, clearOfMinimap, fitsReadable, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
 export interface Issue {
@@ -213,8 +213,10 @@ function Frame(props: CanvasFrameProps) {
     const at = start >= 0 ? start : graph.nodes.findIndex(({ config }) => config.initial === "yes")
     const container = { width: box?.width ?? 0, height: box?.height ?? 0 }
     const fits = fitsReadable(boxes, container)
-    setMap(!fits)
-    setOpening(openingViewport(boxes, container, boxes[at], fits ? INSET : WITH_MINIMAP))
+    const view = openingViewport(boxes, container, boxes[at], fits ? INSET : WITH_MINIMAP)
+    // Shown only when there is more than the view holds and its corner is clear; otherwise it starts hidden.
+    setMap(!fits && clearOfMinimap(boxes, view, container))
+    setOpening(view)
   }, []) // Once, for the graph the canvas opened with.
   // The path in focus: selected connections and every connection of a selected node; a finding outranks it.
   const look = (edge: g.CanvasEdge): Edge => {
