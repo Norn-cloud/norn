@@ -5,6 +5,7 @@ import { CircleAlert, Copy, Redo2, Save, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
+import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
@@ -229,6 +230,18 @@ function Frame(props: CanvasFrameProps) {
 /** The editing frame every canvas surface shares, so each verb exists everywhere once. */
 export function CanvasFrame(props: CanvasFrameProps) {
   return <ReactFlowProvider><Frame {...props} /></ReactFlowProvider>
+}
+
+/**
+ * An action that exists but cannot run yet: drawn dashed and muted so it reads as unavailable, with its reason on
+ * hover (on the wrapper, because a disabled button takes no pointer events) and in its accessible name.
+ */
+export function Unavailable({ reason, children, className }: { readonly reason: string; readonly children: string; readonly className?: string }) {
+  return (
+    <span title={reason} className={cn("inline-flex cursor-not-allowed", className)}>
+      <Button size="sm" variant="outline" disabled className="border-dashed text-muted-foreground">{children}<span className="sr-only">: {reason}</span></Button>
+    </span>
+  )
 }
 
 /** A finding in a side panel. */
