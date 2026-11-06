@@ -13,6 +13,8 @@ use norn_cell_do::{seed, server};
 use serde_json::Value;
 
 const VIEWER: Option<&str> = Some("Bearer fixture:viewer@demo");
+/// Holds only the `viewer` role: not a declared run starter.
+const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 
 /// The demo cell with its fixture principals recording into its policy.
@@ -78,10 +80,17 @@ fn post(
 fn run_routes_dispatch_with_typed_refusals() {
     let host = host(NativeEngine::open_in_memory().unwrap());
     let body = r#"{"flow":"demo.no_such_flow","runId":"run-1"}"#;
-    let (status, refused) = post(&host, "/v1/runs", SCOPE, VIEWER, body);
+    let (status, refused) = post(&host, "/v1/runs", SCOPE, GUEST, body);
     assert_eq!(
         (status, refused["code"].as_str()),
         (403, Some("authz.denied")),
+        "{refused}"
+    );
+    // `viewer@demo` holds `admin`, a declared run starter; the demo cell has no flow.
+    let (status, refused) = post(&host, "/v1/runs", SCOPE, VIEWER, body);
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (404, Some("run.flow_not_found")),
         "{refused}"
     );
     let (status, refused) = post(

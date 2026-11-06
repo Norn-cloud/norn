@@ -141,6 +141,10 @@ struct InstalledFlow {
     environment_hash: String,
 }
 
+fn text<'v>(value: &'v serde_json::Value, pointer: &str) -> Option<&'v str> {
+    value.pointer(pointer).and_then(serde_json::Value::as_str)
+}
+
 fn flow_not_found() -> Refusal {
     Refusal::new(
         StatusCode::NOT_FOUND,
@@ -161,9 +165,6 @@ fn installed_flow<E: SqlEngine>(
         .ok_or_else(flow_not_found)?;
     let artifacts: Vec<serde_json::Value> =
         serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
-    fn text<'v>(value: &'v serde_json::Value, pointer: &str) -> Option<&'v str> {
-        value.pointer(pointer).and_then(serde_json::Value::as_str)
-    }
     let find = |id: &str, kind: &str| {
         artifacts.iter().find(|artifact| {
             text(artifact, "/artifactId") == Some(id) && text(artifact, "/kind") == Some(kind)
@@ -317,21 +318,23 @@ fn commit_start<E: SqlEngine>(
         object_type: flow.object_type,
         state_property: flow.state_property,
     };
-    cell.commit_run_start(commit, &start)
-        .map_err(|error| match &error {
-            norn_kernel::CommitError::Host(norn_cell::CellError::RunRefused(code)) => Refusal::new(
+    cell.commit_run_start(commit, &start).map_err(|error| {
+        if let norn_kernel::CommitError::Host(norn_cell::CellError::RunRefused(code)) = &error {
+            Refusal::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                *code,
+                code,
                 "the run start was refused",
                 "the flow's start turn must create its run object",
-            ),
-            _ => Refusal::new(
+            )
+        } else {
+            Refusal::new(
                 StatusCode::CONFLICT,
                 "run.start_conflict",
                 "the run start was refused",
                 error.to_string(),
-            ),
-        })?;
+            )
+        }
+    })?;
     Ok(())
 }
 
