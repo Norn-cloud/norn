@@ -662,7 +662,10 @@ fn amounts_on_the_wire(document: &impl serde::Serialize) -> Vec<serde_json::Valu
                 stack.extend(map.values());
             }
             serde_json::Value::Array(items) => stack.extend(items),
-            _ => {}
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
         }
     }
     found
