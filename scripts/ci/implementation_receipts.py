@@ -100,6 +100,14 @@ FSTAR_HOLE = re.compile(r"\b(?:admit|admitP|assume|_assume|axiom|val|magic|unsaf
 EXTRACTION_FIELDS = {"package", "items", "module", "proofRoot", "models", "proofs"}
 # Candidate files that could make cargo execute candidate-chosen programs.
 CARGO_CONFIG = (".cargo/config", ".cargo/config.toml", "rust-toolchain", "rust-toolchain.toml")
+# The only variables a process that reads candidate input inherits; the wrapper
+# sets PATH and the tool homes itself. Candidate Rust reads its compiler's
+# environment with env!/option_env! and can print it into uploaded logs, so
+# runner credentials and metadata (GITHUB_*, ACTIONS_*, RUNNER_*) never pass.
+INHERITED_ENV = ("HOME", "LANG", "LC_ALL", "TMPDIR", "CARGO_HOME", "RUSTUP_HOME")
+SECRET_ENV = re.compile(r"^(?:GITHUB_|ACTIONS_|RUNNER_)|TOKEN|SECRET", re.IGNORECASE)
+# What one claim or one receipt can raise without stopping the others.
+CLAIM_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError)
 
 
 class Refused(Exception):
@@ -117,10 +125,20 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def child_env(**overrides: str) -> dict:
+    """The environment of a process that reads candidate input: INHERITED_ENV, PATH and `overrides`."""
+    env = {name: os.environ[name] for name in INHERITED_ENV if name in os.environ}
+    env["PATH"] = os.environ.get("PATH", os.defpath)
+    env |= overrides
+    leaked = sorted(name for name in env if SECRET_ENV.search(name))
+    require(not leaked, f"refusing to pass {', '.join(leaked)} to a candidate-facing process")
+    return env
+
+
 def git(root: Path, *arguments: str) -> str:
     """Run git in `root` and return its stripped stdout."""
     return subprocess.run(["git", "-C", str(root), *arguments], check=True,
-                          capture_output=True, text=True).stdout.strip()
+                          capture_output=True, text=True, env=child_env()).stdout.strip()
 
 
 def relative(value: object) -> str:
@@ -252,7 +270,7 @@ def guard_cargo(root: Path, package: str) -> None:
                 f"{name} differs from the base")
     metadata = json.loads(subprocess.run(
         ["cargo", "metadata", "--locked", "--format-version", "1", "--manifest-path", str(root / "Cargo.toml")],
-        check=True, capture_output=True, text=True).stdout)
+        check=True, capture_output=True, text=True, env=child_env()).stdout)
     packages = {p["id"]: p for p in metadata["packages"]}
     nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
     start = [i for i, p in packages.items() if p["name"] == package and p["source"] is None]
@@ -311,8 +329,8 @@ def run(root: Path, claim: dict, head: str, out: Path, tools: Path) -> int:
     kani_plan(claim) if kind == "kani" else extraction_plan(claim, "")
     directory = out / claim["id"]
     (directory / "logs").mkdir(parents=True)
-    env = {**os.environ, "PATH": f"{tools}/bin:{os.environ['PATH']}", "RUSTUP_HOME": str(tools / "rustup"),
-           "KANI_HOME": str(tools / "kani-home"), "RUSTFLAGS": "--edition=2024"}
+    env = child_env(PATH=f"{tools}/bin:{os.environ['PATH']}", RUSTUP_HOME=str(tools / "rustup"),
+                    KANI_HOME=str(tools / "kani-home"), RUSTFLAGS="--edition=2024")
     invocations, outputs, failed = [], {}, False
     if kind == "kani":
         plan = kani_plan(claim)
@@ -559,7 +577,7 @@ def install_fstar(directory: Path) -> Path:
 def git_object(root: Path, path: str) -> str | None:
     """The committed object id of `path` at HEAD, or None when absent."""
     done = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "-q", f"HEAD:{path}"],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=child_env())
     return done.stdout.strip() if done.returncode == 0 else None
 
 
@@ -602,9 +620,21 @@ def verify(root: Path, receipts: Path, expected: dict, fstar: Path | None,
                 require(name in present, "no receipt from the base-owned wrapper")
                 verdicts.append(check(root, claim, receipts / name, expected, fstar))
             raise Refused(f"{verdicts[-1]['label']}; {NOT_ADMITTED}")
-        except (Refused, OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
+        except (Refused, *CLAIM_ERRORS) as error:
             errors.append(f"{name}: {error}")
     return errors, verdicts
+
+
+def run_all(root: Path, claims: dict, head: str, out: Path, tools: Path) -> int:
+    """Run every claim's wrapper; a claim that fails or raises fails the run, never the other claims."""
+    status = 0
+    for name, claim in claims.items():
+        try:
+            status |= run(root, claim, head, out, tools)
+        except (Refused, *CLAIM_ERRORS) as error:
+            print(f"{name}: refused: {error}", file=sys.stderr)
+            status = 1
+    return status
 
 
 def main() -> int:
@@ -633,14 +663,7 @@ def main() -> int:
                              ("bootstrap-rust-extraction-tools.sh", "extraction")):
             if any(kind_of(c) == kind for c in claims.values()):
                 subprocess.run(["bash", str(TRUSTED / "scripts" / script)], check=True, env=environment)
-        status = 0
-        for claim in claims.values():
-            try:
-                status |= run(root, claim, args.head, args.receipts, args.tools)
-            except Refused as error:
-                print(f"{claim['id']}: refused: {error}", file=sys.stderr)
-                status = 1
-        return status
+        return run_all(root, claims, args.head, args.receipts, args.tools)
     expected = {"headSha": args.head, "repository": os.environ.get("GITHUB_REPOSITORY", ""),
                 "runId": os.environ.get("GITHUB_RUN_ID", ""), "runAttempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
                 "job": JOB}
