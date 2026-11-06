@@ -970,6 +970,7 @@ pub fn version_json() -> String {
     .to_string()
 }
 
+/// Format tag of [`admit_question_json`] output.
 pub const QUESTION_FORMAT: &str = "norn-checker-abi/question@1";
 
 /// Admit a proposed question against a world: `artifacts_json` is the world's
