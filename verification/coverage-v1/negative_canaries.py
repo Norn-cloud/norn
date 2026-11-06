@@ -671,6 +671,73 @@ context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:
     return json.loads(result.stdout)
 
 
+def workflow_superseded_canaries(source: str) -> None:
+    """A superseded pull_request_target evaluation writes nothing; comment events never skip."""
+    workflow = yaml.safe_load(source)
+    steps = workflow["jobs"]["trusted-policy"]["steps"]
+    resolve = next(step for step in steps if step.get("name") == "Resolve the pull request")
+
+    def outputs(script: str, event: str, payload: str, live: str) -> dict[str, str]:
+        harness = ("const out={};const core={setOutput:(k,v)=>{out[k]=v},notice:()=>{}};"
+                   f"const context={{eventName:{json.dumps(event)},repo:{{owner:'o',repo:'r'}},payload:{payload}}};"
+                   "const github={rest:{pulls:{get:async()=>({data:{number:7,base:{sha:'b'.repeat(40)},"
+                   "head:{sha:" + json.dumps(live) + ",repo:{full_name:'Norn-cloud/norn'}}}})}}};"
+                   "(async()=>{\n" + script + "\nconsole.log(JSON.stringify(out))})()"
+                   ".catch(error=>{console.error(error);process.exit(1)});")
+        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10, check=True)
+        return json.loads(result.stdout)
+
+    old, new = "a" * 40, "c" * 40
+    target = lambda head: "{pull_request:{number:7,head:{sha:'" + head + "'}}}"
+    for event, payload, live, expected in (
+            ("pull_request_target", target(old), new, "true"),
+            ("pull_request_target", target(new), new, "false"),
+            # Comment events re-evaluate the live head: approvals and revocations never skip.
+            ("issue_comment", "{issue:{number:7,pull_request:{}}}", new, "false"),
+            ("issue_comment", "{issue:{number:7,pull_request:{}},pull_request:{head:{sha:'" + old + "'}}}", new, "false")):
+        value = outputs(resolve["with"]["script"], event, payload, live)
+        if value.get("superseded") != expected or value.get("head_sha") != live:
+            raise AssertionError(f"superseded resolution drift: {event}/{payload}/{live}: {value}")
+
+    validator = load_module("norn_superseded_canaries", VALIDATOR)
+    guard = "steps.pr.outputs.superseded != 'true'"
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+
+        def rejected(label: str, document: dict[str, Any]) -> None:
+            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate)
+            except validator.InvalidCoverage:
+                return
+            raise AssertionError(f"superseded mutation passed: {label}")
+
+        for index, step in enumerate(steps[1:-1], start=1):
+            label = step.get("name") or step.get("uses")
+            for value in (None, "always()", "!cancelled()", guard.replace("!=", "=="),
+                          guard.replace("superseded", "head_sha")):
+                if value == step.get("if"):
+                    continue
+                document = copy.deepcopy(workflow)
+                if value is None:
+                    document["jobs"]["trusted-policy"]["steps"][index].pop("if", None)
+                else:
+                    document["jobs"]["trusted-policy"]["steps"][index]["if"] = value
+                rejected(f"unguarded {label} after a superseded resolution: {value}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["trusted-policy"]["steps"].insert(2, {"name": "extra", "run": "true"})
+        rejected("unguarded step inserted after Resolve", document)
+        for before, after in (("context.eventName === 'pull_request_target' && ", ""),
+                              ("event.head.sha !== data.head.sha", "true"),
+                              ("String(superseded)", "'false'")):
+            if before not in resolve["with"]["script"]:
+                raise AssertionError(f"superseded canary target drifted: {before}")
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["steps"][0]
+            changed["with"]["script"] = changed["with"]["script"].replace(before, after)
+            rejected(f"superseded resolution mutation {before}", document)
+
+
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -1953,6 +2020,51 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     history.find(s=>s.context.startsWith('rights-ledger/')).context=
       history.find(s=>s.context.startsWith('rights-ledger/')).context.toUpperCase();
     await snapshot(prefix+'case');
+    // Runs created in the same second can list (newest id first) in an order that
+    // disagrees with run_number. The walk accepts any order but no missing number.
+    const swapA=nextRun++,swapB=nextRun++;
+    await record(swapA,payload(comment(14,'ordinary text',clock)));
+    await record(swapB,payload(comment(15,'ordinary text',clock)));
+    assert.deepEqual(runs.slice(0,2).map(r=>r.id),[swapB,swapA]);
+    [runs[0],runs[1]]=[runs[1],runs[0]];
+    const swapped=runs.find(r=>r.id===swapA);
+    runs=runs.filter(r=>r!==swapped);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights history checkpoint unavailable/);assert(!fs.existsSync(path))}
+    runs.splice(0,0,swapped);
+    await snapshot(prefix+'inverted');
+    // A run numbered above the cursor can also list after the cursor run itself (here
+    // a revocation whose ledger has not run). Each collector starts below its own one.
+    for(const [index,kind] of ['pr','group'].entries()){
+      const cursorRun=runs.reduce((a,b)=>b.run_number>a.run_number?b:a), straddle=nextRun++;
+      await record(straddle,payload(comment(16+index,'/revoke-rights '+head,clock)),1,true);
+      assert.equal(runs[0].id,straddle);
+      const moved=runs.shift();runs.splice(runs.indexOf(cursorRun)+1,0,moved);
+      // Its id sorts below the cursor run's id, as in a real id-ordered listing
+      // (harness ids start at 100, so 50 and 49 are unused).
+      const low=50-index;assert(low<cursorRun.id&&!runs.some(r=>r.id===low));jobs.set(low,jobs.get(moved.id));moved.id=low;
+      assert(pending(await collect(kind)).includes(low),'a run listed after the cursor run must be read');
+    }
+    await snapshot(prefix+'straddle');
+    // A complete first page is no upper bound: a run numbered above every run seen so
+    // far (here a revocation whose ledger has not run) can list on a later page.
+    paging=true;shifted=true;
+    for(const [index,kind] of ['pr','group'].entries()){
+      const lowA=nextRun++,lowB=nextRun++,high=nextRun++,ids=20+index*3;
+      await record(lowA,payload(comment(ids,'ordinary text',clock)));
+      await record(lowB,payload(comment(ids+1,'ordinary text',clock)));
+      await record(high,payload(comment(ids+2,'/revoke-rights '+head,clock)),1,true);
+      assert.deepEqual(runs.slice(0,3).map(r=>r.id),[high,lowB,lowA]);
+      runs.splice(2,0,runs.shift());
+      assert(pending(await collect(kind)).includes(high),'a later-page run above the first page must be read');
+    }
+    paging=false;
+    // A repeated run_number must not stand in for a missing one.
+    const n=Math.max(...runs.map(r=>r.run_number));
+    const dupes=[makeRun(nextRun++,'push'),makeRun(nextRun++,'push'),makeRun(nextRun++,'push')];
+    dupes[0].run_number=dupes[1].run_number=n+1;dupes[2].run_number=n+3;
+    runs.unshift(dupes[2],dupes[1],dupes[0]);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Incomplete rights event history/);assert(!fs.existsSync(path))}
+    runs=runs.filter(r=>!dupes.includes(r));nextRun-=3;
     const complete=[...runs];
     for(const id of [revokeRun,admission,firstRun]){
       runs=complete.filter(r=>r.id!==id);
@@ -2068,6 +2180,7 @@ def main() -> int:
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
         workflow_trusted_policy_canaries(source)
+        workflow_superseded_canaries(source)
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
         rights_workflow_canaries()
