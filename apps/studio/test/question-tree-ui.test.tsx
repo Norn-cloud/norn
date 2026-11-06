@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
-import { ChoiceColumn, PathSummary, pathNumbers } from "../src/components/choice-columns.tsx"
+import { ChoiceColumn, PathSummary, pathNumbers } from "../src/components/decision/choice-columns.tsx"
 import { buildQuestion } from "../src/builder.tsx"
 import { QuestionTree, recommendedDraft, selection, type Recommendations } from "../src/question-tree.tsx"
 import { catalog, cell } from "./support/definitions.ts"

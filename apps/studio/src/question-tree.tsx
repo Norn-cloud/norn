@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { BadgeCheck, ChartLine, ShieldCheck } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
-import { ChoiceColumn, PathSummary, pathNumbers, type ColumnOption } from "@/components/choice-columns"
+import { ChoiceColumn, PathSummary, pathNumbers, type ColumnOption } from "@/components/decision/choice-columns"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"

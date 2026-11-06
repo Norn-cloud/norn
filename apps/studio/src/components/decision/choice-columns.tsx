@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
  * agent decision tree: each option is a card with its number, label and
  * detail; the server's top pick reads "Recommended" and the assistant's
  * "Agent's pick". The chosen path reads underneath as "Then 1 – 2 – 1".
- * Shared by the question tree and CANVAS's decision tree.
+ * The one implementation of choice columns: the question tree uses it, and CANVAS's decision tree moves onto it.
  */
 export type Mark = "recommended" | "agent"
 
