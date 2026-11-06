@@ -79,7 +79,20 @@ fn granted_principals_get_the_exact_live_answer() {
     // Population alone answers the question; the pin names the population.
     let guest = get(&cell, &answer_path(), SCOPE, GUEST);
     assert_eq!(guest.status, 200, "{}", guest.body);
-    assert_eq!(json(&guest)["rows"], answer["rows"]);
+    // The same aggregate and membership; the guest's member amounts are
+    // withheld (DATA-VALUES-1), every bucket meeting the minimum of three.
+    let guest = json(&guest);
+    let (ours, theirs) = (answer["rows"].as_object().unwrap(), guest["rows"].as_object().unwrap());
+    assert_eq!(ours.keys().collect::<Vec<_>>(), theirs.keys().collect::<Vec<_>>());
+    for (bucket, row) in ours {
+        let other = &theirs[bucket];
+        assert_eq!(row["totals"], other["totals"], "{bucket}");
+        assert_eq!(row["value"], other["value"], "{bucket}");
+        let members = |row: &Value| row["members"].as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+        assert_eq!(members(row), members(other), "{bucket}");
+        assert!(other["members"].as_object().unwrap().values().all(|m| m["amounts"].is_null()), "{bucket}");
+        assert!(other.get("suppressed").is_none(), "{bucket}");
+    }
 }
 
 #[test]
