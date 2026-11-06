@@ -154,6 +154,7 @@ function Frame(props: CanvasFrameProps) {
   const [saving, setSaving] = useState(false)
   const saveServer = async () => {
     if (!props.save || saving) return
+    if (unresolved) { setNotice({ tone: "refusal", text: unresolved }); return }
     setSaving(true)
     try { setNotice(await props.save(graph)) } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) } finally { setSaving(false) }
   }
@@ -187,6 +188,8 @@ function Frame(props: CanvasFrameProps) {
   })
 
   const { issues, status } = useMemo(() => props.issues(graph), [props.issues, graph])
+  // The UI offers a server save only for a drawing with no findings; the cell still checks and decides on its own.
+  const unresolved = issues.length === 0 ? null : `Fix ${issues.length} ${issues.length === 1 ? "problem" : "problems"} first`
   const on = (key: "node" | "edge", id: string) => issues.filter((issue) => issue[key] === id)
   const jump = (issue: Issue) => {
     if (issue.node) { setSelection({ nodes: [issue.node], edges: [] }); void flow.fitView({ nodes: [{ id: issue.node }], duration: 300, maxZoom: 1.2 }) }
@@ -207,9 +210,9 @@ function Frame(props: CanvasFrameProps) {
           <Button size="sm" variant="outline" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
           <Button size="sm" variant="outline" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
           <Button size="sm" variant="outline" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
-          {props.save
-            ? <Button size="sm" title="Save to the cell (⌘S): it checks again and decides" disabled={saving} onClick={() => void saveServer()}>{saving ? "Saving…" : "Save to server"}</Button>
-            : <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>}
+          {!props.save ? <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
+            : unresolved ? <Unavailable reason={unresolved}>Save to server</Unavailable>
+              : <Button size="sm" title="Save to the cell (⌘S): it checks again and decides" disabled={saving} onClick={() => void saveServer()}>{saving ? "Saving…" : "Save to server"}</Button>}
           {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
         </div>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
