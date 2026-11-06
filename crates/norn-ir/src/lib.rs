@@ -78,6 +78,7 @@ pub mod runtime;
 pub mod sealing;
 pub mod setting;
 pub mod source_schema;
+pub mod source_tree;
 pub mod technical_view;
 pub mod theorem_input;
 pub mod view;

@@ -35,7 +35,8 @@ function Level({ view, path, depth, choose }: { readonly view: DecisionView; rea
                 <span className="mt-1 flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                   <span>{option.scope || "No scope stated"}</span>
                   {option.effect && <span className="font-mono text-xs">{"action" in option.effect ? `action ${option.effect.action}` : `binding ${option.effect.binding}`}</span>}
-                  {tools.map((tool) => <span key={tool} className="inline-flex items-center gap-1 font-mono text-xs"><Wrench className="size-3" />{tool}</span>)}
+                  {/* The tools the option leads to, without repeating the binding its effect already names. */}
+                  {tools.filter((tool) => !(option.effect && "binding" in option.effect && option.effect.binding === tool)).map((tool) => <span key={tool} className="inline-flex items-center gap-1 font-mono text-xs"><Wrench className="size-3" />{tool}</span>)}
                 </span>
               </button>
             </li>

@@ -5,7 +5,7 @@
  * choice. Only the cell resolves that perform, with a receipt it issues for
  * the deciding human; a client or an agent can only recommend.
  */
-import { S, X, fn, taggedError, type FnRef, type Step } from "../../../../../tools/norn-ts/src/builder/index.ts"
+import { DECISION_FN, X, type Step } from "../../../../../tools/norn-ts/src/builder/index.ts"
 import type { CanvasEdge, CanvasNode, Graph, Port } from "./graph.ts"
 
 /** What choosing an option starts: a typed action, or a connector call through a tool binding. */
@@ -27,30 +27,14 @@ export const effectOf = (option: DecisionOption): { readonly kind: "action" | "b
 export const RISKS = ["low", "medium", "high"] as const
 export type Risk = (typeof RISKS)[number]
 
-// The closed schema subset has no unions: `{action} | {binding}` is a record with both members optional.
-const EFFECT = S.record({ action: S.text(), binding: S.text() }, ["action", "binding"])
-const OPTION = S.record({ id: S.text(), label: S.text(), scope: S.text(), effect: EFFECT })
-
 /**
- * A reference to the Norn built-in `norn.decision` v1 (lane RUNS owns it, its
- * host implementation and its hashing; D58 and CELL-DO's answer 3). The canvas
- * declares no Function and emits no manifest: this handle only gives lowering
- * the schemas the approved contract states, so a drawn decision is typed.
- * Its fields follow the relayed contract exactly, so the switch is one line:
- * `import { DECISION_FN } from "../../../../../tools/norn-ts/src/builder/index.ts"`
- * once RUNS exports it from `builder/builtins.ts`.
+ * The Norn built-in `norn.decision@1` (lane RUNS, `tools/norn-ts/src/builder/builtins.ts`, pinned to the Rust
+ * schemas in `crates/norn-builtins`). The canvas only lowers drawn decisions with it; the cell resolves them.
  */
-export const DECISION_FN: FnRef = fn({
-  id: "norn.decision",
-  version: "1.0.0",
-  input: S.record({
-    question: S.text(), risk: S.text([...RISKS]), options: S.array(OPTION), agentPick: S.text(),
-    decider: S.record({ roles: S.array(S.text()), law: S.text() }, ["law"]), expiresInMs: S.integer,
-  }, ["agentPick", "expiresInMs"]),
-  output: S.record({ choice: S.text(), note: S.text() }, ["note"]),
-  errors: [taggedError("Expired", S.record({})), taggedError("Withdrawn", S.record({}))],
-  at: { file: "apps/studio/src/lib/canvas/decision.ts", line: 1 },
-})
+export { DECISION_FN }
+
+/** Bounds the schema cannot carry and the cell enforces (RUNS' contract); the canvas names them before saving. */
+export const DECISION_BOUNDS = { maxQuestion: 500, maxOptions: 9, maxExpiresInMs: 7 * 24 * 3_600_000 } as const
 
 export const optionsOf = (node: CanvasNode): DecisionOption[] => JSON.parse(node.config.options ?? "[]") as DecisionOption[]
 export const rolesOf = (node: CanvasNode): string[] => (node.config.deciderRoles ?? "").split(",").map((role) => role.trim()).filter(Boolean)
