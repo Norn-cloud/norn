@@ -15,12 +15,12 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, ObjectRecord};
-use norn_checker::EffectiveCatalog;
-use norn_checker::metric::compute::QuestionPlan;
 use norn_cell_do::analytics::{self, DemoQuestions};
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
 use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::server::{self, Response};
+use norn_checker::EffectiveCatalog;
+use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::MetricDefinition;
 use norn_kernel::authz::AccessRequest;
 use serde_json::{Value, json};
@@ -58,8 +58,14 @@ impl QuestionRuntime<NativeEngine> for Bounded {
         capability: ReadCapability,
         row: Option<&ObjectRecord>,
     ) -> Result<AccessRequest, Refusal> {
-        let mut access =
-            QuestionRuntime::<NativeEngine>::access(&self.inner, scope, actor, question, capability, row)?;
+        let mut access = QuestionRuntime::<NativeEngine>::access(
+            &self.inner,
+            scope,
+            actor,
+            question,
+            capability,
+            row,
+        )?;
         if row.is_none() && self.ungranted == Some(question) {
             // The PDP request for this metric names no grant the caller holds.
             access.principal.subject_id = "nobody".into();
@@ -164,12 +170,20 @@ fn question(metal: &str) -> Value {
         "window".into(),
         json!({"start": "2026-07-06T00:00:00Z", "end": "2026-10-26T00:00:00Z"}),
     );
-    fields.insert("freshness".into(), json!({"kind": "live", "maxAgeMs": 5000}));
+    fields.insert(
+        "freshness".into(),
+        json!({"kind": "live", "maxAgeMs": 5000}),
+    );
     question
 }
 
 fn evaluate(cell: &Cell, auth: Option<&str>, question: &Value) -> Response {
-    post(cell, "/v1/questions:evaluate", auth, &json!({ "question": question }))
+    post(
+        cell,
+        "/v1/questions:evaluate",
+        auth,
+        &json!({ "question": question }),
+    )
 }
 
 #[test]
@@ -177,7 +191,13 @@ fn an_admitted_ad_hoc_question_answers_exactly_as_the_named_one() {
     let cell = cell();
     let adhoc = evaluate(&cell, ADMIN, &question("gold"));
     assert_eq!(adhoc.status, 200, "{}", adhoc.body);
-    let named = call(&cell, "GET", &format!("/v1/questions/{}/answer", analytics::QUESTION), ADMIN, "");
+    let named = call(
+        &cell,
+        "GET",
+        &format!("/v1/questions/{}/answer", analytics::QUESTION),
+        ADMIN,
+        "",
+    );
     assert_eq!(named.status, 200, "{}", named.body);
     let (adhoc, named) = (json_of(&adhoc), json_of(&named));
     assert_eq!(adhoc["rows"], named["rows"]);
@@ -185,7 +205,13 @@ fn an_admitted_ad_hoc_question_answers_exactly_as_the_named_one() {
     // Its handle is keyed (D53), and it opens the ad-hoc trace.
     let handle = adhoc["lineageRef"].as_str().unwrap();
     assert_eq!(handle.len(), 64);
-    let bucket = adhoc["rows"].as_object().unwrap().keys().next().unwrap().clone();
+    let bucket = adhoc["rows"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
     let trace = post(
         &cell,
         "/v1/questions:trace",
@@ -193,7 +219,10 @@ fn an_admitted_ad_hoc_question_answers_exactly_as_the_named_one() {
         &json!({"question": question("gold"), "lineageRef": handle, "bucket": bucket}),
     );
     assert_eq!(trace.status, 200, "{}", trace.body);
-    assert_eq!(json_of(&trace)["contributions"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        json_of(&trace)["contributions"].as_array().unwrap().len(),
+        4
+    );
 }
 
 /// D53 per bucket: a viewer (Population only) gets the aggregate with every
@@ -204,10 +233,17 @@ fn an_ad_hoc_answer_applies_d53_per_bucket() {
     let cell = cell();
     let gold = json_of(&evaluate(&cell, VIEWER, &question("gold")));
     for (bucket, row) in gold["rows"].as_object().unwrap() {
-        assert!(row["totals"].as_array().is_some_and(|t| !t.is_empty()), "{bucket}");
+        assert!(
+            row["totals"].as_array().is_some_and(|t| !t.is_empty()),
+            "{bucket}"
+        );
         assert!(row.get("suppressed").is_none(), "{bucket}");
         assert!(
-            row["members"].as_object().unwrap().values().all(|m| m["amounts"].is_null() && m["restricted"] == true),
+            row["members"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|m| m["amounts"].is_null() && m["restricted"] == true),
             "{bucket}"
         );
     }
@@ -219,12 +255,24 @@ fn an_ad_hoc_answer_applies_d53_per_bucket() {
     for (bucket, row) in viewer["rows"].as_object().unwrap() {
         assert_eq!(row["members"].as_object().unwrap().len(), 1, "{bucket}");
         assert_eq!(row["suppressed"], true, "{bucket}");
-        assert!(row["value"].is_null() && row["totals"] == json!([]), "{bucket}");
+        assert!(
+            row["value"].is_null() && row["totals"] == json!([]),
+            "{bucket}"
+        );
         let open = &admin["rows"][bucket];
-        assert!(open.get("suppressed").is_none() && !open["value"].is_null(), "{bucket}");
+        assert!(
+            open.get("suppressed").is_none() && !open["value"].is_null(),
+            "{bucket}"
+        );
     }
     // The viewer's trace of a suppressed bucket discloses no member value.
-    let bucket = viewer["rows"].as_object().unwrap().keys().next().unwrap().clone();
+    let bucket = viewer["rows"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
     let trace = json_of(&post(
         &cell,
         "/v1/questions:trace",
@@ -232,7 +280,13 @@ fn an_ad_hoc_answer_applies_d53_per_bucket() {
         &json!({"question": question("silver"), "lineageRef": viewer["lineageRef"], "bucket": bucket}),
     ));
     assert_eq!(trace["result"]["rows"][&bucket]["suppressed"], true);
-    assert!(trace["contributions"].as_array().unwrap().iter().all(|c| c["values"].is_null() && c["amounts"].is_null()));
+    assert!(
+        trace["contributions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["values"].is_null() && c["amounts"].is_null())
+    );
 }
 
 /// Authorization precedes admission: an ungranted or undeclared metric, or a
@@ -254,7 +308,10 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     // A declared metric the caller holds no grant on — here the ratio's
     // numerator, read only transitively: the same denial, for any question.
     cell.runtime.ungranted = Some("demo.recovered");
-    assert_eq!(evaluate(&cell, ADMIN, &question("gold")).body, baseline.body);
+    assert_eq!(
+        evaluate(&cell, ADMIN, &question("gold")).body,
+        baseline.body
+    );
     assert_eq!(evaluate(&cell, ADMIN, &inadmissible).body, baseline.body);
     let trace = post(
         &cell,
@@ -271,7 +328,11 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     assert_eq!(refused["code"], "question.refused");
     let diagnostics = refused["diagnostics"].as_array().unwrap();
     assert!(!diagnostics.is_empty());
-    assert!(diagnostics.iter().all(|d| d["code"].is_string() && d["severity"].is_string()));
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d["code"].is_string() && d["severity"].is_string())
+    );
 }
 
 #[test]
@@ -287,17 +348,43 @@ fn bounds_on_rows_read_and_output_buckets_refuse_rather_than_truncate() {
     assert_eq!(buckets.status, 413, "{}", buckets.body);
     assert_eq!(json_of(&buckets)["code"], "question.bucket_bound_exceeded");
     cell.runtime.buckets = 16;
-    assert_eq!(evaluate(&cell, ADMIN, &question("gold")).status, 200, "sixteen weeks fit sixteen buckets");
+    assert_eq!(
+        evaluate(&cell, ADMIN, &question("gold")).status,
+        200,
+        "sixteen weeks fit sixteen buckets"
+    );
 }
 
 #[test]
 fn submissions_are_posted_json_and_malformed_ones_refuse() {
     let cell = cell();
-    assert_eq!(call(&cell, "GET", "/v1/questions:evaluate", ADMIN, "").status, 405);
-    assert_eq!(call(&cell, "POST", "/v1/questions/demo.yield_week/answer", ADMIN, "{}").status, 405);
-    assert_eq!(call(&cell, "POST", "/v1/questions:evaluate", ADMIN, "not json").status, 400);
     assert_eq!(
-        post(&cell, "/v1/questions:evaluate", ADMIN, &json!({"question": question("gold"), "extra": 1})).status,
+        call(&cell, "GET", "/v1/questions:evaluate", ADMIN, "").status,
+        405
+    );
+    assert_eq!(
+        call(
+            &cell,
+            "POST",
+            "/v1/questions/demo.yield_week/answer",
+            ADMIN,
+            "{}"
+        )
+        .status,
+        405
+    );
+    assert_eq!(
+        call(&cell, "POST", "/v1/questions:evaluate", ADMIN, "not json").status,
+        400
+    );
+    assert_eq!(
+        post(
+            &cell,
+            "/v1/questions:evaluate",
+            ADMIN,
+            &json!({"question": question("gold"), "extra": 1})
+        )
+        .status,
         400,
         "unknown members refuse"
     );

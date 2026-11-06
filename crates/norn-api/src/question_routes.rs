@@ -75,7 +75,9 @@ pub const DEFAULT_MIN_DISCLOSED_BUCKET: usize = 3;
 fn handle_key<E: SqlEngine>(runtime: &dyn QuestionRuntime<E>) -> Result<&[u8], Refusal> {
     let key = runtime.handle_key();
     if key.len() < 32 {
-        return Err(Refusal::host("the lineage handle key is shorter than 32 bytes"));
+        return Err(Refusal::host(
+            "the lineage handle key is shorter than 32 bytes",
+        ));
     }
     Ok(key)
 }
@@ -278,7 +280,7 @@ fn trace_plan<E: SqlEngine>(
         )
         .map_err(Refusal::from_compute)?;
     withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
-    trace.result.lineage_ref = lineage.to_owned();
+    lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)
 }
 
@@ -343,7 +345,7 @@ pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EvaluateRequest {
-    /// The QuestionIR to admit against the cell's declared metrics. It is
+    /// The `QuestionIR` to admit against the cell's declared metrics. It is
     /// evaluated once and never installed.
     #[schema(value_type = Object)]
     pub question: QuestionIR,
@@ -353,7 +355,7 @@ pub struct EvaluateRequest {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdHocTraceRequest {
-    /// The same QuestionIR the answer was evaluated from.
+    /// The same `QuestionIR` the answer was evaluated from.
     #[schema(value_type = Object)]
     pub question: QuestionIR,
     /// The `lineageRef` handle that answer returned.
@@ -447,17 +449,21 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
             },
         )?);
     }
-    let plan = admit(runtime.definitions(), question, runtime.catalog(), runtime.max_rows()).map_err(
-        |findings| {
-            Refusal::new(
-                http::StatusCode::UNPROCESSABLE_ENTITY,
-                "question.refused",
-                "the question is not admissible",
-                "each diagnostic names the rule and where in the question it applies",
-            )
-            .with_diagnostics(&findings, "/question")
-        },
-    )?;
+    let plan = admit(
+        runtime.definitions(),
+        question,
+        runtime.catalog(),
+        runtime.max_rows(),
+    )
+    .map_err(|findings| {
+        Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            "question.refused",
+            "the question is not admissible",
+            "each diagnostic names the rule and where in the question it applies",
+        )
+        .with_diagnostics(&findings, "/question")
+    })?;
     if !types.contains(plan.grain().as_str()) {
         return Err(read_denied());
     }

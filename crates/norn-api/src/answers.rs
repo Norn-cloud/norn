@@ -226,7 +226,10 @@ fn value_schema() -> Schema {
 }
 
 fn totals_schema() -> Schema {
-    decimal_list(false, "One sum, or numerator then denominator; empty when the bucket is `suppressed`.")
+    decimal_list(
+        false,
+        "One sum, or numerator then denominator; empty when the bucket is `suppressed`.",
+    )
 }
 
 pub(crate) fn amounts_schema() -> Schema {

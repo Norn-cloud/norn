@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use http::StatusCode;
 use norn_api::host::DevHost;
 use norn_api::question_routes::{
-    AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery, evaluate_question,
-    get_answer, get_numeric_trace, trace_ad_hoc,
+    AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
+    evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
@@ -126,7 +126,13 @@ pub fn handle_with<E: SqlEngine>(
                         org_id: fields.get("orgId").cloned(),
                         environment_id: fields.get("environmentId").cloned(),
                     };
-                    get_answer(host, &scope, actor, name, runtime as &dyn QuestionRuntime<E>)
+                    get_answer(
+                        host,
+                        &scope,
+                        actor,
+                        name,
+                        runtime as &dyn QuestionRuntime<E>,
+                    )
                 })
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => {
@@ -138,7 +144,13 @@ pub fn handle_with<E: SqlEngine>(
                             lineage_ref: fields.remove("lineageRef"),
                             bucket: fields.remove("bucket"),
                         };
-                        get_numeric_trace(host, &query, actor, name, runtime as &dyn QuestionRuntime<E>)
+                        get_numeric_trace(
+                            host,
+                            &query,
+                            actor,
+                            name,
+                            runtime as &dyn QuestionRuntime<E>,
+                        )
                     })
                     .and_then(|document| document_json(&document))
             }
@@ -182,7 +194,9 @@ fn ad_hoc_question<E: SqlEngine>(
         return Err(norn_api::authz::read_denied());
     };
     let malformed = |error: serde_json::Error| {
-        Refusal::invalid(format!("the request body is not a valid submission: {error}"))
+        Refusal::invalid(format!(
+            "the request body is not a valid submission: {error}"
+        ))
     };
     if path == "/v1/questions:evaluate" {
         let request: EvaluateRequest = serde_json::from_str(body).map_err(malformed)?;

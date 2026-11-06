@@ -250,14 +250,38 @@ fn cell_keyed(secret: Option<&[u8]>) -> Cell {
 /// that does not open this cell's traces.
 #[test]
 fn answers_need_the_stage_lineage_key_and_handles_are_per_secret() {
-    assert_eq!(get(&cell_keyed(None), &answer_path(), SCOPE, VIEWER).status, 500);
-    assert_eq!(get(&cell_keyed(Some(&[5; 16])), &answer_path(), SCOPE, VIEWER).status, 500);
+    assert_eq!(
+        get(&cell_keyed(None), &answer_path(), SCOPE, VIEWER).status,
+        500
+    );
+    assert_eq!(
+        get(&cell_keyed(Some(&[5; 16])), &answer_path(), SCOPE, VIEWER).status,
+        500
+    );
     let (ours, theirs) = (cell_keyed(Some(&SECRET)), cell_keyed(Some(&[6; 32])));
     let first = json(&get(&ours, &answer_path(), SCOPE, VIEWER));
     let second = json(&get(&theirs, &answer_path(), SCOPE, VIEWER));
     assert_eq!(first["rows"], second["rows"], "the same answer");
     assert_ne!(first["lineageRef"], second["lineageRef"]);
     let trace = format!("/v1/questions/{QUESTION}/trace");
-    assert_eq!(get(&ours, &trace, &trace_query(&first, "\"2026-10-19\""), VIEWER).status, 200);
-    assert_ne!(get(&ours, &trace, &trace_query(&second, "\"2026-10-19\""), VIEWER).status, 200);
+    assert_eq!(
+        get(
+            &ours,
+            &trace,
+            &trace_query(&first, "\"2026-10-19\""),
+            VIEWER
+        )
+        .status,
+        200
+    );
+    assert_ne!(
+        get(
+            &ours,
+            &trace,
+            &trace_query(&second, "\"2026-10-19\""),
+            VIEWER
+        )
+        .status,
+        200
+    );
 }

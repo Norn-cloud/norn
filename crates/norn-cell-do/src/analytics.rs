@@ -250,7 +250,11 @@ impl DemoQuestions {
     /// F2b: answer ad-hoc questions over these declared metrics and catalog.
     /// Without them every ad-hoc question names an undeclared metric.
     #[must_use]
-    pub fn with_metrics(mut self, definitions: Vec<MetricDefinition>, catalog: EffectiveCatalog) -> Self {
+    pub fn with_metrics(
+        mut self,
+        definitions: Vec<MetricDefinition>,
+        catalog: EffectiveCatalog,
+    ) -> Self {
         self.definitions = definitions;
         self.catalog = catalog;
         self
