@@ -227,13 +227,22 @@ function Frame(props: CanvasFrameProps) {
     setMap(!fits && clearOfMinimap(boxes, view, container))
     setOpening(view)
   }, []) // Once, for the graph the canvas opened with.
-  // The path in focus: selected connections and every connection of a selected node; a finding outranks it.
+  // The path in focus: what is selected or under the pointer (a node's connections, or a connection itself) takes
+  // the accent and everything else dims, so one state's steps can be traced; a finding outranks both.
+  const [hover, setHover] = useState<{ readonly node?: string; readonly edge?: string }>()
+  const focusNodes = new Set([...selection.nodes, ...hover?.node ? [hover.node] : []])
+  const focusEdges = new Set([...selection.edges, ...hover?.edge ? [hover.edge] : []])
+  const focused = focusNodes.size + focusEdges.size > 0
   const look = (edge: g.CanvasEdge): Edge => {
     const base = props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph)
     const failing = on("edge", edge.id).length > 0
-    const active = selection.edges.includes(edge.id) || selection.nodes.includes(edge.source) || selection.nodes.includes(edge.target)
+    const active = focusEdges.has(edge.id) || focusNodes.has(edge.source) || focusNodes.has(edge.target)
+    const dim = focused && !active && !failing
     const tone = failing ? "var(--destructive)" : active ? "var(--edge-active)" : "var(--edge)"
-    return { ...base, className: cn(base.className, failing ? "canvas-edge-failing" : active && "canvas-edge-active"), markerEnd: { type: MarkerType.ArrowClosed, color: tone, width: 14, height: 14 } }
+    return {
+      ...base, data: { ...base.data, dim }, className: cn(base.className, failing ? "canvas-edge-failing" : active ? "canvas-edge-active" : dim && "canvas-edge-dim"),
+      markerEnd: { type: MarkerType.ArrowClosed, color: tone, width: 14, height: 14 },
+    }
   }
   const Sep = () => <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
 
@@ -273,6 +282,8 @@ function Frame(props: CanvasFrameProps) {
               onConnect={(connection) => edit(g.connect(graph, kinds, props.newEdge(connection, graph)))}
               onReconnect={(old, connection) => edit(g.reconnect(graph, kinds, old.id, { source: connection.source, target: connection.target, sourcePort: connection.sourceHandle ?? old.sourceHandle ?? "", targetPort: connection.targetHandle ?? old.targetHandle ?? "" }))}
               onNodeDragStart={() => setState(g.checkpoint)}
+              onNodeMouseEnter={(_, node) => setHover({ node: node.id })} onNodeMouseLeave={() => setHover(undefined)}
+              onEdgeMouseEnter={(_, edge) => setHover({ edge: edge.id })} onEdgeMouseLeave={() => setHover(undefined)}
               onNodesChange={(changes) => {
                 for (const change of changes) {
                   if (change.type === "position" && change.position) setState((current) => g.replace(current, g.moveNode(current.present, change.id, change.position as g.CanvasNode["position"])))

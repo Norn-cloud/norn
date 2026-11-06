@@ -34,15 +34,56 @@ export function rounded(points: readonly Point[], radius: number = LANE.radius):
   return d
 }
 
-export function laneRoute(source: Point, target: Point, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE): Routed {
+/**
+ * One lane step's own way through: its rail (a vertical offset from the lane's middle), how far right of its source
+ * it turns down (`out`), how far left of its target it turns in (`into`), and where on the target's left side it
+ * lands (`port`, a vertical offset from the handle). Steps sharing a lane, a source or a target each get their own,
+ * RAIL_GAP apart, so every step can be traced from its source to its target.
+ */
+export interface Rail { readonly offset: number; readonly out: number; readonly into: number; readonly port: number }
+export const RAIL_GAP = 8
+const NO_RAIL: Rail = { offset: 0, out: 0, into: 0, port: 0 }
+
+/** Offsets around the middle, nearest first: 0, -g, g, -2g, 2g… (or ±g, ±2g… when the middle is taken). */
+const around = (count: number, gap: number, skipMiddle: boolean) => {
+  const values: number[] = []
+  for (let k = skipMiddle ? 1 : 0; values.length < count; k += 1) for (const v of k === 0 ? [0] : [-k * gap, k * gap]) if (values.length < count) values.push(v)
+  return values.sort((a, b) => a - b)
+}
+
+/** Each lane step's rail, from where its states sit (their positions; a row is a shared y). Straight steps need none. */
+export function railsOf(steps: readonly { readonly id: string; readonly source: Point; readonly target: Point }[], gap: number = RAIL_GAP): ReadonlyMap<string, Rail> {
+  const straight = (step: { source: Point; target: Point }) => Math.abs(step.source.y - step.target.y) < 2 && step.target.x > step.source.x
+  const lane = steps.filter((step) => !straight(step))
+  const key = (p: Point) => `${p.x},${p.y}`
+  const group = <T,>(items: readonly T[], by: (item: T) => string) => items.reduce((all, item) => all.set(by(item), [...all.get(by(item)) ?? [], item]), new Map<string, T[]>())
+  const offset = new Map<string, number>(), out = new Map<string, number>(), into = new Map<string, number>(), port = new Map<string, number>()
+  // A rail per step in each lane, ordered by where they leave, then where they go.
+  for (const shared of group(lane, ({ source, target }) => Math.abs(source.y - target.y) < 2 ? `above:${source.y}` : `between:${Math.max(source.y, target.y)}`).values()) {
+    const ordered = [...shared].sort((a, b) => a.source.x - b.source.x || a.target.x - b.target.x)
+    around(ordered.length, gap, false).forEach((v, i) => offset.set(ordered[i]!.id, v))
+  }
+  for (const leaving of group(lane, ({ source }) => key(source)).values()) [...leaving].sort((a, b) => a.target.x - b.target.x).forEach((step, i) => out.set(step.id, i * gap))
+  for (const [at, arriving] of group(lane, ({ target }) => key(target))) {
+    const ordered = [...arriving].sort((a, b) => a.source.y - b.source.y || b.source.x - a.source.x)
+    ordered.forEach((step, i) => into.set(step.id, i * gap))
+    // A straight step lands on the handle itself, so lane steps into the same target take the places beside it.
+    const middleTaken = steps.some((step) => straight(step) && key(step.target) === at)
+    around(ordered.length, gap, middleTaken).forEach((v, i) => port.set(ordered[i]!.id, v))
+  }
+  return new Map(lane.map(({ id }) => [id, { offset: offset.get(id) ?? 0, out: out.get(id) ?? 0, into: into.get(id) ?? 0, port: port.get(id) ?? 0 }]))
+}
+
+export function laneRoute(source: Point, target: Point, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE, rail: Rail = NO_RAIL): Routed {
   const sameRow = Math.abs(source.y - target.y) < 2
   if (sameRow && target.x > source.x) {
     return { path: `M ${source.x} ${source.y} L ${target.x} ${target.y}`, label: { x: (source.x + target.x) / 2, y: source.y, anchor: "middle" }, straight: true }
   }
-  // Between the two rows it joins, or above the row for a step back along it.
-  const y = sameRow ? source.y - lane.pitch / 2 : Math.max(source.y, target.y) - lane.pitch / 2
-  const out = source.x + lane.stub, into = target.x - lane.stub
-  const points = [source, { x: out, y: source.y }, { x: out, y }, { x: into, y }, { x: into, y: target.y }, target]
+  // Between the two rows it joins, or above the row for a step back along it; on this step's own rail.
+  const y = (sameRow ? source.y - lane.pitch / 2 : Math.max(source.y, target.y) - lane.pitch / 2) + rail.offset
+  const out = source.x + lane.stub + rail.out, into = target.x - lane.stub - rail.into
+  const landing = { x: target.x, y: target.y + rail.port }
+  const points = [source, { x: out, y: source.y }, { x: out, y }, { x: into, y }, { x: into, y: landing.y }, landing]
   const forward = into >= out
   return { path: rounded(points, lane.radius), label: { x: out + (forward ? 10 : -10), y, anchor: forward ? "start" : "end" }, straight: false }
 }

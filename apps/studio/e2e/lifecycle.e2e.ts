@@ -188,3 +188,22 @@ test("step label: clicking a step's label selects the step, as clicking its line
   await expect(edge(page, "complete:invoiced")).toHaveClass(/selected/)
   await expect(page.getByLabel("Step id")).toHaveValue("complete")
 })
+
+test("focus: hovering or selecting a state lights its steps in the accent and dims the rest", async ({ page }) => {
+  await open(page)
+  const approved = await shown(page, "approved")
+  await approved.hover()
+  // Approved's own steps (Approve in; Invoice, Hold and Cancel out) take the accent; the rest dim.
+  await expect(edge(page, "invoice:approved")).toHaveClass(/canvas-edge-active/)
+  await expect(edge(page, "submit:draft")).toHaveClass(/canvas-edge-dim/)
+  await expect(page.locator('[data-edge-label="submit:draft"]')).toHaveClass(/opacity-35/)
+  // Moving away clears it.
+  await clear(page)
+  await page.mouse.move(5, 5)
+  await expect(page.locator(".react-flow__edge.canvas-edge-dim")).toHaveCount(0)
+  // Selecting holds the same focus.
+  await approved.click()
+  await page.mouse.move(5, 5)
+  await expect(edge(page, "invoice:approved")).toHaveClass(/canvas-edge-active/)
+  await expect(edge(page, "submit:draft")).toHaveClass(/canvas-edge-dim/)
+})

@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { CARD, EDGE_PILL, InspectorHead, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { cn } from "@/lib/utils"
-import { laneRoute } from "./lib/canvas/routes.ts"
+import { LANE, laneRoute, railsOf, type Rail } from "./lib/canvas/routes.ts"
 import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
@@ -40,12 +40,24 @@ export function StateBox({ data, selected }: NodeProps<StateNode>) {
 
 const NODE_TYPES = { state: StateBox }
 
-type StepEdgeData = { readonly label: string; readonly failing: boolean }
+type StepEdgeData = { readonly label: string; readonly failing: boolean; readonly rail?: Rail; readonly dim?: boolean }
+
+/** Each lane step's own rail, worked out once per drawing from where the states sit. */
+const railCache = new WeakMap<g.Graph, ReadonlyMap<string, Rail>>()
+const railOf = (graph: g.Graph, id: string): Rail | undefined => {
+  let rails = railCache.get(graph)
+  if (!rails) {
+    const at = new Map(graph.nodes.map(({ id: node, position }) => [node, position]))
+    rails = railsOf(graph.edges.flatMap((edge) => { const source = at.get(edge.source), target = at.get(edge.target); return source && target ? [{ id: edge.id, source, target }] : [] }))
+    railCache.set(graph, rails)
+  }
+  return rails.get(id)
+}
 
 /** A lifecycle step: straight along the main row, else in a lane with rounded corners (lib/canvas/routes); its label a pill. */
 export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, data }: EdgeProps<Edge<StepEdgeData, "step">>) {
   const store = useStoreApi()
-  const routed = laneRoute({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })
+  const routed = laneRoute({ x: sourceX, y: sourceY }, { x: targetX, y: targetY }, LANE, data?.rail)
   const shift = routed.label.anchor === "middle" ? "-50%" : routed.label.anchor === "end" ? "-100%" : "0"
   // A straight step's label stays inside the gap, clear of both ports.
   const room = routed.straight ? Math.max(0, targetX - sourceX - 20) : 160
@@ -54,7 +66,7 @@ export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, da
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
       {data?.label && room >= 28 && (
         <EdgeLabelRenderer>
-          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive")} onClick={() => store.getState().addSelectedEdges([id])}
+          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer transition-opacity", data.failing && "text-destructive", data.dim && "opacity-35")} onClick={() => store.getState().addSelectedEdges([id])}
             style={{ maxWidth: room, transform: `translate(${shift}, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
@@ -133,9 +145,9 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     nodeSize: () => ({ width: CARD.state, height: cardHeight({}) }),
     tidy: (graph) => tidy(graph, STATE_SPACING),
     toNode: (node, found, selected): StateNode => ({ id: node.id, type: "state", position: node.position, selected, data: { label: words(node.id), flags: FLAGS.filter((flag) => node.config[flag] === "yes").join(" · "), issues: found } }),
-    toEdge: (edge, found, selected): Edge => ({
+    toEdge: (edge, found, selected, graph): Edge => ({
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected, type: "step",
-      data: { label: words(edge.config.transition || edge.id), failing: found.length > 0 },
+      data: { label: words(edge.config.transition || edge.id), failing: found.length > 0, ...railOf(graph, edge.id) ? { rail: railOf(graph, edge.id) } : {} },
     }),
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) => {
       const transition = g.freshName(graph.edges.map(({ config }) => config.transition ?? ""), `${source}_to_${target}`)

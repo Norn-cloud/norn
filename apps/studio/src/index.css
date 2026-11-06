@@ -233,6 +233,8 @@
 .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-text { fill: var(--foreground); }
 @keyframes canvas-flow { to { stroke-dashoffset: -20; } }
 .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-path { stroke: var(--edge-active); stroke-width: 2px; stroke-dasharray: 6 4; animation: canvas-flow 1.1s linear infinite; }
+.react-flow .react-flow__edge.canvas-edge-dim { opacity: 0.35; transition: opacity 150ms ease; }
+@media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge.canvas-edge-dim { transition: none; } }
 .react-flow .react-flow__edge.canvas-edge-failing .react-flow__edge-path { stroke: var(--destructive); stroke-width: 2px; }
 @media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-path { animation: none; stroke-dasharray: none; } }
 /* Exits are small pills on the node's edge. */
