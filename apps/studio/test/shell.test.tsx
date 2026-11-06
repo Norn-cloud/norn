@@ -5,7 +5,7 @@ import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import type { Account } from "../src/lib/session.ts"
-import { Shell, Submenu, groupOpen, initials, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, Submenu, groupOpen, hiddenLabelTabIndex, initials, sectionOf, target, type Section } from "../src/shell.tsx"
 
 const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
 
@@ -98,4 +98,10 @@ test("the rail shows the signed-in user's initials and never the recorded-demo p
   expect(html).not.toContain("Not signed in")
   expect(initials("")).toBe("?")
   expect(initials("ada@example.com")).toBe("A")
+})
+
+test("a group label's button leaves the tab order only while the desktop sidebar is collapsed", () => {
+  expect(hiddenLabelTabIndex("collapsed", false)).toBe(-1)
+  expect(hiddenLabelTabIndex("expanded", false)).toBeUndefined()
+  expect(hiddenLabelTabIndex("collapsed", true)).toBeUndefined()
 })
