@@ -74,7 +74,8 @@ test("the object type's own URL still opens the type, not an empty record", asyn
   await router.load()
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
   expect(html).not.toContain("This record is not available yet")
-  expect(html).toContain("canon.Holding")
+  expect(html).toContain("Owner and location partitioned holding")
+  expect(html).toContain("Facts recorded")
 })
 
 test("the overview says in one sentence what the record is and what its stored links show, and lists who points at it", async () => {
