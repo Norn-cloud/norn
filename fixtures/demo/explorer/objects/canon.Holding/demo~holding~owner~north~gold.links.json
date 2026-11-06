@@ -1,0 +1,39 @@
+{
+  "objectType": "canon.Holding",
+  "id": "demo/holding/owner/north/gold",
+  "items": [
+    {
+      "sourceType": "canon.Holding",
+      "link": "custodian",
+      "source": "demo/holding/owner/north/gold",
+      "targetType": "canon.Party",
+      "target": "demo/party/custodian",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.Holding",
+      "link": "item",
+      "source": "demo/holding/owner/north/gold",
+      "targetType": "canon.Item",
+      "target": "demo/item/gold",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.Holding",
+      "link": "owner",
+      "source": "demo/holding/owner/north/gold",
+      "targetType": "canon.Party",
+      "target": "demo/party/owner",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.OrderLine",
+      "link": "resource",
+      "source": "demo/order/1/line/1",
+      "targetType": "canon.Holding",
+      "target": "demo/holding/owner/north/gold",
+      "version": 1
+    }
+  ],
+  "hasMore": false
+}
