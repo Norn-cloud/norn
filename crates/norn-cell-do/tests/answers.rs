@@ -342,8 +342,24 @@ fn an_analytics_cell_without_definitions_upgrades_in_place_once() {
     );
     drop(reopened);
     // The rows answer as a fresh cell's do, and the catalog read serves v1.
+    // Only the ledger-bound revision hash and the lineage handle keyed by it
+    // differ: the upgraded cell's history is K1, then v1.
     let served = cell(open());
-    assert_eq!(get(&served, &answer_path(), SCOPE, VIEWER).body, fresh);
+    let history_free = |body: &str| {
+        let mut answer: Value = serde_json::from_str(body).unwrap();
+        let fields = answer.as_object_mut().unwrap();
+        fields.remove("lineageRef").unwrap();
+        fields["revision"]
+            .as_object_mut()
+            .unwrap()
+            .remove("hash")
+            .unwrap();
+        answer
+    };
+    assert_eq!(
+        history_free(&get(&served, &answer_path(), SCOPE, VIEWER).body),
+        history_free(&fresh)
+    );
     let catalog: Value =
         serde_json::from_str(&get(&served, "/v1/definitions", SCOPE, VIEWER).body).unwrap();
     assert_eq!(catalog["version"], 1, "{catalog}");
