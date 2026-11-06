@@ -71,6 +71,57 @@ fn run_types() -> Vec<ObjectTypeDef> {
     ]
 }
 
+/// The run type and the kernel's action-call record type, which every
+/// durable action commit writes (as `tests/synchronous_action.rs` declares it).
+fn definitions() -> Vec<ObjectTypeDef> {
+    let text = |nullable: bool| {
+        move |id: &&str| {
+            if nullable {
+                json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}})
+            } else {
+                json!({"id": id, "type": {"kind": "text"}})
+            }
+        }
+    };
+    let mut fields: Vec<serde_json::Value> =
+        ["actionId", "actor", "turn", "transition", "from", "to"]
+            .iter()
+            .map(text(false))
+            .collect();
+    fields.extend(
+        [
+            "actionArtifactId",
+            "actionVersion",
+            "effectKind",
+            "ruleBinding",
+        ]
+        .iter()
+        .map(text(true)),
+    );
+    fields.extend(
+        [
+            "object",
+            "input",
+            "effectiveInput",
+            "derivedValues",
+            "preconditionOutcomes",
+            "rowOperations",
+        ]
+        .iter()
+        .map(
+            |id| json!({"id": id, "type": {"kind": "json-ext"}, "constraints": {"nullable": true}}),
+        ),
+    );
+    let mut definitions = run_types();
+    definitions.push(
+        serde_json::from_value(
+            json!({"name": norn_kernel::ACTION_CALL_TYPE, "properties": fields}),
+        )
+        .unwrap(),
+    );
+    definitions
+}
+
 fn decide_action() -> ActionRoot {
     serde_json::from_value(json!({
         "actionId": "flow.decision_run.decide",
@@ -199,7 +250,7 @@ impl CellHost for DurableReceiptCell {
 fn open(path: &Path, issued: BTreeMap<String, Issued>) -> DurableReceiptCell {
     let cell = Sqlite::open(
         path,
-        Model::from_definitions(&run_types(), &[]).expect("models the run type"),
+        Model::from_definitions(&definitions(), &[]).expect("models the run type"),
         StoreOptions::default(),
         SCOPE,
         |command: &Command<JsonObject>| command.payload.clone(),
