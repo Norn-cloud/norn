@@ -36,3 +36,11 @@ test("production, weak secrets, email and half an assistant refuse before anythi
   expect(() => celldStudio({ ...BASE, AI_GATEWAY_URL: "https://gw" })).toThrow("together")
   expect(() => celldStudio({ ...BASE, NORN_HOST_SERVICE: "Norn_Cell" })).toThrow("script name")
 })
+
+test("the tool gateway reaches the Worker only whole, as an https origin with Studio's client", () => {
+  const tool = { TOOL_GATEWAY_URL: "https://gateway-next.norn.cloud", TOOL_GATEWAY_CLIENT_ID: "client", TOOL_GATEWAY_CLIENT_SECRET: "c".repeat(32) }
+  expect(celldConfig(celldStudio({ ...BASE, ...tool })).vars).toEqual({ BETTER_AUTH_SECRET: SECRET, BETTER_AUTH_URL: "https://demo.norn.cloud", AUTH_SCRYPT: "js", STUDIO_BUILD: BUILD, ...tool })
+  expect(celldConfig(celldStudio(BASE)).vars).not.toHaveProperty("TOOL_GATEWAY_URL")
+  expect(() => celldStudio({ ...BASE, TOOL_GATEWAY_URL: tool.TOOL_GATEWAY_URL })).toThrow("go together")
+  expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: "http://127.0.0.1:9878" })).toThrow("https origin")
+})

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { join } from "node:path"
-import { appDir, pinnedCommit } from "../scripts/celld-deploy.ts"
+import { appDir, deployThenCheck, pinnedCommit } from "../scripts/celld-deploy.ts"
 import { awaitServed, entryChunk } from "../scripts/served-build.ts"
 
 const HEAD = "93dfdc450d".padEnd(40, "a")
@@ -40,4 +40,20 @@ test("--app names another Studio checkout to build; anything else refuses", () =
   expect(() => appDir(["--app"], own)).toThrow("--app needs a directory")
   expect(() => appDir(["--app", "--commit"], own)).toThrow("--app needs a directory")
   expect(() => appDir(["--app", import.meta.dir], own)).toThrow("not a Studio app directory")
+})
+
+
+test("the served-bundle check always runs and is reported, and any failed step fails the deploy", async () => {
+  const seen: (string | undefined)[] = []
+  const served = (answer: string | undefined) => async (expected: string | undefined) => { seen.push(expected); return { served: answer, matched: answer !== undefined && answer === expected } }
+  const ok = await deployThenCheck({ build: () => "/assets/index-A.js", deploy: () => {}, served: served("/assets/index-A.js") })
+  expect(ok).toEqual({ ok: true, lines: ["serves /assets/index-A.js, built /assets/index-A.js: match"] })
+  // The upload lands but celld reports an error: the check still runs and is reported; the deploy fails.
+  const deployFailed = await deployThenCheck({ build: () => "/assets/index-A.js", deploy: () => { throw new Error("migrate: connection refused") }, served: served("/assets/index-A.js") })
+  expect(deployFailed).toEqual({ ok: false, lines: ["celld deploy failed: migrate: connection refused", "serves /assets/index-A.js, built /assets/index-A.js: match"] })
+  const buildFailed = await deployThenCheck({ build: () => { throw new Error("vite failed") }, deploy: () => { throw new Error("never deployed") }, served: served("/assets/index-old.js") })
+  expect(buildFailed).toEqual({ ok: false, lines: ["build failed: vite failed", "serves /assets/index-old.js, built nothing: MISMATCH"] })
+  expect(seen).toEqual(["/assets/index-A.js", "/assets/index-A.js", undefined])
+  const stale = await deployThenCheck({ build: () => "/assets/index-B.js", deploy: () => {}, served: served("/assets/index-A.js") })
+  expect(stale.ok).toBe(false)
 })
