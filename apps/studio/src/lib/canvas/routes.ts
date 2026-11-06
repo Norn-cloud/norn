@@ -87,8 +87,9 @@ export const laneYOf = (source: Point, target: Point, lane: { readonly pitch: nu
  * tick where it joins), the rail runs to the target's turn and drops into it. Only the drawing bundles; each step
  * stays its own in the model. The label sits on the rail beside the turn, in the gap to the nearest join.
  */
-export function bundleRoute(sources: readonly Point[], target: Point, labelWidth: number, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE) {
-  const y = laneYOf(sources[0]!, target, lane)
+export function bundleRoute(sources: readonly Point[], target: Point, labelWidth: number, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE, offset = 0) {
+  // On its own rail in the lane: two bundles through one lane never share a line.
+  const y = laneYOf(sources[0]!, target, lane) + offset
   const into = target.x - lane.stub
   const joins = sources.map((source) => ({ x: source.x + lane.stub, y }))
   const branches = sources.map((source, index) => rounded([source, { x: joins[index]!.x, y: source.y }, joins[index]!], lane.radius))

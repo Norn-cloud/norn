@@ -51,7 +51,7 @@ type StepEdgeData = { readonly label: string; readonly failing: boolean; readonl
  */
 interface Drawing {
   readonly rails: ReadonlyMap<string, Rail>
-  readonly bundles: readonly (Bundle & { readonly label: string })[]
+  readonly bundles: readonly (Bundle & { readonly label: string; readonly offset: number })[]
 }
 const drawings = new WeakMap<g.Graph, Drawing>()
 export function drawingOf(graph: g.Graph): Drawing {
@@ -83,19 +83,21 @@ export function drawingOf(graph: g.Graph): Drawing {
     ...graph.edges.filter(({ id }) => handles.has(id) && !bundled.has(id)).map((edge) => ({ id: edge.id, ...handles.get(edge.id)!, width: labelWidth(words(edge.config.transition || edge.id)) })),
     ...bundles.map((bundle) => ({ id: bundle.id, ...handles.get(bundle.members[0]!)!, width: 0 })),
   ]
-  const taken = bundles.map((bundle) => {
+  const assigned = railsOf(steps)
+  const placedBundles = bundles.map((bundle) => ({ ...bundle, offset: assigned.get(bundle.id)?.offset ?? 0 }))
+  const taken = placedBundles.map((bundle) => {
     const width = labelWidth(bundle.label)
-    const { label } = bundleRoute(bundle.members.map((id) => handles.get(id)!.source), handles.get(bundle.members[0]!)!.target, width)
+    const { label } = bundleRoute(bundle.members.map((id) => handles.get(id)!.source), handles.get(bundle.members[0]!)!.target, width, LANE, bundle.offset)
     return { x1: label.x - width / 2, x2: label.x + width / 2, y: label.y }
   })
-  const rails = placeLabels(steps.filter(({ id }) => !id.startsWith("bundle:")), railsOf(steps), LANE, graph.nodes.map(({ position }) => ({ ...position, width: CARD.state, height: middle * 2 })), taken)
-  const drawing = { rails, bundles }
+  const rails = placeLabels(steps.filter(({ id }) => !id.startsWith("bundle:")), assigned, LANE, graph.nodes.map(({ position }) => ({ ...position, width: CARD.state, height: middle * 2 })), taken)
+  const drawing = { rails, bundles: placedBundles }
   drawings.set(graph, drawing)
   return drawing
 }
 const railOf = (graph: g.Graph, id: string): Rail | undefined => drawingOf(graph).rails.get(id)
 
-type BundleEdgeData = { readonly label: string; readonly sources: readonly string[]; readonly failing: boolean }
+type BundleEdgeData = { readonly label: string; readonly sources: readonly string[]; readonly failing: boolean; readonly offset: number }
 
 /** A bundle: each source turns into one rail (a tick where it joins), the rail drops into the target; one pill. */
 export function BundleEdge({ id, targetX, targetY, markerEnd, data }: EdgeProps<Edge<BundleEdgeData, "bundle">>) {
@@ -110,7 +112,7 @@ export function BundleEdge({ id, targetX, targetY, markerEnd, data }: EdgeProps<
   const sources = sourcesKey.split(";").filter(Boolean).map((pair) => { const [x, y] = pair.split(",").map(Number); return { x: x!, y: y! } })
   if (!data || sources.length === 0) return null
   const width = labelWidth(data.label)
-  const routed = bundleRoute(sources, { x: targetX, y: targetY }, width)
+  const routed = bundleRoute(sources, { x: targetX, y: targetY }, width, LANE, data.offset)
   return (
     <>
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
@@ -258,7 +260,7 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
             id: bundle.id, source: bundle.sources[0]!, target: bundle.target, sourceHandle: "out", targetHandle: "in", type: "bundle", reconnectable: false,
             selected: bundle.members.every((member) => selection.edges.includes(member)),
             className: failing ? "canvas-edge-failing" : active ? "canvas-edge-active" : undefined, markerEnd: parts[0]?.markerEnd,
-            data: { label: bundle.label, sources: bundle.sources, failing },
+            data: { label: bundle.label, sources: bundle.sources, failing, offset: bundle.offset },
           }
         }),
       ]

@@ -41,3 +41,9 @@ test("a bundle in focus lights its steps and its sources", () => {
   expect(css).toContain('.react-flow__edge[data-id="bundle:cancel:cancelled"]')
   for (const source of ["draft", "submitted", "approved", "on_hold"]) expect(css).toContain(`.react-flow__node[data-id="${source}"] .canvas-node`)
 })
+
+test("two bundles through one lane run on rails of their own", () => {
+  const { bundles } = drawingOf(order)
+  const [cancel, hold] = ["bundle:cancel:cancelled", "bundle:hold:on_hold"].map((id) => bundles.find((bundle) => bundle.id === id)!)
+  expect(cancel!.offset).not.toBe(hold!.offset)
+})
