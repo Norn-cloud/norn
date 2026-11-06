@@ -28,10 +28,11 @@ test("step: create, view, edit, delete, duplicate, move, undo/redo, validate, sa
   await expect(node(page, "sleep_copy")).toBeVisible()
   await press(page, "Shift+z")
   await expect(node(page, "sleep_copy")).toHaveCount(0)
-  // The start cannot be deleted or copied.
+  // The start cannot be deleted or copied, and deleting with it selected keeps its connection.
   await node(page, "start").click()
   await page.keyboard.press("Delete")
   await expect(node(page, "start")).toBeVisible()
+  await expect(edge(page, "start.next")).toHaveCount(1)
   await press(page, "s")
   await expect(page.getByText(/Draft saved in this browser/)).toBeVisible()
   await expect(page.getByRole("button", { name: "Run in the cell" })).toBeDisabled()
@@ -127,6 +128,18 @@ test("route branches: create, edit, delete, reorder, undo/redo, validate, reopen
   await page.getByRole("button", { name: "Automation", exact: true }).click()
   await node(page, "settled").click()
   await expect(page.getByLabel("Branch b2")).toBeVisible()
+})
+
+test("clipboard: states copied on a lifecycle are refused on the automation canvas", async ({ page }) => {
+  await open(page)
+  await node(page, "draft").click()
+  await press(page, "c")
+  await expect(page.getByText("Copied 1 item.")).toBeVisible()
+  await page.getByRole("button", { name: "Automation", exact: true }).click()
+  await page.locator(".react-flow__pane").click({ position: { x: 10, y: 10 } })
+  await press(page, "v")
+  await expect(page.getByText(/copied from another kind of canvas/)).toBeVisible()
+  await expect(node(page, "draft_copy")).toHaveCount(0)
 })
 
 test("selection and problems: multi-select, copy/paste, delete selected, jump to a finding", async ({ page }) => {
