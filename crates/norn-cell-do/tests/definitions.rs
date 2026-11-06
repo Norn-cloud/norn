@@ -842,7 +842,7 @@ fn bindings_are_admitted_against_their_recomputed_digest_and_declared_roles() {
         "/connector/app".to_owned()
     )));
     // A cell that declares no roles admits no binding.
-    let bare = cell(DefinitionKinds::default());
+    let bare = crate::cell(DefinitionKinds::default());
     let (status, refused) = install_binding(&bare, "studio.binding.issues", &good, None);
     assert_eq!(status, 422, "{refused}");
 }
