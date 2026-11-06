@@ -338,15 +338,61 @@ fn decode_policy(value: &JsonValue, findings: &mut Vec<Diagnostic>) -> Option<De
     })
 }
 
+/// The largest exponent magnitude a payload number may spell (`1e64`). The
+/// Norn1 parser expands an exponent to plain digits (up to 1 MiB per number),
+/// so a short payload of many `1e1048575` tokens would allocate far more than
+/// its size; every in-range budget needs far less than this. With the cap,
+/// expansion stays within a small multiple of the payload byte bound.
+pub const MAX_NUMBER_EXPONENT: u32 = 64;
+
+/// Whether a number token outside strings spells an exponent above
+/// [`MAX_NUMBER_EXPONENT`]. A lexical scan: it builds nothing.
+fn oversized_exponent(text: &str) -> bool {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut previous = b' ';
+    let mut bytes = text.bytes().peekable();
+    while let Some(byte) = bytes.next() {
+        if in_string {
+            match (escaped, byte) {
+                (true, _) => escaped = false,
+                (false, b'\\') => escaped = true,
+                (false, b'"') => in_string = false,
+                (false, _) => {}
+            }
+        } else if byte == b'"' {
+            in_string = true;
+        } else if matches!(byte, b'e' | b'E') && (previous.is_ascii_digit() || previous == b'.') {
+            let _sign = bytes.next_if(|next| matches!(next, b'+' | b'-'));
+            let mut exponent: u32 = 0;
+            while let Some(digit) = bytes.next_if(u8::is_ascii_digit) {
+                exponent = exponent
+                    .saturating_mul(10)
+                    .saturating_add(u32::from(digit.saturating_sub(b'0')));
+            }
+            if exponent > MAX_NUMBER_EXPONENT {
+                return true;
+            }
+        }
+        previous = byte;
+    }
+    false
+}
+
 /// Whether `payload` is JSON text at all, for callers that treat text that is
 /// not JSON as invalid input rather than a finding. Only UTF-8 and grammar
 /// errors count; duplicate keys, nesting depth, and number range are
-/// [`codes::INVALID_PAYLOAD`] or budget findings of [`check_agent`].
+/// [`codes::INVALID_PAYLOAD`] or budget findings of [`check_agent`]. Text
+/// with an exponent above [`MAX_NUMBER_EXPONENT`] is not parsed here; it is an
+/// [`codes::INVALID_PAYLOAD`] finding.
 ///
 /// # Errors
 ///
 /// The parser's message when the text is not JSON.
 pub fn agent_payload_syntax(payload: &str) -> Result<(), String> {
+    if oversized_exponent(payload) {
+        return Ok(());
+    }
     match norn_canonical::parse_json_verbatim(payload) {
         Ok(_)
         | Err(
@@ -383,6 +429,12 @@ pub fn decode_agent(
                 "the payload is {} bytes, more than {max_bytes}",
                 payload.len()
             ),
+            &[],
+        )]);
+    }
+    if oversized_exponent(payload) {
+        return Err(vec![invalid(
+            format!("a number spells an exponent above {MAX_NUMBER_EXPONENT}"),
             &[],
         )]);
     }
@@ -789,6 +841,23 @@ mod tests {
             findings_of(&deep_budget),
             one(codes::BUDGET_UNBOUNDED, "/budgets/maxRuns")
         );
+    }
+
+    #[test]
+    fn large_exponents_are_refused_before_expansion() {
+        let bomb = format!("[{}]", vec!["1e1048575"; 1_000].join(","));
+        assert!(agent_payload_syntax(&bomb).is_ok());
+        assert_eq!(findings_of(&bomb), one(codes::INVALID_PAYLOAD, ""));
+        let runs = agent()
+            .to_string()
+            .replace("\"maxRuns\":100", "\"maxRuns\":1E+65");
+        assert_eq!(findings_of(&runs), one(codes::INVALID_PAYLOAD, ""));
+        // Exponents inside strings and small exponents are ordinary.
+        let small = agent()
+            .to_string()
+            .replace("\"maxRuns\":100", "\"maxRuns\":1e2")
+            .replace("Follow up", "Follow up 1e999");
+        assert_eq!(findings_of(&small), Vec::new());
     }
 
     #[test]
