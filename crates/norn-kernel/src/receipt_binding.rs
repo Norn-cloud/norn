@@ -261,6 +261,13 @@ pub fn bind_receipt<T: DeserializeOwned, S: AcceptedReceiptStore>(
         || record.generation.0 != receipt.run.generation
         || record.attempt != receipt.attempt
         || acceptance.state.generation != record.generation
+        // The delivery it consumes is this command's result at this
+        // generation, never another pending delivery (RECEIPT-CONSUME-1).
+        || acceptance.consumed
+            != (crate::cell_host::Consumed::Result {
+                command: record.command.clone(),
+                generation: record.generation,
+            })
         || acceptance.state.cancelled
         || acceptance.state.accepted.as_ref().is_none_or(|accepted| {
             accepted.receipt != digest

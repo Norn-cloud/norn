@@ -640,3 +640,60 @@ fn receipt_refusals_have_distinct_codes_and_stable_categories() {
         assert_eq!(refusal.category(), reason.category());
     }
 }
+
+#[test]
+fn evidence_never_consumes_a_delivery_other_than_its_own_command_and_generation() {
+    // Sol S1 on #1043: generation-1 evidence whose `acceptance.consumed` names
+    // the run's pending generation-2 delivery must not commit against it.
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = decide_action();
+    let mut cell = fresh();
+    waiting_run(&mut cell, "run-1", 2);
+    let ledger = cell.cell.ledger().len();
+    let retargets = [
+        Consumed::Result {
+            command: CommandId("run-1/ask".to_owned()),
+            generation: Generation(2),
+        },
+        Consumed::Result {
+            command: CommandId("run-1/other".to_owned()),
+            generation: Generation(1),
+        },
+    ];
+    for (index, consumed) in retargets.into_iter().enumerate() {
+        let digest = issue(&mut cell, "run-1", 1, "approve");
+        cell.issued.get_mut(&digest).unwrap().acceptance.consumed = consumed;
+        let refused = commit_action(
+            &mut cell,
+            &catalog,
+            &decide(&action, "run-1", &digest, &format!("k-retarget-{index}")),
+            &Allow,
+        )
+        .unwrap_err();
+        assert_eq!(
+            refused.code(),
+            "action.receipt_binding_mismatch",
+            "{refused}"
+        );
+        assert_eq!(cell.cell.ledger().len(), ledger, "nothing committed");
+        assert_eq!(value(&cell, "run-1", "choice"), None);
+        assert!(
+            is_pending(&mut cell, "run-1"),
+            "the generation-2 delivery stays pending"
+        );
+    }
+    // The run's own generation-2 evidence still resolves it.
+    let own = issue(&mut cell, "run-1", 2, "approve");
+    commit_action(
+        &mut cell,
+        &catalog,
+        &decide(&action, "run-1", &own, "k-own"),
+        &Allow,
+    )
+    .unwrap();
+    assert_eq!(
+        value(&cell, "run-1", "status"),
+        Some(JsonValue::String("decided".to_owned()))
+    );
+}
