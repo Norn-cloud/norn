@@ -3,7 +3,8 @@ import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } fr
 import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Shell, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, decoded, sectionOf, target, type Section } from "../src/shell.tsx"
+import { ViewProvider } from "../src/lib/view.tsx"
 import { WORKSPACES } from "../src/lib/workspaces.ts"
 
 const sources: Section = {
@@ -81,4 +82,24 @@ test("a section's count sits in the theme's destructive pair", async () => {
   const badge = html.match(/<span class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
   expect(badge).toContain("text-destructive-foreground")
   expect(badge).not.toContain("text-white")
+})
+
+test("a malformed escape in a record path is shown as written, not thrown", () => {
+  expect(decoded("demo%2Fitem")).toBe("demo/item")
+  expect(decoded("%E0%A4%A")).toBe("%E0%A4%A")
+})
+
+test("a browser that throws on storage still renders, in the business view", () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, get: () => { throw new DOMException("blocked", "SecurityError") } })
+  try {
+    expect(renderToStaticMarkup(<ViewProvider><span>ok</span></ViewProvider>)).toBe("<span>ok</span>")
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "localStorage", saved); else delete (globalThis as { localStorage?: unknown }).localStorage
+  }
+})
+
+test("the search button keeps its name when its label is hidden on phones", async () => {
+  const html = await at("/sources", () => <Shell sections={[sources, questions]} />)
+  expect(html).toMatch(/<button[^>]*aria-label="Search"/)
 })
