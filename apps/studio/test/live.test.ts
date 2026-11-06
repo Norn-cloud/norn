@@ -1,7 +1,25 @@
 import { expect, test } from "bun:test"
 import { Refused, liveTransport, within } from "../src/lib/live.ts"
 import { readDocument } from "../src/lib/exact.ts"
-import { recordedTransport } from "../src/lib/transport.ts"
+import type { QuestionAnswer, Transport } from "../src/lib/transport.ts"
+
+// Recordings load through Vite's import.meta.glob, so tests use a stub fallback.
+const recordedRead = <T,>(document: T) => readDocument<T>(JSON.stringify(document), "recorded")
+const board: QuestionAnswer = {
+  question: recordedRead({ name: "demo.yield_week" } as never),
+  answer: recordedRead({ freshness: "exact" } as never),
+  metrics: recordedRead([] as never),
+  objectType: recordedRead({ name: "demo.Conversion" } as never),
+}
+const recordedTransport: Transport = {
+  questionBoard: async () => [board],
+  definitions: async () => [],
+  restatement: async () => { throw new Error("not used") },
+  catalog: async () => recordedRead([] as never),
+  guarantees: async () => [{ name: "original", read: recordedRead({} as never) }],
+  objectPage: async () => null,
+  object: async () => null,
+}
 
 type Call = { url: string; authorization: string | null }
 
