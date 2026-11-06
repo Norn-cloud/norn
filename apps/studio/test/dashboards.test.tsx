@@ -19,6 +19,8 @@ test("tiles lay out in reading order on two columns; duplicating a dashboard ren
   expect(copy.tiles.map(({ id }) => id)).toEqual(["new-1", "new-2"])
 })
 
+const render = (stored?: StoredDashboard) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><DashboardEditor store={cellDouble()} catalog={catalog} stored={stored} /></QueryClientProvider>)
+
 test("the editor shows its empty state, and a reopened dashboard shows every tile with its verbs, view and an honest not-run note", () => {
   const empty = render()
   for (const text of ["No questions on this dashboard yet", "Add question", 'aria-label="Undo"', "All changes saved"]) expect(empty).toContain(text)
