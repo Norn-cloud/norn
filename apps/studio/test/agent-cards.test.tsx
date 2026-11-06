@@ -4,7 +4,7 @@ import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, settleExample, timeline, verdictOf, type ExampleRun } from "../src/agent/verdict.ts"
 import { Chat } from "@ai-sdk/react"
 import type { UIMessage } from "ai"
-import { AgentPanel, type AgentState } from "../src/agent/panel.tsx"
+import { AgentPanel, examplesServedBy, type AgentState } from "../src/agent/panel.tsx"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
 const refusal = {
@@ -103,10 +103,25 @@ test("a tab keeps one session id when its storage throws", () => {
 
 test("the panel renders the conversation and draft it is given, so reopening the sheet keeps them", () => {
   const chat = new Chat<UIMessage>({ messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Let Receive start from draft" }] }] })
-  const state: AgentState = { chat, input: "half-typed draft", setInput: () => {}, stopped: new Set(), setStopped: () => {}, examples: [{ id: 0, chip: "an example sent before the sheet closed", after: 1, verdict: "pending" }], setExamples: () => {}, nextExample: { current: 1 } }
+  const state: AgentState = { chat, input: "half-typed draft", setInput: () => {}, stopped: new Set(), setStopped: () => {}, examples: [{ id: 0, chip: "an example sent before the sheet closed", after: 1, verdict: "pending" }], setExamples: () => {}, nextExample: { current: 1 }, examplesServed: true }
   const html = renderToStaticMarkup(<AgentPanel state={state} />)
   expect(html).toContain("Let Receive start from draft")
   expect(html).toContain("half-typed draft")
   expect(html).toContain("an example sent before the sheet closed")
   expect(html).not.toContain("Propose a change")
+})
+
+test("the example proposals are disabled, and say why, when the Worker does not serve the example checker", () => {
+  expect(examplesServedBy(404)).toBe(false)
+  expect(examplesServedBy(503)).toBe(false)
+  expect(examplesServedBy("unreachable")).toBe(false)
+  expect(examplesServedBy(405)).toBe(true)
+  const chat = new Chat<UIMessage>({})
+  const base: AgentState = { chat, input: "", setInput: () => {}, stopped: new Set(), setStopped: () => {}, examples: [], setExamples: () => {}, nextExample: { current: 0 }, examplesServed: false }
+  const off = renderToStaticMarkup(<AgentPanel state={base} />)
+  expect(off).toContain("Examples need the agent service.")
+  expect(off.match(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Example proposal:/g)?.length).toBeGreaterThan(0)
+  const on = renderToStaticMarkup(<AgentPanel state={{ ...base, examplesServed: true }} />)
+  expect(on).not.toContain("Examples need the agent service.")
+  expect(on.match(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Example proposal:/g)).toBeNull()
 })
