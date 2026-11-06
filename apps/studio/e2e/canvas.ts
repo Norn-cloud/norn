@@ -90,7 +90,9 @@ export async function clickEdge(page: Page, id: string) {
     for (const t of [0.5, 0.6, 0.4, 0.7, 0.3, 0.8, 0.2, 0.9, 0.1]) {
       const point = shape.getPointAtLength(length * t)
       const screen = new DOMPoint(point.x, point.y).matrixTransform(shape.getScreenCTM() ?? undefined)
-      if (document.elementFromPoint(screen.x, screen.y)?.closest(".react-flow__edge")?.getAttribute("data-id") === id) return { x: screen.x, y: screen.y }
+      // The line, or the edge's own label pill (clicking a label selects its edge).
+      const hit = document.elementFromPoint(screen.x, screen.y)
+      if (hit?.closest(".react-flow__edge")?.getAttribute("data-id") === id || hit?.closest(`[data-edge-label="${id}"],[data-exit-label="${id}"]`)) return { x: screen.x, y: screen.y }
     }
     return null
   }, id)

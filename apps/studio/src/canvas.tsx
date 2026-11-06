@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo, useState } from "react"
-import { BaseEdge, EdgeLabelRenderer, Handle, Position, type EdgeProps, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStoreApi, type EdgeProps, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import { Network, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -44,6 +44,7 @@ type StepEdgeData = { readonly label: string; readonly failing: boolean }
 
 /** A lifecycle step: straight along the main row, else in a lane with rounded corners (lib/canvas/routes); its label a pill. */
 export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, data }: EdgeProps<Edge<StepEdgeData, "step">>) {
+  const store = useStoreApi()
   const routed = laneRoute({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })
   const shift = routed.label.anchor === "middle" ? "-50%" : routed.label.anchor === "end" ? "-100%" : "0"
   // A straight step's label stays inside the gap, clear of both ports.
@@ -53,7 +54,7 @@ export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, da
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
       {data?.label && room >= 28 && (
         <EdgeLabelRenderer>
-          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, data.failing && "text-destructive")}
+          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive")} onClick={() => store.getState().addSelectedEdges([id])}
             style={{ maxWidth: room, transform: `translate(${shift}, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}

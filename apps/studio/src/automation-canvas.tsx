@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback } from "react"
-import { BaseEdge, EdgeLabelRenderer, Handle, Position, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
+import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStoreApi, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { cn } from "@/lib/utils"
 import { CARD, EDGE_PILL, InspectorHead, InspectorSection, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
@@ -54,6 +55,8 @@ type ExitEdgeData = { readonly label?: string; readonly full?: string }
  */
 export function ExitEdge({ id, source, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }: EdgeProps<Edge<ExitEdgeData, "exit">>) {
   const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  // A label is part of its edge: clicking it selects the edge, as clicking the line does.
+  const store = useStoreApi()
   // The label never runs under a card: going forward it is clamped to the gap before the target card and ends at
   // its edge (cut with an ellipsis, in full on hover); a gap too small for a word shows none, the exit's handle names it.
   const forward = targetX > sourceX
@@ -63,7 +66,7 @@ export function ExitEdge({ id, source, sourceX, sourceY, targetX, targetY, sourc
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {data?.label && room >= LABEL_MIN && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} data-exit-source={source} title={data.full} className={EDGE_PILL}
+          <div data-exit-label={id} data-exit-source={source} title={data.full} className={cn(EDGE_PILL, "cursor-pointer")} onClick={() => store.getState().addSelectedEdges([id])}
             style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { clear, clickEdge, drag, edge, edgeEnds, handle, lefts, node, open, placed, press, shown } from "./canvas.ts"
+import { clear, clickEdge, drag, edge, edgeEnds, handle, lefts, node, open, placed, press, reveal, shown } from "./canvas.ts"
 
 // One test per row of the lifecycle canvas's verb matrix (see the PR body). Each test exercises every ✓ verb of its row.
 
@@ -178,4 +178,13 @@ test("tidy up: lays the lifecycle out from its initial state, as one step undo p
   await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(before))
   await press(page, "Shift+z")
   await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(after))
+})
+
+test("step label: clicking a step's label selects the step, as clicking its line does", async ({ page }) => {
+  await open(page)
+  const label = page.locator('[data-edge-label="complete:invoiced"]')
+  await reveal(page, label)
+  await label.click()
+  await expect(edge(page, "complete:invoiced")).toHaveClass(/selected/)
+  await expect(page.getByLabel("Step id")).toHaveValue("complete")
 })
