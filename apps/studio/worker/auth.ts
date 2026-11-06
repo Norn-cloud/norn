@@ -50,6 +50,34 @@ const MINUTE = 60
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
 
+type AuthAdapter = Awaited<ReturnType<typeof getCurrentAdapter>>
+
+async function provisionWorkspace(adapter: AuthAdapter, secret: string, user: { id: string; name: string; email: string }) {
+  const identity = await workspaceIdentity(secret, user.id)
+  const find = () => adapter.findOne<{ id: string; metadata?: string | null }>({ model: "organization", where: [{ field: "id", value: identity.id }] })
+  let org = await find()
+  if (org === null) {
+    try {
+      const data = { id: identity.id, name: `${user.name || user.email}'s workspace`, slug: `u-${identity.id.slice(10)}`, metadata: identity.metadata, createdAt: new Date() }
+      org = await adapter.create<typeof data>({ model: "organization", forceAllowId: true, data })
+    } catch (error) {
+      org = await find()
+      if (org === null) throw error
+    }
+  }
+  if (org.metadata !== identity.metadata) throw new Error("Workspace ownership could not be verified")
+  const member = await adapter.findOne<{ id: string }>({ model: "member", where: [{ field: "organizationId", value: identity.id }, { field: "userId", value: user.id }] })
+  if (member === null) await adapter.create({ model: "member", data: { organizationId: identity.id, userId: user.id, role: "owner", createdAt: new Date() } })
+}
+
+/** A server-authenticated workspace identity, independent of user-editable slugs. */
+async function workspaceIdentity(secret: string, userId: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+  const sign = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))), (byte) => byte.toString(16).padStart(2, "0")).join("")
+  const id = `workspace_${await sign(`id:${userId}`)}`
+  return { id, metadata: JSON.stringify({ studioProvisioningProof: await sign(`owner:${userId}:${id}`) }) }
+}
+
 export function authOptions(config: AuthConfig, self: Self = {}) {
   return {
     appName: "Norn Studio",
@@ -125,17 +153,9 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     databaseHooks: {
       user: {
         create: {
-          // Every account starts with its own organization, so a fresh session has a scope.
+          // This hook runs after commit; session creation retries any incomplete provisioning.
           after: async (user, ctx) => {
-            if (ctx === null) return
-            const now = new Date()
-            // Inside the sign-up transaction where the database has one (SQLite); D1 has none.
-            const adapter = await getCurrentAdapter(ctx.context.adapter)
-            const org = await adapter.create<{ id: string }>({
-              model: "organization",
-              data: { name: `${user.name || user.email}'s workspace`, slug: `u-${user.id.toLowerCase()}`, createdAt: now },
-            })
-            await adapter.create({ model: "member", data: { organizationId: org.id, userId: user.id, role: "owner", createdAt: now } })
+            if (ctx !== null) await provisionWorkspace(await getCurrentAdapter(ctx.context.adapter), config.secret, user)
           },
         },
       },
@@ -143,6 +163,15 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         create: {
           before: async (session, ctx) => {
             const method = ctx === null ? undefined : AUTH_METHODS[ctx.path as keyof typeof AUTH_METHODS]
+            if (ctx !== null) {
+              const adapter = await getCurrentAdapter(ctx.context.adapter)
+              const existing = await adapter.findMany<{ organizationId: string }>({ model: "member", where: [{ field: "userId", value: session.userId }], limit: 1 })
+              if (existing.length === 0) {
+                const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
+                if (user === null) throw new Error("Cannot provision a workspace for a missing user")
+                await provisionWorkspace(adapter, config.secret, user)
+              }
+            }
             // The earliest membership, the same rule activeMembership uses when a session has none.
             const [member] = ctx === null ? [] : await (await getCurrentAdapter(ctx.context.adapter)).findMany<{ organizationId: string }>({
               model: "member",

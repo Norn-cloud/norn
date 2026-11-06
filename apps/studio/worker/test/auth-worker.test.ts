@@ -137,3 +137,34 @@ test("sign-up answers a registered address byte for byte like a new one, apart f
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "correct horse battery" })).status).toBe(200)
   expect((await post(env, "/api/auth/sign-in/email", { email: "ha@example.com", password: "another horse battery" })).status).toBe(200)
 })
+
+
+test("a failed membership insert is retried safely on the next sign-in", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  expect((await enroll(env, "recover@example.com", "Recover")).status).toBe(200)
+  db.run(`delete from "member"`)
+  db.run(`delete from "organization"`)
+  db.exec(`create trigger fail_member before insert on "member" begin select raise(abort, 'injected membership failure'); end`)
+  const failed = await post(env, "/api/auth/sign-in/email", { email: "recover@example.com", password: "correct horse battery" })
+  expect(failed.status).not.toBe(200)
+  expect(db.query(`select count(*) as n from "organization"`).get()).toEqual({ n: 1 })
+  expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 0 })
+  db.exec(`drop trigger fail_member`)
+  const recovered = await post(env, "/api/auth/sign-in/email", { email: "recover@example.com", password: "correct horse battery" })
+  expect(recovered.status).toBe(200)
+  const me = await (await call(env, "/api/me", { headers: { cookie: cookieOf(recovered) } })).json() as { organization: { role: string; name: string } }
+  expect(me.organization).toMatchObject({ role: "owner", name: "Recover's workspace" })
+  expect(db.query(`select count(*) as n from "organization"`).get()).toEqual({ n: 1 })
+})
+
+test("recovery refuses a workspace whose server ownership proof is altered", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  expect((await enroll(env, "proof@example.com", "Proof")).status).toBe(200)
+  db.run(`delete from "member"`)
+  db.run(`update "organization" set "metadata" = ?`, ['{"studioProvisioningProof":"forged"}'])
+  const response = await post(env, "/api/auth/sign-in/email", { email: "proof@example.com", password: "correct horse battery" })
+  expect(response.status).not.toBe(200)
+  expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 0 })
+})
