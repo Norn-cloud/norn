@@ -7,9 +7,14 @@
 //!
 //! - [`principal`]: the one seam that turns transport credentials into a Norn
 //!   principal, and the server policy for fixture principals (until #817).
+//! - [`analytics`]: the scrap-yield cell and its admitted question runtime.
+//! - [`policy`]: HOST-READ-1 data-read decisions by the kernel PDP over an
+//!   `AccessIR` policy compiled against the cell model's Cedar projection.
 //! - [`seed`]: the public three-systems demo cell, provisioned idempotently.
 //! - [`server`]: read-only fetch dispatch over `norn_api`'s shared services.
 
+pub mod analytics;
+pub mod policy;
 pub mod principal;
 pub mod seed;
 pub mod server;

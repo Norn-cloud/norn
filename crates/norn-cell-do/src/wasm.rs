@@ -5,17 +5,26 @@
 //! loop make this cell the only writer; `transactionSync` is the commit.
 
 use norn_api::host::DevHost;
+use norn_api::question_routes::QuestionRuntime;
 use norn_api::scope::CellScope;
 use norn_cell::workers::WorkersEngine;
 use wasm_bindgen::prelude::*;
 
-use crate::principal::{DEMO_PRINCIPALS, FixturePolicy};
+use crate::analytics::{self, DemoQuestions};
+use crate::policy::{DEMO_GRANTS, ReadPolicy};
+use crate::principal::DEMO_PRINCIPALS;
 use crate::{seed, server};
 
 /// One opened tenant cell.
 #[wasm_bindgen]
 pub struct NornCell {
     host: DevHost<WorkersEngine>,
+    /// The cell's admitted questions, when it publishes any.
+    questions: Option<DemoQuestions>,
+}
+
+fn rejected(error: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&error.to_string())
 }
 
 /// A finite HTTP reply.
@@ -39,15 +48,23 @@ impl NornCell {
             org_id,
             environment_id,
         };
-        if scope != seed::demo_scope() {
+        let engine = WorkersEngine::new(storage);
+        let (store, questions) = if scope == seed::demo_scope() {
+            (seed::provision(engine, &scope).map_err(rejected)?, None)
+        } else if scope == analytics::analytics_scope() {
+            let opened = analytics::provision(engine, &scope).map_err(rejected)?;
+            let questions = DemoQuestions::new(opened.plan, scope.clone());
+            (opened.store, Some(questions))
+        } else {
             return Err(JsValue::from_str("no cell is published for this scope"));
-        }
-        let store = seed::provision(WorkersEngine::new(storage), &scope)
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        };
+        // Data reads are decided by the kernel PDP over this cell's own model.
+        let policy = ReadPolicy::compile(store.model().object_types(), &scope, DEMO_GRANTS)
+            .map_err(rejected)?;
         let host = DevHost::from_store(store, scope, |command| command.payload.clone())
             .map_err(|refusal| JsValue::from_str(&refusal.code))?
-            .with_authorizer(FixturePolicy(DEMO_PRINCIPALS));
-        Ok(Self { host })
+            .with_authorizer(policy);
+        Ok(Self { host, questions })
     }
 
     /// Serve one request; every outcome is a status and a JSON document.
@@ -63,9 +80,14 @@ impl NornCell {
         query: &str,
         authorization: Option<String>,
     ) -> Reply {
-        let response = server::handle(
+        let questions = self
+            .questions
+            .as_ref()
+            .map(|questions| -> &dyn QuestionRuntime<WorkersEngine> { questions });
+        let response = server::handle_with(
             &self.host,
             &DEMO_PRINCIPALS,
+            questions,
             method,
             path,
             query,
