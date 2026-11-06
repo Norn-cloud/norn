@@ -35,7 +35,7 @@ fn manifest() -> FunctionManifest {
     norn_builtins::decision_manifest().unwrap()
 }
 
-fn request(extra: serde_json::Value) -> Vec<u8> {
+fn request(extra: &serde_json::Value) -> Vec<u8> {
     let mut body = json!({
         "question": "Publish the Q3 dashboard?",
         "risk": "high",
@@ -186,7 +186,7 @@ fn deliver(
 #[test]
 fn a_cell_issued_receipt_resolves_the_perform_and_routes_on_choice() {
     let manifest = manifest();
-    let body = request(json!({}));
+    let body = request(&json!({}));
     let invocation = invocation(&manifest, &body);
     let held = roles(&["finance.approver"]);
     let laws = roles(&["law.two_person"]);
@@ -227,7 +227,7 @@ fn a_cell_issued_receipt_resolves_the_perform_and_routes_on_choice() {
 #[test]
 fn a_client_supplied_result_is_refused_however_well_formed() {
     let manifest = manifest();
-    let body = request(json!({}));
+    let body = request(&json!({}));
     let invocation = invocation(&manifest, &body);
     let held = roles(&["finance.approver"]);
     let laws = roles(&["law.two_person"]);
@@ -256,7 +256,7 @@ fn a_client_supplied_result_is_refused_however_well_formed() {
     }
     let ledger = BTreeSet::from([issued.digest().clone()]);
     for (receipt, ledger) in [
-        (&forged, ledger.clone()),
+        (&forged, ledger),
         // Even the genuine bytes are refused when the cell has no record of issuing them.
         (issued.receipt(), BTreeSet::new()),
     ] {
@@ -275,7 +275,7 @@ fn a_client_supplied_result_is_refused_however_well_formed() {
 #[test]
 fn a_non_decider_is_refused_before_any_receipt_exists() {
     let manifest = manifest();
-    let body = request(json!({}));
+    let body = request(&json!({}));
     let invocation = invocation(&manifest, &body);
     let laws = roles(&["law.two_person"]);
     let none = BTreeSet::new();
@@ -291,18 +291,8 @@ fn a_non_decider_is_refused_before_any_receipt_exists() {
             laws.clone(),
             DecisionRefusal::NotADecider,
         ),
-        (
-            agent,
-            approver.clone(),
-            laws.clone(),
-            DecisionRefusal::NotADecider,
-        ),
-        (
-            ada(),
-            approver.clone(),
-            none,
-            DecisionRefusal::LawNotSatisfied,
-        ),
+        (agent, approver.clone(), laws, DecisionRefusal::NotADecider),
+        (ada(), approver, none, DecisionRefusal::LawNotSatisfied),
     ] {
         let refused = issue(
             &manifest,
@@ -324,7 +314,7 @@ fn a_non_decider_is_refused_before_any_receipt_exists() {
 #[test]
 fn answers_and_requests_are_bounded() {
     let manifest = manifest();
-    let body = request(json!({}));
+    let body = request(&json!({}));
     let invocation = invocation(&manifest, &body);
     let held = roles(&["finance.approver"]);
     let laws = roles(&["law.two_person"]);
@@ -349,7 +339,7 @@ fn answers_and_requests_are_bounded() {
         Err(DecisionRefusal::Expired)
     );
     // Another request than the dispatched blob does not bind.
-    let other = request(json!({ "question": "Something else?" }));
+    let other = request(&json!({ "question": "Something else?" }));
     assert_eq!(
         issue(
             &manifest,
@@ -400,7 +390,7 @@ fn answers_and_requests_are_bounded() {
         (json!({ "context": 42 }), "decision.request_shape"),
     ] {
         assert_eq!(
-            parse_request(&request(extra.clone()))
+            parse_request(&request(&extra))
                 .map(|_| ())
                 .unwrap_err()
                 .code(),
@@ -413,7 +403,7 @@ fn answers_and_requests_are_bounded() {
 #[test]
 fn expiry_and_withdrawal_are_typed_failures_the_cell_issues() {
     let manifest = manifest();
-    let body = request(json!({}));
+    let body = request(&json!({}));
     let invocation = invocation(&manifest, &body);
     assert_eq!(
         expire(&manifest, &invocation, &body, DEADLINE),
