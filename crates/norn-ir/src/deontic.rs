@@ -247,14 +247,12 @@ pub struct ActivationKey {
 }
 
 impl ActivationKey {
-    /// `sha256(canonical_json(["norn.activation/1", key]))`, lowercase hex.
+    /// `sha256("norn.activation.v1\0" ‖ canonical_json(key))`, lowercase hex.
     ///
     /// # Errors
     /// Canonical encoding failure.
     pub fn id(&self) -> Result<String, norn_canonical::CanonicalJsonError> {
-        use sha2::Digest as _;
-        let bytes = norn_canonical::canonical_json_of(&("norn.activation/1", self))?;
-        Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
+        norn_canonical::domain_hash_hex(b"norn.activation.v1\0", self)
     }
 }
 

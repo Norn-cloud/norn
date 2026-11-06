@@ -53,7 +53,7 @@ The cell's committed clock is a nonnegative SQLite INTEGER, so `t ≤ 2^63 − 1
 
 *Trigger resolution.* Catalog admission resolves `trigger` to exactly one transition of the subject's effective lifecycle, or refuses with `law.model.unknown_binding`. A misspelled trigger never admits. TARGET: `check_requirement` has no lifecycle catalog and checks only that `trigger` is nonblank. Until the lifecycle-graph binding lands, no `within` requirement reaches runtime, because runtime law evaluation refuses timed laws.
 
-*Identity.* An activation's identity is `ActivationKey {lawId, lawDigest, origin, subjectId, triggerSeq}`: the effective law instance (law ID, SHA-256 of its canonical `LawIR`, attachment origin), the subject and the ledger position of the opening commit. Its `id` is `sha256(canonical_json(["norn.activation/1", key]))` in lowercase hex. It is never a string concatenation. A `restart` opens a new key.
+*Identity.* An activation's identity is `ActivationKey {lawId, lawDigest, origin, subjectId, triggerSeq}`: the effective law instance (law ID, SHA-256 of its canonical `LawIR`, attachment origin), the subject and the ledger position of the opening commit. Its `id` is `sha256("norn.activation.v1\0" ‖ canonical_json(key))` in lowercase hex (`domain_hash_hex`). It is never a string concatenation. A `restart` opens a new key.
 
 *Violation placement.* `violated` is recorded in exactly one ledger commit: the first commit in ledger order with `t ≥ deadline` that is either this activation's deadline timer or a commit touching its subject. It carries that commit's `atSeq` and `atMillis`, and the activation still states the deadline. Replaying the ledger therefore reproduces the same event at the same position.
 
