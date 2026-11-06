@@ -77,13 +77,31 @@ const gatewayLink = (gateway: GatewayClient) => genericOAuth({
     clientSecret: gateway.clientSecret,
     authorizationUrl: `${gateway.url}/api/auth/oauth2/authorize`,
     tokenUrl: `${gateway.url}/api/auth/oauth2/token`,
-    userInfoUrl: `${gateway.url}/api/auth/oauth2/userinfo`,
-    scopes: ["openid", "email", "offline_access", "executor"],
+    // The gateway grants only these (its /.well-known/oauth-authorization-server); it has no OpenID userinfo.
+    scopes: ["executor", "offline_access"],
     pkce: true,
     disableSignUp: true,
     disableImplicitSignUp: true,
+    getUserInfo: (tokens) => gatewaySubject(gateway, tokens.accessToken),
   }],
 })
+
+/**
+ * Who granted the gateway token, from the gateway's token introspection (RFC 7662) with Studio's
+ * client credentials. The account is keyed by that subject; the address is a placeholder, since a
+ * link-only provider never sets a Norn user's email.
+ */
+export async function gatewaySubject(gateway: GatewayClient, accessToken: string | undefined, fetcher: typeof fetch = fetch) {
+  if (accessToken === undefined) return null
+  const response = await fetcher(`${gateway.url}/api/auth/oauth2/introspect`, {
+    method: "POST",
+    headers: { authorization: `Basic ${btoa(`${gateway.clientId}:${gateway.clientSecret}`)}`, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: accessToken, token_type_hint: "access_token" }),
+  })
+  const body = (await response.json().catch(() => null)) as { active?: boolean; sub?: string } | null
+  if (!response.ok || body?.active !== true || typeof body.sub !== "string") return null
+  return { id: body.sub, name: "Tool gateway", email: `${encodeURIComponent(body.sub)}@gateway.invalid`, emailVerified: false }
+}
 
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
