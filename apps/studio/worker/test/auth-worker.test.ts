@@ -62,6 +62,14 @@ test("a state-changing auth request from another origin is refused", async () =>
   expect(response.status).toBe(403)
 })
 
+test("a listed second origin may sign in while an unlisted origin is refused", async () => {
+  const env = { ...stage(), BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify([ORIGIN, "https://studio-demo.norn.cloud"]) }
+  await post(env, "/api/auth/sign-up/email", { email: "second@example.com", password: "correct horse battery", name: "Second" })
+  const credentials = { email: "second@example.com", password: "correct horse battery" }
+  expect((await post(env, "/api/auth/sign-in/email", credentials, { origin: "https://studio-demo.norn.cloud" })).status).toBe(200)
+  expect((await post(env, "/api/auth/sign-in/email", credentials, { origin: "https://evil.example" })).status).toBe(403)
+})
+
 test("repeated password guesses from one address are rate limited", async () => {
   const env = stage()
   await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" })

@@ -41,6 +41,7 @@ export interface AuthConfig {
   readonly secret: string
   /** The Studio origin, e.g. https://studio-preview.norn.cloud. */
   readonly baseURL: string
+  readonly trustedOrigins?: readonly string[]
   /** Absent when this deployment has no mail sender: magic links then refuse. */
   readonly sendMagicLink?: (mail: MagicLinkMail) => Promise<void>
 }
@@ -58,7 +59,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     baseURL: config.baseURL,
     basePath: "/api/auth",
     // Better Auth refuses state-changing requests whose Origin is not listed (its CSRF check).
-    trustedOrigins: [config.baseURL],
+    trustedOrigins: [...(config.trustedOrigins ?? [config.baseURL])],
     // No sign-in on sign-up: Better Auth then answers a registered address exactly as a new one
     // (no session either way), so sign-up does not reveal which emails have accounts.
     emailAndPassword: {
