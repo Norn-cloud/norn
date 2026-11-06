@@ -1013,7 +1013,7 @@ fn lowered() -> Vec<Value> {
     artifacts
 }
 
-fn flow_body(id: &str, artifacts: Vec<Value>, expected: Option<u64>) -> Value {
+fn flow_body(id: &str, artifacts: &[Value], expected: Option<u64>) -> Value {
     let mut body = json!({ "kind": "flow", "id": id,
         "payload": { "flow": { "id": FLOW_ID, "version": "1.0.0" }, "artifacts": artifacts } });
     if let Some(expected) = expected {
@@ -1037,7 +1037,7 @@ fn codes_of(refused: &Value) -> Vec<String> {
 fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
     let cell = cell(DefinitionKinds::default().with_roles(ROLES));
     // Its one perform names a tool nothing binds yet.
-    let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, lowered(), None));
+    let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
     assert_eq!(status, 422, "{refused}");
     let unknown = pointers(&refused);
     assert!(!unknown.is_empty(), "{refused}");
@@ -1053,7 +1053,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
         install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
         200
     );
-    let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, lowered(), None));
+    let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
     assert_eq!(status, 200, "{installed}");
     assert_eq!(
         installed["flow"],
@@ -1129,7 +1129,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
         .0,
         200
     );
-    let (status, stale) = install_flow(&cell, &flow_body(FLOW_ID, lowered(), Some(1)));
+    let (status, stale) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), Some(1)));
     assert_eq!(status, 422, "{stale}");
     assert!(
         codes_of(&stale)
@@ -1159,7 +1159,7 @@ fn a_registered_builtin_resolves_a_perform() {
         function == TOOL && version == 1
     }
     let cell = cell(DefinitionKinds::default().with_builtins(resolve));
-    let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, lowered(), None));
+    let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
     assert_eq!(status, 200, "{installed}");
 }
 
@@ -1173,7 +1173,7 @@ fn a_flow_owns_exactly_its_two_lowered_artifacts() {
     let admit = |body: &Value| post(&cell, "/v1/definitions:admit", ADMIN, body).1;
     // The definition id is flow.id.
     assert_eq!(
-        codes_of(&admit(&flow_body("crm.other_flow", lowered(), None))),
+        codes_of(&admit(&flow_body("crm.other_flow", &lowered(), None))),
         ["definition.flow_id_mismatch"]
     );
     // An artifact it does not own, or an action, is refused.
@@ -1181,7 +1181,7 @@ fn a_flow_owns_exactly_its_two_lowered_artifacts() {
     let mut extra = foreign[0].clone();
     extra["artifactId"] = json!("crm.Other.entity");
     foreign.push(extra);
-    let found = admit(&flow_body(FLOW_ID, foreign, None));
+    let found = admit(&flow_body(FLOW_ID, &foreign, None));
     assert!(
         codes_of(&found).contains(&"definition.flow_artifact_foreign".to_owned()),
         "{found}"
@@ -1193,14 +1193,14 @@ fn a_flow_owns_exactly_its_two_lowered_artifacts() {
         ))
         .unwrap(),
     );
-    let found = admit(&flow_body(FLOW_ID, declared, None));
+    let found = admit(&flow_body(FLOW_ID, &declared, None));
     assert!(
         codes_of(&found).contains(&"definition.flow_action_declared".to_owned()),
         "{found}"
     );
     // An artifact scoped outside the cell is refused.
     let foreign_scope: Vec<Value> = serde_json::from_str(LOWERED).unwrap();
-    let found = admit(&flow_body(FLOW_ID, foreign_scope, None));
+    let found = admit(&flow_body(FLOW_ID, &foreign_scope, None));
     assert!(
         codes_of(&found).contains(&"definition.flow_scope_conflict".to_owned()),
         "{found}"
@@ -1212,7 +1212,7 @@ fn a_flow_owns_exactly_its_two_lowered_artifacts() {
             .replace(&format!("function: '{TOOL}'"), "function: input.fn"),
     )
     .unwrap();
-    let found = admit(&flow_body(FLOW_ID, computed, None));
+    let found = admit(&flow_body(FLOW_ID, &computed, None));
     assert!(
         !codes_of(&found).is_empty()
             && codes_of(&found)
@@ -1227,11 +1227,7 @@ fn a_flow_owns_exactly_its_two_lowered_artifacts() {
             .contains("not a literal")
     );
     // Only the rule and the Run entity: dropping either is a shape refusal.
-    let found = admit(&flow_body(
-        FLOW_ID,
-        lowered().into_iter().take(1).collect(),
-        None,
-    ));
+    let found = admit(&flow_body(FLOW_ID, &lowered()[..1], None));
     assert_eq!(
         codes_of(&found),
         ["definition.flow_shape_invalid"],
