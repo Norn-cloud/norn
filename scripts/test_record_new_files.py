@@ -72,16 +72,16 @@ class RecordNewFilesTests(unittest.TestCase):
         self.assertEqual(self.run_tool("--check"), 0)
 
     def test_a_new_source_is_enrolled_with_its_siblings_and_recorded_like_them(self):
-        self.write("app/src/grid/new.tsx", "export const x = 1\n")
+        self.write("app/src/grid/new.ts", "export const x = 1\n")
         self.assertEqual(self.run_tool("--check"), 1)
-        self.assertFalse((self.root / PROVENANCE / "app/src/grid/new.tsx.json").exists(), "--check wrote")
+        self.assertFalse((self.root / PROVENANCE / "app/src/grid/new.ts.json").exists(), "--check wrote")
         self.assertEqual(self.run_tool(), 0)
-        self.assertEqual(self.enrolled()["app/src/grid/new.tsx"], "app")
+        self.assertEqual(self.enrolled()["app/src/grid/new.ts"], "app")
         self.assertEqual(discover_sources(self.root), set(self.enrolled()))
-        record = self.record("app/src/grid/new.tsx")
+        record = self.record("app/src/grid/new.ts")
         self.assertEqual(record["sha256"], sha("export const x = 1\n"))
         self.assertEqual({k: v for k, v in record.items() if k != "sha256"}, AUTHORED)
-        entry = next(p for p in (self.root / COVERAGE).rglob("*.json") if "new.tsx" in p.read_text())
+        entry = next(p for p in (self.root / COVERAGE).rglob("*.json") if "new.ts" in p.read_text())
         self.assertEqual(self.record(entry.relative_to(self.root).as_posix())["sha256"], hashlib.sha256(entry.read_bytes()).hexdigest())
         coverage_manifest.load(self.root / COVERAGE)
         self.assertEqual(self.run_tool("--check"), 0, "a second run changed something")
@@ -149,11 +149,58 @@ class RecordNewFilesTests(unittest.TestCase):
         self.assertEqual(self.run_tool(), 2)
         self.assertFalse((self.root / PROVENANCE / "lib/new.py.json").exists())
 
-    def test_a_derived_file_of_another_kind_does_not_block_its_neighbours(self):
-        self.add("app/src/index.css", "body {}\n", "app", origin="derived")
-        self.write("app/src/page.ts", "export {}\n")
-        self.assertEqual(self.run_tool(), 0)
-        self.assertEqual(self.record("app/src/page.ts")["origin"], "authored")
+    def tree(self) -> dict[str, str]:
+        """Every file under the root and its digest, to prove a refusal wrote nothing."""
+        return {p.relative_to(self.root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(self.root.rglob("*")) if p.is_file() and ".git" not in p.relative_to(self.root).parts}
+
+    def assertRefusedUntouched(self, *args):
+        before = self.tree()
+        self.assertEqual(self.run_tool(*args), 2)
+        self.assertEqual(self.tree(), before, "a refusal wrote something")
+
+    def upstream_directory(self):
+        """vendor/zen as it is: authored JSON beside a derived (MIT) Rust source."""
+        for name in ("boundary.json", "manifest.json"):
+            self.write(f"vendor/zen/{name}", "{}\n")
+            self.recorded(f"vendor/zen/{name}")
+        self.add("vendor/zen/engine.rs", "fn main() {}\n", "lib", origin="derived")
+
+    def test_upstream_code_does_not_inherit_authored_provenance_from_other_kinds_of_sibling(self):
+        # Sol's repro: authored .json siblings must not hide a derived sibling of another suffix.
+        self.upstream_directory()
+        self.write("vendor/zen/imported.json", "{}\n")
+        self.assertRefusedUntouched()
+        self.assertRefusedUntouched("--check")
+
+    def test_a_new_file_without_a_sibling_of_its_suffix_is_refused(self):
+        self.write("app/src/readme.md", "# readme\n")  # app/src holds only authored .ts
+        self.assertRefusedUntouched()
+
+    def test_same_suffix_siblings_that_disagree_on_category_are_refused(self):
+        self.add("app/src/notes.ts", "export {}\n", "app")
+        self.write(f"{PROVENANCE}/app/src/notes.ts.json", json.dumps({"sha256": sha("export {}\n"), **AUTHORED, "category": "fixture"}, indent=2) + "\n")
+        self.write("app/src/new.ts", "export {}\n")
+        self.assertRefusedUntouched()
+
+    def test_same_suffix_siblings_that_disagree_on_licence_are_refused(self):
+        self.add("app/src/notes.ts", "export {}\n", "app")
+        self.write(f"{PROVENANCE}/app/src/notes.ts.json", json.dumps({"sha256": sha("export {}\n"), **AUTHORED, "license": "MIT"}, indent=2) + "\n")
+        self.write("app/src/new.ts", "export {}\n")
+        self.assertRefusedUntouched()
+
+    def test_a_declared_author_records_a_new_file_in_a_mixed_directory(self):
+        self.upstream_directory()
+        self.write("vendor/zen/ours.json", "{}\n")
+        self.assertRefusedUntouched()
+        self.assertEqual(self.run_tool("--authored", "vendor/zen/ours.json"), 0)
+        self.assertEqual({k: v for k, v in self.record("vendor/zen/ours.json").items() if k != "sha256"}, AUTHORED)
+        self.assertEqual(self.run_tool("--check"), 0)
+
+    def test_a_declaration_is_only_for_a_new_file(self):
+        self.upstream_directory()
+        self.assertRefusedUntouched("--authored", "vendor/zen/missing.json")
+        self.assertRefusedUntouched("--authored", "vendor/zen/engine.rs")  # already recorded as derived
 
     def test_a_new_file_takes_the_category_of_siblings_with_its_suffix(self):
         self.write("app/src/notes.md", "# notes\n")
