@@ -63,6 +63,10 @@ test("view: the form is the action's admitted schema: titled fields, help, a cho
   await expect(form.getByText("(g)")).toBeVisible()
   await expect(form.getByLabel("Location › Bin")).toBeVisible()
   await expect(form.getByLabel("Note")).toBeVisible()
+  // "No value" stays chosen: the field sends null, not nothing.
+  await form.getByLabel("No value").last().check()
+  await expect(form.getByLabel("No value").last()).toBeChecked()
+  await expect(form.getByLabel("Note")).toHaveCount(0)
   await expect(form.getByLabel("Quantity")).toHaveAttribute("placeholder", "e.g. 12.500")
   // The submit bar stays on screen on a long form.
   await expect(form.getByRole("button", { name: "Open a holding" })).toBeInViewport()
@@ -183,7 +187,7 @@ test("create: a parent with owned rows takes a list of records, each refused at 
   await form.getByLabel("Holding id").fill("demo/holding/0003")
   await form.getByRole("button", { name: "Add lot" }).click()
   await form.getByRole("button", { name: "Add lot" }).click()
-  await form.getByLabel("Lot", { exact: true }).nth(0).fill("L-1")
+  await form.getByRole("textbox", { name: "Lot", exact: true }).nth(0).fill("L-1")
   await form.getByLabel("Quantity").nth(0).fill("1.250")
   await form.getByLabel("Quantity").nth(1).fill("2,0")
   await form.getByRole("button", { name: "Restock holding" }).click()
@@ -191,7 +195,7 @@ test("create: a parent with owned rows takes a list of records, each refused at 
   await expect(form.locator('[data-pointer="/lots/1/quantity"]')).toContainText("must be an exact number")
   await expect(form.getByRole("button", { name: "Remove lot 2" })).toBeVisible()
   await shoot(page, "rows")
-  await form.getByLabel("Lot", { exact: true }).nth(1).fill("L-2")
+  await form.getByRole("textbox", { name: "Lot", exact: true }).nth(1).fill("L-2")
   await form.getByLabel("Quantity").nth(1).fill("2.000")
   await form.getByRole("button", { name: "Restock holding" }).click()
   await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0003 restocked · just now")

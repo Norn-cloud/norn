@@ -138,7 +138,9 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
   // A record (or a list of records) shows only its own problems; its members show theirs.
   const own = field.spec.kind === "object" || (field.spec.kind === "array" && field.spec.item.kind === "object")
   const problems = own ? diagnostics.filter((d) => inputPointer(d) === field.pointer) : problemsAt(diagnostics, field.pointer)
-  const value = draftAt(draft, field.pointer)
+  // An explicit null is the field's "No value"; only an absent value reads as empty.
+  const found = draftAt(draft, field.pointer)
+  const value: Draft = found === undefined ? "" : found
   const described = [field.description ? `${id}-help` : "", problems.length > 0 ? `${id}-problem` : ""].filter(Boolean).join(" ") || undefined
   const aria = { id, "aria-describedby": described, "aria-invalid": problems.length > 0 || undefined, "aria-required": field.required || undefined }
   return (
@@ -153,13 +155,13 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
         ? (
           <div className="relative">
             <Lock className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input id={id} readOnly aria-readonly value={String(value ?? "")} title="This record: set by where you opened the action"
+            <Input id={id} readOnly aria-readonly value={String(value)} title="This record: set by where you opened the action"
               className="h-9 cursor-default bg-muted/70 pl-8 font-mono text-xs text-muted-foreground focus-visible:ring-0" />
           </div>
         )
         : field.nullable
-          ? <Nullable field={field} value={value ?? ""} onEdit={onEdit} widget={<Widget spec={field.spec} pointer={field.pointer} label={field.label} value={value ?? ""} root={draft} diagnostics={diagnostics} onEdit={onEdit} aria={aria} />} />
-          : <Widget spec={field.spec} pointer={field.pointer} label={field.label} value={value ?? ""} root={draft} diagnostics={diagnostics} onEdit={onEdit} aria={aria} />}
+          ? <Nullable field={field} value={value} onEdit={onEdit} widget={<Widget spec={field.spec} pointer={field.pointer} label={field.label} value={value} root={draft} diagnostics={diagnostics} onEdit={onEdit} aria={aria} />} />
+          : <Widget spec={field.spec} pointer={field.pointer} label={field.label} value={value} root={draft} diagnostics={diagnostics} onEdit={onEdit} aria={aria} />}
       {problems.length > 0 && <div id={`${id}-problem`} role="alert" className="grid text-meta text-destructive">{problems.map((p) => <span key={`${p.pointer}:${p.code}:${p.message}`}>{p.message}</span>)}</div>}
     </div>
   )
