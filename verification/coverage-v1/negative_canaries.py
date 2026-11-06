@@ -817,19 +817,22 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
     ):
-        for cancelled in (False, True):
+        # A bot-authored comment never re-evaluates; a human one does, whoever edits or
+        # deletes it (the condition keys on the author, so the sender is irrelevant).
+        for cancelled, author in itertools.product((False, True), ("User", "Bot", "Organization")):
             condition = expression
             for key, value in {
                 "github.event_name": event, "github.event.action": action,
                 "github.event.comment.body": body, "github.event.changes.body.from": previous,
-                "github.event.issue.pull_request": is_pr,
+                "github.event.issue.pull_request": is_pr, "github.event.comment.user.type": author,
             }.items():
                 condition = condition.replace(key, repr(value))
             condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
             condition = re.sub(r"!(?!=)", " not ", condition)
             accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
-            if bool(accepted) != (expected and not cancelled):
-                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}")
+            bot = event == "issue_comment" and author == "Bot"
+            if bool(accepted) != (expected and not cancelled and not bot):
+                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}")
 
     reporter = next(step for step in job["steps"]
                     if step.get("name") == "Report trusted policy on the exact PR head")
@@ -1015,6 +1018,17 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
             rejected(f"renamed control check {name}", document)
+        bot_clause = "github.event.comment.user.type != 'Bot' && "
+        for label, before, after in (("sender", "github.event.comment.user.type", "github.event.sender.type"),
+                                     ("actor", "github.event.comment.user.type != 'Bot'", "github.actor != 'coderabbitai[bot]'"),
+                                     ("inverted", "!= 'Bot'", "== 'Bot'"),
+                                     ("dropped", bot_clause, "")):
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["if"].replace(before, after)
+            if changed == document["jobs"]["trusted-policy"]["if"]:
+                raise AssertionError(f"trusted-policy bot mutation is a no-op: {label}")
+            document["jobs"]["trusted-policy"]["if"] = changed
+            rejected(f"trusted-policy bot comment {label}", document)
         for change in ("concurrency", "if", "reporter"):
             document = copy.deepcopy(workflow)
             trusted = document["jobs"]["trusted-policy"]
