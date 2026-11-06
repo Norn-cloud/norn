@@ -172,6 +172,16 @@ export default {
       if (!isQuestionRoute(pathname)) return refuse(404, "No such endpoint.")
       return questionsRoute(request, pathname, async () => (await import("./checker.ts")).admitQuestion)
     }
+    // A dashboard in plain words for sign-off: the same gate as the question routes.
+    if (pathname.startsWith("/api/dashboards/")) {
+      const actor = await resolveActor(request, auth(env))
+      if (actor === null) return refuse(401, "Sign in first.")
+      if (actor.actorKind !== "user") return refuse(403, "Dashboard sign-off is for signed-in users, not API keys.")
+      if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
+      const { isDashboardRoute, dashboardsRoute } = await import("./dashboards.ts")
+      if (!isDashboardRoute(pathname)) return refuse(404, "No such endpoint.")
+      return dashboardsRoute(request)
+    }
     if (pathname.startsWith("/api/connectors/")) {
       // A gateway URL without its OAuth client is not a gateway this stage can use.
       const gatewayEnv = env.TOOL_GATEWAY_CLIENT_ID === undefined || env.TOOL_GATEWAY_CLIENT_SECRET === undefined ? { ...env, TOOL_GATEWAY_URL: undefined } : env

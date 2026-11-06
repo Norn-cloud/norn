@@ -1,4 +1,5 @@
 import { useMutation } from "@tanstack/react-query"
+import { useEffect } from "react"
 import { Play } from "lucide-react"
 import { ValidationPanel } from "@/components/editor"
 import { Button } from "@/components/ui/button"
@@ -38,8 +39,13 @@ export const answerRead = (question: unknown, catalog: QuestionCatalog, result: 
  * Run one admitted question in the cell: its answer, as a published one reads
  * (withheld and suppressed values included), or why there is none.
  */
-export function RunQuestion({ question, catalog, label = "Run", compact = false }: { readonly question: unknown; readonly catalog: QuestionCatalog; readonly label?: string; readonly compact?: boolean }) {
+export function RunQuestion({ question, catalog, label = "Run", compact = false, runs = 0 }: {
+  readonly question: unknown; readonly catalog: QuestionCatalog; readonly label?: string; readonly compact?: boolean
+  /** Bumped by a "Run all" outside: each new value runs this question once more. */
+  readonly runs?: number
+}) {
   const run = useMutation({ mutationFn: () => evaluateQuestion(question) })
+  useEffect(() => { if (runs > 0) run.mutate() }, [runs])
   const result = run.data
   return (
     <div className="space-y-3">
