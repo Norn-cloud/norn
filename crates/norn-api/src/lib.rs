@@ -22,5 +22,7 @@ pub mod objects;
 /// Authorized read services shared by transports.
 pub mod routes;
 
+/// The trusted transport's identity seam: verified host tokens to Norn principals.
+pub mod principal;
 /// Scoped PDP authority for complete refusal diagnostics.
 pub mod refusal_disclosure;

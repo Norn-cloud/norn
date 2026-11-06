@@ -112,8 +112,27 @@ test("selection: multi-select, copy/paste, select all, delete selected", async (
   await expect(page.getByText("2 states and 0 steps selected.")).toBeVisible()
   await page.getByRole("button", { name: "Delete selected" }).click()
   await expect(node(page, "invoiced_copy")).toHaveCount(0)
+  // Select-all is the canvas's only while the canvas is in use: click it first.
+  await page.locator(".react-flow__pane").click({ position: { x: 10, y: 10 } })
   await press(page, "a")
   await expect(page.getByText(/^\d+ states and \d+ steps selected\.$/)).toBeVisible()
+})
+
+test("shortcuts: copy and select-all stay the browser's outside the canvas and over selected text", async ({ page }) => {
+  await open(page)
+  await node(page, "invoiced").click()
+  // Selecting text elsewhere and copying copies the text: the canvas does not claim it.
+  await page.getByText(/Draw how a process moves/).selectText()
+  await press(page, "c")
+  await expect(page.getByText(/^Copied \d+ items?\.$/)).toHaveCount(0)
+  // With another modifier held, the shortcut is not the canvas's either.
+  await node(page, "invoiced").click()
+  await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+Shift+c`)
+  await expect(page.getByText(/^Copied \d+ items?\.$/)).toHaveCount(0)
+  // Back on the canvas, copy is the canvas's again.
+  await node(page, "invoiced").click()
+  await press(page, "c")
+  await expect(page.getByText("Copied 1 item.")).toBeVisible()
 })
 
 test("problems panel: lists each finding and jumps to the state it is on", async ({ page }) => {

@@ -12,13 +12,16 @@ import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
 import * as g from "./lib/canvas/graph.ts"
-import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
+import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, stepKey, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { words } from "./lib/format.ts"
-import { recordedTransport, type Envelope } from "./lib/transport.ts"
+import type { Envelope } from "./lib/transport.ts"
 
 export const SAVE_BLOCKED = "Saving to the server needs its admission and governed-install route, which is not live yet."
 
 type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }, "state">
+
+/** The recorded definitions, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
+const recordedDefinitions = async () => (await import("./lib/transport.ts")).recordedTransport.definitions()
 
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
   const failing = data.issues.length > 0
@@ -61,7 +64,8 @@ function Inspector({ editing, issues, standing }: { readonly editing: Editing; r
   )
   const node = graph.nodes.find(({ id }) => id === selection.nodes[0])
   const edge = graph.edges.find(({ id }) => id === selection.edges[0])
-  const siblings = edge ? graph.edges.filter(({ config }) => config.transition === edge.config.transition).map(({ id }) => id) : []
+  // The edges of this one step, by the same key compilation groups them with.
+  const siblings = edge ? graph.edges.filter((other) => stepKey(other) === stepKey(edge)).map(({ id }) => id) : []
   const own = issues.filter((issue) => (node && issue.node === node.id) || (edge && issue.edge === edge.id))
   return (
     <>
@@ -148,7 +152,7 @@ export interface DefinitionsRead {
 }
 
 export function CanvasPage() {
-  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions })
+  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedDefinitions })
   const data = useMemo(() => definitions.data?.map(({ document }) => document), [definitions.data])
   return <CanvasPageView definitions={{ isPending: definitions.isPending, error: definitions.error, data }} />
 }
