@@ -258,7 +258,7 @@ export function CanvasFrame(props: CanvasFrameProps) {
 export function Unavailable({ reason, children, className }: { readonly reason: string; readonly children: string; readonly className?: string }) {
   return (
     <span title={reason} className={cn("inline-flex cursor-not-allowed", className)}>
-      <Button size="sm" variant="outline" disabled className="border-dashed text-muted-foreground">{children}<span className="sr-only">: {reason}</span></Button>
+      <Button size="sm" variant="outline" disabled className="border-dashed border-muted-foreground/50 text-muted-foreground disabled:opacity-100">{children}<span className="sr-only">: {reason}</span></Button>
     </span>
   )
 }
