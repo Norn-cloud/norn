@@ -453,8 +453,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
         "cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
     }, "workflow must cancel only superseded PR and main runs")
-    require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
-            "run name must attribute READY to the triggering event and head")
+    require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot' && format('issue_comment bot {0}', github.event.comment.id) || github.event_name }}",
+            "run name must attribute READY to the triggering event and head, and mark bot comments")
     validate_rights_contract(source)
     jobs = workflow["jobs"]
     require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy", "rights-capture", "rights-revocation"}, "workflow job inventory changed")
@@ -681,9 +681,9 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
         'Resolve the pull request': ('ddaf2a910172cfbad41ea7aa5e247d3893e89c7682f173ec3925f64619026d67', ['script', 'retries'], False, None),
         'Capture the saved rights payload': ('748661200b99a0ebf6859d5638816d6ba7b60af7fb1818d2aabe9d14ff46883d', ['script'], False, None),
         'Persist the target rights ledger': ('8b60fe98a60613841c5a345cb5860f8879635d37bede68583d372720c24e30cd', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('9b6055f62178edf8178a8a25339d01018fc796fbcdc08d233796d21aa59f9b02', ['script'], False, SUPERSEDED_GUARD),
+        'Record admin approvals of the exact PR head': ('acae005141be56809dfd78f692a0b26c1b3771de1eef3270345d5e3969c06fb4', ['script'], False, SUPERSEDED_GUARD),
         'Report trusted policy on the exact PR head': ('223c0970b6a8f6493fcca9e8a3964528a23908cd6fa9db55c373a9db8b52985d', ['script', 'retries'], False, 'always() && ' + SUPERSEDED_GUARD),
-        'Record admin approvals of the queued heads': ('3ad13b76bc4b8a2dc0d4e19bb823863bd9a6fe3678b715e3241d8e2cfa46d82a', ['script'], False, None),
+        'Record admin approvals of the queued heads': ('08604ce93544d22597399c5752f44ba8ee52718c74ad7c0d66e1512f0c6e9a0a', ['script'], False, None),
         'Report trusted policy on the group head': ('ec9e3099f381b8c71706ab6b1bd0b6c56cc3a280d67f66c956988f30650199c2', ['script', 'retries'], False, 'always()'),
     }
     def api_step(step: dict) -> None:
@@ -709,7 +709,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     capture = public["jobs"].get("rights-capture", {})
     expected_capture = {
         "name": "Capture immutable rights event ${{ github.event.issue.pull_request && 'pull' || 'issue' }} ${{ (contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights')) && 'possible' || 'none' }}",
-        "if": "github.event_name == 'issue_comment'",
+        "if": "github.event_name == 'issue_comment' && github.event.comment.user.type != 'Bot'",
         "permissions": {"contents": "read"}, "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
         "outputs": {key: "${{ steps.payload.outputs." + key + " }}" for key in ("heads", "kind", "comment", "payload")},
     }
