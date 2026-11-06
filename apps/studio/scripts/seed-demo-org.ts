@@ -58,6 +58,7 @@ async function main(argv: readonly string[]) {
   }).then(async (response) => (await response.json()) as { success: boolean; result: unknown; errors: unknown })
   const name = `norn-studio-auth-${stage}`
   const found = await api(`?name=${name}`)
+  if (!found.success) throw new Error(`could not list D1 databases: ${JSON.stringify(found.errors)}`)
   const database = (found.result as { uuid: string; name: string }[]).find((db) => db.name === name)
   if (database === undefined) throw new Error(`no D1 database ${name}`)
   for (const { sql, params } of seedStatements(members, new Date())) {
@@ -65,7 +66,9 @@ async function main(argv: readonly string[]) {
     if (!result.success) throw new Error(`seed failed: ${JSON.stringify(result.errors)}`)
   }
   const check = await api(`/${database.uuid}/query`, { sql: `select "user"."email" as email, "member"."role" as role from "member" join "user" on "user"."id" = "member"."userId" where "organizationId" = ?`, params: [DEMO_ORG.id] })
-  console.log(`${DEMO_ORG.id} members:`, JSON.stringify((check.result as { results: unknown }[])[0]?.results))
+  const stored = (check.result as { results?: unknown }[] | null)?.[0]?.results
+  if (!check.success || stored === undefined) throw new Error(`could not read ${DEMO_ORG.id}'s members back: ${JSON.stringify(check.errors)}`)
+  console.log(`${DEMO_ORG.id} members:`, JSON.stringify(stored))
 }
 
 if (import.meta.main) await main(process.argv.slice(2))
