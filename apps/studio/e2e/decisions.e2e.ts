@@ -39,7 +39,7 @@ test("view: the inbox lists what waits on you, soonest deadline first, with the 
   await expect(list(page).nth(0)).toContainText("Suggested: Keep holding")
   await expect(list(page).nth(0)).toContainText("Restock gold · Ask manager") // a step with no label reads its id in words
   await expect(list(page).nth(1)).toContainText("Refund review · Approve refund") // a flow with no title likewise
-  await expect(list(page).nth(2)).toContainText(/(6 d 0 h|5 d 23 h) left/)
+  await expect(list(page).nth(2)).toContainText(/(6 days|5 days 23 h) left/)
   await expect(page.locator('a[href="/decisions"]').first()).toContainText("3")
   await shoot(page, "inbox")
 })
@@ -97,11 +97,11 @@ test("edit (decide): a high-risk choice that starts an action confirms first; th
 test("the race: another decider got there first; the sheet says who and when, and nothing of yours was sent", async ({ page }) => {
   const cell = await inbox(page)
   await open(page, "Release the held shipment")
-  cell.resolveElsewhere("dec_UmVsZWFzZS1nb2xk", "Mona Ali")
+  cell.resolveElsewhere("dec_UmVsZWFzZS1nb2xk", "Mona Ali", "hold")
   await sheet(page).getByLabel("Keep holding").check()
   await sheet(page).getByRole("button", { name: "Decide: Keep holding" }).click()
   await sheet(page).getByRole("button", { name: "Yes, keep holding" }).click() // high risk: every choice confirms
-  await expect(sheet(page).getByRole("status")).toHaveText(/^Decided by Mona Ali at \d{2}:\d{2}/)
+  await expect(sheet(page).getByRole("status")).toHaveText(/^Decided by Mona Ali at \d{2}:\d{2}( [AP]M)?: Keep holding$/)
   await expect(sheet(page)).toContainText("Nothing you chose was sent.")
   await shoot(page, "race")
   await sheet(page).getByRole("button", { name: "Back to inbox" }).click()

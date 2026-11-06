@@ -18,7 +18,7 @@ interface StoredDecision {
   requestedAtMs: number; expiresAtMs: number
   /** A law this actor does not satisfy: deciding refuses 403 decision.law_not_satisfied. */
   lawRefuses?: boolean
-  resolved?: { resolution: "decided" | "expired" | "withdrawn"; by: string | null; atMs: number }
+  resolved?: { resolution: "decided" | "expired" | "withdrawn"; by: string | null; atMs: number; choice?: string }
 }
 interface Step { id: string; label: string | null; kind: "perform" | "decide" | "route" | "wait" | "succeed" | "fail"; status: "pending" | "running" | "waiting" | "done" | "failed" | "skipped"; startedAtMs: number | null; endedAtMs: number | null; receipts: { kind: string; receiptHash: string; commitSeq: number; recordedAtMs: number; executor?: string | null }[]; error: null | { code: string; message: string } }
 interface StoredRun { id: string; generation: number; flow: { ruleId: string; version: number; title: string | null }; version: number; steps: Step[]; decision: { id: string; expiresAtMs: number } | null; createdAtMs: number; reads: number }
@@ -28,8 +28,8 @@ const hash = (n: number) => n.toString(16).padStart(64, "a")
 export interface DecisionCell {
   /** Every decide call the inbox sent, with its body. */
   readonly calls: { readonly id: string; readonly body: string }[]
-  /** Another decider decides first (the race). */
-  resolveElsewhere(id: string, by: string): void
+  /** Another decider decides first (the race); with `choice`, the reader may read the run and is told what they chose. */
+  resolveElsewhere(id: string, by: string, choice?: string): void
   /** Move the cell's clock on. */
   advance(ms: number): void
   /** The next call fails as an outage (500, no Norn code). */
@@ -201,7 +201,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
 
   return {
     calls, runs,
-    resolveElsewhere: (id, by) => { const d = decisions.find((x) => x.id === id); if (d) d.resolved = { resolution: "decided", by, atMs: now } },
+    resolveElsewhere: (id, by, choice) => { const d = decisions.find((x) => x.id === id); if (d) d.resolved = { resolution: "decided", by, atMs: now, ...choice === undefined ? {} : { choice } } },
     advance: (ms) => { now += ms },
     failNext: () => { fail = true },
   }

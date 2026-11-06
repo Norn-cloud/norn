@@ -60,8 +60,11 @@ export interface Decided {
   readonly run: { readonly id: string; readonly state: string | null }
 }
 
-/** Who got there first (409 `decision.resolved`). */
-export interface Resolution { readonly resolution: "decided" | "expired" | "withdrawn"; readonly by: string | null; readonly atMs: number }
+/**
+ * Who got there first (409 `decision.resolved`). `choice` is the option they chose, sent only when
+ * this reader may read the run; absent, Studio says who and when, not what.
+ */
+export interface Resolution { readonly resolution: "decided" | "expired" | "withdrawn"; readonly by: string | null; readonly atMs: number; readonly choice: string | null }
 
 export type DecideResult =
   | { readonly kind: "decided"; readonly decided: Decided }
@@ -97,9 +100,9 @@ export async function decide(id: string, body: { readonly choice: string; readon
       const { refusal } = result
       if (refusal.code === "decision.not_found") return { kind: "not-found", message: refusal.message }
       if (refusal.code === "decision.resolved") {
-        const r = refusal.body["resolution"] as { resolution?: unknown; by?: unknown; atMs?: unknown } | undefined
+        const r = refusal.body["resolution"] as { resolution?: unknown; by?: unknown; atMs?: unknown; choice?: unknown } | undefined
         const kind = r?.resolution === "expired" || r?.resolution === "withdrawn" ? r.resolution : "decided"
-        return { kind: "resolved", message: refusal.message, resolution: { resolution: kind, by: typeof r?.by === "string" ? r.by : null, atMs: typeof r?.atMs === "number" ? r.atMs : 0 } }
+        return { kind: "resolved", message: refusal.message, resolution: { resolution: kind, by: typeof r?.by === "string" ? r.by : null, atMs: typeof r?.atMs === "number" ? r.atMs : 0, choice: typeof r?.choice === "string" ? r.choice : null } }
       }
       if (refusal.code === "decision.expired") return { kind: "expired", message: refusal.message }
       return { kind: "refused", status: refusal.status, code: refusal.code, message: refusal.message, diagnostics: refusal.diagnostics }
@@ -127,7 +130,10 @@ export const needsConfirm = (decision: Pick<Decision, "risk">, option: DecisionO
  */
 export const cellNow = (serverNowMs: number, receivedAt: number, now = Date.now()) => serverNowMs + (now - receivedAt)
 
-/** "2 d 4 h", "3 h 05 min", "12 min", "45 s", or null once the deadline has passed. */
+/**
+ * What is left, in the two largest units, zero units dropped: "2 days", "1 day 4 h", "5 h 20 min",
+ * "5 h", "45 min", "30 s"; null once the deadline has passed.
+ */
 export function remaining(expiresAtMs: number, cellNowMs: number): string | null {
   const ms = expiresAtMs - cellNowMs
   if (ms <= 0) return null
@@ -135,10 +141,10 @@ export function remaining(expiresAtMs: number, cellNowMs: number): string | null
   const d = Math.floor(s / 86_400)
   const h = Math.floor((s % 86_400) / 3600)
   const m = Math.floor((s % 3600) / 60)
-  if (d > 0) return `${d} d ${h} h`
-  if (h > 0) return `${h} h ${String(m).padStart(2, "0")} min`
+  if (d > 0) return [`${d} ${d === 1 ? "day" : "days"}`, h > 0 ? `${h} h` : ""].filter(Boolean).join(" ")
+  if (h > 0) return [`${h} h`, m > 0 ? `${m} min` : ""].filter(Boolean).join(" ")
   if (m > 0) return `${m} min`
-  return `${s % 60} s`
+  return `${s} s`
 }
 
 /** Under an hour left: the countdown reads as urgent. */

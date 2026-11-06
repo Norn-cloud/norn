@@ -34,7 +34,10 @@ test("a 404 with a Norn code is the cell's answer; a bare 404 or 503 means the r
 
 test("the race: someone else resolved it first, by name, never id", async () => {
   const result = await decide("dec_x", { choice: "a" }, "k", cell(refusal(409, "decision.resolved", { resolution: { resolution: "decided", by: "Mona Ali", atMs: 7 } })).fetcher)
-  expect(result).toEqual({ kind: "resolved", message: "m:decision.resolved", resolution: { resolution: "decided", by: "Mona Ali", atMs: 7 } })
+  expect(result).toEqual({ kind: "resolved", message: "m:decision.resolved", resolution: { resolution: "decided", by: "Mona Ali", atMs: 7, choice: null } })
+  // The choice comes only when this reader may read the run.
+  const told = await decide("dec_x", { choice: "a" }, "k", cell(refusal(409, "decision.resolved", { resolution: { resolution: "decided", by: "Mona Ali", atMs: 7, choice: "hold" } })).fetcher)
+  expect(told).toMatchObject({ kind: "resolved", resolution: { choice: "hold" } })
   const withdrawn = await decide("dec_x", { choice: "a" }, "k", cell(refusal(409, "decision.resolved", { resolution: { resolution: "withdrawn", atMs: 9 } })).fetcher)
   expect(withdrawn).toMatchObject({ kind: "resolved", resolution: { resolution: "withdrawn", by: null } })
   expect(await decide("dec_x", { choice: "a" }, "k", cell(refusal(410, "decision.expired")).fetcher)).toMatchObject({ kind: "expired" })
@@ -75,8 +78,10 @@ test("high risk or an option that starts an action asks before deciding", () => 
 test("countdowns run on the cell's clock, not the browser's", () => {
   const now = cellNow(1_000_000, 50, 1_050)
   expect(now).toBe(1_001_000)
-  expect(remaining(now + 2 * 86_400_000 + 4 * 3_600_000, now)).toBe("2 d 4 h")
-  expect(remaining(now + 3 * 3_600_000 + 5 * 60_000, now)).toBe("3 h 05 min")
+  expect(remaining(now + 2 * 86_400_000, now)).toBe("2 days")
+  expect(remaining(now + 86_400_000 + 4 * 3_600_000, now)).toBe("1 day 4 h")
+  expect(remaining(now + 5 * 3_600_000 + 20 * 60_000, now)).toBe("5 h 20 min")
+  expect(remaining(now + 5 * 3_600_000, now)).toBe("5 h")
   expect(remaining(now + 12 * 60_000, now)).toBe("12 min")
   expect(remaining(now + 45_000, now)).toBe("45 s")
   expect(remaining(now, now)).toBeNull()

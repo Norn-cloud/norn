@@ -257,7 +257,9 @@ function Outcome({ phase, decision, technical, onClose }: { readonly phase: Phas
   }
   const [icon, title, body] = phase.kind === "resolved"
     ? phase.resolution.resolution === "decided"
-      ? [<UserCheck key="i" className="size-4" aria-hidden />, `Decided by ${phase.resolution.by ?? "another decider"} at ${at(phase.resolution.atMs)}`, "Someone else got there first. Nothing you chose was sent."]
+      ? [<UserCheck key="i" className="size-4" aria-hidden />,
+        `Decided by ${phase.resolution.by ?? "another decider"} at ${at(phase.resolution.atMs)}${phase.resolution.choice === null ? "" : `: ${decision.options.find((o) => o.id === phase.resolution.choice)?.label ?? phase.resolution.choice}`}`,
+        "Someone else got there first. Nothing you chose was sent."]
       : phase.resolution.resolution === "withdrawn"
         ? [<Hourglass key="i" className="size-4" aria-hidden />, `Withdrawn at ${at(phase.resolution.atMs)}`, "The run no longer needs this decision."]
         : [<Clock key="i" className="size-4" aria-hidden />, `Expired at ${at(phase.resolution.atMs)}`, "The deadline passed before anyone decided."]
