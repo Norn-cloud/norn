@@ -50,6 +50,32 @@
   --sidebar-border: #e5e7eb;
   --sidebar-ring: #2563eb;
   --elevation-1: 0 1px 2px 0 rgb(10 10 10 / 0.06), 0 1px 3px -1px rgb(10 10 10 / 0.05);
+  /*
+   * Depth model for things that float on a canvas (canvas nodes, the question tree, floating toolbars):
+   * a tight contact shadow plus a large, very faint ambient one, a hairline border and a top highlight.
+   * Hover lifts (deeper ambient); selection is an accent ring, never a heavier border.
+   */
+  --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
+  --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
+  --elevation-float: 0 1px 2px rgb(15 23 42 / 0.06), 0 8px 24px -8px rgb(15 23 42 / 0.16);
+  --node-border: rgb(15 23 42 / 0.09);
+  --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --node-radius: 14px;
+  --node-ring: color-mix(in oklab, var(--ring) 55%, transparent);
+  --canvas-surface: #fafafa;
+  --canvas-dot: rgb(15 23 42 / 0.09);
+  --edge: #c3c8cf;
+  --edge-active: var(--ring);
+  /* One tint per kind of thing on a canvas; chips mix it into a pale fill, so it stays a hint, not a theme. */
+  --tint-state: #64748b;
+  --tint-tool: #2563eb;
+  --tint-ask: #c2410c;
+  --tint-route: #0f766e;
+  --tint-wait: #7c5e10;
+  --tint-outcome: #15803d;
+  --tint-agent: #4338ca;
+  --tint-law: #be123c;
+  --tint-start: #334155;
 }
 
 .dark {
@@ -90,6 +116,25 @@
   --sidebar-border: #38383d;
   --sidebar-ring: #4aa3f0;
   --elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 6px -1px rgb(0 0 0 / 0.35);
+  --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
+  --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
+  --elevation-float: 0 1px 2px rgb(0 0 0 / 0.5), 0 10px 28px -8px rgb(0 0 0 / 0.65);
+  --node-border: rgb(255 255 255 / 0.09);
+  --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --node-ring: color-mix(in oklab, var(--ring) 65%, transparent);
+  --canvas-surface: #151517;
+  --canvas-dot: rgb(255 255 255 / 0.08);
+  --edge: #4b4b53;
+  --edge-active: var(--ring);
+  --tint-state: #94a3b8;
+  --tint-tool: #60a5fa;
+  --tint-ask: #fb923c;
+  --tint-route: #2dd4bf;
+  --tint-wait: #facc15;
+  --tint-outcome: #4ade80;
+  --tint-agent: #a5b4fc;
+  --tint-law: #fb7185;
+  --tint-start: #cbd5e1;
 }
 
 @theme inline {
@@ -104,6 +149,12 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --shadow-elevation: var(--elevation-1);
+  --shadow-node: var(--elevation-node);
+  --shadow-node-hover: var(--elevation-node-hover);
+  --shadow-float: var(--elevation-float);
+  --radius-node: var(--node-radius);
+  --color-node-border: var(--node-border);
+  --color-canvas-surface: var(--canvas-surface);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --text-meta: 0.8125rem;
   --text-panel: 0.9375rem;
@@ -156,3 +207,30 @@
   body { @apply bg-canvas text-foreground antialiased; font-size: 0.875rem; line-height: 1.45; }
   h1, h2, h3 { letter-spacing: -0.02em; }
 }
+
+/* Canvas nodes float: contact plus ambient shadow and a top highlight; hover lifts; selection is an accent ring. */
+.canvas-node { box-shadow: var(--node-highlight), var(--elevation-node); transition: box-shadow 200ms var(--ease-spring, ease), transform 200ms var(--ease-spring, ease); }
+.canvas-node:hover { box-shadow: var(--node-highlight), var(--elevation-node-hover); transform: translateY(-1.5px); }
+.canvas-node-selected { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px var(--node-ring), var(--elevation-node-hover); }
+.canvas-node-failing { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px color-mix(in oklab, var(--destructive) 55%, transparent), var(--elevation-node); }
+@media (prefers-reduced-motion: reduce) { .canvas-node, .canvas-node:hover { transition: none; transform: none; } }
+/* Canvas edges: thin and muted; the active path in the accent, its direction drawn by a slow dash. */
+.react-flow {
+  --xy-edge-stroke-default: var(--edge); --xy-edge-stroke-selected-default: var(--edge-active); --xy-edge-stroke-width-default: 1.5;
+  --xy-connectionline-stroke-default: var(--edge-active); --xy-handle-background-color-default: var(--card); --xy-handle-border-color-default: var(--node-border);
+  --xy-selection-background-color-default: color-mix(in oklab, var(--edge-active) 8%, transparent); --xy-selection-border-default: 1px dashed var(--edge-active);
+  --xy-controls-button-background-color-default: var(--card); --xy-controls-button-background-color-hover-default: var(--muted);
+  --xy-controls-button-color-default: var(--muted-foreground); --xy-controls-button-color-hover-default: var(--foreground);
+  --xy-controls-button-border-color-default: var(--node-border); --xy-controls-box-shadow-default: var(--elevation-float);
+}
+.canvas-controls { border-radius: 12px; overflow: hidden; border: 1px solid var(--node-border); }
+.react-flow__edge-textbg { fill: var(--card); stroke: var(--node-border); stroke-width: 1px; }
+.react-flow__edge-text { fill: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+.react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-text { fill: var(--foreground); }
+@keyframes canvas-flow { to { stroke-dashoffset: -20; } }
+.react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-path { stroke: var(--edge-active); stroke-width: 2px; stroke-dasharray: 6 4; animation: canvas-flow 1.1s linear infinite; }
+.react-flow .react-flow__edge.canvas-edge-failing .react-flow__edge-path { stroke: var(--destructive); stroke-width: 2px; }
+@media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-path { animation: none; stroke-dasharray: none; } }
+/* Exits are small pills on the node's edge. */
+.react-flow__handle.canvas-pill { width: 10px; height: 10px; border-radius: 9999px; border: 1.5px solid var(--node-border); background: var(--card); box-shadow: var(--elevation-1); }
+.react-flow__handle.canvas-pill:hover { border-color: var(--edge-active); }

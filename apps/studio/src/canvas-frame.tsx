@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { Background, Controls, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
+import { Background, BackgroundVariant, Controls, MarkerType, Panel as FlowPanel, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { CircleAlert, Copy, Redo2, Save, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -191,27 +191,27 @@ function Frame(props: CanvasFrameProps) {
     }
   }
   const editing: Editing = { graph, selection, edit, select: setSelection }
+  // The path in focus: selected connections and every connection of a selected node; a finding outranks it.
+  const look = (edge: g.CanvasEdge): Edge => {
+    const base = props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph)
+    const failing = on("edge", edge.id).length > 0
+    const active = selection.edges.includes(edge.id) || selection.nodes.includes(edge.source) || selection.nodes.includes(edge.target)
+    const tone = failing ? "var(--destructive)" : active ? "var(--edge-active)" : "var(--edge)"
+    return { ...base, className: cn(base.className, failing ? "canvas-edge-failing" : active && "canvas-edge-active"), markerEnd: { type: MarkerType.ArrowClosed, color: tone, width: 14, height: 14 } }
+  }
+  const Sep = () => <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
 
   return (
     <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_22rem]">
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
-        <div className="flex flex-wrap items-center gap-1.5 px-2.5 pb-2">
-          {props.palette(editing)}
-          <Button size="sm" variant="outline" aria-label="Duplicate" title="Duplicate (⌘D)" disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
-          <Button size="sm" variant="outline" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
-          <Button size="sm" variant="outline" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
-          <Button size="sm" variant="outline" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
-          <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
-          {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
-        </div>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
-          <div data-canvas-surface className="relative h-[36rem] w-full">
+          <div data-canvas-surface className="relative h-[38rem] w-full overflow-hidden rounded-[inherit]">
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             <ReactFlow
               nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
-              edges={graph.edges.map((edge) => props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph))}
-              nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
+              edges={graph.edges.map(look)} className="bg-canvas-surface"
+              nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} fitView fitViewOptions={{ padding: { top: "72px", left: 0.08, right: 0.08, bottom: 0.08 }, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
               onConnect={(connection) => edit(g.connect(graph, kinds, props.newEdge(connection, graph)))}
@@ -232,7 +232,21 @@ function Frame(props: CanvasFrameProps) {
                 const cut = edges.filter(({ id, source, target }) => selection.edges.includes(id) || !(kept.has(source) || kept.has(target))).map(({ id }) => id)
                 edit(g.remove(graph, removable(nodes.map(({ id }) => id)), cut)); setSelection(NONE)
               }}>
-              <Background /><Controls showInteractive={false} />
+              <Background variant={BackgroundVariant.Dots} gap={18} size={1.25} color="var(--canvas-dot)" />
+              <Controls showInteractive={false} className="canvas-controls" />
+              <FlowPanel position="top-left" className="!m-3">
+                <div role="toolbar" aria-label="Canvas tools" className="flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-1 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
+                  {props.palette(editing)}
+                  <Sep />
+                  <Button size="sm" variant="ghost" aria-label="Duplicate" title="Duplicate (⌘D)" disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
+                  <Button size="sm" variant="ghost" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
+                  <Button size="sm" variant="ghost" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
+                  <Sep />
+                  <Button size="sm" variant="ghost" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
+                  {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
+                  <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
+                </div>
+              </FlowPanel>
             </ReactFlow>
           </div>
         </Well>
@@ -240,7 +254,7 @@ function Frame(props: CanvasFrameProps) {
       </Panel>
       <div className="space-y-3">
         <Panel label="Inspector">
-          <Well className="space-y-3 p-3 text-sm">{props.inspector(editing, issues)}</Well>
+          <Well className="space-y-4 p-4 text-sm">{props.inspector(editing, issues)}</Well>
         </Panel>
         <Panel label="Problems" action={issues.length === 0 ? "None" : `${issues.length}`}>
           <Well className="space-y-2 p-3" >

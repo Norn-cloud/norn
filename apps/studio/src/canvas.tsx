@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo, useState } from "react"
-import { Handle, MarkerType, Position, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
-import { Network, Plus, Trash2 } from "lucide-react"
+import { Handle, Position, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { Network, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
-import { cn } from "@/lib/utils"
+import { InspectorHead, KindChip, NodeCard } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
@@ -25,14 +25,12 @@ type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }
 const recordedDefinitions = async () => (await import("./lib/transport.ts")).recordedTransport.definitions()
 
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
-  const failing = data.issues.length > 0
   return (
-    <div data-testid={`node-${data.label}`} title={data.issues.map(({ message }) => message).join("\n")} className={cn("w-36 rounded-lg border-2 bg-background px-3 py-2 text-center text-sm", selected ? "border-primary ring-2 ring-primary/30" : "border-border", failing && "border-destructive")}>
-      <Handle type="target" position={Position.Left} id="in" />
-      <Handle type="source" position={Position.Right} id="out" />
-      <div className="font-medium">{data.label}</div>
-      {data.flags && <div className="text-meta text-muted-foreground">{data.flags}</div>}
-      {failing && <div className="text-meta text-destructive">{data.issues.length} {data.issues.length === 1 ? "problem" : "problems"}</div>}
+    <div title={data.issues.map(({ message }) => message).join("\n")}>
+      <NodeCard testId={`node-${data.label}`} kind="state" kindLabel={data.flags || "State"} title={data.label} problems={data.issues.length} selected={selected} className="w-40">
+        <Handle className="canvas-pill" type="target" position={Position.Left} id="in" />
+        <Handle className="canvas-pill" type="source" position={Position.Right} id="out" />
+      </NodeCard>
     </div>
   )
 }
@@ -70,8 +68,11 @@ function Inspector({ editing, issues, standing }: { readonly editing: Editing; r
   const own = issues.filter((issue) => (node && issue.node === node.id) || (edge && issue.edge === edge.id))
   return (
     <>
+      {node && <InspectorHead kind="state" id={node.id} />}
+      {edge && <InspectorHead kind="route" kindLabel="Step" id={`${words(edge.source)} → ${words(edge.target)}`} />}
+      {own.map((issue, index) => <IssueCard key={index} issue={issue} />)}
       {node && <>
-        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Name</span>
+        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Name</span>
           <Input aria-label="Name" defaultValue={node.id} key={`name:${node.id}`} onBlur={(event) => {
             const to = event.target.value.trim()
             if (!to || to === node.id) return
@@ -79,20 +80,18 @@ function Inspector({ editing, issues, standing }: { readonly editing: Editing; r
             edit(g.renameNode(graph, node.id, to)); select({ nodes: [to], edges: [] })
           }} /></label>
         {FLAGS.map((flag) => (
-          <label key={flag} className="flex items-center gap-2"><input type="checkbox" aria-label={words(flag)} checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
+          <label key={flag} className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={words(flag)} checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
         ))}
       </>}
       {edge && <>
-        <p className="text-meta text-muted-foreground">{words(edge.source)} → {words(edge.target)}</p>
-        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Step id</span>
+        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Step id</span>
           <Input aria-label="Step id" defaultValue={edge.config.transition} key={`${edge.id}:id:${edge.config.transition}`} onBlur={(event) => { const id = event.target.value.trim(); if (id) edit(g.configureEdges(graph, siblings, { transition: id })) }} /></label>
-        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Allowed only when (one rule per line)</span>
+        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Allowed only when (one rule per line)</span>
           <Textarea aria-label="Guards" defaultValue={edge.config.guards} key={`${edge.id}:guards:${edge.config.guards}`} className="font-mono text-xs" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
-        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Description</span>
+        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Description</span>
           <Input aria-label="Description" defaultValue={edge.config.description} key={`${edge.id}:description:${edge.config.description}`} onBlur={(event) => edit(g.configureEdges(graph, siblings, { description: event.target.value }))} /></label>
       </>}
-      <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete</Button>
-      {own.map((issue, index) => <IssueCard key={index} issue={issue} />)}
+      <div className="border-t border-node-border pt-3"><Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={remove}><Trash2 />Delete</Button></div>
     </>
   )
 }
@@ -105,21 +104,18 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     initial: decompile(envelope, lifecycle), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
     empty: "This lifecycle has no states. Add one to start.",
     toNode: (node, found, selected): StateNode => ({ id: node.id, type: "state", position: node.position, selected, data: { label: words(node.id), flags: FLAGS.filter((flag) => node.config[flag] === "yes").join(" · "), issues: found } }),
-    toEdge: (edge, found, selected): Edge => {
-      const stroke = found.length > 0 ? "var(--destructive)" : selected ? "var(--primary)" : "var(--muted-foreground)"
-      return {
-        id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
-        label: words(edge.config.transition || edge.id), markerEnd: { type: MarkerType.ArrowClosed, color: stroke }, style: { stroke, strokeWidth: found.length > 0 || selected ? 2 : 1 },
-        labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: found.length > 0 ? "var(--destructive)" : "var(--foreground)", fontSize: 12 },
-      }
-    },
+    toEdge: (edge, found, selected): Edge => ({
+      id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
+      label: words(edge.config.transition || edge.id), labelBgPadding: [6, 3], labelBgBorderRadius: 999,
+      ...found.length > 0 ? { labelStyle: { fill: "var(--destructive)" } } : {},
+    }),
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) => {
       const transition = g.freshName(graph.edges.map(({ config }) => config.transition ?? ""), `${source}_to_${target}`)
       return { id: g.freshName(graph.edges.map(({ id }) => id), edgeId(transition, source)), source, target, sourcePort: sourceHandle ?? "out", targetPort: targetHandle ?? "in", config: { transition, guards: "", description: "" } }
     },
     copyEdgeConfig: (edge, taken) => ({ ...edge.config, transition: g.freshName(taken, `${edge.config.transition || "step"}_copy`) }),
     palette: ({ graph, edit, select }) => (
-      <Button size="sm" variant="outline" onClick={() => { const id = g.freshId(graph, "new_state"); edit(g.addNode(graph, { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} })); select({ nodes: [id], edges: [] }) }}><Plus />State</Button>
+      <Button size="sm" variant="ghost" className="gap-1.5 pl-1.5" onClick={() => { const id = g.freshId(graph, "new_state"); edit(g.addNode(graph, { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} })); select({ nodes: [id], edges: [] }) }}><KindChip kind="state" className="size-5 rounded-md" />State</Button>
     ),
     inspector: (editing, found) => <Inspector editing={editing} issues={found} standing={standing} />,
   }

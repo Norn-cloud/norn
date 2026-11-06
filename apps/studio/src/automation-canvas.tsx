@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback } from "react"
-import { BaseEdge, EdgeLabelRenderer, Handle, MarkerType, Position, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
+import { BaseEdge, EdgeLabelRenderer, Handle, Position, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { cn } from "@/lib/utils"
+import { InspectorHead, InspectorSection, KindChip, NodeCard } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
 import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
@@ -24,17 +24,14 @@ export const RUN_BLOCKED = "Running happens in the cell with receipts; the run r
 type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly { readonly id: string; readonly label: string }[] }, "step">
 
 export function StepBox({ data, selected }: NodeProps<StepNode>) {
-  const failing = data.issues.length > 0
   return (
-    <div title={data.issues.map(({ message }) => message).join("\n")} className={cn("relative w-44 rounded-lg border-2 bg-background px-3 py-2 text-sm", selected ? "border-primary ring-2 ring-primary/30" : "border-border", failing && "border-destructive")}>
-      {data.kind !== "start" && <Handle type="target" position={Position.Left} id="in" />}
-      <div className="text-meta text-muted-foreground">{STEP_KINDS[data.kind as keyof typeof STEP_KINDS] ?? data.kind}</div>
-      <div className="font-medium break-words">{data.title}</div>
-      {data.detail && <div className="truncate text-meta text-muted-foreground">{data.detail}</div>}
-      {failing && <div className="text-meta text-destructive">{data.issues.length} {data.issues.length === 1 ? "problem" : "problems"}</div>}
-      {data.outs.map((port, index) => (
-        <Handle key={port.id} type="source" position={Position.Right} id={port.id} title={port.label} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
-      ))}
+    <div title={data.issues.map(({ message }) => message).join("\n")}>
+      <NodeCard kind={data.kind} kindLabel={STEP_KINDS[data.kind as keyof typeof STEP_KINDS]} title={data.title} subtitle={data.detail} problems={data.issues.length} selected={selected}>
+        {data.kind !== "start" && <Handle className="canvas-pill" type="target" position={Position.Left} id="in" />}
+        {data.outs.map((port, index) => (
+          <Handle key={port.id} className="canvas-pill" type="source" position={Position.Right} id={port.id} title={port.label} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
+        ))}
+      </NodeCard>
     </div>
   )
 }
@@ -54,7 +51,7 @@ export function ExitEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {data?.label && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute max-w-28 truncate rounded border bg-card px-1 text-[11px] leading-4 text-foreground"
+          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute max-w-32 truncate rounded-full border border-node-border bg-card px-2 py-px text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
             style={{ transform: `translate(0, -50%) translate(${sourceX + 8}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
@@ -186,16 +183,17 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
   if (!node) return null
   const tool = RECORDED_TOOLS.find(({ id }) => id === node.config.tool)
   const field = (label: string, key: string, value: string | undefined, onSave: (text: string) => void, extra: { type?: string; placeholder?: string } = {}) => (
-    <label className="block space-y-1"><span className="text-meta text-muted-foreground">{label}</span>
+    <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">{label}</span>
       <Input aria-label={label} key={`${node.id}:${key}:${value ?? ""}`} defaultValue={value} onBlur={(event) => onSave(event.target.value)} {...extra} /></label>
   )
   return (
     <>
-      <div className="text-meta text-muted-foreground">{STEP_KINDS[node.kind as keyof typeof STEP_KINDS]} · {node.id}</div>
+      <InspectorHead kind={node.kind} kindLabel={STEP_KINDS[node.kind as keyof typeof STEP_KINDS]} id={node.id} />
+      {issues.filter((issue) => issue.node === node.id).map((issue, index) => <IssueCard key={index} issue={issue} />)}
       {node.kind === "start" && <p className="text-muted-foreground">Every automation has one start. Connect it to the first step.</p>}
       {node.kind === "perform" && <>
-        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Tool</span>
-          <select aria-label="Tool" className="w-full rounded-md border bg-background px-2 py-1" value={node.config.tool} onChange={(event) => edit(g.configureNode(graph, node.id, { tool: event.target.value, input: "{}" }))}>
+        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Tool</span>
+          <select aria-label="Tool" className="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50" value={node.config.tool} onChange={(event) => edit(g.configureNode(graph, node.id, { tool: event.target.value, input: "{}" }))}>
             {!tool && <option value={node.config.tool}>{node.config.tool} (not connected)</option>}
             {RECORDED_TOOLS.map(({ id }) => <option key={id} value={id}>{id}</option>)}
           </select></label>
@@ -206,20 +204,23 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
       </>}
       {node.kind === "route" && <Branches editing={editing} id={node.id} branches={branchesOf(node)} />}
       {node.kind === "decide" && <>
+        <InspectorSection title="The ask">
         {field("Question", "question", node.config.question, (text) => edit(g.configureNode(graph, node.id, { question: text.trim() })), { placeholder: "What should I do?" })}
-        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Risk</span>
-          <select aria-label="Risk" className="w-full rounded-md border bg-background px-2 py-1" value={node.config.risk ?? "medium"} onChange={(event) => edit(g.configureNode(graph, node.id, { risk: event.target.value }))}>
+        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Risk</span>
+          <select aria-label="Risk" className="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50" value={node.config.risk ?? "medium"} onChange={(event) => edit(g.configureNode(graph, node.id, { risk: event.target.value }))}>
             {RISKS.map((risk) => <option key={risk} value={risk}>{words(risk)}</option>)}
           </select></label>
+        </InspectorSection>
+        <InspectorSection title="Who decides">
         {field("Who decides (roles, comma separated)", "roles", node.config.deciderRoles, (text) => edit(g.configureNode(graph, node.id, { deciderRoles: text.split(",").map((role) => role.trim()).filter(Boolean).join(",") })))}
         {field("Under law (optional)", "law", node.config.deciderLaw, (text) => edit(g.configureNode(graph, node.id, { deciderLaw: text.trim() })), { placeholder: "the law that makes this a person's call" })}
         {field("Expires after (hours, optional)", "expires", node.config.expiresInMs ? String(Number(node.config.expiresInMs) / 3_600_000) : "", (text) => edit(g.configureNode(graph, node.id, { expiresInMs: /^\d+(\.\d+)?$/.test(text.trim()) ? String(Math.round(Number(text) * 3_600_000)) : "" })), { type: "number" })}
+        </InspectorSection>
         <Options editing={editing} id={node.id} options={optionsOf(node)} pick={node.config.agentPick ?? ""} />
       </>}
       {node.kind === "sleep" && field("Wait (milliseconds)", "millis", node.config.millis, (text) => edit(g.configureNode(graph, node.id, { millis: text })), { type: "number" })}
       {node.kind === "succeed" && field("Outcome", "outcome", node.config.outcome, (text) => edit(g.configureNode(graph, node.id, { outcome: text })))}
-      {node.kind !== "start" && <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete</Button>}
-      {issues.filter((issue) => issue.node === node.id).map((issue, index) => <IssueCard key={index} issue={issue} />)}
+      {node.kind !== "start" && <div className="border-t border-node-border pt-3"><Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={remove}><Trash2 />Delete</Button></div>}
     </>
   )
 }
@@ -251,19 +252,17 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
       return {
         id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected, type: "exit",
         data: full === undefined ? {} : { label: short(full), full },
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
       }
     },
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) =>
       ({ id: g.freshName(graph.edges.map(({ id }) => id), `${source}.${sourceHandle ?? "next"}`), source, target, sourcePort: sourceHandle ?? "next", targetPort: targetHandle ?? "in", config: {} }),
     palette: ({ graph, edit, select }) => Object.keys(DEFAULTS).map((kind) => (
-      <Button key={kind} size="sm" variant="outline" onClick={() => {
+      <Button key={kind} size="sm" variant="ghost" className="gap-1.5 pl-1.5" onClick={() => {
         const base = graph.nodes.some((node) => node.kind === "start") ? graph : g.addNode(graph, { id: "start", kind: "start", position: { x: 0, y: 120 }, config: {} })
         const id = g.freshId(base, kind === "perform" ? "call" : kind)
         edit(g.addNode(base, { id, kind, position: { x: 40, y: 360 + graph.nodes.length * 10 }, config: { ...DEFAULTS[kind] } }))
         select({ nodes: [id], edges: [] })
-      }}><Plus />{STEP_KINDS[kind as keyof typeof STEP_KINDS]}</Button>
+      }}><KindChip kind={kind} className="size-5 rounded-md" />{STEP_KINDS[kind as keyof typeof STEP_KINDS]}</Button>
     )),
     inspector: (editing, found) => <Inspector editing={editing} issues={found} />,
     below: ({ graph, selection }) => {
