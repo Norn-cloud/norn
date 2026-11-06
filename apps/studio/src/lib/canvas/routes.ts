@@ -78,6 +78,31 @@ export function railsOf(steps: readonly { readonly id: string; readonly source: 
   return new Map(lane.map(({ id }) => [id, { offset: offset.get(id) ?? 0, out: out.get(id) ?? 0, into: into.get(id) ?? 0, port: port.get(id) ?? 0 }]))
 }
 
+/** The lane a non-straight step runs in: between the two rows it joins, or above the row for a step back along it. */
+export const laneYOf = (source: Point, target: Point, lane: { readonly pitch: number } = LANE) =>
+  Math.abs(source.y - target.y) < 2 ? source.y - lane.pitch / 2 : Math.max(source.y, target.y) - lane.pitch / 2
+
+/**
+ * Several steps of one lifecycle step into one target, drawn as one: each source turns into the shared rail (a small
+ * tick where it joins), the rail runs to the target's turn and drops into it. Only the drawing bundles; each step
+ * stays its own in the model. The label sits on the rail beside the turn, in the gap to the nearest join.
+ */
+export function bundleRoute(sources: readonly Point[], target: Point, labelWidth: number, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE) {
+  const y = laneYOf(sources[0]!, target, lane)
+  const into = target.x - lane.stub
+  const joins = sources.map((source) => ({ x: source.x + lane.stub, y }))
+  const branches = sources.map((source, index) => rounded([source, { x: joins[index]!.x, y: source.y }, joins[index]!], lane.radius))
+  const xs = [...joins.map(({ x }) => x), into]
+  const rail = `M ${Math.min(...xs)} ${y} L ${Math.max(...xs)} ${y}`
+  // The drop into the target is drawn last, so the arrowhead lands on the target.
+  const drop = rounded([{ x: into, y }, { x: into, y: target.y }, target], lane.radius)
+  const nearest = [...joins].sort((a, b) => Math.abs(a.x - into) - Math.abs(b.x - into))[0]!
+  const side = nearest.x >= into ? 1 : -1
+  const room = Math.abs(nearest.x - into)
+  const x = room >= labelWidth + 16 ? (into + nearest.x) / 2 : nearest.x + side * (labelWidth / 2 + 10)
+  return { path: [...branches, rail, drop].join(" "), ticks: joins, label: { x, y }, y }
+}
+
 export function laneRoute(source: Point, target: Point, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE, rail: Rail = NO_RAIL): Routed {
   const sameRow = Math.abs(source.y - target.y) < 2
   if (sameRow && target.x > source.x) {
@@ -101,8 +126,9 @@ const LABEL_HEIGHT = 18, LABEL_CLEAR = 6
  * label takes the first place on its own run (from its turn toward its target) clear of every label placed before
  * it (past the run's end only when the run is full). `width` is each label's drawn width.
  */
-export function placeLabels(steps: readonly { readonly id: string; readonly source: Point; readonly target: Point; readonly width: number }[], rails: ReadonlyMap<string, Rail>, lane = LANE, states: readonly { readonly x: number; readonly y: number; readonly width: number; readonly height: number }[] = []): ReadonlyMap<string, Rail> {
-  const placed: { x1: number; x2: number; y: number }[] = []
+export function placeLabels(steps: readonly { readonly id: string; readonly source: Point; readonly target: Point; readonly width: number }[], rails: ReadonlyMap<string, Rail>, lane = LANE, states: readonly { readonly x: number; readonly y: number; readonly width: number; readonly height: number }[] = [], taken: readonly { readonly x1: number; readonly x2: number; readonly y: number }[] = []): ReadonlyMap<string, Rail> {
+  // Labels already placed (a bundle's) are obstacles from the start.
+  const placed: { x1: number; x2: number; y: number }[] = [...taken]
   // States are obstacles too: a label never sits on a card.
   const onState = (x1: number, x2: number, y: number) => states.some((s) => x1 < s.x + s.width + LABEL_CLEAR && x2 > s.x - LABEL_CLEAR && y + LABEL_HEIGHT / 2 > s.y - 2 && y - LABEL_HEIGHT / 2 < s.y + s.height + 2)
   const clear = (x1: number, x2: number, y: number) => !onState(x1, x2, y) && placed.every((box) => x2 + LABEL_CLEAR <= box.x1 || x1 >= box.x2 + LABEL_CLEAR || Math.abs(y - box.y) >= LABEL_HEIGHT)

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
-import { focusCss } from "./lib/canvas/focus.ts"
+import { focusCss, type Bundle } from "./lib/canvas/focus.ts"
 import { INSET, MINIMAP, READABLE, WITH_MINIMAP, clearOfMinimap, fitsReadable, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
@@ -50,6 +50,12 @@ export interface CanvasFrameProps {
   readonly toNode: (node: g.CanvasNode, issues: readonly Issue[], selected: boolean) => Node
   /** Draws one edge; the graph lets a label read its node (a route's condition, a decision's option). */
   readonly toEdge: (edge: g.CanvasEdge, issues: readonly Issue[], selected: boolean, graph: g.Graph) => Edge
+  /**
+   * Steps drawn as one edge, and the drawing with them: the frame selects, deletes and focuses a bundle as its steps.
+   * `draw` turns the per-step edges into what is drawn (members hidden, one edge per bundle).
+   */
+  readonly bundles?: (graph: g.Graph) => readonly Bundle[]
+  readonly draw?: (edges: readonly Edge[], graph: g.Graph, selection: Selection) => Edge[]
   /** The edge a new connection draws; `undefined` lets the frame refuse it. */
   readonly newEdge: (connection: Connection, graph: g.Graph) => g.CanvasEdge
   /** Copies rename what must stay unique (a lifecycle step id). */
@@ -242,12 +248,15 @@ function Frame(props: CanvasFrameProps) {
   const canvasId = useId()
   const focusSheet = useRef<HTMLStyleElement>(null)
   const pointer = useRef<{ readonly node?: string; readonly edge?: string }>({})
+  const bundlesOf = useRef((drawn: g.Graph) => props.bundles?.(drawn) ?? [])
+  bundlesOf.current = (drawn: g.Graph) => props.bundles?.(drawn) ?? []
+  const membersOf = (id: string): readonly string[] => props.bundles?.(graph).find((bundle) => bundle.id === id)?.members ?? [id]
   const current = useRef({ graph, selection })
   current.current = { graph, selection }
   const paintFocus = useCallback(() => {
     const { graph: drawn, selection: chosen } = current.current
     const over = pointer.current
-    if (focusSheet.current) focusSheet.current.textContent = focusCss(drawn, { nodes: [...chosen.nodes, ...over.node ? [over.node] : []], edges: [...chosen.edges, ...over.edge ? [over.edge] : []] }, canvasId)
+    if (focusSheet.current) focusSheet.current.textContent = focusCss(drawn, { nodes: [...chosen.nodes, ...over.node ? [over.node] : []], edges: [...chosen.edges, ...over.edge ? [over.edge] : []] }, canvasId, bundlesOf.current(drawn))
   }, [canvasId])
   useEffect(paintFocus, [graph, selection, paintFocus])
   const point = (next: { readonly node?: string; readonly edge?: string }) => { pointer.current = next; paintFocus() }
@@ -283,7 +292,7 @@ function Frame(props: CanvasFrameProps) {
                 const size = props.nodeSize?.(node) ?? DEFAULT_SIZE
                 return { ...props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)), initialWidth: size.width, initialHeight: size.height }
               })}
-              edges={graph.edges.map(look)} className="bg-canvas-surface"
+              edges={props.draw ? props.draw(graph.edges.map(look), graph, selection) : graph.edges.map(look)} className="bg-canvas-surface"
               nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
@@ -299,9 +308,15 @@ function Frame(props: CanvasFrameProps) {
                 }
               }}
               onEdgesChange={(changes) => {
-                for (const change of changes) if (change.type === "select") setSelection((current) => ({ ...current, edges: change.selected ? [...new Set([...current.edges, change.id])] : current.edges.filter((id) => id !== change.id) }))
+                // A bundle is selected as the steps it holds.
+                for (const change of changes) if (change.type === "select") {
+                  const ids = membersOf(change.id)
+                  setSelection((current) => ({ ...current, edges: change.selected ? [...new Set([...current.edges, ...ids])] : current.edges.filter((id) => !ids.includes(id)) }))
+                }
               }}
-              onDelete={({ nodes, edges }) => {
+              onDelete={({ nodes, edges: drawn }) => {
+                // A bundle deletes the steps it holds.
+                const edges = drawn.flatMap(({ id }) => membersOf(id)).flatMap((id) => graph.edges.filter((edge) => edge.id === id))
                 // A fixed node (an automation's start) stays, and so do its connections unless they were selected themselves.
                 const kept = new Set(nodes.map(({ id }) => id).filter((id) => !removable([id]).length))
                 const cut = edges.filter(({ id, source, target }) => selection.edges.includes(id) || !(kept.has(source) || kept.has(target))).map(({ id }) => id)

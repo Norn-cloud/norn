@@ -237,6 +237,9 @@
 @media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge, [data-edge-label], [data-exit-label] { transition: none; } }
 .react-flow .react-flow__edge.canvas-edge-failing .react-flow__edge-path { stroke: var(--destructive); stroke-width: 2px; }
 @media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-path { animation: none; stroke-dasharray: none; } }
+/* Where each source joins a bundle's rail. */
+.canvas-bundle-tick { fill: var(--card); stroke: var(--edge); stroke-width: 1.5px; }
+.react-flow .react-flow__edge.canvas-edge-active .canvas-bundle-tick { stroke: var(--edge-active); }
 /* Exits are small pills on the node's edge. */
 .react-flow__handle.canvas-pill { width: 10px; height: 10px; border-radius: 9999px; border: 1.5px solid var(--node-border); background: var(--card); box-shadow: var(--elevation-1); }
 .react-flow__handle.canvas-pill:hover { border-color: var(--edge-active); }

@@ -209,3 +209,25 @@ test("focus: hovering or selecting a state lights its steps and dims the rest, w
   await expect(edge(page, "invoice:approved")).toHaveClass(/canvas-edge-active/)
   await expect.poll(() => opacity('.react-flow__edge[data-id="submit:draft"]')).toBe("0.35")
 })
+
+test("bundle: steps of one step into one state draw as one; hover lights its sources; select lists them; remove one, undo", async ({ page }) => {
+  await open(page)
+  const bundle = page.locator('[data-edge-label^="bundle:cancel:"]')
+  await reveal(page, bundle)
+  await expect(bundle).toHaveText(/^Cancel · from \d+ states$/)
+  const count = Number((await bundle.textContent())?.match(/from (\d+)/)?.[1])
+  // Its steps are not drawn one by one.
+  await expect(page.locator('.react-flow__edge[data-id^="cancel:"]')).toHaveCount(0)
+  // Hovering it lights its sources (an accent ring on each source card).
+  await page.locator('.react-flow__edge[data-id^="bundle:cancel:"]').first().hover({ force: true })
+  await bundle.click()
+  await expect(page.getByTestId("step-sources").locator("li")).toHaveCount(count)
+  await expect(page.getByTestId("step-sources")).toContainText("Draft → Cancelled")
+  const ring = await page.locator('.react-flow__node[data-id="draft"] .canvas-node').evaluate((element) => getComputedStyle(element).boxShadow)
+  expect(ring).toContain("0px 0px 0px 4px")
+  // Removing one step leaves the bundle one source smaller; undo brings it back.
+  await page.getByRole("button", { name: "Remove the step from Draft" }).click()
+  await expect(bundle).toHaveText(`Cancel · from ${count - 1} states`)
+  await press(page, "z")
+  await expect(bundle).toHaveText(`Cancel · from ${count} states`)
+})
