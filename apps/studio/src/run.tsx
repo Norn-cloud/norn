@@ -4,6 +4,7 @@ import { ValidationPanel } from "@/components/editor"
 import { Button } from "@/components/ui/button"
 import { evaluateQuestion, traceQuestion, type Evaluation } from "@/lib/evaluate"
 import { readDocument } from "@/lib/exact"
+import { NO_DATA_CELL } from "@/lib/definitions"
 import type { QuestionAnswer } from "@/lib/transport"
 import { fieldOf, type QuestionCatalog } from "./builder.tsx"
 import { AnswerView, RefusedNote } from "./answer-view.tsx"
@@ -21,6 +22,7 @@ export function notRun(result: Exclude<Evaluation, { kind: "answer" }>): string 
   if (result.kind === "refused") return result.refusal.message
   if (result.kind === "too-large") return `Too large to run: ${result.message || BOUNDS[result.code] || "over the cell's bounds"}.`
   if (result.kind === "bad-request") return `Not run: the cell refused the request${result.message ? ` (${result.message})` : ""}.`
+  if (result.reason === "no-cell") return NO_DATA_CELL
   return result.status === 404 || result.status === 0 ? "Not run: the evaluate route isn't connected yet." : result.status === 401 ? "Not run: sign in again." : `Not run: the cell did not answer (${result.status}).`
 }
 

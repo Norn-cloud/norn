@@ -31,7 +31,7 @@ const tree: Recommendations = {
 
 test("the tree opens on the top pick of every column, which is exactly the cell's admitted question", () => {
   const draft = recommendedDraft(tree)
-  expect(draft).toEqual({ title: "", measures: ["demo.yield"], by: "occurred_at", grain: "week", filters: [{ property: "metal", operator: "eq", value: "gold" }], start: "2026-07-06", end: "2026-10-26" })
+  expect(draft).toEqual({ title: "Yield", measures: ["demo.yield"], by: "occurred_at", grain: "week", filters: [{ property: "metal", operator: "eq", value: "gold" }], start: "2026-07-06", end: "2026-10-26" })
   const { name: _built, ...built } = buildQuestion(draft, catalog)
   const { name: _cell, ...expected } = cell
   expect(built).toEqual(expected)

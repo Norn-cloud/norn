@@ -1,6 +1,7 @@
 import type { Answer } from "./transport.ts"
 import { readDocument, type Read } from "./exact.ts"
 import type { Fetch, LiveRead, Refusal, Trace } from "./live.ts"
+import { CellUnavailable, NO_DATA_CELL, StudioScopeError, readStudioScope, scopedHostFetch } from "./definitions.ts"
 
 /**
  * Running a question built in Studio (F2b, CELL-DO's final shape, query/evaluate
@@ -23,14 +24,17 @@ export type Evaluation =
   /** The cell refused the request itself (400, e.g. an unknown member). */
   | { readonly kind: "bad-request"; readonly message: string }
   /** Not answered: no host on this stage, signed out, the route not there yet, or no answer. */
-  | { readonly kind: "unavailable"; readonly status: number }
+  | { readonly kind: "unavailable"; readonly status: number; readonly reason?: "no-cell" }
 
-async function post(path: string, body: unknown, fetcher: Fetch): Promise<{ readonly status: number; readonly text: string } | undefined> {
+type PostResult = { readonly status: number; readonly text: string } | { readonly noCell: true } | { readonly scopeStatus: number } | undefined
+async function post(path: string, body: unknown, fetcher: Fetch): Promise<PostResult> {
   try {
-    const response = await fetcher(`/api/host${path}`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
+    const scoped = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
+    const response = await scoped(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
     return { status: response.status, text: await response.text() }
-  } catch {
-    return undefined
+  } catch (error) {
+    if (error instanceof StudioScopeError && error.message === NO_DATA_CELL) return { noCell: true }
+    return error instanceof CellUnavailable ? { scopeStatus: error.status } : undefined
   }
 }
 
@@ -44,12 +48,11 @@ const refusalOf = (status: number, text: string): Refusal | undefined => {
   return typeof body?.code === "string" && typeof body.message === "string" ? body as Refusal : undefined
 }
 
-/** The cell and environment built questions are run in: the demo analytics world, as named answers are read. */
-const SCOPE = "orgId=org_demo&environmentId=analytics"
-
 export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch): Promise<Evaluation> {
-  const response = await post(`/v1/questions:evaluate?${SCOPE}`, { question }, fetcher)
+  const response = await post("/v1/questions:evaluate", { question }, fetcher)
   if (response === undefined) return { kind: "unavailable", status: 0 }
+  if ("noCell" in response) return { kind: "unavailable", status: 0, reason: "no-cell" }
+  if ("scopeStatus" in response) return { kind: "unavailable", status: response.scopeStatus }
   const { status, text } = response
   if (status === 200 && parse(text) !== undefined) return { kind: "answer", read: readDocument<Answer>(text, "live") }
   if (status === 422) {
@@ -70,8 +73,10 @@ export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch
 
 /** One bucket's records for a question built in Studio: POST /v1/questions:trace, passing lineageRef back exactly as received. */
 export async function traceQuestion(question: unknown, lineageRef: string, bucket: string, fetcher: Fetch = fetch): Promise<LiveRead<Trace>> {
-  const response = await post(`/v1/questions:trace?${SCOPE}`, { question, lineageRef, bucket }, fetcher)
+  const response = await post("/v1/questions:trace", { question, lineageRef, bucket }, fetcher)
   if (response === undefined) return { kind: "unavailable", status: 0 }
+  if ("noCell" in response) return { kind: "unavailable", status: 0, reason: "no-cell" }
+  if ("scopeStatus" in response) return { kind: "unavailable", status: response.scopeStatus }
   const { status, text } = response
   if (status === 200 && parse(text) !== undefined) return { kind: "read", read: readDocument<Trace>(text, "live") }
   const refusal = refusalOf(status, text)

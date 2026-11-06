@@ -50,14 +50,14 @@ export function DirtyGuard({ dirty }: { readonly dirty: boolean }) {
  * "Saved · version n" once a save succeeded, and "Not saved" for anything
  * never saved. It never claims a save that did not happen.
  */
-export function EditorToolbar({ editor, onSave, saving, version, children }: { readonly editor: Pick<ReturnType<typeof useEditor>, "undo" | "redo" | "canUndo" | "canRedo" | "dirty">; readonly onSave?: () => void; readonly saving?: boolean; readonly version?: number; readonly children?: React.ReactNode }) {
+export function EditorToolbar({ editor, onSave, saving, version, showSaveState, children }: { readonly editor: Pick<ReturnType<typeof useEditor>, "undo" | "redo" | "canUndo" | "canRedo" | "dirty">; readonly onSave?: () => void; readonly saving?: boolean; readonly version?: number; readonly showSaveState?: boolean; readonly children?: React.ReactNode }) {
   const mod = modKey()
   return (
     <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="Editor">
       <Button type="button" variant="ghost" size="icon" aria-label="Undo" title={`Undo (${mod}Z)`} disabled={!editor.canUndo} onClick={editor.undo}><Undo2 /></Button>
       <Button type="button" variant="ghost" size="icon" aria-label="Redo" title={`Redo (${mod}Shift+Z)`} disabled={!editor.canRedo} onClick={editor.redo}><Redo2 /></Button>
       {onSave && <Button type="button" variant="outline" size="sm" title={`Save (${mod}S)`} disabled={!editor.dirty || saving} onClick={onSave}><Save />{saving ? "Saving…" : "Save"}</Button>}
-      {editor.dirty ? <Badge variant="outline">Unsaved changes</Badge> : <span className="text-meta text-muted-foreground">{version === undefined ? "Not saved" : `Saved · version ${version}`}</span>}
+      {editor.dirty ? <Badge variant="outline">Unsaved changes</Badge> : <span className="text-meta text-muted-foreground">{!showSaveState ? "All changes saved" : version === undefined ? "Not saved" : `Saved · version ${version}`}</span>}
       {children}
     </div>
   )

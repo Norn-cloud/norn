@@ -10,6 +10,7 @@ import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
 import { OPERATOR_WORDS, buildQuestion, draftOf, issuesOf, readCatalog, type Condition, type Draft, type QuestionCatalog } from "./builder.tsx"
 import { RunQuestion } from "./run.tsx"
 import { questionDefinitions, QuestionDefinitionError } from "./lib/question-definitions.ts"
+import { NO_DATA_CELL, useStudioScope } from "./lib/definitions.ts"
 import { z } from "zod"
 
 /** One option of a column, as GET /api/questions/recommendations serves it. */
@@ -56,7 +57,7 @@ export function recommendedDraft(tree: Recommendations): Draft {
   const by = pick(tree.groupBy)?.id ?? ""
   const window = (pick(tree.windows)?.value.window ?? {}) as { start?: string; end?: string }
   return {
-    title: "",
+    title: pick(tree.measures)?.label ?? "Question",
     measures: pick(tree.measures) ? [pick(tree.measures)?.id ?? ""] : [],
     by,
     grain: pick(tree.grains[by] ?? [])?.id ?? "",
@@ -95,7 +96,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const [checked, setChecked] = useState<CheckedQuestion>()
   const [failure, setFailure] = useState<string>()
-  const [signOff, setSignOff] = useState<(SignOff & { readonly revision: object })>()
+  const [signOff, setSignOff] = useState<SignOff>()
   const [saved, setSaved] = useState<{ readonly id: string; readonly version: number }>()
   const [saving, setSaving] = useState(false)
   const [verified, setVerified] = useState(false)
@@ -103,14 +104,18 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const [saveError, setSaveError] = useState<string>()
   const [refresh, setRefresh] = useState(0)
   const [pageCursor, setPageCursor] = useState<string>()
-  const list = useQuery({ queryKey: ["saved-questions", refresh, pageCursor], queryFn: () => definitions.list(pageCursor), retry: false })
+  const scope = useStudioScope()
+  const cellAvailable = scope.isSuccess && scope.data !== null
+  const list = useQuery({ queryKey: ["saved-questions", scope.data?.orgId, scope.data?.environmentId, refresh, pageCursor], queryFn: () => definitions.list(pageCursor), enabled: cellAvailable, retry: false })
   const revision = useRef(editor.revision)
   revision.current = editor.revision
   const question = buildQuestion(draft, catalog)
   const questionKey = JSON.stringify(question)
+  const { name: _name, ...restatedQuestion } = question
+  const restatementKey = JSON.stringify(restatedQuestion)
   const [checkedKey, setCheckedKey] = useState<string>()
   const [checkedRevision, setCheckedRevision] = useState<object>()
-  const [rejectedHash, setRejectedHash] = useState<string>()
+  const [serverWords, setServerWords] = useState<{ readonly key: string; readonly value: { readonly text: string; readonly sha256: string } }>()
   // Only the newest check may authorize this exact editor revision.
   useEffect(() => {
     let current = true
@@ -120,9 +125,11 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     return () => { current = false; clearTimeout(timer) }
   }, [questionKey, editor.revision])
   const currentCheck = checkedKey === questionKey && checkedRevision === editor.revision ? checked : undefined
-  const restated = currentCheck?.restatement
+  const fromCell = serverWords?.key === restatementKey ? serverWords.value : undefined
+  const restated = fromCell ?? currentCheck?.restatement
   const admitted = currentCheck?.verdict.admitted === true
-  const signed = signOff !== undefined && signOff.revision === editor.revision && restated != null && signOff.sha256 === restated.sha256 && admitted
+  const signed = signOff !== undefined && restated != null && signOff.sha256 === restated.sha256 && admitted
+  useEffect(() => { if (signOff && restated && signOff.sha256 !== restated.sha256) setSignOff(undefined) }, [signOff, restated?.sha256])
   const openSaved = async (id: string) => {
     if (editor.dirty && !globalThis.confirm("Discard your unsaved changes and open this question?")) return
     try {
@@ -131,11 +138,11 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       if (!parsed.success) throw new QuestionDefinitionError("definition.shape", "This question uses fields this builder cannot edit.")
       const next = draftOf(parsed.data)
       if (stable(buildQuestion(next, catalog)) !== stable(parsed.data)) throw new QuestionDefinitionError("definition.unsupported", "This question cannot be reopened without changing it.")
-      editor.open(next); setSaved({ id: stored.id, version: stored.version }); setVerified(Boolean(stored.signoff)); setRemoved(undefined); setSignOff(undefined); setChecked(undefined); setCheckedKey(undefined); setRejectedHash(undefined); setSaveError(undefined)
+      editor.open(next); setSaved({ id: stored.id, version: stored.version }); setVerified(Boolean(stored.signoff)); setRemoved(undefined); setSignOff(undefined); setChecked(undefined); setCheckedKey(undefined); setServerWords(undefined); setSaveError(undefined)
     } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
   }
   const save = async () => {
-    if (!signed || !restated || !draft.title.trim() || saving) return
+    if (!cellAvailable || !signed || !restated || !draft.title.trim() || saving) return
     const at = editor.revision
     setSaving(true); setSaveError(undefined)
     try {
@@ -143,16 +150,24 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       setSaved({ id: result.id, version: result.version }); setVerified(true); setRemoved(undefined); editor.markSaved(draft); setRefresh((n) => n + 1)
     } catch (error) {
       if (error instanceof QuestionDefinitionError && error.code === "definition.signoff_mismatch") {
-        setSignOff(undefined); setChecked(undefined); setCheckedKey(undefined); setRejectedHash(restated.sha256)
-        setSaveError("The cell's restatement changed. Check the words again and sign off before saving.")
-        try { const next = await checkQuestion(question); if (revision.current === at && next.restatement?.sha256 !== restated.sha256) { setChecked(next); setCheckedKey(questionKey); setCheckedRevision(at) } else if (revision.current === at) setSaveError("The cell rejected these words, but its updated restatement is not available yet. Your question was not saved.") } catch { setSaveError("The restatement changed and could not be refreshed. Try again.") }
+        setSignOff(undefined)
+        if (revision.current !== at) setSaveError("The earlier question was not saved. Review the current question and sign off again.")
+        else if (error.restatement) {
+          setServerWords({ key: restatementKey, value: error.restatement })
+          setSaveError("The server reads this question differently. Review its words and sign off again.")
+        } else {
+          setChecked(undefined); setCheckedKey(undefined); setServerWords(undefined)
+          setSaveError("The cell rejected these words, but its updated restatement is not available yet. Your question was not saved.")
+        }
       } else if (error instanceof QuestionDefinitionError && error.code === "definition.signoff_unavailable") {
         setSaveError("The cell cannot verify sign-off yet. Your question has not been saved.")
+      } else if (error instanceof QuestionDefinitionError && error.status === 403) {
+        setSaveError(`You do not have permission to save this question. ${error.message}`)
       } else setSaveError(error instanceof Error ? error.message : String(error))
     } finally { setSaving(false) }
   }
   const remove = async () => {
-    if (!saved || saving || !signed || !restated || !verified || editor.dirty || !globalThis.confirm("Remove this saved question?")) return
+    if (!cellAvailable || !saved || saving || !signed || !restated || !verified || editor.dirty || !globalThis.confirm("Remove this saved question?")) return
     setSaving(true)
     try {
       const result = await definitions.retire(saved.id, saved.version)
@@ -162,7 +177,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     finally { setSaving(false) }
   }
   const undoRemove = async () => {
-    if (!removed || saving) return
+    if (!cellAvailable || !removed || saving) return
     setSaving(true)
     try {
       const result = await definitions.install(removed.id, removed.question, removed.sha256, removed.version)
@@ -191,22 +206,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   return (
     <div className="space-y-5">
       {guard?.(editor.dirty)}
-      <EditorToolbar editor={editor} version={saved?.version} />
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="grid gap-1.5 text-sm">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
-        <Button type="button" onClick={save} disabled={!signed || !draft.title.trim() || saving}>{saving ? "Saving…" : "Save question"}</Button>
-        {saved && <Button type="button" variant="outline" disabled={saving || !signed || !verified || editor.dirty} onClick={remove}>Remove question</Button>}
-        {removed && <Button type="button" variant="outline" disabled={saving} onClick={undoRemove}>Undo removal</Button>}
-      </div>
-      {saveError && <p role="alert" className="text-destructive">{saveError}</p>}
-      <Panel icon={ChartLine} label="Saved questions">
-        {list.isPending && <p>Loading saved questions…</p>}
-        {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
-        {list.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No saved questions yet.</p>}
-        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span>{item.title || item.id} · version {item.version}</span><Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
-        {pageCursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(undefined)}>First page</Button>}
-        {list.data?.cursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
-      </Panel>
+      <EditorToolbar editor={editor} version={saved?.version} showSaveState />
       <div className="flex flex-wrap items-start gap-6 pb-2" data-testid="question-tree">
         <ChoiceColumn title="Measure" field="measures" invalid={invalid("measure") || invalid("measures")} options={measureOptions} selected={chosen.measure} onSelect={(id) => patch({ measures: [id] })} />
         <div className="flex flex-col gap-4">
@@ -259,18 +259,39 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       {restated && (
         <Panel icon={ShieldCheck} label="In plain words" action={<span className="font-mono text-xs text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span>}>
           <div className="space-y-3 p-1">
+            {fromCell && <p className="font-medium">The server reads your question as:</p>}
             <p className="text-base" data-testid="restatement">{restated.text}</p>
             <p className="text-meta text-muted-foreground">Written from the question itself by the server, not by the assistant. Check that it says what you mean.</p>
             <div className="flex flex-wrap items-center gap-3">
               {signed
                 ? <span className="flex items-center gap-2 text-sm font-medium"><BadgeCheck className="size-4 text-success" />Signed off: this is what you asked for</span>
-                : <Button type="button" size="sm" disabled={!admitted || restated.sha256 === rejectedHash} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => restated && setSignOff({ sha256: restated.sha256, atMs: Date.now(), revision: editor.revision })}>This is what I asked for</Button>}
+                : <Button type="button" size="sm" disabled={!admitted} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => restated && setSignOff({ sha256: restated.sha256, atMs: Date.now() })}>This is what I asked for</Button>}
               {!admitted && <span className="text-meta text-muted-foreground">Sign-off opens once the checker admits the question.</span>}
             </div>
           </div>
         </Panel>
       )}
+      <div className="space-y-2" data-testid="question-save-controls">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="grid gap-1.5 text-sm">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
+          <Button type="button" onClick={save} disabled={!cellAvailable || !signed || !draft.title.trim() || saving} aria-describedby={!signed ? "question-save-reason" : undefined}>{saving ? "Saving…" : "Save question"}</Button>
+          {saved && <Button type="button" variant="outline" disabled={!cellAvailable || saving || !signed || !verified || editor.dirty} onClick={remove}>Remove question</Button>}
+          {removed && <Button type="button" variant="outline" disabled={!cellAvailable || saving} onClick={undoRemove}>Undo removal</Button>}
+        </div>
+        {scope.isSuccess && scope.data === null && <p role="status" className="text-sm text-muted-foreground">{NO_DATA_CELL}</p>}
+        {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+        {!signed && <p id="question-save-reason" className="text-meta text-muted-foreground">Sign off on the plain words first.</p>}
+        {saveError && <p role="alert" className="text-destructive">{saveError}</p>}
+      </div>
       {signed ? <RunQuestion key={restated?.sha256} question={question} catalog={catalog} /> : <p className="text-meta text-muted-foreground">Run opens once you have signed off on the question in plain words.</p>}
+      <Panel icon={ChartLine} label="Saved questions">
+        {cellAvailable && list.isPending && <p>Loading saved questions…</p>}
+        {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
+        {list.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No saved questions yet.</p>}
+        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span>{item.title || item.id} · version {item.version}</span><Button type="button" variant="outline" size="sm" disabled={!cellAvailable || saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
+        {pageCursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(undefined)}>First page</Button>}
+        {list.data?.cursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
+      </Panel>
     </div>
   )
 }

@@ -15,13 +15,14 @@ const answerText = text("scrap-yield.k1.answer.json")
 const question = JSON.parse(text("scrap-yield.question.json"))
 const calls: { path: string; body: unknown }[] = []
 const answer = (status: number, body: string) => async (path: string, init?: RequestInit) => {
+  if (path === "/api/me") return Response.json({ organization: { id: "org_other" }, environmentId: "warehouse" })
   calls.push({ path, body: JSON.parse(String(init?.body)) })
   return new Response(body, { status })
 }
 
 test("an admitted question is answered with the server's document, its numbers read exactly as written", async () => {
   const result = await evaluateQuestion(question, answer(200, answerText))
-  expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:evaluate?orgId=org_demo&environmentId=analytics", body: { question } })
+  expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:evaluate?orgId=org_other&environmentId=warehouse", body: { question } })
   if (result.kind !== "answer") throw new Error(result.kind)
   expect(result.read.origin).toBe("live")
   expect(result.read.document.lineageRef).toBe(JSON.parse(answerText).lineageRef)
@@ -48,7 +49,7 @@ test("a built question's records are traced with its lineage handle passed back 
   const handle = "lin:v2/AbC+/=~opaque"
   const trace = `{"result":${answerText},"bucket":"2026-W28","contributions":[]}`
   const read = await traceQuestion(question, handle, "2026-W28", answer(200, trace))
-  expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:trace?orgId=org_demo&environmentId=analytics", body: { question, lineageRef: handle, bucket: "2026-W28" } })
+  expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:trace?orgId=org_other&environmentId=warehouse", body: { question, lineageRef: handle, bucket: "2026-W28" } })
   expect(read.kind).toBe("read")
 })
 
@@ -60,4 +61,26 @@ test("a run answer renders like a published one, without a link to a published p
   expect(html).toContain(">Live<")
   expect(html).not.toContain('href="/questions/')
   expect(html).toContain("Every week")
+})
+
+
+test("evaluation and trace use the active server scope and never call an unmapped cell", async () => {
+  let environmentId: string | null = "analytics"
+  let orgId = "org_demo"
+  const paths: string[] = []
+  const fetcher = async (path: string) => {
+    if (path === "/api/me") return Response.json({ organization: { id: orgId }, environmentId })
+    paths.push(path)
+    return new Response(answerText)
+  }
+  await evaluateQuestion(question, fetcher)
+  orgId = "org_other"; environmentId = "warehouse"
+  await traceQuestion(question, "lin", "row", fetcher)
+  expect(Object.fromEntries(new URL(paths[0] ?? "", "https://studio").searchParams)).toEqual({ orgId: "org_demo", environmentId: "analytics" })
+  expect(Object.fromEntries(new URL(paths[1] ?? "", "https://studio").searchParams)).toEqual({ orgId: "org_other", environmentId: "warehouse" })
+  environmentId = null
+  expect(await evaluateQuestion(question, fetcher)).toEqual({ kind: "unavailable", status: 0, reason: "no-cell" })
+  expect(await traceQuestion(question, "lin", "row", fetcher)).toEqual({ kind: "unavailable", status: 0, reason: "no-cell" })
+  expect(paths).toHaveLength(2)
+  expect(await evaluateQuestion(question, async () => new Response("", { status: 401 }))).toEqual({ kind: "unavailable", status: 401 })
 })

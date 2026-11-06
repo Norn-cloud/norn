@@ -1,4 +1,5 @@
 import { readDocument, type Read } from "./exact.ts"
+import { CellUnavailable, NO_DATA_CELL, StudioScopeError, readStudioScope, scopedHostFetch } from "./definitions.ts"
 import type { Answer, Schemas } from "./transport.ts"
 
 /** A refusal exactly as the server wrote it (`{code, category, message, explanation}`). */
@@ -13,7 +14,7 @@ export interface Refusal {
 export type LiveRead<T> =
   | { readonly kind: "read"; readonly read: Read<T> }
   | { readonly kind: "refused"; readonly refusal: Refusal }
-  | { readonly kind: "unavailable"; readonly status: number }
+  | { readonly kind: "unavailable"; readonly status: number; readonly reason?: "no-cell" }
 
 /** The one call this module makes to fetch; narrower than the global fetch type, so tests can pass a plain function. */
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>
@@ -46,39 +47,36 @@ export interface Trace {
  * stage) mean live reads are not available, and the page keeps its recording.
  */
 export async function hostRead<T>(path: string, fetcher: Fetch = fetch): Promise<LiveRead<T>> {
-  let response: Response
-  let text: string
   try {
-    response = await fetcher(`/api/host${path}`, { headers: { accept: "application/json" } })
-    text = await response.text()
-  } catch {
-    // The network failed: no live read, so the page shows its recording rather than a stale "Live".
-    return { kind: "unavailable", status: 0 }
-  }
-  if (response.ok) {
-    try {
-      return { kind: "read", read: readDocument<T>(text, "live") }
-    } catch {
-      return { kind: "unavailable", status: response.status }
+    const scoped = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
+    const response = await scoped(path, { headers: { accept: "application/json" } })
+    const text = await response.text()
+    if (response.ok) {
+      try { return { kind: "read", read: readDocument<T>(text, "live") } }
+      catch { return { kind: "unavailable", status: response.status } }
     }
+    if (response.status === 403) {
+      try {
+        const body = JSON.parse(text) as Partial<Refusal>
+        if (typeof body.code === "string" && typeof body.message === "string") return { kind: "refused", refusal: body as Refusal }
+      } catch { /* not the host's refusal document: the Worker's own */ }
+    }
+    return { kind: "unavailable", status: response.status }
+  } catch (error) {
+    return error instanceof StudioScopeError && error.message === NO_DATA_CELL
+      ? { kind: "unavailable", status: 0, reason: "no-cell" }
+      : { kind: "unavailable", status: error instanceof CellUnavailable ? error.status : 0 }
   }
-  if (response.status === 403) {
-    try {
-      const body = JSON.parse(text) as Partial<Refusal>
-      if (typeof body.code === "string" && typeof body.message === "string") return { kind: "refused", refusal: body as Refusal }
-    } catch { /* not the host's refusal document: the Worker's own */ }
-  }
-  return { kind: "unavailable", status: response.status }
 }
 
-const DEMO = "orgId=org_demo"
-
 export const liveAnswer = (question: string, fetcher?: Fetch) =>
-  hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer?${DEMO}&environmentId=analytics`, fetcher)
+  hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer`, fetcher)
 
 /** One bucket of a live answer; `bucket` is the answer's row key exactly as the server wrote it. */
-export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) =>
-  hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${DEMO}&environmentId=analytics&lineageRef=${encodeURIComponent(lineageRef)}&bucket=${encodeURIComponent(bucket)}`, fetcher)
+export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) => {
+  const query = new URLSearchParams({ lineageRef, bucket })
+  return hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${query}`, fetcher)
+}
 
 /**
  * A contribution's amounts as the exact number texts the server sent, or `null`
@@ -91,7 +89,7 @@ export function amountTexts(read: Read<Trace>, index: number): readonly (string 
   return amounts.map((amount, at) => amount === null ? null : read.numbers.get(`/contributions/${index}/amounts/${at}`) ?? String(amount))
 }
 
-/** The host's access document (`GET /v1/access`): who the server verified, and its decision per read capability. */
+/** The host's access document: the verified principal and decisions for the active cell. */
 export interface Access {
   readonly principal: { readonly subjectId: string; readonly actorKind: string; readonly roles: readonly string[]; readonly roleTable: string }
   readonly policy: string
@@ -99,5 +97,4 @@ export interface Access {
   readonly capabilities: Readonly<Record<"population" | "values" | "sources", { readonly decision: "permit" | "deny"; readonly rule: string | null }>>
 }
 
-/** The signed-in account's access decisions in the demo cell, computed by the host on each read. */
-export const liveAccess = (fetcher?: Fetch) => hostRead<Access>(`/v1/access?${DEMO}&environmentId=dev`, fetcher)
+export const liveAccess = (fetcher?: Fetch) => hostRead<Access>("/v1/access", fetcher)

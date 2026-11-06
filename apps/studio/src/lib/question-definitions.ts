@@ -1,32 +1,45 @@
 import { z } from "zod"
-import { CellUnavailable } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, scopedHostFetch, type ScopeProvider } from "./definitions.ts"
 
-const scope = { orgId: "org_demo", environmentId: "analytics" }
 const summary = z.object({ id: z.string(), title: z.string(), version: z.number(), lifecycle: z.string() })
 const page = z.object({ items: z.array(summary), cursor: z.string().nullable().optional() })
 const document = z.object({ id: z.string(), kind: z.literal("question"), version: z.number(), payload: z.unknown(), signoff: z.object({ restatementSha256: z.string() }).nullable().optional() })
 const result = z.object({ installed: z.literal(true), id: z.string(), version: z.number() })
-const refusal = z.object({ code: z.string(), message: z.string().optional(), detail: z.string().optional() })
+const refusal = z.object({ code: z.string(), message: z.string().optional(), detail: z.string().optional(), restatement: z.string().optional(), restatementSha256: z.string().optional() })
 
 export class QuestionDefinitionError extends Error {
-  constructor(readonly code: string, message: string) { super(message); this.name = "QuestionDefinitionError" }
+  constructor(readonly code: string, message: string, readonly status = 0, readonly restatement?: { readonly text: string; readonly sha256: string }) { super(message); this.name = "QuestionDefinitionError" }
 }
 
 /** The cell owns authorization, validation, versions, and the sign-off record. */
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 
-export function questionDefinitions(fetcher: Fetch = (input, init) => fetch(input, init)) {
+export function questionDefinitions(fetcher: Fetch = (input, init) => fetch(input, init), scope?: ScopeProvider) {
+  const scoped = scopedHostFetch(fetcher, "/api/host", scope)
   const call = async (path: string, query: Record<string, string> = {}, body?: unknown): Promise<unknown> => {
     let response: Response
     try {
-      response = await fetcher(`/api/host${path}?${new URLSearchParams({ ...scope, ...query })}`, body === undefined
+      response = await scoped(`${path}?${new URLSearchParams(query)}`, body === undefined
         ? { headers: { accept: "application/json" } }
         : { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
-    } catch { throw new CellUnavailable(0) }
+    } catch (error) {
+      if (error instanceof StudioScopeError) throw error
+      if (error instanceof CellUnavailable) throw error
+      throw new CellUnavailable(0)
+    }
     const raw: unknown = await response.json().catch(() => null)
     if (!response.ok) {
       const error = refusal.safeParse(raw)
-      if (error.success) throw new QuestionDefinitionError(error.data.code, error.data.detail ?? error.data.message ?? error.data.code)
+      if (error.success) {
+        const { code, detail, message, restatement, restatementSha256 } = error.data
+        let checked: { text: string; sha256: string } | undefined
+        if (code === "definition.signoff_mismatch" && restatement !== undefined && restatementSha256 !== undefined && /^[0-9a-f]{64}$/.test(restatementSha256)) {
+          const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(restatement))
+          const digest = Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("")
+          if (digest === restatementSha256) checked = { text: restatement, sha256: digest }
+        }
+        throw new QuestionDefinitionError(code, detail ?? message ?? code, response.status, checked)
+      }
       throw new CellUnavailable(response.status)
     }
     return raw
