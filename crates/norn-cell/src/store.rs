@@ -3003,7 +3003,9 @@ impl<E: SqlEngine> CellStore<E> {
         outcome: &Value,
     ) -> Result<bool, CellError> {
         self.conn.transaction(|| -> Result<bool, CellError> {
-            let head = StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes).head_command()?;
+            let head = StoreReader::new(&self.conn, &self.model)
+                .with_source_disputes(&self.source_disputes)
+                .head_command()?;
             let is_head = head.as_ref().is_some_and(|head| {
                 head.command.command_id == command_id
                     && head.command.generation == generation
@@ -3012,7 +3014,9 @@ impl<E: SqlEngine> CellStore<E> {
             if !is_head {
                 return Ok(false);
             }
-            let head = head.ok_or_else(|| CellError::Encoding("pending result command disappeared".to_owned()))?;
+            let head = head.ok_or_else(|| {
+                CellError::Encoding("pending result command disappeared".to_owned())
+            })?;
             self.store_result(&head, command_id, generation, outcome)
         })
     }
@@ -3057,9 +3061,19 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         outcome: &Value,
     ) -> Result<bool, CellError> {
-        crate::payload_storage::remember_command(&self.conn, command_id, generation, head.commit_seq)?;
+        crate::payload_storage::remember_command(
+            &self.conn,
+            command_id,
+            generation,
+            head.commit_seq,
+        )?;
         let outcome = match self.export_record(head.commit_seq)? {
-            Some(record) => crate::payload_storage::encode_result(&self.conn, &record.batch.scope, &record.batch.world, outcome)?,
+            Some(record) => crate::payload_storage::encode_result(
+                &self.conn,
+                &record.batch.scope,
+                &record.batch.world,
+                outcome,
+            )?,
             None => canonical_json(outcome)?,
         };
         let generation = to_i64(generation, "generation")?;

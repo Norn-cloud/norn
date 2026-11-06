@@ -2103,20 +2103,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
             result,
             runs,
         } => {
-            // A parked command is replayed at its own position; any other
-            // result is replayed only as the FIFO head (PARKED-1).
-            let head = {
-                let reader = store.read();
-                let fifo_head = reader.head_command()?.map(|head| head.position);
-                reader
-                    .pending_commands()?
-                    .into_iter()
-                    .find(|row| row.position == position)
-                    .filter(|row| {
-                        crate::read::is_parked(&row.command) || fifo_head == Some(row.position)
-                    })
-                    .ok_or_else(mismatch)?
-            };
+            let head = replayed_result(store, position)?.ok_or_else(mismatch)?;
             if head.position != position
                 || head.commit_seq != commit_seq
                 || head.command != command
@@ -2167,6 +2154,21 @@ pub(crate) fn restore_input<E: SqlEngine>(
         return Err(mismatch());
     }
     Ok(())
+}
+
+/// PARKED-1: the pending command a retained result consumption names: a
+/// parked command at its own position, any other only as the FIFO head.
+fn replayed_result<E: SqlEngine>(
+    store: &CellStore<E>,
+    position: u64,
+) -> Result<Option<crate::read::PendingCommand>, CellError> {
+    let reader = store.read();
+    let fifo_head = reader.head_command()?.map(|head| head.position);
+    Ok(reader
+        .pending_commands()?
+        .into_iter()
+        .find(|row| row.position == position)
+        .filter(|row| crate::read::is_parked(&row.command) || fifo_head == Some(row.position)))
 }
 
 fn restore_run_history<E: SqlEngine>(
