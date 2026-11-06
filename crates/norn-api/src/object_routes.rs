@@ -4,9 +4,13 @@
 //! row is decided on its own: a record appears only when the principal holds
 //! both Population and Values for that exact row. Visibility is applied
 //! before data quality, so quarantine counts and cursors describe only rows
-//! the principal may see. A cursor always names a visible row. An absent, an
-//! invisible and a quarantined object refuse the same way. No table, column,
-//! row locator or SQL crosses this boundary (#733).
+//! the principal may see. A cursor always names a visible row, and a page
+//! fills from visible rows only: every response is the one the principal would
+//! get if the unreadable rows did not exist. The work behind a page is bounded
+//! by the collection, which only the server can grow; its latency is the one
+//! remaining channel. An absent, an invisible and a quarantined object refuse
+//! the same way. No table, column, row locator or SQL crosses this boundary
+//! (#733).
 
 use crate::{
     authz::{
@@ -22,8 +26,6 @@ use norn_cell::{MAIN_WORLD, ObjectRecord, engine::SqlEngine};
 
 /// Largest page a caller may ask for.
 pub const MAX_PAGE: usize = 100;
-/// Most raw rows one page may scan; a page that would scan more refuses.
-pub const MAX_SCAN: usize = 1_000;
 
 /// Server-owned mapping from principal and resource to the kernel PDP input.
 /// No client role, grant or scope enters here.
@@ -123,7 +125,8 @@ fn collection<'h, E: SqlEngine>(
 ///
 /// # Errors
 /// A denied gate (one opaque 403), an undeclared type (404), an oversized
-/// page (400), a page that would scan past [`MAX_SCAN`] (413), or a host failure.
+/// page (400) or a host failure. Unreadable rows never refuse a page: a bound
+/// on raw rows would reveal how many exist.
 pub fn get_object_page<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -148,22 +151,13 @@ pub fn get_object_page<E: SqlEngine>(
         quarantine_count: 0,
         scanned_through: None,
     };
-    let (mut cursor, mut scanned) = (after.map(str::to_owned), 0usize);
+    let mut cursor = after.map(str::to_owned);
     loop {
         let batch = reader
             .list_after(MAIN_WORLD, object_type, cursor.as_deref(), limit)
             .map_err(Refusal::host)?;
         let exhausted = batch.len() < limit;
         for row in batch {
-            scanned = scanned.saturating_add(1);
-            if scanned > MAX_SCAN {
-                return Err(Refusal::new(
-                    http::StatusCode::PAYLOAD_TOO_LARGE,
-                    "object.scan_bound",
-                    "the page would scan too many objects",
-                    "narrow the read or continue from an earlier cursor",
-                ));
-            }
             cursor = Some(row.id.clone());
             if !row_visible(host, access, &actor, &row) {
                 continue;

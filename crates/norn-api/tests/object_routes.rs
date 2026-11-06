@@ -1,6 +1,6 @@
 //! HOST-READ-2 correspondences: per-row authorization before data quality, so
-#![cfg(not(target_arch = "wasm32"))]
 //! no page, count or cursor discloses rows the principal cannot read.
+#![cfg(not(target_arch = "wasm32"))]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -21,12 +21,14 @@ use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, ObjectRecord};
 use norn_kernel::authz::{
     AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
 };
-use query_support::{TYPE, capture_quality, fixture, fixture_writes};
+use query_support::{TYPE, capture_quality, fixture, fixture_writes, put};
 use serde_json::json;
 use std::collections::BTreeMap;
 
 const HIDDEN: &str = "SYN-MELT-15-0";
 const QUARANTINED: &str = "SYN-MELT-15-1";
+/// The only rows `few` may read.
+const FEW: [&str; 3] = ["SYN-MELT-00-0", "SYN-MELT-05-0", "SYN-MELT-10-0"];
 
 fn physical() -> CellScope {
     CellScope {
@@ -41,7 +43,8 @@ fn scope() -> ScopeQuery {
     }
 }
 
-/// `reader` reads every row; `partial` is denied Values on one row.
+/// `reader` reads every row; `partial` is denied Values on one row; `few`
+/// reads the collection and only the rows in [`FEW`].
 struct Policy;
 impl Authorizer for Policy {
     fn authorize(&self, _: &AccessRequest<'_>) -> Result<(), Refusal> {
@@ -52,6 +55,14 @@ impl Authorizer for Policy {
         let hidden = actor == "partial"
             && request.capability == ReadCapability::Values
             && request.access.resource.id == HIDDEN;
+        let resource = request.access.resource.id.as_str();
+        if actor == "few" {
+            return if resource == TYPE || FEW.contains(&resource) {
+                Ok(())
+            } else {
+                Err(Refusal::invalid("private policy diagnostic"))
+            };
+        }
         if ["reader", "partial"].contains(&actor) && !hidden {
             Ok(())
         } else {
@@ -106,6 +117,12 @@ impl ObjectAccess for Mapping {
 /// The scrap-yield conversions with a recovery-bound law; one record arrives
 /// from a source that breaks it and is quarantined by a real finding.
 fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    host_with(0)
+}
+
+/// [`host`] with `hidden` extra conversions no fixture principal but `reader`
+/// and `partial` may read; their ids sort before every fixture row.
+fn host_with(hidden: usize) -> (DevHost<NativeEngine>, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let (base, _, _) = fixture();
@@ -141,7 +158,18 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
                 world: MAIN_WORLD.into(),
                 scope: key.clone(),
                 logical_time: query_support::CLOCK,
-                writes: fixture_writes(),
+                writes: fixture_writes()
+                    .into_iter()
+                    .chain((0..hidden).map(|index| {
+                        put(
+                            &format!("SYN-HIDDEN-{index:05}"),
+                            1_000,
+                            900,
+                            "2026-07-10T12:00:00Z",
+                            "gold",
+                        )
+                    }))
+                    .collect(),
                 ..CommitBatch::default()
             })
             .unwrap();
@@ -270,5 +298,33 @@ fn page_bounds_refuse_before_reading() {
         let refused = get_object_page(&host, &scope(), Some("reader"), TYPE, None, limit, &Mapping)
             .unwrap_err();
         assert_eq!(refused.status, 400, "{limit}");
+    }
+}
+
+/// Pages are the ones the principal would get if unreadable rows did not
+/// exist: thousands of hidden rows change no record, count, cursor or refusal.
+#[test]
+fn pages_do_not_depend_on_how_many_rows_are_unreadable() {
+    let (small, _small_dir) = host_with(0);
+    let (large, _large_dir) = host_with(1_500);
+    for limit in [1, 2, 100] {
+        let without: Vec<String> = all_pages(&small, "few", limit)
+            .iter()
+            .map(|page| serde_json::to_string(page).unwrap())
+            .collect();
+        let with: Vec<String> = all_pages(&large, "few", limit)
+            .iter()
+            .map(|page| serde_json::to_string(page).unwrap())
+            .collect();
+        assert_eq!(with, without, "limit {limit}");
+        assert!(
+            with.iter().all(|page| !page.contains("SYN-HIDDEN")),
+            "limit {limit}"
+        );
+        let ids: usize = all_pages(&large, "few", limit)
+            .iter()
+            .map(|page| page.records.len())
+            .sum();
+        assert_eq!(ids, FEW.len(), "limit {limit}");
     }
 }
