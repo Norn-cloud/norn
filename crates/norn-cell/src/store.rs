@@ -1962,7 +1962,9 @@ impl<E: SqlEngine> CellStore<E> {
     /// SQL failures; existing metadata, ledger or history returns false.
     pub fn engine_is_fresh(engine: &E) -> Result<bool, CellError> {
         let platform = engine.platform_table_globs();
-        let filter = " AND name NOT GLOB ?".repeat(platform.len());
+        // An index is judged by the table it belongs to.
+        let filter = " AND (CASE WHEN type = 'index' THEN tbl_name ELSE name END) NOT GLOB ?"
+            .repeat(platform.len());
         let sql = format!(
             "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'{filter} LIMIT 1"
         );

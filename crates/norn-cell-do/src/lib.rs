@@ -1,7 +1,8 @@
 //! `norn-cell-do`: one tenant cell per Workers Durable Object (#728, #819).
 //!
 //! Ring 1 host perimeter. The Durable Object is the cell's single writer and
-//! its SQLite storage is the cell's engine ([`norn_cell::workers::WorkersEngine`]).
+//! its SQLite storage is the cell's engine (`norn_cell::workers::WorkersEngine`,
+//! compiled for `wasm32` only, so not a doc link).
 //! Everything here is portable Rust: the same [`server::handle`] dispatch runs
 //! natively over `NativeEngine`, which is how native/DO parity is checked.
 //!
