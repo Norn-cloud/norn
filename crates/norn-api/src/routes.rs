@@ -93,7 +93,7 @@ pub fn get_defs<E: SqlEngine>(
 }
 
 fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsResponse, Refusal> {
-    verify_retained(&set, scope)?;
+    let base_artifact_ids = verify_retained(&set, scope)?;
     let receipt = set
         .admission_receipt
         .ok_or_else(|| Refusal::host("missing receipt"))?;
@@ -113,12 +113,18 @@ fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsR
         receipt_sha256: set.receipt_sha256,
         diagnostics: None,
         registry: set.registry,
-        base_artifact_ids: Vec::new(),
+        base_artifact_ids,
         artifacts: serde_json::from_str(&set.canonical_set).map_err(Refusal::host)?,
     })
 }
 
-fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Result<(), Refusal> {
+/// Verify the retained set against its receipt. A receipt's base must be
+/// retained in the same set: it is verified there, never resolved from a
+/// release pin. Returns the base artifact ids.
+fn verify_retained(
+    installed: &InstalledDefinitionSet,
+    scope: &CellScope,
+) -> Result<Vec<String>, Refusal> {
     let receipt = installed
         .admission_receipt
         .as_deref()
@@ -131,13 +137,18 @@ fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Res
     let limits = ResourceLimitProfile::norn_limits_v1();
     let profile =
         serde_json::to_value(limits.reference().map_err(Refusal::host)?).map_err(Refusal::host)?;
-    // Release pins never grant type authority; verify self-contained sources only.
-    if retained
+    let base_refs = retained
         .pointer("/artifactSet/base")
         .and_then(serde_json::Value::as_array)
-        .is_some_and(|base| !base.is_empty())
-        || retained.get("limitProfile") != Some(&profile)
-    {
+        .map_or_else(Vec::new, |base| {
+            base.iter()
+                .map(|entry| {
+                    let text = |key| entry.get(key).and_then(serde_json::Value::as_str);
+                    (text("artifactId"), text("version"))
+                })
+                .collect()
+        });
+    if retained.get("limitProfile") != Some(&profile) {
         return Err(context_unavailable());
     }
     let RuntimeValue::Array(sources) =
@@ -147,21 +158,36 @@ fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Res
             "retained definitions must be an artifact array",
         ));
     };
-    for source in &sources {
+    let (mut candidates, mut base, mut base_ids) = (Vec::new(), Vec::new(), Vec::new());
+    for source in sources {
         let artifact: norn_ir::ArtifactEnvelope =
-            norn_ir::runtime::decode(source).map_err(Refusal::host)?;
+            norn_ir::runtime::decode(&source).map_err(Refusal::host)?;
         if norn_checker::scope_conflict(&scope.as_scope_ref(), &artifact.scope).is_some() {
             return Err(Refusal::host("retained artifact outside cell scope"));
         }
+        let identity = (
+            Some(artifact.artifact_id.as_str()),
+            Some(artifact.version.as_str()),
+        );
+        if base_refs.contains(&identity) {
+            base_ids.push(artifact.artifact_id);
+            base.push(source);
+        } else {
+            candidates.push(source);
+        }
+    }
+    // An external base (absent from the retained set) cannot be verified here.
+    if base.len() != base_refs.len() {
+        return Err(context_unavailable());
     }
     norn_checker::receipt::verify_admission_receipt_sources(
         receipt,
         &installed.receipt_sha256,
-        &sources,
-        &[],
+        &candidates,
+        &base,
         &limits,
     )
-    .map(drop)
+    .map(|_| base_ids)
     .map_err(|error| {
         if matches!(
             &error,
@@ -350,6 +376,59 @@ mod tests {
         assert_eq!(
             before,
             host.cell().unwrap().store().verified_head().unwrap()
+        );
+    }
+    /// A receipt whose base is retained in the same set verifies here and
+    /// names that base; the base is never resolved from outside the cell.
+    #[test]
+    fn retained_base_definitions_verify_and_are_listed() {
+        let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../../fixtures/demo/explorer/three-systems.definitions.json"
+        ))
+        .unwrap();
+        let value = |a: &norn_ir::ArtifactEnvelope| {
+            RuntimeValue::from_json(serde_json::to_value(a).unwrap()).unwrap()
+        };
+        let is_base = |a: &&norn_ir::ArtifactEnvelope| {
+            a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
+        };
+        let base: Vec<_> = artifacts.iter().filter(is_base).cloned().collect();
+        let candidates: Vec<_> = artifacts.iter().filter(|a| !is_base(a)).map(value).collect();
+        let checked = check_artifact_set_with_receipt(
+            &ReceiptSources::new(&candidates, &base.iter().map(value).collect::<Vec<_>>())
+                .unwrap(),
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            },
+            &ResourceLimitProfile::norn_limits_v1(),
+        )
+        .unwrap();
+        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+        let set = |canonical_set: String| InstalledDefinitionSet {
+            canonical_set,
+            admission_receipt: Some(
+                String::from_utf8(checked.receipt.canonical_json().unwrap()).unwrap(),
+            ),
+            receipt_sha256: checked.receipt.content_sha256().unwrap(),
+            ..installed(&host())
+        };
+        let all = RuntimeValue::Array(artifacts.iter().map(value).collect());
+        let retained = set(String::from_utf8(all.canonical_json().unwrap()).unwrap());
+        let listed = verify_retained(&retained, host().scope()).unwrap();
+        let mut expected: Vec<_> = base.iter().map(|a| a.artifact_id.clone()).collect();
+        let mut sorted = listed.clone();
+        sorted.sort();
+        expected.sort();
+        assert_eq!(sorted, expected);
+        assert!(!listed.is_empty());
+        // Without its base the set cannot be verified in this cell.
+        let missing = RuntimeValue::Array(candidates);
+        let partial = set(String::from_utf8(missing.canonical_json().unwrap()).unwrap());
+        assert_eq!(
+            verify_retained(&partial, host().scope()).unwrap_err().code,
+            "defs.receipt_context_unavailable"
         );
     }
     #[test]
