@@ -79,9 +79,11 @@ test("the object type's own URL still opens the type, not an empty record", asyn
 
 test("the overview says in one sentence what the record is and what its stored links show, and lists who points at it", async () => {
   const html = await page("canon.Item", "demo/item/gold")
-  expect(html).toContain("Gold scrap is an item record, read from ERPNext by mapping erpnext.three.mapping. Its one declared relation has no stored link in this snapshot.")
+  // main's recorded snapshot stores two holdings of the gold item; the empty case is summaryOf's test below.
+  expect(html).toContain("Gold scrap is an item record, read from ERPNext by mapping erpnext.three.mapping. 2 stored links connect it to other records.")
   expect(html).toContain("Holding records (item)")
-  expect(html).toContain("none in this snapshot")
+  expect(html).toContain('href="/sources/canon.Holding/demo/holding/owner/north/gold"')
+  expect(html).toContain('href="/sources/canon.Holding/demo/holding/owner/south/gold"')
 })
 
 test("when the server returned only the first page of links, the summary does not claim the snapshot has none", () => {
