@@ -54,8 +54,8 @@ async function gatewaySignIn(page: Page) {
 
 /**
  * The gateway's own connection form for the test app's API-key account (Executor 2.0.0-beta.37):
- * its app page opens a "Connect Norn e2e echo" dialog with one "Token" field and a "Connect
- * account" button, then offers "Name this account". It does not send the browser back to Studio.
+ * its app page opens a "Connect Norn e2e echo" dialog (or "Reconnect …" with "Save credentials")
+ * with one "Token" field, then offers "Name this account". It does not send the browser back to Studio.
  */
 async function gatewayAccountForm(page: Page) {
   await page.waitForURL(/gateway-next\.norn\.cloud\//, { timeout: 30_000 })
@@ -65,8 +65,10 @@ async function gatewayAccountForm(page: Page) {
     await page.getByLabel("Password").press("Enter")
   }
   await page.getByLabel(/^(token|api key)$/i).first().fill(env("E2E_APP_KEY"))
-  await page.getByRole("button", { name: /^(connect account|save|update|reconnect)$/i }).first().click()
-  await page.getByText(/name this account|linked for you/i).first().waitFor({ timeout: 30_000 })
+  // "Connect account" for a new account; "Save credentials" when reconnecting one.
+  const submit = page.getByRole("button", { name: /^(connect account|save credentials)$/i }).first()
+  await submit.click()
+  await submit.waitFor({ state: "detached", timeout: 30_000 })
 }
 
 /** Whether the gateway reads Signed in, once its status has loaded (never before). */
