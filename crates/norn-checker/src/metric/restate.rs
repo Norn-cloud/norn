@@ -83,6 +83,7 @@ fn aggregate_words(aggregate: MeasureAggregate) -> &'static str {
     match aggregate {
         MeasureAggregate::Sum => "sum of",
         MeasureAggregate::Count => "count of",
+        MeasureAggregate::CountDistinct => "count of distinct",
         MeasureAggregate::Min => "least",
         MeasureAggregate::Max => "greatest",
         MeasureAggregate::Avg => "average of",
@@ -91,6 +92,7 @@ fn aggregate_words(aggregate: MeasureAggregate) -> &'static str {
 
 fn value_words(value: &RuntimeValue) -> String {
     match value {
+        RuntimeValue::Null => "no value".to_owned(),
         RuntimeValue::Bool(flag) => flag.to_string(),
         RuntimeValue::Number(number) => number.canonical(),
         RuntimeValue::String(text) => text.clone(),
