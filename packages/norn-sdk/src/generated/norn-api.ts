@@ -95,6 +95,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/runs`: one page in run-id order, holding only runs the caller may
+         *     read. The cursor advances past every examined row, readable or not.
+         * @description # Errors
+         *     Missing or foreign scope, an invalid limit, or a host failure.
+         */
+        get: operations["list_runs"];
+        put?: never;
+        /**
+         * `POST /v1/runs`: start a run of an installed flow.
+         * @description # Errors
+         *     Missing or foreign scope, a denied caller, an invalid body, an unknown
+         *     flow, a run id already started for another flow (`run.exists`), a refused
+         *     start turn (`run.start_refused`, or the kernel's own refusal code), or a
+         *     host failure.
+         */
+        post: operations["start_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/runs/{id}`.
+         * @description # Errors
+         *     Missing or foreign scope; `run.not_found` for an absent or unreadable run.
+         */
+        get: operations["get_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7991,6 +8042,74 @@ export interface components {
             /** @description RFC 6901 JSON pointer into the submitted document. */
             pointer: string;
         };
+        /** @description One run, as the routes return it. */
+        RunDocument: {
+            /**
+             * Format: int64
+             * @description Start time (logical milliseconds) and commit.
+             */
+            createdAtMs: number;
+            /**
+             * Format: int64
+             * @description The starting commit.
+             */
+            createdCommitSeq: number;
+            /** @description The flow it runs. */
+            flow: components["schemas"]["RunFlow"];
+            /**
+             * Format: int64
+             * @description Its generation.
+             */
+            generation: number;
+            /** @description The run id. */
+            id: string;
+            /** @description The run's object type. */
+            objectType: string;
+            /** @description Its lifecycle state; `null` once the run object is deleted. */
+            state?: string | null;
+            /**
+             * Format: int64
+             * @description Last write time (logical milliseconds).
+             */
+            updatedAtMs: number;
+            /**
+             * Format: int64
+             * @description The last commit that wrote the run object.
+             */
+            updatedCommitSeq: number;
+            /**
+             * Format: int64
+             * @description The run object's version.
+             */
+            version: number;
+        };
+        /** @description The flow a run executes, pinned by definition id and version. */
+        RunFlow: {
+            /** @description The flow's definition id. */
+            id: string;
+            /** @description Its version. */
+            version: string;
+        };
+        /** @description One page of runs. */
+        RunPage: {
+            /** @description Pass as `cursor` for the next page; absent on the last page. */
+            nextCursor?: string | null;
+            /** @description The runs the caller may read, in run-id order. */
+            runs: components["schemas"]["RunDocument"][];
+        };
+        /** @description `POST /v1/runs` body. */
+        StartRunRequest: {
+            /**
+             * @description The installed flow's definition id (`flow.id`); its rule is
+             *     `<flow>.flow.rule`.
+             */
+            flow: string;
+            /**
+             * @description The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry
+             *     with the same id and flow returns the existing run.
+             */
+            runId: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -8271,6 +8390,188 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    list_runs: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /** @description Only runs of this flow (its definition id). */
+                flow?: string;
+                /** @description Only runs in this lifecycle state. */
+                state?: string;
+                /** @description The previous page's `nextCursor`. */
+                cursor?: string;
+                /** @description Page size, 1 to 200 (default 50). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    start_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

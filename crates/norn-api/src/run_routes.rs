@@ -33,7 +33,7 @@ pub const MAX_RUN_ID_BYTES: usize = 128;
 pub type ReadAccess<'a> = &'a dyn Fn(ReadCapability, &str) -> norn_kernel::authz::AccessRequest;
 
 /// `POST /v1/runs` body.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartRunRequest {
     /// The installed flow's definition id (`flow.id`); its rule is
@@ -44,8 +44,17 @@ pub struct StartRunRequest {
     pub run_id: String,
 }
 
+/// The flow a run executes, pinned by definition id and version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+pub struct RunFlow {
+    /// The flow's definition id.
+    pub id: String,
+    /// Its version.
+    pub version: String,
+}
+
 /// One run, as the routes return it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunDocument {
     /// The run id.
@@ -53,7 +62,7 @@ pub struct RunDocument {
     /// Its generation.
     pub generation: u64,
     /// The flow it runs.
-    pub flow: FlowRef,
+    pub flow: RunFlow,
     /// The run's object type.
     pub object_type: String,
     /// Its lifecycle state; `null` once the run object is deleted.
@@ -75,7 +84,10 @@ impl From<RunRow> for RunDocument {
         Self {
             id: row.run_id,
             generation: row.generation,
-            flow: row.flow,
+            flow: RunFlow {
+                id: row.flow.id,
+                version: row.flow.version,
+            },
             object_type: row.object_type,
             state: row.state,
             version: row.version,
@@ -88,7 +100,7 @@ impl From<RunRow> for RunDocument {
 }
 
 /// One page of runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunPage {
     /// The runs the caller may read, in run-id order.
@@ -99,13 +111,19 @@ pub struct RunPage {
 }
 
 /// `GET /v1/runs` query.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[into_params(parameter_in = Query, rename_all = "camelCase")]
 pub struct RunsQuery {
-    /// Required scope.
-    pub scope: ScopeQuery,
-    /// Only runs of this flow.
+    /// Organization (required).
+    #[param(required = true, nullable = false)]
+    pub org_id: Option<String>,
+    /// Environment (required).
+    #[param(required = true, nullable = false)]
+    pub environment_id: Option<String>,
+    /// Only runs of this flow (its definition id).
     pub flow: Option<String>,
-    /// Only runs in this state.
+    /// Only runs in this lifecycle state.
     pub state: Option<String>,
     /// The previous page's `nextCursor`.
     pub cursor: Option<String>,
@@ -147,12 +165,12 @@ fn readable<E: SqlEngine>(host: &DevHost<E>, access: ReadAccess<'_>, row: &RunRo
 }
 
 /// The installed flow: its rule, Run type, lifecycle property and version.
-struct InstalledFlow {
-    rule: RuleRoot,
-    version: String,
-    object_type: String,
-    state_property: String,
-    environment_hash: String,
+pub(crate) struct InstalledFlow {
+    pub(crate) rule: RuleRoot,
+    pub(crate) version: String,
+    pub(crate) object_type: String,
+    pub(crate) state_property: String,
+    pub(crate) environment_hash: String,
 }
 
 fn text<'v>(value: &'v serde_json::Value, pointer: &str) -> Option<&'v str> {
@@ -168,7 +186,7 @@ fn flow_not_found() -> Refusal {
     )
 }
 
-fn installed_flow<E: SqlEngine>(
+pub(crate) fn installed_flow<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
     flow: &str,
 ) -> Result<InstalledFlow, Refusal> {
@@ -229,6 +247,7 @@ fn installed_flow<E: SqlEngine>(
 /// flow, a run id already started for another flow (`run.exists`), a refused
 /// start turn (`run.start_refused`, or the kernel's own refusal code), or a
 /// host failure.
+#[utoipa::path(post, path = "/v1/runs", params(ScopeQuery), request_body = StartRunRequest, responses((status = 201, body = RunDocument), (status = 200, body = RunDocument), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 409, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
 pub fn start_run<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -357,6 +376,7 @@ fn commit_start<E: SqlEngine>(
 ///
 /// # Errors
 /// Missing or foreign scope; `run.not_found` for an absent or unreadable run.
+#[utoipa::path(get, path = "/v1/runs/{id}", params(ScopeQuery, ("id" = String, Path)), responses((status = 200, body = RunDocument), (status = 400, body = Refusal), (status = 404, body = Refusal), (status = 500, body = Refusal)))]
 pub fn get_run<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -385,16 +405,15 @@ pub fn get_run<E: SqlEngine>(
 ///
 /// # Errors
 /// Missing or foreign scope, an invalid limit, or a host failure.
+#[utoipa::path(get, path = "/v1/runs", params(RunsQuery), responses((status = 200, body = RunPage), (status = 400, body = Refusal), (status = 500, body = Refusal)))]
 pub fn list_runs<E: SqlEngine>(
     host: &DevHost<E>,
     query: &RunsQuery,
     access: ReadAccess<'_>,
 ) -> Result<RunPage, Refusal> {
     let _epoch = host.definition_read()?;
-    host.scope().admit(
-        query.scope.org_id.as_deref(),
-        query.scope.environment_id.as_deref(),
-    )?;
+    host.scope()
+        .admit(query.org_id.as_deref(), query.environment_id.as_deref())?;
     let limit = query.limit.unwrap_or(50);
     if !(1..=norn_cell::flow_run::MAX_RUN_PAGE).contains(&limit) {
         return Err(Refusal::invalid("limit must be 1-200"));

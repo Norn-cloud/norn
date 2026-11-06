@@ -101,13 +101,17 @@ carrying one `norn.run.started` ledger event (run id, flow artifact id and
 version, Run type, lifecycle property) together with the write that creates the
 run object. The store records the run (generation 1) in `_norn_flow_run` in that
 commit's transaction, and refreshes its state, version and update time in the
-transaction of every later commit that writes the run object. A start without its
-creating write, or with a run id already started in the world, refuses
-(`run.start_invalid`, `run.exists`) and nothing commits. The ledger derives only
+transaction of every later commit that writes the run object. A start whose run object
+already exists before the commit (a creating write is required), whose Run type
+is undeclared, or whose run id was already started in the world refuses
+(`run.start_invalid`, `run.exists`) and nothing commits. The run-start event stays
+in the hash-chained ledger; the typed commit reader skips it as bookkeeping. The ledger derives only
 from committed batches, so every engine that runs the store's SQL maintains it and
 export replay rebuilds it. It is a read index, not authority: reads go through the
-caller's read gates on the Run type. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
-**RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**.
+caller's read gates on the Run type. `live_runs(flow)` counts the runs whose object
+exists in a non-terminal state of its Run type's lifecycle (RUN-LIVE-1), for a retire
+guard; an undeclared Run type counts as live. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
+**RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**, **RUN-LIVE**.
 
 ### RUN-ROUTES-1 — starting and reading runs
 
@@ -127,6 +131,40 @@ is `run.not_found`, exactly like an absent one, and listing omits it while the
 cursor advances past it. Named scenarios
 (`crates/norn-api/tests/run_routes.rs`, `crates/norn-cell-do/tests/server.rs`):
 **RUN-START-ONCE**, **RUN-START-REFUSE**, **RUN-READ-GATED**, **RUN-PAGE**.
+
+### PARKED-1 — parked perform commands
+
+A perform of a built-in that a person resolves (`norn.decision@1`,
+`norn_builtins::parks`) is a parked command. It is enqueued in the outbox like
+any command, in the same commit, but it never occupies the FIFO perform head:
+`perform`, the head lookup and perform claims skip it, so a waiting decision
+never blocks other work. The cell completes it out of order with the result it
+produced itself (`record_parked`, `SqliteCell::complete_parked`), at most once
+per generation; a second or concurrent resolution, another generation, or a
+command that is not parked writes nothing. Its delivery is then pending like
+any result (`Consumed::Result`), and the ordinary delivery fence consumes it
+exactly once. Every other command keeps strict FIFO order. Parking is derived
+only from the command's own payload with the compiled-in registry, so every host
+and every export replay classifies a command identically; replay checks a parked
+consumption at its own outbox position and every other at the FIFO head. Named
+scenarios (`crates/norn-cell/tests/parked.rs`): **PARKED-HEAD**, **PARKED-FIFO**,
+**PARKED-ONCE** (concurrent decide and expire, replay), **PARKED-CRASH** (restart
+before and after the consuming commit), **PARKED-INTERLEAVING** (property).
+
+### FLOW-DRIVER-1 — result turns
+
+A run advances only through result turns. When a perform's result is a pending
+delivery (an ordinary perform the cell's performer executed in FIFO order, or a
+parked command the cell resolved, PARKED-1), the driver loads the run object and
+evaluates the flow's `decide` rule on `{kind: "result", runId, step, attempt,
+results: {<step>: result}}` (FLOW-TURN-1). It commits the turn's writes and next
+dispatches in one commit that consumes the delivery (`Consumed::Result`), so each
+result advances its run exactly once; a refused turn leaves the delivery
+pending, and a second delivery refuses `run.result_not_pending`. The driver only
+performs flow perform commands (payload `kind: "perform"` with a `runId`);
+another command at the FIFO head waits for its own performer. Named scenarios
+(`crates/norn-api/tests/flow_driver.rs`): **DRIVE-TO-TERMINAL**,
+**DRIVE-INDEPENDENT**.
 
 ### Durable flow scheduling and identity (#515)
 

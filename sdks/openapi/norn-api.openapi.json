@@ -447,6 +447,306 @@
           }
         }
       }
+    },
+    "/v1/runs": {
+      "get": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`GET /v1/runs`: one page in run-id order, holding only runs the caller may\nread. The cursor advances past every examined row, readable or not.",
+        "description": "# Errors\nMissing or foreign scope, an invalid limit, or a host failure.",
+        "operationId": "list_runs",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "flow",
+            "in": "query",
+            "description": "Only runs of this flow (its definition id).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Only runs in this lifecycle state.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The previous page's `nextCursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`POST /v1/runs`: start a run of an installed flow.",
+        "description": "# Errors\nMissing or foreign scope, a denied caller, an invalid body, an unknown\nflow, a run id already started for another flow (`run.exists`), a refused\nstart turn (`run.start_refused`, or the kernel's own refusal code), or a\nhost failure.",
+        "operationId": "start_run",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runs/{id}": {
+      "get": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`GET /v1/runs/{id}`.",
+        "description": "# Errors\nMissing or foreign scope; `run.not_found` for an absent or unreadable run.",
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -20937,6 +21237,138 @@
             "description": "RFC 6901 JSON pointer into the submitted document."
           }
         }
+      },
+      "RunDocument": {
+        "type": "object",
+        "description": "One run, as the routes return it.",
+        "required": [
+          "id",
+          "generation",
+          "flow",
+          "objectType",
+          "version",
+          "createdAtMs",
+          "createdCommitSeq",
+          "updatedAtMs",
+          "updatedCommitSeq"
+        ],
+        "properties": {
+          "createdAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start time (logical milliseconds) and commit.",
+            "minimum": 0
+          },
+          "createdCommitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The starting commit.",
+            "minimum": 0
+          },
+          "flow": {
+            "$ref": "#/components/schemas/RunFlow",
+            "description": "The flow it runs."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its generation.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The run's object type."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its lifecycle state; `null` once the run object is deleted."
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last write time (logical milliseconds).",
+            "minimum": 0
+          },
+          "updatedCommitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The last commit that wrote the run object.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run object's version.",
+            "minimum": 0
+          }
+        }
+      },
+      "RunFlow": {
+        "type": "object",
+        "description": "The flow a run executes, pinned by definition id and version.",
+        "required": [
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The flow's definition id."
+          },
+          "version": {
+            "type": "string",
+            "description": "Its version."
+          }
+        }
+      },
+      "RunPage": {
+        "type": "object",
+        "description": "One page of runs.",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; absent on the last page."
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunDocument"
+            },
+            "description": "The runs the caller may read, in run-id order."
+          }
+        }
+      },
+      "StartRunRequest": {
+        "type": "object",
+        "description": "`POST /v1/runs` body.",
+        "required": [
+          "flow",
+          "runId"
+        ],
+        "properties": {
+          "flow": {
+            "type": "string",
+            "description": "The installed flow's definition id (`flow.id`); its rule is\n`<flow>.flow.rule`."
+          },
+          "runId": {
+            "type": "string",
+            "description": "The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry\nwith the same id and flow returns the existing run."
+          }
+        },
+        "additionalProperties": false
       }
     }
   }

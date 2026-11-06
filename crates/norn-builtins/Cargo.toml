@@ -1,0 +1,22 @@
+[package]
+name = "norn-builtins"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Norn-owned host built-in Functions and their pinned registry (ring 0; FUNCTION-HOST-1, #761)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+norn-ir = { path = "../norn-ir" }
+norn-kernel = { path = "../norn-kernel" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+[dev-dependencies]
+norn-testkit = { path = "../norn-testkit" }
+
+[lints]
+workspace = true

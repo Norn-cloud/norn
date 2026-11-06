@@ -237,7 +237,8 @@ fn starts_refuse_with_typed_codes_and_commit_nothing() {
     let page = list_runs(
         &host,
         &RunsQuery {
-            scope: query(),
+            org_id: Some("org_demo".into()),
+            environment_id: Some("dev".into()),
             limit: Some(10),
             ..RunsQuery::default()
         },
@@ -263,7 +264,8 @@ fn reads_pass_the_values_gate_and_never_reveal_invisible_runs() {
     let hidden = list_runs(
         &host,
         &RunsQuery {
-            scope: query(),
+            org_id: Some("org_demo".into()),
+            environment_id: Some("dev".into()),
             limit: Some(10),
             ..RunsQuery::default()
         },
@@ -278,7 +280,8 @@ fn reads_pass_the_values_gate_and_never_reveal_invisible_runs() {
     let page = list_runs(
         &host,
         &RunsQuery {
-            scope: query(),
+            org_id: Some("org_demo".into()),
+            environment_id: Some("dev".into()),
             limit: Some(1),
             ..RunsQuery::default()
         },
@@ -294,7 +297,8 @@ fn reads_pass_the_values_gate_and_never_reveal_invisible_runs() {
     let page = list_runs(
         &host,
         &RunsQuery {
-            scope: query(),
+            org_id: Some("org_demo".into()),
+            environment_id: Some("dev".into()),
             limit: Some(2),
             ..RunsQuery::default()
         },
@@ -314,7 +318,8 @@ fn runs_page_by_cursor_and_filter_by_flow_and_state() {
         list_runs(
             &host,
             &RunsQuery {
-                scope: query(),
+                org_id: Some("org_demo".into()),
+                environment_id: Some("dev".into()),
                 flow: flow.map(str::to_owned),
                 state: state.map(str::to_owned),
                 cursor,
@@ -349,7 +354,8 @@ fn runs_page_by_cursor_and_filter_by_flow_and_state() {
         list_runs(
             &host,
             &RunsQuery {
-                scope: query(),
+                org_id: Some("org_demo".into()),
+                environment_id: Some("dev".into()),
                 limit: Some(0),
                 ..RunsQuery::default()
             },

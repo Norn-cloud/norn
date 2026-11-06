@@ -13,6 +13,8 @@ pub mod scope;
 
 pub use clock::{Clock, ManualClock};
 
+/// FLOW-DRIVER-1: perform dispatch and result turns of flow runs.
+pub mod flow_driver;
 /// Shared cell and definition epoch.
 pub mod host;
 /// Generic MCP catalog and dispatch boundary.
