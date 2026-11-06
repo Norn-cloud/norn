@@ -95,3 +95,17 @@ test("sign-in always lands in the earliest of several organizations", async () =
     expect(me.organization).toMatchObject({ id: own, role: "owner" })
   }
 })
+
+test("an unverified account cannot accept an invitation sent to its address", async () => {
+  const env = stage()
+  const owner = cookieOf(await post(env, "/api/auth/sign-up/email", { email: "ow@example.com", password: "correct horse battery", name: "Ow" }))
+  const org = ((await (await call(env, "/api/me", { headers: { cookie: owner } })).json()) as { organization: { id: string } }).organization.id
+  const invite = await post(env, "/api/auth/organization/invite-member", { email: "claim@example.com", role: "admin", organizationId: org }, { cookie: owner })
+  expect(invite.status).toBe(200)
+  const { id } = (await invite.json()) as { id: string }
+  const claimant = cookieOf(await post(env, "/api/auth/sign-up/email", { email: "claim@example.com", password: "correct horse battery", name: "Claim" }))
+  const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: id }, { cookie: claimant })
+  expect(accept.status).toBe(403)
+  const db = env.AUTH_DB as unknown as Database
+  expect(db.query("select count(*) as n from member where organizationId = ?").get(org)).toEqual({ n: 1 })
+})
