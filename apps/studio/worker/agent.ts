@@ -1,7 +1,8 @@
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { convertToModelMessages, stepCountIs, streamText, tool, type UIMessage } from "ai"
 import { z } from "zod"
-import { check } from "./checker.ts"
+import { admitQuestion, check } from "./checker.ts"
+import { ANALYTICS, questionVerdict } from "./questions.ts"
 import { ProposalError, applyProposal, verdictOf, worldIndex } from "./proposal.ts"
 import { CONTEXT, WORLD } from "./world.ts"
 
@@ -27,6 +28,7 @@ The checker on the server decides every proposal. Never say a change is accepted
 When the economist asks for a concrete change, propose it as asked in one call, even if you expect a refusal; the checker decides, and its refusal names the law. Ask a question only when the request names no change at all.
 When the checker refuses, say which law or rule refused it in plain words, quote the law's own statement, and suggest what would satisfy it.
 Nothing you propose is installed: a proposal is checked, not applied.
+To define a business question (a measure over time, such as weekly yield), call propose_question with one question definition shaped like its example; the checker admits it or names the problem. An admitted question is not yet run: never state a number for it.
 Business questions and their numbers stay with the recorded answers in Studio; do not invent figures.
 Keep answers short and plain. Use the economist's words, not code, except when quoting a law's expression.`
 
@@ -42,6 +44,11 @@ export const tools = {
     description: "Read one artifact's full definition.",
     inputSchema: z.object({ artifactId: z.string().max(200) }),
     execute: async ({ artifactId }) => WORLD.find((envelope) => envelope.artifactId === artifactId) ?? { error: `No artifact ${artifactId}.` },
+  }),
+  propose_question: tool({
+    description: `Ask the checker whether a business question is well defined over the analytics world: object type ${ANALYTICS.artifacts[0]?.name} (properties input, recovered, loss in grams; occurred_at; metal) with metrics ${ANALYTICS.metrics.map(({ name, label }) => `${name} (${label})`).join(", ")}. Give one question definition shaped like this admitted example: ${JSON.stringify(ANALYTICS.example)}. Change only its name, aggregate, groupBy, filter and window. It is checked, not run.`,
+    inputSchema: z.object({ question: json.describe("One question definition (QuestionIR).") }),
+    execute: async ({ question }) => questionVerdict(question, admitQuestion),
   }),
   propose: tool({
     description: "Ask the checker whether one change would be admitted: set the value at a JSON pointer inside one artifact.",
