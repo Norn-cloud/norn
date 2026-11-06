@@ -251,7 +251,7 @@
         "tags": [
           "crate::question_routes"
         ],
-        "summary": "F2b: admit an ad-hoc question against the cell's declared metrics and\nanswer it once, under the same row gates and D53 redaction as a named\nquestion. Nothing is installed.\n# Errors\nAny ungranted or undeclared metric or type (one opaque 403, before\nadmission), an inadmissible question (422 `question.refused` with\ndiagnostics), a bound (413), or a compute refusal.",
+        "summary": "F2b: admit an ad-hoc question against the cell's declared metrics and\nanswer it once, under the same row gates and D53 redaction as a named\nquestion. Nothing is installed.\n# Errors\nAny ungranted metric or type, or an undeclared metric from a caller who\ncannot read every declared metric (one opaque 403, before admission); an\ninadmissible question, including an undeclared metric from a caller who\ncan (422 `question.refused` with diagnostics); a bound (413); or a\ncompute refusal.",
         "operationId": "evaluate_question",
         "parameters": [
           {

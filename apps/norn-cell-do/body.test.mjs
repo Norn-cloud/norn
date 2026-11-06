@@ -39,9 +39,14 @@ test("the bound counts bytes, not characters", async () => {
 });
 
 test("a declared Content-Length over the bound refuses before any byte is read", async () => {
-  const { request, pulled } = streamed(["x"], { "content-length": "100000" });
-  assert.equal(await boundedText(request, 64), null);
-  assert.equal(pulled.count, 0);
+  // Node's Request drops a caller-set content-length on a streamed body; an incoming
+  // Workers request keeps it. The reader needs only headers and body.
+  // highWaterMark 0: the stream pulls only when read, so any pull is the reader's.
+  let pulls = 0;
+  const body = new ReadableStream({ pull(controller) { pulls += 1; controller.close(); } }, { highWaterMark: 0 });
+  const declared = { headers: new Headers({ "content-length": "100000" }), body };
+  assert.equal(await boundedText(declared, 64), null);
+  assert.equal(pulls, 0);
 });
 
 test("an empty body is empty text", async () => {
