@@ -107,6 +107,12 @@ pub struct Flow {
     pub summary: FlowSummary,
 }
 
+/// An artifact payload as plain JSON for structural reads (numbers are not
+/// judged here; the checker admits the exact values).
+fn json(payload: &norn_ir::JsonValue) -> Value {
+    serde_json::to_value(payload).unwrap_or(Value::Null)
+}
+
 fn error(code: &str, message: impl Into<String>, pointer: impl Into<String>) -> RefusalDiagnostic {
     RefusalDiagnostic::error(code, message, pointer)
 }
@@ -243,7 +249,7 @@ pub fn check(
             format!("{rule_at}/version"),
         ));
     }
-    let rule_payload = rule.payload.to_json_value();
+    let rule_payload = json(&rule.payload.to_json_value());
     if rule_payload.get("contract").and_then(Value::as_str) != Some("decide") {
         findings.push(error(
             codes::SHAPE_INVALID,
@@ -263,9 +269,7 @@ pub fn check(
             format!("{rule_at}/dependencies"),
         ));
     }
-    let lifecycles = entity
-        .payload
-        .to_json_value()
+    let lifecycles = json(&entity.payload.to_json_value())
         .pointer("/objectType/lifecycles")
         .and_then(Value::as_array)
         .cloned()
