@@ -20,8 +20,8 @@ async function page(concept: string, id: string) {
   client.setQueryData(["object", concept, id], { object: file("object"), links: file("links"), source: file("source") })
   const root = createRootRoute()
   const router = createRouter({
-    routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage })]),
-    history: createMemoryHistory({ initialEntries: [`/sources/${concept}/${encodeURIComponent(id)}`] }),
+    routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: ObjectPage })]),
+    history: createMemoryHistory({ initialEntries: [`/sources/${concept}/${id}`] }),
   })
   await router.load()
   return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
@@ -38,4 +38,10 @@ test("a record page names its type and copyable id, and offers every tab", async
 test("a value the server recorded a source for opens its provenance", async () => {
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toMatch(/aria-haspopup="dialog"[^>]*>GOLD</)
+})
+
+test("a record id with slashes is the rest of the path, so a reload finds it without an encoded %2F", async () => {
+  const html = await page("canon.Item", "demo/item/gold")
+  expect(html).toContain("Gold scrap")
+  expect(html).not.toContain("Not Found")
 })

@@ -58,7 +58,7 @@ function ObjectTable({ concept, collected }: { readonly concept: Concept; readon
       header: "Record",
       accessorFn: ({ record }) => recordName(record),
       cell: ({ row }) => (
-        <Link to="/sources/$concept/$id" params={{ concept: row.original.record.objectType, id: row.original.record.id }} className="font-medium underline-offset-4 hover:underline">
+        <Link to="/sources/$concept/$" params={{ concept: row.original.record.objectType, _splat: row.original.record.id }} className="font-medium underline-offset-4 hover:underline">
           {recordName(row.original.record)}
         </Link>
       ),
@@ -173,7 +173,8 @@ export function ObjectRecords({ concept }: { readonly concept: Concept }) {
 
 /** Everything known about one record, tab by tab; each value opens where it came from. */
 export function ObjectPage() {
-  const { concept: name = "", id = "" } = useParams({ strict: false })
+  // The id is the rest of the path: ids hold `/`, and Cloudflare redirects an encoded `%2F` to a decoded one, so it cannot be one segment.
+  const { concept: name = "", _splat: id = "" } = useParams({ strict: false })
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
@@ -280,14 +281,14 @@ function Relations({ concept, id, links }: { readonly concept: Concept; readonly
                 <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} ({relationship.count}) → </span>
                 {edges.length === 0
                   ? <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none stored yet"}</span>
-                  : edges.map((edge) => <Link key={`${edge.targetType}/${edge.target}`} to="/sources/$concept/$id" params={{ concept: edge.targetType, id: edge.target }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.target}</Link>)}
+                  : edges.map((edge) => <Link key={`${edge.targetType}/${edge.target}`} to="/sources/$concept/$" params={{ concept: edge.targetType, _splat: edge.target }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.target}</Link>)}
               </li>
             )
           })}
           {links.items.filter((edge) => edge.target === id).map((edge) => (
             <li key={`${edge.sourceType}/${edge.source}/${edge.link}`}>
               <span className="text-muted-foreground">{edge.link.replaceAll("_", " ")} of </span>
-              <Link to="/sources/$concept/$id" params={{ concept: edge.sourceType, id: edge.source }} className="font-medium underline-offset-4 hover:underline">{edge.source}</Link>
+              <Link to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="font-medium underline-offset-4 hover:underline">{edge.source}</Link>
               <span className="text-muted-foreground"> ({conceptTitle(edge.sourceType)})</span>
             </li>
           ))}
