@@ -14,13 +14,32 @@ Build into a directory outside the checkout, then smoke it:
 export NORN_CELL_DO_PROJECT="${CARGO_TARGET_DIR:?}/norn-cell-do"
 mkdir -p "$NORN_CELL_DO_PROJECT"
 cp apps/norn-cell-do/{worker.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
-cargo build --locked -p norn-cell-do --target wasm32-unknown-unknown --profile wasm-release
+cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
 wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
   --target web --out-name norn_cell_do --out-dir "$NORN_CELL_DO_PROJECT/pkg"
 python3 apps/norn-cell-do/smoke.py celld   # or: wrangler
 ```
 
+The smoke build enables `fixtures` (`Bearer fixture:viewer@demo`, `guest@demo`);
+a deployable build omits it and then requires a verified host token.
+
 Pins: celld v0.6.3 and Wrangler 4.157.0, as in `crates/norn-cell/README.md`.
+
+## Callers
+
+A deployed cell accepts only the Studio Worker's signed host token (#817):
+`Authorization: Bearer <EdDSA JWT>`, audience `norn-host`, at most five
+minutes, its `norn.org` equal to the cell's organization, its role mapped
+through `studio-roles/1` and then the declared grant table
+`norn-cell-do-grants/1` (viewer: Population; member: + Values; admin and
+owner: + Sources). Two Worker settings are pinned configuration, never taken
+from a token:
+
+- `NORN_HOST_ISSUER`: the token issuer (Studio's base URL);
+- `NORN_HOST_JWKS_URL`: its JWKS document (Studio's `/api/auth/jwks`).
+
+The cell fetches the JWKS when it opens; a token naming an unknown key id
+triggers at most one refetch per minute, then the request is retried once.
 Set `ALLOWED_ORIGINS` (comma-separated) to let a browser origin read it.
 
 ## Guarantees and their mechanism here

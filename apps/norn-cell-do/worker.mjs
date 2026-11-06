@@ -13,18 +13,45 @@ const key = ([org, env]) => `${escape(org)}/${escape(env)}`;
 const CELL_HEADER = "x-norn-cell";
 
 export class Cell {
-  constructor(ctx) {
+  constructor(ctx, env) {
     this.ctx = ctx;
+    this.env = env;
     this.cell = null;
+    this.opening = null;
   }
-  fetch(request) {
-    // Provisioning and dispatch are synchronous Wasm: no request interleaves.
-    if (this.cell === null) {
+  /** The pinned JWKS document. The URL is configuration, never taken from a token. */
+  async jwks() {
+    const response = await fetch(this.env.NORN_HOST_JWKS_URL, { redirect: "error" });
+    if (!response.ok) throw new Error(`JWKS fetch failed: HTTP ${response.status}`);
+    return response.text();
+  }
+  open(request) {
+    // One opening per object; provisioning and dispatch are synchronous Wasm.
+    this.opening ??= (async () => {
       const [org, env] = JSON.parse(request.headers.get(CELL_HEADER));
-      this.cell = new NornCell(this.ctx.storage, org, env);
-    }
+      const issuer = this.env.NORN_HOST_ISSUER;
+      const jwks = issuer === undefined ? undefined : await this.jwks();
+      this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks);
+    })().catch((error) => {
+      this.opening = null;
+      throw error;
+    });
+    return this.opening;
+  }
+  serve(request) {
     const url = new URL(request.url);
-    const reply = this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined);
+    return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now());
+  }
+  async fetch(request) {
+    await this.open(request);
+    let reply = this.serve(request);
+    if (reply.refreshJwks) {
+      // An unknown key id, at most once per refresh interval: refetch the pinned JWKS and retry once.
+      try {
+        this.cell.replaceJwks(await this.jwks());
+        reply = this.serve(request);
+      } catch {}
+    }
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
 }

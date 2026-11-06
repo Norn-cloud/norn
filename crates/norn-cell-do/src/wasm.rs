@@ -3,6 +3,12 @@
 //! The DO constructor passes its root `ctx.storage`; the cell keeps it for the
 //! object's lifetime. The DO's input/output gates and single-threaded event
 //! loop make this cell the only writer; `transactionSync` is the commit.
+//!
+//! Callers are verified host tokens ([`TokenPrincipals`]); the issuer and its
+//! JWKS come from the Worker's pinned configuration. Fixture principals exist
+//! only in builds with the `fixtures` feature (local smoke tests).
+
+use std::cell::Cell;
 
 use norn_api::host::DevHost;
 use norn_api::question_routes::QuestionRuntime;
@@ -12,8 +18,18 @@ use wasm_bindgen::prelude::*;
 
 use crate::analytics::{self, DemoQuestions};
 use crate::policy::{DEMO_GRANTS, ReadPolicy};
-use crate::principal::DEMO_PRINCIPALS;
+use crate::principal::{PrincipalResolver, TokenPrincipals};
 use crate::{seed, server};
+
+/// Least time between two refetches of the pinned JWKS (milliseconds), so
+/// tokens naming unknown key ids cannot drive a fetch storm.
+const JWKS_REFRESH_MS: f64 = 60_000.0;
+
+enum Principals {
+    Tokens(TokenPrincipals),
+    #[cfg(feature = "fixtures")]
+    Fixtures(crate::principal::FixturePrincipals),
+}
 
 /// One opened tenant cell.
 #[wasm_bindgen]
@@ -21,6 +37,8 @@ pub struct NornCell {
     host: DevHost<WorkersEngine>,
     /// The cell's admitted questions, when it publishes any.
     questions: Option<DemoQuestions>,
+    principals: Principals,
+    last_refresh_ms: Cell<f64>,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -34,16 +52,29 @@ pub struct Reply {
     pub status: u16,
     /// JSON body.
     pub body: String,
+    /// The pinned JWKS should be refetched (an unknown key id was seen and the
+    /// refresh interval has passed); the host refetches, then retries once.
+    #[wasm_bindgen(js_name = refreshJwks)]
+    pub refresh_jwks: bool,
 }
 
 #[wasm_bindgen]
 impl NornCell {
     /// Open (provisioning on first use) the cell for the DO's own scope.
+    /// `issuer` and `jwks` are the pinned token issuer and its key document;
+    /// without the `fixtures` feature both are required.
     ///
     /// # Errors
-    /// The scope has no published cell, or provisioning failed.
+    /// The scope has no published cell, provisioning failed, or no usable
+    /// issuer keys were supplied.
     #[wasm_bindgen(constructor)]
-    pub fn new(storage: JsValue, org_id: String, environment_id: String) -> Result<Self, JsValue> {
+    pub fn new(
+        storage: JsValue,
+        org_id: String,
+        environment_id: String,
+        issuer: Option<String>,
+        jwks: Option<String>,
+    ) -> Result<Self, JsValue> {
         let scope = CellScope {
             org_id,
             environment_id,
@@ -59,15 +90,53 @@ impl NornCell {
             return Err(JsValue::from_str("no cell is published for this scope"));
         };
         // Data reads are decided by the kernel PDP over this cell's own model.
-        let policy = ReadPolicy::compile(store.model().object_types(), &scope, DEMO_GRANTS)
+        let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS)
             .map_err(rejected)?;
+        let slot = policy.caller();
+        let principals = match (issuer, jwks) {
+            (Some(issuer), Some(jwks)) => Principals::Tokens(
+                TokenPrincipals::new(&issuer, &jwks, scope.clone(), slot)
+                    .map_err(|refusal| JsValue::from_str(&refusal.code))?,
+            ),
+            #[cfg(feature = "fixtures")]
+            (None, None) => Principals::Fixtures(crate::principal::FixturePrincipals::new(
+                crate::principal::DEMO_FIXTURES,
+                slot,
+            )),
+            _ => {
+                return Err(JsValue::from_str(
+                    "the token issuer and its JWKS are required",
+                ));
+            }
+        };
         let host = DevHost::from_store(store, scope, |command| command.payload.clone())
             .map_err(|refusal| JsValue::from_str(&refusal.code))?
             .with_authorizer(policy);
-        Ok(Self { host, questions })
+        Ok(Self {
+            host,
+            questions,
+            principals,
+            last_refresh_ms: Cell::new(f64::NEG_INFINITY),
+        })
     }
 
-    /// Serve one request; every outcome is a status and a JSON document.
+    /// Install a refetched JWKS from the pinned location.
+    ///
+    /// # Errors
+    /// The document is unusable; the previous keys stay in force.
+    #[wasm_bindgen(js_name = replaceJwks)]
+    pub fn replace_jwks(&self, jwks: &str) -> Result<(), JsValue> {
+        match &self.principals {
+            Principals::Tokens(tokens) => tokens
+                .replace_jwks(jwks)
+                .map_err(|refusal| JsValue::from_str(&refusal.code)),
+            #[cfg(feature = "fixtures")]
+            Principals::Fixtures(_) => Ok(()),
+        }
+    }
+
+    /// Serve one request at `now_ms` (the host clock, Unix milliseconds);
+    /// every outcome is a status and a JSON document.
     #[must_use]
     #[allow(
         clippy::needless_pass_by_value,
@@ -79,23 +148,48 @@ impl NornCell {
         path: &str,
         query: &str,
         authorization: Option<String>,
+        now_ms: f64,
     ) -> Reply {
         let questions = self
             .questions
             .as_ref()
             .map(|questions| -> &dyn QuestionRuntime<WorkersEngine> { questions });
-        let response = server::handle_with(
-            &self.host,
-            &DEMO_PRINCIPALS,
-            questions,
+        let resolver: &dyn PrincipalResolver = match &self.principals {
+            Principals::Tokens(tokens) => tokens,
+            #[cfg(feature = "fixtures")]
+            Principals::Fixtures(fixtures) => fixtures,
+        };
+        let request = server::Request {
             method,
             path,
             query,
-            authorization.as_deref(),
-        );
+            authorization: authorization.as_deref(),
+            now: seconds(now_ms),
+        };
+        let response = server::handle_with(&self.host, resolver, questions, &request);
+        let unknown_kid = match &self.principals {
+            Principals::Tokens(tokens) => tokens.take_unknown_kid(),
+            #[cfg(feature = "fixtures")]
+            Principals::Fixtures(_) => false,
+        };
+        let refresh_jwks = unknown_kid && now_ms - self.last_refresh_ms.get() >= JWKS_REFRESH_MS;
+        if refresh_jwks {
+            self.last_refresh_ms.set(now_ms);
+        }
         Reply {
             status: response.status,
             body: response.body,
+            refresh_jwks,
         }
     }
+}
+
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a host clock in milliseconds since the epoch, clamped to non-negative"
+)]
+fn seconds(now_ms: f64) -> u64 {
+    (now_ms.max(0.0) / 1000.0) as u64
 }
