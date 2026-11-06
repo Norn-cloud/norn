@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
-import { recordedTransport } from "./lib/transport.ts"
+import { transport } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
@@ -172,14 +172,14 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
 
 /** The object types the systems feed, for the submenu island. */
 export function useSourcesMenu(): readonly MenuEntry[] | undefined {
-  const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
+  const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return catalog?.concepts.filter(({ kind }) => kind === "concept").map((concept) => ({ href: `#concept-${concept.name}`, label: concept.title, group: "Object types" }))
 }
 
 /** The admitted catalog, indexed once per read. */
 export function useCatalog() {
-  const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
+  const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return { read, catalog }
 }

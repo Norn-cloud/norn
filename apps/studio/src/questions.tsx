@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
-import { recordedTransport, type QuestionAnswer } from "./lib/transport.ts"
+import { transport, type QuestionAnswer } from "./lib/transport.ts"
 import { RestatementCard } from "./restatement.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
@@ -127,7 +127,7 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
 
 /** The questions on the board, for the submenu island. */
 export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
-  const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
+  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
   return board.data && [
     ...board.data.map(({ question }) => ({ href: `#${question.document.name}`, label: headline(question.document) })),
     { href: "#corrections", label: "Corrections" },
@@ -135,7 +135,7 @@ export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
 }
 
 export function QuestionsPage() {
-  const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
+  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
   return (
     <section className="space-y-6">
       <div className="space-y-2">

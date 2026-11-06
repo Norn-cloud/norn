@@ -14,7 +14,7 @@ import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
 import { member } from "./lib/exact.ts"
 import { collect, compareDecimals, factText, nextAfter, readProblem, recordName, shouldReadNext, type PageRow } from "./lib/objects.ts"
-import { recordedTransport } from "./lib/transport.ts"
+import { transport } from "./lib/transport.ts"
 import { DenseTable, RECORDED_HINT, useCatalog } from "./sources.tsx"
 
 /** Pages read per concept before the list is shown as incomplete. */
@@ -36,7 +36,7 @@ function ObjectTable({ concept, collected }: { readonly concept: Concept; readon
   const sources = useQueries({
     queries: collected.map(({ record }) => ({
       queryKey: ["object", record.objectType, record.id],
-      queryFn: () => recordedTransport.object(record.objectType, record.id),
+      queryFn: () => transport.object(record.objectType, record.id),
     })),
   })
   // Row values are cached against `data`, so each row carries its source system.
@@ -125,7 +125,7 @@ export function ObjectsPage() {
   const pages = useInfiniteQuery({
     queryKey: ["objects", name],
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => recordedTransport.objectPage(name, pageParam),
+    queryFn: ({ pageParam }) => transport.objectPage(name, pageParam),
     getNextPageParam: nextAfter,
   })
   // Keep reading server pages until the server returns no cursor, within a bound.
@@ -177,7 +177,7 @@ export function ObjectPage() {
   const { concept: name = "", id = "" } = useParams({ strict: false })
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
-  const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => recordedTransport.object(name, id) })
+  const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
   const data = reads.data
   const lineage = data?.source?.document
   const problem = readProblem(catalogRead, reads)
