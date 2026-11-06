@@ -11,7 +11,9 @@
 )]
 use std::collections::BTreeSet;
 
-use norn_api::definition_routes::{AgentAdmissionContext, DefinitionKinds};
+use norn_api::definition_routes::{
+    AgentAdmissionContext, AgentToolBinding, DefinitionKinds, connector_well_formed,
+};
 use norn_api::host::DevHost;
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::analytics::{self, DemoQuestions};
@@ -522,4 +524,39 @@ fn agents_are_admitted_by_the_registered_checker_against_host_context() {
     let (status, taken) = install(&cell, "studio.agent.triage", &dashboard("A"), Some(1));
     assert_eq!(status, 422, "{taken}");
     assert_eq!(pointers(&taken)[0].0, "definition.id_in_use");
+}
+
+#[test]
+fn tool_bindings_follow_the_connector_naming_contract() {
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let binding =
+        AgentToolBinding::new("b1", "executor:github/create_issue@1.2.0", &digest).unwrap();
+    assert_eq!(binding.connector, "executor:github/create_issue@1.2.0");
+    for connector in [
+        "executor:github/create_issue",
+        "github/create_issue@1",
+        "executor:github@1",
+        "executor:/create_issue@1",
+        "executor:github/ create_issue@1",
+        "executor:git/hub/create_issue@1",
+        "",
+    ] {
+        assert!(!connector_well_formed(connector), "{connector:?}");
+        assert!(AgentToolBinding::new("b1", connector, &digest).is_err());
+    }
+    for digest in [
+        "a".repeat(64),
+        format!("sha256:{}", "A".repeat(64)),
+        format!("sha256:{}", "a".repeat(63)),
+    ] {
+        assert!(AgentToolBinding::new("b1", "executor:github/create_issue@1", digest).is_err());
+    }
+    assert!(
+        AgentToolBinding::new(
+            " ",
+            "executor:github/create_issue@1",
+            format!("sha256:{}", "0".repeat(64))
+        )
+        .is_err()
+    );
 }

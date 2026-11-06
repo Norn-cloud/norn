@@ -80,16 +80,83 @@ pub mod codes {
     pub const ALREADY_RETIRED: &str = "definition.already_retired";
 }
 
-/// One tool binding the host resolved for the org: what an agent's `tools`
-/// may name.
+/// One tool binding the host resolved for the org from CONNECT's stored
+/// bindings: what an agent's `tools` may name. Named exactly as the browser
+/// check names it, so the canvas and the server agree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentToolBinding {
     /// The tool binding id.
     pub id: String,
-    /// The installed connector it resolves to.
+    /// `gateway:app/tool@version`.
     pub connector: String,
-    /// The connector manifest digest, `sha256:<64 hex>`.
+    /// `sha256:<64 lower-case hex>` over the canonical JSON
+    /// `{format: "norn.connector-tool-manifest/1", gateway, app, tool,
+    /// inputSchema, outputSchema}`, as CONNECT stores it.
     pub manifest_digest: String,
+}
+
+impl AgentToolBinding {
+    /// A binding whose `connector` and `manifestDigest` follow the naming
+    /// contract.
+    ///
+    /// # Errors
+    /// A blank id, a connector that is not `gateway:app/tool@version`, or a
+    /// digest that is not `sha256:<64 lower-case hex>`.
+    pub fn new(
+        id: impl Into<String>,
+        connector: impl Into<String>,
+        manifest_digest: impl Into<String>,
+    ) -> Result<Self, String> {
+        let binding = Self {
+            id: id.into(),
+            connector: connector.into(),
+            manifest_digest: manifest_digest.into(),
+        };
+        if binding.id.trim().is_empty() {
+            return Err("a tool binding has a blank id".to_owned());
+        }
+        if !connector_well_formed(&binding.connector) {
+            return Err(format!(
+                "tool binding {:?}: connector {:?} is not gateway:app/tool@version",
+                binding.id, binding.connector
+            ));
+        }
+        let hex = binding.manifest_digest.strip_prefix("sha256:");
+        if !hex.is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
+            return Err(format!(
+                "tool binding {:?}: manifestDigest is not sha256:<64 lower-case hex>",
+                binding.id
+            ));
+        }
+        Ok(binding)
+    }
+}
+
+/// Whether `connector` is `gateway:app/tool@version`, each part non-blank
+/// and free of the separators that delimit the others.
+#[must_use]
+pub fn connector_well_formed(connector: &str) -> bool {
+    let part = |text: &str, banned: &[char]| {
+        !text.trim().is_empty() && text.trim() == text && !text.contains(banned)
+    };
+    let Some((gateway, rest)) = connector.split_once(':') else {
+        return false;
+    };
+    let Some((app, rest)) = rest.split_once('/') else {
+        return false;
+    };
+    let Some((tool, version)) = rest.rsplit_once('@') else {
+        return false;
+    };
+    part(gateway, &[':', '/', '@'])
+        && part(app, &[':', '/', '@'])
+        && part(tool, &[':', '/'])
+        && part(version, &[':', '/', '@'])
 }
 
 /// What an agent is admitted against: host-supplied only, never from the
@@ -98,7 +165,8 @@ pub struct AgentToolBinding {
 pub struct AgentAdmissionContext {
     /// The model allowlist.
     pub models: BTreeSet<String>,
-    /// The org's resolved tool bindings.
+    /// The org's resolved tool bindings, each built with
+    /// [`AgentToolBinding::new`].
     pub bindings: Vec<AgentToolBinding>,
     /// The admitted law ids.
     pub laws: BTreeSet<String>,
