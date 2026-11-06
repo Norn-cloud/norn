@@ -600,6 +600,10 @@ def workflow_verdict_canaries(source: str) -> None:
     duplicate["bundle"] = [{"id": "b0", "tasks": ["test/rest-1", "test/rest-1"]}]
     cases.append(("pull_request", duplicate, passed, False))
     cases.append(("pull_request", affected, {**passed, "CORE": "Success"}, False))
+    # A stacked pull request never qualifies, whatever its plan and results claim.
+    for base_ref in ("feature/base", "", "Main", "main "):
+        cases.append(("pull_request", affected, {**passed, "BASE_REF": base_ref}, False))
+        cases.append(("pull_request", full_plan, {**passed, "BASE_REF": base_ref}, False))
     for mutate in (
         lambda p: p.pop("bundle"),
         lambda p: p["bundle"][0]["tasks"].pop(),
@@ -610,7 +614,7 @@ def workflow_verdict_canaries(source: str) -> None:
         mutate(broken)
         cases.append(("pull_request", broken, passed, False))
     for index, (event, plan, results, accepted) in enumerate(cases):
-        environment = {**os.environ, "DRAFT": "false", "BASE": "base", "HEAD_SHA": "head", **results, "EVENT": event, "PLAN": json.dumps(plan)}
+        environment = {**os.environ, "DRAFT": "false", "BASE_REF": "main", "BASE": "base", "HEAD_SHA": "head", **results, "EVENT": event, "PLAN": json.dumps(plan)}
         result = subprocess.run(["bash", "-c", verdict], cwd=ROOT, env=environment,
                                 capture_output=True, text=True, timeout=10, check=False)
         if (result.returncode == 0) != accepted:
