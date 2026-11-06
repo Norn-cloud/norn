@@ -822,6 +822,8 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         # deletes it (the condition keys on the author, so the sender is irrelevant).
         # A pull_request_target event evaluates only for a main-targeted head, and an edit
         # only when it changed the base (a retarget): stacked heads never take the mutex.
+        # Actions compares strings case-insensitively, so a case-variant base such as `Main`
+        # is evaluated too: the skip errs only towards an extra evaluation, never away from main.
         for cancelled, author, base, retarget in itertools.product(
                 (False, True), ("User", "Bot", "Organization"), ("main", "feature/base", "Main", ""), (False, True)):
             condition = expression
@@ -829,7 +831,7 @@ def workflow_trusted_policy_canaries(source: str) -> None:
                 "github.event_name": event, "github.event.action": action,
                 "github.event.comment.body": body, "github.event.changes.body.from": previous,
                 "github.event.issue.pull_request": is_pr, "github.event.comment.user.type": author,
-                "github.event.pull_request.base.ref": base, "github.event.repository.default_branch": "main",
+                "github.event.pull_request.base.ref": base.casefold(), "github.event.repository.default_branch": "main",
                 "github.event.changes.base": retarget,
             }.items():
                 condition = condition.replace(key, repr(value))
@@ -837,7 +839,7 @@ def workflow_trusted_policy_canaries(source: str) -> None:
             condition = re.sub(r"!(?!=)", " not ", condition)
             accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
             bot = event == "issue_comment" and author == "Bot"
-            stacked = event == "pull_request_target" and (base != "main" or (action == "edited" and not retarget))
+            stacked = event == "pull_request_target" and (base.casefold() != "main" or (action == "edited" and not retarget))
             if bool(accepted) != (expected and not cancelled and not bot and not stacked):
                 raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}/{base}/{retarget}")
 
