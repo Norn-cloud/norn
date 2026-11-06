@@ -405,7 +405,7 @@ impl ObjectAccess for Committing {
                 self.model.clone(),
                 norn_cell::StoreOptions::default(),
             )
-            .unwrap();
+            .map_err(Refusal::host)?;
             store
                 .commit(&CommitBatch {
                     world: MAIN_WORLD.into(),
@@ -414,7 +414,7 @@ impl ObjectAccess for Committing {
                     writes: vec![put("SYN-LATE", 1_000, 900, "2026-07-10T12:00:00Z", "gold")],
                     ..CommitBatch::default()
                 })
-                .unwrap();
+                .map_err(Refusal::host)?;
         }
         Mapping.access(scope, actor, capability, object_type, row)
     }
