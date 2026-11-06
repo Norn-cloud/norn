@@ -135,6 +135,18 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &self.store
     }
 
+    /// Capture pinned mapping evidence while the cell owns its store.
+    ///
+    /// # Errors
+    /// Invalid framing/pins or the existing atomic inbox capture failure.
+    pub fn inject_mapping_bundle(
+        &mut self,
+        raw: &Observed<Value>,
+        input: &crate::mapping_bundle::MappingInput,
+    ) -> Result<(String, bool), CellError> {
+        self.store.inject_mapping_bundle(raw, input)
+    }
+
     /// Begin a private rebuild in this native host's world and tenant scope.
     /// # Errors
     /// Refuses foreign scope, stale slot versions or invalid rebuild declarations.
@@ -559,7 +571,7 @@ fn link_state<S: SqlEngine>(
 }
 
 /// What the kernel's admission check reads, inside the commit transaction.
-struct GuardView<'r, 'c, S: SqlEngine>(&'r StoreReader<'c, S>);
+pub(crate) struct GuardView<'r, 'c, S: SqlEngine>(pub(crate) &'r StoreReader<'c, S>);
 
 impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
     type Error = CellError;
@@ -820,9 +832,7 @@ where
             command,
             generation,
         }) = &commit.consumes
-            && let Some(pending) = self.store.read().head_command()?
-            && pending.command.command_id == command.0
-            && pending.command.generation == generation.0
+            && let Some(pending) = self.store.read().pending_result(&command.0, generation.0)?
             && pending
                 .command
                 .command
@@ -1265,6 +1275,35 @@ where
             input,
         }))
     }
+
+    /// PARKED-1: record the result the cell itself produced for a parked
+    /// command (for `norn.decision@1`, the receipt it issued), out of FIFO
+    /// order. Returns `None` without writing when the command is not a
+    /// pending parked command at `generation`, or already has a result, so a
+    /// parked command completes at most once. A commit consuming the returned
+    /// delivery applies it, exactly once, under the ordinary delivery fence.
+    ///
+    /// # Errors
+    ///
+    /// Serialization or SQLite errors.
+    pub fn complete_parked(
+        &mut self,
+        command: &CommandId,
+        generation: Generation,
+        input: I,
+    ) -> Result<Option<Performed<I>>, CellError> {
+        if !self
+            .store
+            .record_parked(&command.0, generation.0, &to_runtime(&input)?)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(Performed {
+            command: command.clone(),
+            generation,
+            input,
+        }))
+    }
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
@@ -1482,6 +1521,14 @@ where
                     != Some(bundle.definitions_version)
                 {
                     return Err(CommitError::Host(CellError::MappingBundleMismatch));
+                }
+                if reader
+                    .mapping_link_plan(bundle, &commit)
+                    .map_err(CommitError::Host)?
+                    .links
+                    != commit.links
+                {
+                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
                 }
                 if reader
                     .mapping_conflict(bundle)

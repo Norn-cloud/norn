@@ -160,10 +160,21 @@ pub const CRATES: &[CrateRule] = &[
         ],
         &["serde", "thiserror"],
     ),
+    r0(
+        "norn-builtins",
+        &["norn-ir", "norn-kernel"],
+        &["serde", "serde_json"],
+    ),
     rule(
         "norn-cell",
         Ring::One,
-        &["norn-kernel", "norn-checker", "norn-projections", "norn-ir"],
+        &[
+            "norn-kernel",
+            "norn-builtins",
+            "norn-checker",
+            "norn-projections",
+            "norn-ir",
+        ],
     ),
     rule(
         "norn-cell-do",
