@@ -21,9 +21,16 @@ interface QuestionShape {
   readonly window?: { readonly start?: string; readonly end?: string }
 }
 
+/** A finding the builder can place: a string code and message, and a pointer that is absent, null or a string. */
+const isFinding = (finding: unknown): boolean => {
+  if (finding === null || typeof finding !== "object") return false
+  const { code, message, pointer } = finding as Record<string, unknown>
+  return typeof code === "string" && typeof message === "string" && (pointer === undefined || pointer === null || typeof pointer === "string")
+}
+
 export function questionVerdictOf(output: unknown): QuestionVerdict | undefined {
   const value = output as Partial<QuestionVerdict> | null
-  return value?.kind === "question" && typeof value.admitted === "boolean" && Array.isArray(value.findings) ? value as QuestionVerdict : undefined
+  return value?.kind === "question" && typeof value.admitted === "boolean" && Array.isArray(value.findings) && value.findings.every(isFinding) ? value as QuestionVerdict : undefined
 }
 
 const words = (property: string | undefined) => (property ?? "").replaceAll("_", " ")
