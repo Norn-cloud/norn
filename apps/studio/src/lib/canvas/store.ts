@@ -1,9 +1,11 @@
 /**
  * Canvas definitions saved in the cell: the same definition routes as
  * dashboards (`lib/definitions.ts`, CELL-DO's contract), for any `kind`.
- * The cell checks every admit and install and decides; a refusal names the law.
+ * The cell checks every admit and install and decides; a refusal names the law. Every call carries the Studio
+ * scope (`?orgId=…&environmentId=…`): without it the cell fails closed.
  */
 import { CellUnavailable, NotConnected, type Admission, type Finding, type Receipt } from "../definitions.ts"
+import { scopeQuery, type StudioScope } from "../scope.ts"
 
 export interface Summary { readonly id: string; readonly title: string; readonly version: number; readonly lifecycle: string; readonly updatedAtMs: number }
 export interface Stored<T> { readonly id: string; readonly version: number; readonly payload: T }
@@ -29,8 +31,9 @@ const findingsOf = (body: unknown): readonly Finding[] => {
     : []
 }
 
-/** The definition routes for one kind, through the Studio Worker's /api/host forwarding as the signed-in account. */
-export function kindStore<T>(kind: string, fetcher: Fetch = (input, init) => fetch(input, init), base = "/api/host"): KindStore<T> {
+/** The definition routes for one kind in one scope, through the Studio Worker's /api/host forwarding as the signed-in account. */
+export function kindStore<T>(kind: string, scope: StudioScope, fetcher: Fetch = (input, init) => fetch(input, init), base = "/api/host"): KindStore<T> {
+  const q = (extra?: Record<string, string>) => scopeQuery(scope, extra)
   const call = async (path: string, body?: unknown) => {
     let response: Response
     try {
@@ -50,7 +53,7 @@ export function kindStore<T>(kind: string, fetcher: Fetch = (input, init) => fet
   }
   return {
     list: async (cursor) => {
-      const { status, body } = await call(`/v1/definitions:list?${new URLSearchParams({ kind, limit: "50", ...cursor ? { cursor } : {} })}`)
+      const { status, body } = await call(`/v1/definitions:list?${q({ kind, limit: "50", ...cursor ? { cursor } : {} })}`)
       const b = body as { items?: unknown; cursor?: unknown } | null
       if (status === 404) throw new NotConnected(`The cell's definition routes aren't live yet, so ${kind} definitions can't be listed or saved there.`)
       if (status !== 200 || !Array.isArray(b?.items)) throw new CellUnavailable(status)
@@ -60,7 +63,7 @@ export function kindStore<T>(kind: string, fetcher: Fetch = (input, init) => fet
       }
     },
     get: async (id) => {
-      const { status, body } = await call(`/v1/definitions/${encodeURIComponent(id)}`)
+      const { status, body } = await call(`/v1/definitions/${encodeURIComponent(id)}?${q()}`)
       const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: T; code?: unknown } | null
       if (status === 404 && b?.code === "definition.not_found") return undefined
       if (status === 404) throw new NotConnected(`The cell's definition routes aren't live yet, so this ${kind} can only be a draft in this browser.`)
@@ -68,13 +71,13 @@ export function kindStore<T>(kind: string, fetcher: Fetch = (input, init) => fet
       return { id: String(b.id ?? id), version: b.version, payload: b.payload }
     },
     admit: async (id, payload) => {
-      const { status, body } = await call("/v1/definitions:admit", { kind, id, payload })
+      const { status, body } = await call(`/v1/definitions:admit?${q()}`, { kind, id, payload })
       const b = body as { admitted?: unknown } | null
       if (status === 404) throw new NotConnected()
       if (status !== 200 || typeof b?.admitted !== "boolean") throw new CellUnavailable(status)
       return b.admitted ? { admitted: true } : { admitted: false, findings: findingsOf(b) }
     },
-    install: async (id, payload, expectedVersion) => saved(await call("/v1/definitions:install", { kind, id, payload, ...expectedVersion === undefined ? {} : { expectedVersion } })),
-    retire: async (id, expectedVersion) => saved(await call(`/v1/definitions/${encodeURIComponent(id)}:retire`, { expectedVersion })),
+    install: async (id, payload, expectedVersion) => saved(await call(`/v1/definitions:install?${q()}`, { kind, id, payload, ...expectedVersion === undefined ? {} : { expectedVersion } })),
+    retire: async (id, expectedVersion) => saved(await call(`/v1/definitions/${encodeURIComponent(id)}:retire?${q()}`, { expectedVersion })),
   }
 }

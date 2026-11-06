@@ -15,6 +15,7 @@ import { AGENT_NODE, OFFERED_MODELS, agentGraph, agentKinds, agentOf, emptyAgent
 import { loadAgentChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { kindStore, type KindStore } from "./lib/canvas/store.ts"
+import { activeScope } from "./lib/scope.ts"
 import { words } from "./lib/format.ts"
 
 export const AGENT_SAVE_BLOCKED = "Saving agents needs the cell's definition routes, which aren't live yet. Your agent is kept as a draft in this browser until then."
@@ -195,7 +196,7 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws, saveLive }: {
 const agentId = (name: string) => `studio.agent.${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "untitled"}`
 
 /** The org's agents: open one, start one, duplicate or retire it. */
-export function AgentsView({ store = kindStore<AgentDefinition>("agent"), bindingsSource = bindingsQuery, initialOpen }: {
+export function AgentsView({ store = kindStore<AgentDefinition>("agent", activeScope()), bindingsSource = bindingsQuery, initialOpen }: {
   readonly store?: KindStore<AgentDefinition>
   /** Where the org's tool bindings come from (CONNECT's /api/connectors/bindings). */
   readonly bindingsSource?: () => Promise<readonly Binding[]>

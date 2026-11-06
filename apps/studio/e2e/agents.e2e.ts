@@ -8,7 +8,7 @@ import { node, open, press } from "./canvas.ts"
  */
 /** Whether this deployment's definition routes answer; the stand-in tests skip, with the reason, where they do not. */
 async function routesLive(page: Page): Promise<boolean> {
-  const response = await page.request.get("/api/host/v1/definitions:list?kind=agent&limit=1")
+  const response = await page.request.get("/api/host/v1/definitions:list?kind=agent&limit=1&orgId=org_demo&environmentId=analytics")
   return response.status() !== 404
 }
 
@@ -25,6 +25,8 @@ async function cell(page: Page) {
   ] } }))
   await page.route("**/api/host/v1/definitions**", async (route) => {
     const url = new URL(route.request().url())
+    // Like the cell: no scope, no answer (fail closed).
+    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return route.fulfill({ status: 403, json: { code: "scope.required" } })
     const body = route.request().postDataJSON() as { id?: string; payload?: { laws?: string[] }; expectedVersion?: number } | null
     if (url.pathname.endsWith("definitions:list")) return route.fulfill({ json: { items: [...saved].filter(([, one]) => !one.retired).map(([id, one]) => ({ id, title: (one.payload as { title: string }).title, version: one.version, lifecycle: "active" })), cursor: null } })
     if (url.pathname.endsWith("definitions:install") && body?.id) {
