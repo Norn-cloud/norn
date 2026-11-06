@@ -249,15 +249,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let bytes = crate::read::to_u64(row.get(2)?, "claim bytes")?;
             let record: serde_json::Value = serde_json::from_str(&row.get::<String>(4)?)?;
             let mut endpoints = BTreeSet::new();
-            if record["clearedLinks"]
-                .as_array()
+            if record
+                .get("clearedLinks")
+                .and_then(serde_json::Value::as_array)
                 .is_some_and(|links| !links.is_empty())
             {
                 endpoints.insert(row.get::<String>(3)?);
             }
-            for link in record["links"].as_array().into_iter().flatten() {
+            for link in record
+                .get("links")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 for field in ["key", "targetKey"] {
-                    if let Some(key) = link[field].as_str() {
+                    if let Some(key) = link.get(field).and_then(serde_json::Value::as_str) {
                         endpoints.insert(key.to_owned());
                     }
                 }

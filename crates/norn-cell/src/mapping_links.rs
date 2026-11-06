@@ -316,23 +316,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .or_default()
                 .push(entry);
         }
-        let present = |key: &FactKey| -> Result<bool, CellError> {
-            let canonical = model.canonical(key);
-            let concrete = match commit
-                .writes
-                .iter()
-                .find(|w| model.canonical(&w.key) == canonical)
-            {
-                Some(write) => matches!(write.mutation, FactMutation::Put { .. })
-                    .then(|| write.key.object_type.clone()),
-                None => GuardView(self).concrete(&canonical)?,
-            };
-            Ok(concrete.is_some_and(|concrete| model.is_a(&concrete, &key.object_type)))
-        };
+        let present = |key: &FactKey| self.present_after(model, commit, key);
         let mut links = BTreeMap::new();
         let mut sealed = Vec::new();
         for ((source, role), group) in &groups {
-            let ranked = standings(group, &target);
+            let ranked = standings(group, target);
             let current: BTreeSet<_> = group
                 .iter()
                 .zip(&ranked)
@@ -369,7 +357,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         }
                     }
                     Standing::Superseded if exists && !supported => LinkMutation::Remove,
-                    _ => continue,
+                    Standing::Current | Standing::Superseded | Standing::Contested => continue,
                 };
                 links.insert(
                     model.canonical_link(&key),
@@ -392,6 +380,26 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             fresh,
             sealed,
         })
+    }
+
+    /// OBS-LINK-PENDING-1: endpoint presence as admission resolves it, after `commit`.
+    fn present_after<E, C, T>(
+        &self,
+        model: CommitModel<'_, '_>,
+        commit: &CellCommit<E, C, T>,
+        key: &FactKey,
+    ) -> Result<bool, CellError> {
+        let canonical = model.canonical(key);
+        let concrete = match commit
+            .writes
+            .iter()
+            .find(|w| model.canonical(&w.key) == canonical)
+        {
+            Some(write) => matches!(write.mutation, FactMutation::Put { .. })
+                .then(|| write.key.object_type.clone()),
+            None => GuardView(self).concrete(&canonical)?,
+        };
+        Ok(concrete.is_some_and(|concrete| model.is_a(&concrete, &key.object_type)))
     }
 
     fn mapping_link_exists(
