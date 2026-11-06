@@ -12,8 +12,19 @@
  * into the non-executable source map, never into an artifact, so builder and
  * compiler output stay byte-identical.
  */
-import { relative, sep } from "node:path"
-import { TOOL_ROOT } from "../profile.ts"
+
+// `tools/norn-ts`, from this module's own URL: the builder imports no Node
+// module, so a browser (Studio's canvas) can build and lower definitions too.
+const TOOL_ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
+
+/** The `/`-separated path from `root` to `file`, both absolute POSIX paths. */
+function relativeTo(root: string, file: string): string {
+  const from = root.split("/").filter(Boolean)
+  const to = file.split("/").filter(Boolean)
+  let shared = 0
+  while (shared < from.length && shared < to.length && from[shared] === to[shared]) shared += 1
+  return [...from.slice(shared).map(() => ".."), ...to.slice(shared)].join("/")
+}
 
 export interface SourceLocation {
   /** Path relative to `tools/norn-ts`, `/`-separated. */
@@ -34,7 +45,6 @@ export interface BuildDiagnostic {
   readonly at?: SourceLocation
 }
 
-const BUILDER_DIR = `${sep}src${sep}builder${sep}`
 const FRAME = /\(?((?:file:\/\/)?[^\s()]+?):(\d+):(\d+)\)?\s*$/
 
 /**
@@ -48,9 +58,9 @@ export function callSite(): SourceLocation | undefined {
     const match = FRAME.exec(frame.trim())
     if (!match) continue
     const file = (match[1] ?? "").replace(/^file:\/\//, "")
-    if (file.includes(BUILDER_DIR) || file.includes("/src/builder/")) continue
+    if (file.includes("/src/builder/")) continue
     if (!file.startsWith("/")) continue
-    return { file: relative(TOOL_ROOT, file).split(sep).join("/"), line: Number(match[2]) }
+    return { file: relativeTo(TOOL_ROOT, file), line: Number(match[2]) }
   }
   return undefined
 }
