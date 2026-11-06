@@ -1269,7 +1269,6 @@ fn constructed_command_records_are_refused() {
     );
     for constructed in [
         "[merge([{kind: 'timer', function: 'uninstalled', functionVersion: '1'}, {['ki' + 'nd']: 'perform'}])]",
-        "[{['kind']: 'perform', function: 'norn.classify.whatsapp-intent', functionVersion: '1'}]",
         "[event.command]",
         "event.commands",
     ] {

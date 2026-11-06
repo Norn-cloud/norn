@@ -245,10 +245,14 @@ mod tests {
         .unwrap();
         assert_eq!(fixed.len(), 1);
         assert_eq!(command_records("[]").unwrap(), Some(vec![]));
+        // A bracketed string-literal key is that literal key, so it is fixed.
+        assert!(matches!(
+            command_records("[{['kind']: 'perform', function: 'a', functionVersion: '1'}]"),
+            Ok(Some(records)) if records.len() == 1
+        ));
         for constructed in [
             "[merge([{kind: 'timer', function: 'uninstalled', functionVersion: '1'}, {['ki' + 'nd']: 'perform'}])]",
             "merge([{kind: 'perform'}], [])",
-            "[{['kind']: 'perform', function: 'a', functionVersion: '1'}]",
             "[event.command]",
             "event.commands",
             "[{kind: input.kind, function: 'a', functionVersion: '1'}]",

@@ -199,7 +199,6 @@ mod tests {
         for cell in [
             "[merge([{kind: 'timer', function: 'uninstalled', functionVersion: '1'}, {['ki' + 'nd']: 'perform'}])]",
             "merge([{kind: 'perform', function: 'a', functionVersion: '1'}], [])",
-            "[{['kind']: 'perform', function: 'a', functionVersion: '1'}]",
             "[{kind: input.kind, function: 'a', functionVersion: '1'}]",
             "[event.command]",
             "event.commands",
