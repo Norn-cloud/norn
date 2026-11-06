@@ -13,6 +13,8 @@ import { join } from "node:path"
 export interface CelldStudio {
   /** The stage; production stays on Cloudflare. */
   readonly stage: string
+  /** The full commit the bundle was built from, served back as the STUDIO_BUILD var. */
+  readonly build: string
   /** The public origin Better Auth issues cookies and host tokens for. */
   readonly authUrl: string
   readonly authSecret: string
@@ -30,6 +32,8 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   const stage = env.STUDIO_STAGE ?? ""
   if (!NAME.test(stage)) throw new Error(`STUDIO_STAGE must be lowercase letters, digits or inner dashes, got ${JSON.stringify(stage)}`)
   if (stage === "prod") throw new Error("Production Studio stays on Cloudflare; celld takes another stage")
+  const build = env.STUDIO_BUILD ?? ""
+  if (!/^[0-9a-f]{40}$/.test(build)) throw new Error("STUDIO_BUILD must be the full commit the bundle was built from")
   const authUrl = env.BETTER_AUTH_URL ?? ""
   if (!/^https:\/\/[a-z0-9.-]+$/.test(authUrl)) throw new Error("BETTER_AUTH_URL must be an https origin without a path")
   const authSecret = env.BETTER_AUTH_SECRET ?? ""
@@ -40,7 +44,7 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   const { AI_GATEWAY_URL: gatewayUrl, AI_GATEWAY_TOKEN: gatewayToken } = env
   if ((gatewayUrl === undefined) !== (gatewayToken === undefined)) throw new Error("AI_GATEWAY_URL and AI_GATEWAY_TOKEN go together")
   return {
-    stage, authUrl, authSecret,
+    stage, build, authUrl, authSecret,
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },
     ...host === undefined ? {} : { host },
     ...gatewayUrl === undefined || gatewayToken === undefined ? {} : { agent: { gatewayUrl, gatewayToken } },
@@ -50,7 +54,7 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
 /** The wrangler.json for one stage, binding for binding the Cloudflare deploy's. */
 export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   // celld has no node:crypto.scrypt; AUTH_SCRYPT=js runs Better Auth's own hash in pure JS.
-  const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js" }
+  const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js", STUDIO_BUILD: studio.build }
   if (studio.defaultOrg !== undefined) vars.STUDIO_DEFAULT_ORG = studio.defaultOrg
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   return {
