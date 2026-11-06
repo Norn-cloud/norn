@@ -42,6 +42,16 @@ pub struct ReadRequest<'a> {
     pub access: &'a norn_kernel::authz::AccessRequest,
 }
 
+/// Trusted principal and admitted action whose complete diagnostic is requested.
+pub struct RefusalDetailRequest<'a> {
+    /// Physical cell scope.
+    pub scope: &'a CellScope,
+    /// Actor resolved by the trusted transport.
+    pub actor: &'a str,
+    /// Admitted action identity; never an operand interpreted as a resource.
+    pub action_id: &'a str,
+}
+
 /// HOST-AUTH-1: trusted server policy; every kernel callback denies by default.
 pub trait Authorizer: Send + Sync {
     /// HOST-READ-1: metadata/action authority supplies no data disclosure grant.
@@ -81,6 +91,12 @@ pub trait Authorizer: Send + Sync {
         _request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
     ) -> Result<(), norn_kernel::ActionDenial> {
         Err(norn_kernel::ActionDenial::Invisible)
+    }
+
+    /// DIAG-DISCLOSE-1: only an explicit scoped PDP grant discloses a diagnostic.
+    /// Action/read grants do not imply this decision; absent policy denies.
+    fn disclose_refusal_detail(&self, _request: &RefusalDetailRequest<'_>) -> bool {
+        false
     }
 
     /// Decide before any target is loaded.

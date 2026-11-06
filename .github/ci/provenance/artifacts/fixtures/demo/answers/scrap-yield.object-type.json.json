@@ -1,0 +1,23 @@
+{
+  "sha256": "4ee9b5865c2a402421d15c8e1a58e1470ad8a888394d96a76af9a3c5f3107f37",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-cell/tests/answer_documents.rs",
+    "crates/norn-cell/tests/query_support/mod.rs",
+    "crates/norn-cell/src/compute.rs",
+    "fixtures/ir/metrics/ontology.json",
+    "fixtures/ir/metrics/net-sales.definition.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

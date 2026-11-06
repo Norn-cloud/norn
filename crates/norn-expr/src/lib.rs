@@ -51,6 +51,14 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "Compile build-script unit tests in the library test harness"
+)]
+#[path = "../build.rs"]
+mod build_script;
+
 pub mod actor;
 pub mod check;
 mod convert;
@@ -61,6 +69,7 @@ pub mod graph;
 mod reads;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
+mod structural_sum;
 pub mod temporal;
 mod value;
 
@@ -81,4 +90,5 @@ pub use expression::{
     Evaluation, EvaluationAttempt, EvaluationBudget, Expression, UnaryTest, check_unary_syntax,
 };
 pub use reads::{ExpressionReads, expression_read_paths, expression_reads};
+pub use structural_sum::{StructuralSumEquality, structural_sum_equality};
 pub use value::{Number, Value};

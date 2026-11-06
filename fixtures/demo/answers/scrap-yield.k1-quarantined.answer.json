@@ -1,16 +1,16 @@
 {
-  "queryPin": "51324a4f3514ec9c3391726891da7f462aaa4c3dba4da741ec1eb32cf7ff81ad",
-  "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+  "queryPin": "8507a0583b51c7fcbefe8856b28049a0a3751ff7d915941ba277837b113fce8c",
+  "definitionPin": "synthetic-quality-v1",
   "engine": "cell",
   "revision": {
-    "seq": 0,
-    "hash": "0000000000000000000000000000000000000000000000000000000000000000",
-    "commits": 1
+    "seq": 5,
+    "hash": "5a166066f328c1e7fca65621e42583162fd3b10f3dde9e3bcbe2f96201b98282",
+    "commits": 3
   },
   "effectiveAsOf": "2026-10-26T00:00:00Z",
-  "knownAsOf": 1,
+  "knownAsOf": 3,
   "grain": "demo.Conversion",
-  "lineageRef": "a76bb0e90f9fb99bb373d4b15d206886cba7bbccdcedfcacedd6ab4690e70ae2",
+  "lineageRef": "cbf674f4b803777b62385247a82ab2afaf33e4129d77a74ca117a133616faf9e",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -616,7 +616,7 @@
   },
   "freshness": "incomplete",
   "complete": false,
-  "world": "synthetic-k1",
+  "world": "main",
   "scope": "synthetic",
   "populationPin": "all-fixture-conversions",
   "authorizationEpoch": 1,
@@ -637,6 +637,6 @@
     }
   },
   "exclusions": {
-    "SYN-MELT-15-1": "core07-finding"
+    "SYN-MELT-15-1": "data_quality_finding:fa752f4f44a9adcdc6c2032aeb10b334da0920e17cb7cbe2200fbbf74015409f"
   }
 }

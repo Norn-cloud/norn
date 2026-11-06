@@ -106,7 +106,7 @@ impl Challenge {
                     .and_then(|index| goals.get(index))
             })
             .ok_or(EvidenceError::MissingGoal)?;
-        let bytes = norn_canonical::serialize_json_verbatim(goal)
+        let bytes = norn_canonical::canonical_json_exact_of(goal)
             .map_err(|_error| EvidenceError::Malformed)?;
         let goal_sha256 =
             exact_commitment(b"evidence-goal", &[&bytes]).map_err(|_error| EvidenceError::Limit)?;
@@ -141,7 +141,7 @@ impl Challenge {
             return Err(EvidenceError::Stale);
         }
         json(result_json, RESULT_LIMIT)?;
-        let bytes = norn_canonical::serialize_json_verbatim(self.body())
+        let bytes = norn_canonical::canonical_json_exact_of(self.body())
             .map_err(|_error| EvidenceError::Malformed)?;
         let challenge_json = String::from_utf8(bytes).map_err(|_error| EvidenceError::Malformed)?;
         Ok(EvidenceRecord {

@@ -78,12 +78,14 @@ run_phase() {
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
       (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
+      (cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test && bun run build)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
       python3 scripts/ci/frontier.py self-test
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
+      python3 scripts/test_demo_scenarios.py
       cargo xtask ci policy
-      cargo xtask ci provenance
+      cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
       ;;
     test)
       select_shard "${2:-all}"
@@ -164,6 +166,8 @@ PY
       use_jsonschema
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
+      ensure_nextest
+      python3 scripts/check_demo_scenarios.py
       cargo install --locked cargo-deny --version 0.19.0
       cargo deny --locked check
       cargo xtask ci policy
@@ -200,10 +204,10 @@ PY
       ;;
     provenance)
       export CI=true
-      cargo xtask ci provenance
+      cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
       mkdir -p "$upstream/distribution"
       git archive HEAD | tar -x -C "$upstream/distribution"
-      cargo xtask ci provenance --root "$upstream/distribution" --distribution --base-root "$PWD"
+      cargo xtask ci provenance --root "$upstream/distribution" --distribution --base-root "$PWD" --source-root "$PWD" --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
       ;;
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac

@@ -16,10 +16,14 @@ pub(crate) mod internal;
 mod method;
 pub(crate) mod registry;
 
-pub(crate) const MAX_TOKEN_COUNT: usize = 256;
-pub(crate) const MAX_TOKEN_BYTES: usize = 256;
-pub(crate) const MAX_TAKE_SCALARS: usize = 16_384;
-pub(crate) const MAX_JOIN_BYTES: usize = 16_384;
+/// Shared runtime and static-admission cap.
+pub const MAX_TOKEN_COUNT: usize = 256;
+/// Shared runtime and static-admission cap.
+pub const MAX_TOKEN_BYTES: usize = 256;
+/// Shared runtime and static-admission cap.
+pub const MAX_TAKE_SCALARS: usize = 16_384;
+/// Shared runtime and static-admission cap.
+pub const MAX_JOIN_BYTES: usize = 16_384;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum FunctionKind {

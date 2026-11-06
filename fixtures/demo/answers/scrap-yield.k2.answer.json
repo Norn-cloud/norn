@@ -1,6 +1,6 @@
 {
-  "queryPin": "51324a4f3514ec9c3391726891da7f462aaa4c3dba4da741ec1eb32cf7ff81ad",
-  "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+  "queryPin": "7c493c810dff39f5297542cdf95384838df955fc358c658f5469c1d41ce12982",
+  "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
   "engine": "cell",
   "revision": {
     "seq": 0,
@@ -10,7 +10,7 @@
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 2,
   "grain": "demo.Conversion",
-  "lineageRef": "20aad52f84acd93593a012883c9d1d55efe51a94fdf9c9f899feccecb4af6699",
+  "lineageRef": "12fa41b3de6b4a6d7faa66f8f7660187d9bbe443c7f3a2cc9764ac2eb26949ae",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",

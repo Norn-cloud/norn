@@ -86,7 +86,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::rc::Rc;
 
-use zen_expression::functions::{ClosureFunction, FunctionKind, InternalFunction};
+use zen_expression::functions::{
+    ClosureFunction, FunctionKind, InternalFunction, MAX_TAKE_SCALARS, MAX_TOKEN_BYTES,
+    MAX_TOKEN_COUNT,
+};
 use zen_expression::intellisense::diagnostic::Severity;
 use zen_expression::intellisense::{AstMetadata, IntelliSense};
 use zen_expression::lexer::{ArithmeticOperator, ComparisonOperator, LogicalOperator, Operator};
@@ -281,6 +284,158 @@ impl CostEstimate {
 impl fmt::Display for CostEstimate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} units", self.0)
+    }
+}
+
+/// Replayable fuel claim for one expression, conditional on conforming slice bounds.
+/// This is not a whole graph, writer, IO or allocation certificate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FuelCertificate {
+    /// Exact bound, not a floating-point estimate or an unchecked solver answer.
+    pub units: u64,
+    /// Identity of the exact source, environment, expected type and declared limits.
+    pub statement: String,
+    /// Content identity of the checker and metered implementation.
+    pub semantics: String,
+}
+
+impl FuelCertificate {
+    /// Reconstruct the derivation from authoritative source, environment and limits.
+    /// Unknown expressions and over-budget claims never produce evidence.
+    ///
+    /// # Errors
+    /// Refuses a stale semantics identity, changed bound, or failed admission.
+    pub fn verify(
+        &self,
+        expression: &Expression,
+        env: &ZenTypeEnv,
+        expected: &Type,
+        limits: &ResourceLimitProfile,
+    ) -> Result<CheckedExpression, String> {
+        if self.semantics.len() != 64
+            || self.statement.len() != 64
+            || self.semantics != fuel_semantics()?
+        {
+            return Err("stale expression fuel semantics".into());
+        }
+        let (checked, reconstructed) = certify_expression(expression, env, expected, limits)?;
+        if self.statement != reconstructed.statement {
+            return Err("expression fuel certificate statement changed".into());
+        }
+        if checked.cost().units() != self.units || self.units == u64::MAX {
+            return Err("expression fuel certificate bound differs from derivation".into());
+        }
+        Ok(checked)
+    }
+}
+
+/// Admit one assignment and retain replayable cost evidence. All limits and
+/// types are supplied by admission authority, never taken from a certificate.
+///
+/// # Errors
+/// Refuses unsupported expressions, over-budget or overflowing bounds.
+pub fn certify_expression(
+    expression: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    limits: &ResourceLimitProfile,
+) -> Result<(CheckedExpression, FuelCertificate), String> {
+    let checked = check_expression_with_sources_and_root_bounds(
+        expression, env, expected, limits, None, true,
+    )
+    .map(|(checked, _)| checked)
+    .map_err(|errors| format!("expression cost admission refused: {errors:?}"))?;
+    if checked.cost().units() == u64::MAX {
+        return Err("unknown or overflowing expression cost".into());
+    }
+    let statement = norn_ir::canonical::domain_hash_hex(
+        b"norn.expression-cost-statement/1\0",
+        &(
+            expression.source().as_bytes(),
+            norn_ir::canonical::serialize(&env.to_canonical_value())
+                .map_err(|error| error.to_string())?,
+            norn_ir::canonical::serialize(
+                &expected.to_canonical_value(crate::env::TypeEnvVersion::V2),
+            )
+            .map_err(|error| error.to_string())?,
+            limits,
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    let certificate = FuelCertificate {
+        units: checked.cost().units(),
+        statement,
+        semantics: fuel_semantics()?,
+    };
+    Ok((checked, certificate))
+}
+
+/// Fingerprint cost-bearing implementation sources once per process. Source edits
+/// invalidate old evidence even when an author forgets to bump the profile name.
+fn fuel_semantics() -> Result<String, String> {
+    static IDENTITY: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    IDENTITY
+        .get_or_init(|| fuel_semantics_for(FUEL_SOURCES))
+        .clone()
+}
+
+const FUEL_SOURCES: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/fuel_sources.rs"));
+
+fn fuel_semantics_for(sources: &[(&str, &str)]) -> Result<String, String> {
+    norn_ir::canonical::domain_hash_hex(b"norn.expression-fuel/1\0", &sources)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "regression assertions")]
+mod fuel_identity_tests {
+    use super::*;
+    use crate::EnvOptions;
+
+    #[test]
+    fn dependency_changes_invalidate_old_evidence() {
+        let env =
+            ZenTypeEnv::input_only(BTreeMap::new(), EnvOptions::default()).expect("environment");
+        let expression = Expression::compile("1").expect("compile");
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let (_, certificate) =
+            certify_expression(&expression, &env, &Type::Number, &limits).expect("certificate");
+        certificate
+            .verify(&expression, &env, &Type::Number, &limits)
+            .expect("replay");
+        for (path, before, after) in [
+            (
+                "vendor/zen/core/expression/src/functions/mod.rs",
+                "MAX_JOIN_BYTES: usize = 16_384",
+                "MAX_JOIN_BYTES: usize = 32_768",
+            ),
+            (
+                "vendor/zen/core/expression/src/functions/defs.rs",
+                "",
+                "// changed definition\n",
+            ),
+            (
+                "crates/norn-expr/src/check/sites.rs",
+                "",
+                "// changed lowering\n",
+            ),
+        ] {
+            let mut sources = FUEL_SOURCES.to_vec();
+            let entry = sources
+                .iter_mut()
+                .find(|(name, _)| *name == path)
+                .expect("dependency included");
+            let changed = entry.1.replacen(before, after, 1);
+            assert_ne!(changed, entry.1);
+            entry.1 = &changed;
+            let mut old = certificate.clone();
+            old.semantics = fuel_semantics_for(&sources).expect("changed identity");
+            assert_ne!(old.semantics, certificate.semantics);
+            assert_eq!(
+                old.verify(&expression, &env, &Type::Number, &limits),
+                Err("stale expression fuel semantics".into())
+            );
+        }
     }
 }
 
@@ -1593,12 +1748,12 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn bounded_integer_literal(&mut self, node: &Node<'_>, max: u16, name: &str) -> Option<()> {
+    fn bounded_integer_literal(&mut self, node: &Node<'_>, max: usize, name: &str) -> Option<()> {
         match node {
             Node::Number(value)
                 if value
                     .to_string()
-                    .parse::<u16>()
+                    .parse::<usize>()
                     .is_ok_and(|value| value <= max) =>
             {
                 Some(())
@@ -2508,14 +2663,14 @@ impl<'a> Checker<'a> {
                     }
                     None => return None,
                 }
-                self.bounded_integer_literal(arguments.get(2)?, 256, "maxCount")?;
-                self.bounded_integer_literal(arguments.get(3)?, 256, "maxLength")?;
+                self.bounded_integer_literal(arguments.get(2)?, MAX_TOKEN_COUNT, "maxCount")?;
+                self.bounded_integer_literal(arguments.get(3)?, MAX_TOKEN_BYTES, "maxLength")?;
                 Some(T::List(Box::new(T::Str(None))))
             }
             F::Take => {
                 self.arity(node, arguments, 2)?;
                 self.string(first?)?;
-                self.bounded_integer_literal(arguments.get(1)?, 16_384, "maxScalars")?;
+                self.bounded_integer_literal(arguments.get(1)?, MAX_TAKE_SCALARS, "maxScalars")?;
                 Some(T::Str(None))
             }
             F::Join => {
@@ -2858,6 +3013,8 @@ pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType
         return None;
     };
     Some(norn_ir::PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+
         scale: norn_ir::WholeNumber(*scale),
         unit: unit.clone(),
         rounding: Some(*rounding),

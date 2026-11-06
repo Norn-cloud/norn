@@ -56,6 +56,7 @@
 
 mod compile;
 pub mod evidence;
+pub mod lens;
 mod set;
 mod snapshot_lint;
 pub mod vendor;
@@ -204,12 +205,30 @@ pub fn decode_mapping(value: &serde_json::Value) -> Result<MappingIr, Vec<Diagno
 /// The per-document (T2) check of a mapping. Empty when it is valid. See
 /// the module docs.
 #[must_use]
+pub fn check_mapping_local(mapping: &MappingIr) -> Vec<Diagnostic> {
+    check_mapping_with_source(mapping, None)
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "local MappingIR validation reports independent structural findings in one pass"
 )]
-pub fn check_mapping_local(mapping: &MappingIr) -> Vec<Diagnostic> {
+fn check_mapping_with_source(
+    mapping: &MappingIr,
+    source: Option<&SourceSchemaIr>,
+) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    let lens_check = match source {
+        Some(source) => lens::admit(mapping, source).map(|_| ()),
+        None => lens::check_local(mapping),
+    };
+    if let Err(reason) = lens_check {
+        out.push(error(
+            codes::INVALID_DOCUMENT,
+            reason,
+            Span::pointer("/extensions"),
+        ));
+    }
     for (empty, member) in [
         (mapping.interfaces.is_empty(), "interfaces"),
         (mapping.maps.is_empty(), "maps"),
@@ -721,7 +740,7 @@ pub fn check_mapping(
     source: &SourceSchemaIr,
     model: &MappingModel,
 ) -> Vec<Diagnostic> {
-    let mut out = check_mapping_local(mapping);
+    let mut out = check_mapping_with_source(mapping, Some(source));
     out.extend(vendor::check_vendor_mapping(mapping, source));
     let reference_check = evidence::read_evidence(mapping).and_then(|evidence| {
         evidence.map_or(Ok(()), |evidence| {

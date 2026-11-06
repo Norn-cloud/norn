@@ -9,11 +9,22 @@ description = "shared cell store with native SQLite adapters (ring 1; see AGENTS
 [lib]
 path = "src/lib.rs"
 
+[[example]]
+name = "catalog_demo"
+test = true
+
+[[example]]
+name = "constitution"
+test = true
+
 [features]
 default = ["native"]
 native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]
 
 [dependencies]
+ct-merkle = "=0.3.0"
+transparency-sha2 = { package = "sha2", version = "0.11" }
+base64 = "0.22.1"
 norn-checker = { path = "../norn-checker" }
 norn-ir = { path = "../norn-ir" }
 norn-kernel = { path = "../norn-kernel" }

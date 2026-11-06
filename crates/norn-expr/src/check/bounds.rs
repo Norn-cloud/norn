@@ -7,7 +7,9 @@
 //! recurse a bounded number of frames (#2852 risk: a deeply nested
 //! expression must not overflow the checker's stack).
 
-use zen_expression::functions::{FunctionKind, InternalFunction};
+use zen_expression::functions::{
+    FunctionKind, InternalFunction, MAX_TAKE_SCALARS, MAX_TOKEN_BYTES, MAX_TOKEN_COUNT,
+};
 use zen_expression::parser::Node;
 
 use super::{CHECKER_PROFILE, Diagnostic, codes};
@@ -67,10 +69,10 @@ fn span_of(source: &str) -> (u32, u32) {
     (0, u32::try_from(source.len()).unwrap_or(u32::MAX))
 }
 
-fn bounded_integer_literal(node: Option<&&Node<'_>>, max: u16) -> bool {
+fn bounded_integer_literal(node: Option<&&Node<'_>>, max: usize) -> bool {
     matches!(
         node,
-        Some(Node::Number(value)) if value.to_string().parse::<u16>().is_ok_and(|value| value <= max)
+        Some(Node::Number(value)) if value.to_string().parse::<usize>().is_ok_and(|value| value <= max)
     )
 }
 
@@ -90,13 +92,13 @@ fn bounded_string_call(
             "tokens",
             arguments.len() == 4
                 && matches!(arguments.get(1), Some(Node::String("alnum")))
-                && bounded_integer_literal(arguments.get(2), 256)
-                && bounded_integer_literal(arguments.get(3), 256),
+                && bounded_integer_literal(arguments.get(2), MAX_TOKEN_COUNT)
+                && bounded_integer_literal(arguments.get(3), MAX_TOKEN_BYTES),
             "requires (text, 'alnum', integer maxCount 0..=256, integer maxLength 0..=256) literals",
         ),
         InternalFunction::Take => (
             "take",
-            arguments.len() == 2 && bounded_integer_literal(arguments.get(1), 16_384),
+            arguments.len() == 2 && bounded_integer_literal(arguments.get(1), MAX_TAKE_SCALARS),
             "requires a literal integer maxScalars from 0 to 16384",
         ),
         InternalFunction::Join => (

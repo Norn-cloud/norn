@@ -1798,6 +1798,7 @@ fn validate_stored_patch<X>(
             });
         };
         if declared.computed
+            || declared.protected()
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -2289,6 +2290,16 @@ where
             let Some(child) = catalog.effective_type(&collection.child_type) else {
                 return true;
             };
+            if [&collection.row_id_property, &collection.ordering_key]
+                .into_iter()
+                .any(|property| {
+                    child
+                        .property(property.as_str())
+                        .is_some_and(norn_checker::EffectiveProperty::protected)
+                })
+            {
+                return true;
+            }
             configs.get(id.as_str()).is_none_or(|config| {
                 config.derive.keys().any(|property| {
                     property == &collection.row_id_property
@@ -2299,7 +2310,7 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| candidate.computed)
+                            .is_none_or(|candidate| candidate.computed || candidate.protected())
                 })
             })
         })
@@ -2622,7 +2633,10 @@ where
             })?;
             let lifecycle_properties = catalog.lifecycle_properties(&object_type);
             let touch = effective_type.properties.iter().find_map(|property| {
-                if property.computed || lifecycle_properties.contains(&property.id) {
+                if property.computed
+                    || property.protected()
+                    || lifecycle_properties.contains(&property.id)
+                {
                     None
                 } else {
                     current_values
@@ -4259,7 +4273,8 @@ fn precondition_read_refusal<X>(
             .iter()
             .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
             .cloned(),
-        CommitError::IdentityCollision { .. }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }
@@ -4295,7 +4310,8 @@ fn precondition_read_refusal<X>(
         | CommitError::UnsupportedLinkRead { source_key, link } => {
             Some((source_key.clone(), link.clone()))
         }
-        CommitError::IdentityCollision { .. }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }

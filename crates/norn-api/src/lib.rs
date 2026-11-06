@@ -17,5 +17,10 @@ pub use clock::{Clock, ManualClock};
 pub mod host;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+/// Typed object, link and source-lineage reads for the Data Explorer.
+pub mod objects;
 /// Authorized read services shared by transports.
 pub mod routes;
+
+/// Scoped PDP authority for complete refusal diagnostics.
+pub mod refusal_disclosure;
