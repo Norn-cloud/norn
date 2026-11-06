@@ -21,7 +21,7 @@ use norn_cell::{CellStore, InstalledDefinitionInput, Model};
 use norn_ir::{EntityRoot, RuntimeValue};
 use norn_kernel::authz::{ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey};
 
-const FLOW: &str = "billing.route.flow.rule";
+const FLOW: &str = "billing.route";
 const RUN_TYPE: &str = "billing.RouteRun";
 
 fn artifacts() -> Vec<serde_json::Value> {

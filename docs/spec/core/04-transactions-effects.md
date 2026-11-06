@@ -111,7 +111,8 @@ caller's read gates on the Run type. Named scenarios (`crates/norn-cell/tests/fl
 
 ### RUN-ROUTES-1 — starting and reading runs
 
-`POST /v1/runs` with `{flow, runId}` starts a run of an installed flow. Scope is
+`POST /v1/runs` with `{flow, runId}` starts a run of an installed flow, named by its
+definition id; the flow's rule is `<flow>.flow.rule`. Scope is
 admitted first, then the host authorizer decides the `StartRun(flow)` operation
 (in the DO cell, the declared run-starter roles of `norn-cell-do-run-grants/1`).
 `runId` is 1-128 bytes of `[A-Za-z0-9._:-]`. The flow's `decide` rule evaluates its

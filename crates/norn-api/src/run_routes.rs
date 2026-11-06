@@ -36,7 +36,8 @@ pub type ReadAccess<'a> = &'a dyn Fn(ReadCapability, &str) -> norn_kernel::authz
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartRunRequest {
-    /// The installed flow's rule artifact id.
+    /// The installed flow's definition id (`flow.id`); its rule is
+    /// `<flow>.flow.rule`.
     pub flow: String,
     /// The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry
     /// with the same id and flow returns the existing run.
@@ -163,7 +164,7 @@ fn flow_not_found() -> Refusal {
         StatusCode::NOT_FOUND,
         "run.flow_not_found",
         "no such installed flow",
-        "name the artifact id of a flow rule in the cell's active definitions",
+        "name the id of a flow installed in the cell's active definitions",
     )
 }
 
@@ -183,7 +184,7 @@ fn installed_flow<E: SqlEngine>(
             text(artifact, "/artifactId") == Some(id) && text(artifact, "/kind") == Some(kind)
         })
     };
-    let rule = find(flow, "rule").ok_or_else(flow_not_found)?;
+    let rule = find(&format!("{flow}.flow.rule"), "rule").ok_or_else(flow_not_found)?;
     let entity = rule
         .pointer("/dependencies")
         .and_then(serde_json::Value::as_array)
