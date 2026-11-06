@@ -30,6 +30,8 @@ test("minimap: shown by default, and the toolbar toggles it", async ({ page }) =
   await open(page)
   const minimap = page.locator(".react-flow__minimap")
   await expect(minimap).toBeVisible()
+  // It draws every node, not only the viewport frame.
+  await expect(minimap.locator(".react-flow__minimap-node")).toHaveCount(await page.locator(".react-flow__node").count())
   await page.getByRole("button", { name: "Minimap" }).click()
   await expect(minimap).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Minimap" })).toHaveAttribute("aria-pressed", "false")

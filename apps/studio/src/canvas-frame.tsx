@@ -246,7 +246,11 @@ function Frame(props: CanvasFrameProps) {
           <div ref={surface} data-canvas-surface className="relative h-[38rem] w-full">
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             {opening && <ReactFlow defaultViewport={opening}
-              nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
+              nodes={graph.nodes.map((node) => {
+                // The card's known size as React Flow's initial size: the minimap draws only nodes with a size, and these are rebuilt each render.
+                const size = props.nodeSize?.(node) ?? DEFAULT_SIZE
+                return { ...props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)), initialWidth: size.width, initialHeight: size.height }
+              })}
               edges={graph.edges.map(look)} className="bg-canvas-surface"
               nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable

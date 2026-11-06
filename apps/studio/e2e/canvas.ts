@@ -74,12 +74,18 @@ export async function clear(page: Page) {
 export async function clickEdge(page: Page, id: string) {
   const path = edge(page, id).locator(".react-flow__edge-interaction")
   await reveal(page, path)
-  const at = await path.evaluate((element) => {
+  // The point nearest the middle where this edge, not one crossing or sharing its handle, is on top.
+  const at = await path.evaluate((element, id) => {
     const shape = element as SVGGeometryElement
-    const point = shape.getPointAtLength(shape.getTotalLength() / 2)
-    const screen = new DOMPoint(point.x, point.y).matrixTransform(shape.getScreenCTM() ?? undefined)
-    return { x: screen.x, y: screen.y }
-  })
+    const length = shape.getTotalLength()
+    for (const t of [0.5, 0.6, 0.4, 0.7, 0.3, 0.8, 0.2, 0.9, 0.1]) {
+      const point = shape.getPointAtLength(length * t)
+      const screen = new DOMPoint(point.x, point.y).matrixTransform(shape.getScreenCTM() ?? undefined)
+      if (document.elementFromPoint(screen.x, screen.y)?.closest(".react-flow__edge")?.getAttribute("data-id") === id) return { x: screen.x, y: screen.y }
+    }
+    return null
+  }, id)
+  if (!at) throw new Error(`edge ${id} is covered along its whole length`)
   await page.mouse.click(at.x, at.y)
 }
 
