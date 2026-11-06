@@ -30,19 +30,23 @@ pub fn perform_refs(payload: &Value) -> Result<Vec<PerformRef>, (String, String)
         .and_then(Value::as_array)
         .map_or(&[][..], Vec::as_slice);
     for (n, node) in nodes.iter().enumerate() {
-        let content = &node["content"];
-        match node["type"].as_str() {
+        let content = node.get("content").unwrap_or(&Value::Null);
+        match node.get("type").and_then(Value::as_str) {
             Some("decisionTableNode") => {
-                let outputs: Vec<&str> = content["outputs"]
-                    .as_array()
+                let outputs: Vec<&str> = content
+                    .get("outputs")
+                    .and_then(Value::as_array)
                     .map_or(&[][..], Vec::as_slice)
                     .iter()
-                    .filter_map(|output| output["id"].as_str())
+                    .filter_map(|output| output.get("id").and_then(Value::as_str))
                     .collect();
-                let rules = content["rules"].as_array().map_or(&[][..], Vec::as_slice);
+                let rules = content
+                    .get("rules")
+                    .and_then(Value::as_array)
+                    .map_or(&[][..], Vec::as_slice);
                 for (r, rule) in rules.iter().enumerate() {
                     for output in &outputs {
-                        if let Some(source) = rule[*output].as_str() {
+                        if let Some(source) = rule.get(*output).and_then(Value::as_str) {
                             let pointer = format!(
                                 "/graph/nodes/{n}/content/rules/{r}/{}",
                                 output.replace('~', "~0").replace('/', "~1")
@@ -53,11 +57,12 @@ pub fn perform_refs(payload: &Value) -> Result<Vec<PerformRef>, (String, String)
                 }
             }
             Some("expressionNode") => {
-                let expressions = content["expressions"]
-                    .as_array()
+                let expressions = content
+                    .get("expressions")
+                    .and_then(Value::as_array)
                     .map_or(&[][..], Vec::as_slice);
                 for (e, expression) in expressions.iter().enumerate() {
-                    if let Some(source) = expression["value"].as_str() {
+                    if let Some(source) = expression.get("value").and_then(Value::as_str) {
                         let pointer = format!("/graph/nodes/{n}/content/expressions/{e}/value");
                         scan(source, &pointer, &mut found)?;
                     }

@@ -554,6 +554,10 @@ fn canonical(payload: &RawValue) -> Result<String, Refusal> {
 }
 
 /// Run `kind`'s validator: the canonical payload and every finding.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a definition's identity, payload and the host context its validator reads"
+)]
 fn validate<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,

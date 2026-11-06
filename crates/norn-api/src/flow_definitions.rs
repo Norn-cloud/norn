@@ -71,7 +71,7 @@ pub fn valid_flow_id(id: &str) -> bool {
 }
 
 /// The Run type `lowerFlow` derives: the namespace, then the last segment in
-/// PascalCase (split on `_`) followed by `Run`.
+/// `PascalCase` (split on `_`) followed by `Run`.
 #[must_use]
 pub fn run_type(flow_id: &str) -> String {
     let (namespace, name) = flow_id.rsplit_once('.').unwrap_or(("", flow_id));
@@ -276,7 +276,8 @@ pub fn check(
         .unwrap_or_default();
     let initial = lifecycles
         .first()
-        .and_then(|lifecycle| lifecycle["initial"].as_array())
+        .and_then(|lifecycle| lifecycle.get("initial"))
+        .and_then(Value::as_array)
         .is_some_and(|initial| !initial.is_empty());
     if lifecycles.len() != 1 || !initial {
         findings.push(error(
@@ -336,11 +337,14 @@ pub fn pinned_version(canonical: &str, binding_id: &str) -> Option<String> {
     let value: Value = serde_json::from_str(canonical).ok()?;
     let flow_id = value.pointer("/flow/id")?.as_str()?;
     let (_, rule_id) = owned_ids(flow_id);
-    let rule = value["artifacts"]
+    let rule = value
+        .get("artifacts")?
         .as_array()?
         .iter()
-        .find(|artifact| artifact["artifactId"].as_str() == Some(rule_id.as_str()))?;
-    norn_checker::flow_performs::perform_refs(&rule["payload"])
+        .find(|artifact| {
+            artifact.get("artifactId").and_then(Value::as_str) == Some(rule_id.as_str())
+        })?;
+    norn_checker::flow_performs::perform_refs(rule.get("payload")?)
         .ok()?
         .into_iter()
         .find_map(|perform| {

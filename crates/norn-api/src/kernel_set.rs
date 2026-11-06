@@ -137,8 +137,5 @@ pub fn retained_artifacts(canonical_set: &str) -> Result<Vec<ArtifactEnvelope>, 
     else {
         return Err("retained definitions must be an artifact array".to_owned());
     };
-    sources
-        .iter()
-        .map(|source| norn_ir::runtime::decode(source).map_err(|error| error.to_string()))
-        .collect()
+    sources.iter().map(norn_ir::runtime::decode).collect()
 }
