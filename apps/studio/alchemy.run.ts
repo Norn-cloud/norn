@@ -1,7 +1,8 @@
+import { cpSync } from "node:fs"
 import alchemy from "alchemy"
-import { D1Database, EmailSender, Vite } from "alchemy/cloudflare"
+import { D1Database, DurableObjectNamespace, EmailSender, Vite } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, deployTarget, scanState } from "./deploy-target.ts"
+import { agentDeploy, authDeploy, deployTarget, scanState } from "./deploy-target.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
@@ -18,11 +19,19 @@ import { authDeploy, deployTarget, scanState } from "./deploy-target.ts"
 // session secret becomes an encrypted Worker secret, never part of a bundle.
 // Operators load BETTER_AUTH_SECRET and ALCHEMY_PASSWORD by name from Infisical
 // (path /auth: NORN_STUDIO_<STAGE>_BETTER_AUTH_SECRET, NORN_STUDIO_<STAGE>_ALCHEMY_PASSWORD).
+// With AI_GATEWAY_URL/AI_GATEWAY_TOKEN set, the Worker also serves the
+// assistant at /api/agent to signed-in actors: the gateway credential becomes
+// an encrypted Worker secret (never part of the browser bundle), and the
+// checker runs in the Worker.
 const target = deployTarget(process.env)
 const auth = authDeploy(process.env, target)
-// The scan below must see the secret's value, so keep a copy before taking it out of the environment.
+const agent = agentDeploy(process.env)
+// The scan below must see the secrets' values, so keep a copy before taking them out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
+delete process.env.AI_GATEWAY_TOKEN
+delete process.env.AI_GATEWAY_URL
+if (agent !== undefined) cpSync(agent.checkerPkg, new URL("./worker/checker/", import.meta.url), { recursive: true })
 const stateDir = process.env.ALCHEMY_STATE_DIR ?? ".alchemy"
 // Alchemy keeps this app's state under <stateDir>/<APP>/; the post-deploy scan reads exactly that subtree.
 const APP = "norn-studio"
@@ -42,7 +51,7 @@ export const studio = await Vite("studio", {
   name: target.worker,
   assets: { directory: "dist", run_worker_first: ["/api/*"] },
   entrypoint: "./worker/index.ts",
-  compatibilityDate: "2026-10-20",
+  compatibilityDate: "2026-11-01",
   compatibilityFlags: ["nodejs_compat"],
   // Never write the Worker's secrets into the local wrangler.jsonc.
   wrangler: { secrets: false },
@@ -52,6 +61,11 @@ export const studio = await Vite("studio", {
     BETTER_AUTH_URL: auth.url,
     // Magic links need a Cloudflare Email Service sender on the domain; without one they refuse.
     ...auth.emailFrom === undefined ? {} : { EMAIL: EmailSender({ allowedSenderAddresses: [auth.emailFrom] }), EMAIL_FROM: auth.emailFrom },
+    ...agent === undefined ? {} : {
+      AGENT_BUDGET: DurableObjectNamespace("agent-budget", { className: "AgentBudget", sqlite: true }),
+      AI_GATEWAY_URL: alchemy.secret(agent.gatewayUrl),
+      AI_GATEWAY_TOKEN: alchemy.secret(agent.gatewayToken),
+    },
   },
   // Built beforehand; an empty command makes Alchemy skip its build step entirely.
   build: "",

@@ -80,3 +80,21 @@ export function scanState(stateDir: string, app: string, env: Readonly<Record<st
   for (const file of files) for (const [name, count] of Object.entries(leakedSecrets(readFileSync(file, "utf8"), env))) leaks[name] = (leaks[name] ?? 0) + count
   return { files: files.length, leaks }
 }
+
+/** The assistant's deploy-time inputs, or nothing when this deploy runs without it. */
+export interface AgentDeploy {
+  readonly gatewayUrl: string
+  readonly gatewayToken: string
+  /** The built checker ABI package (crates/norn-checker-wasm/scripts/build-pkg.sh). */
+  readonly checkerPkg: string
+}
+
+export function agentDeploy(env: Readonly<Record<string, string | undefined>>): AgentDeploy | undefined {
+  const { AI_GATEWAY_URL: gatewayUrl, AI_GATEWAY_TOKEN: gatewayToken, NORN_CHECKER_WASM_PKG: checkerPkg } = env
+  if (gatewayUrl === undefined && gatewayToken === undefined) return undefined
+  if (gatewayUrl === undefined || gatewayToken === undefined) throw new Error("AI_GATEWAY_URL and AI_GATEWAY_TOKEN are set together")
+  if (!/^https:\/\/gateway\.ai\.cloudflare\.com\/v1\/[0-9a-f]{32}\/[a-z0-9-]+(\/compat)?\/?$/.test(gatewayUrl)) throw new Error("AI_GATEWAY_URL must be a Cloudflare AI Gateway URL")
+  if (checkerPkg === undefined) throw new Error("NORN_CHECKER_WASM_PKG is required with the assistant")
+  if (env.ALCHEMY_PASSWORD === undefined) throw new Error("ALCHEMY_PASSWORD is required to encrypt the assistant's secrets in state")
+  return { gatewayUrl, gatewayToken, checkerPkg }
+}
