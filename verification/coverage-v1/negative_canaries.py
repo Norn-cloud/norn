@@ -1965,11 +1965,18 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights history checkpoint unavailable/);assert(!fs.existsSync(path))}
     runs.splice(0,0,swapped);
     await snapshot(prefix+'inverted');
-    // A run numbered above the cursor can also list after the cursor run itself.
-    const cursorRun=runs[0], straddle=nextRun++;
-    await record(straddle,payload(comment(16,'ordinary text',clock)));
-    assert.equal(runs[0].id,straddle);assert.equal(runs[1],cursorRun);
-    [runs[0],runs[1]]=[runs[1],runs[0]];
+    // A run numbered above the cursor can also list after the cursor run itself (here
+    // a revocation whose ledger has not run). Each collector starts below its own one.
+    for(const [index,kind] of ['pr','group'].entries()){
+      const cursorRun=runs.reduce((a,b)=>b.run_number>a.run_number?b:a), straddle=nextRun++;
+      await record(straddle,payload(comment(16+index,'/revoke-rights '+head,clock)),1,true);
+      assert.equal(runs[0].id,straddle);
+      const moved=runs.shift();runs.splice(runs.indexOf(cursorRun)+1,0,moved);
+      // Its id sorts below the cursor run's id, as in a real id-ordered listing
+      // (harness ids start at 100, so 50 and 49 are unused).
+      const low=50-index;assert(low<cursorRun.id&&!runs.some(r=>r.id===low));jobs.set(low,jobs.get(moved.id));moved.id=low;
+      assert(pending(await collect(kind)).includes(low),'a run listed after the cursor run must be read');
+    }
     await snapshot(prefix+'straddle');
     // A complete first page is no upper bound: a run numbered above every run seen so
     // far (here a revocation whose ledger has not run) can list on a later page.
