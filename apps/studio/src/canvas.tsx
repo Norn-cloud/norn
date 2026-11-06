@@ -12,7 +12,7 @@ import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
 import * as g from "./lib/canvas/graph.ts"
-import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
+import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, stepKey, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { words } from "./lib/format.ts"
 import type { Envelope } from "./lib/transport.ts"
 
@@ -64,7 +64,8 @@ function Inspector({ editing, issues, standing }: { readonly editing: Editing; r
   )
   const node = graph.nodes.find(({ id }) => id === selection.nodes[0])
   const edge = graph.edges.find(({ id }) => id === selection.edges[0])
-  const siblings = edge ? graph.edges.filter(({ config }) => config.transition === edge.config.transition).map(({ id }) => id) : []
+  // The edges of this one step, by the same key compilation groups them with.
+  const siblings = edge ? graph.edges.filter((other) => stepKey(other) === stepKey(edge)).map(({ id }) => id) : []
   const own = issues.filter((issue) => (node && issue.node === node.id) || (edge && issue.edge === edge.id))
   return (
     <>
