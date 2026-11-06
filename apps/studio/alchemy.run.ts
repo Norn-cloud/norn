@@ -1,8 +1,8 @@
 import { cpSync } from "node:fs"
 import alchemy from "alchemy"
-import { D1Database, DurableObjectNamespace, EmailSender, Vite } from "alchemy/cloudflare"
+import { D1Database, DurableObjectNamespace, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { agentDeploy, authDeploy, deployTarget, scanState } from "./deploy-target.ts"
+import { agentDeploy, authDeploy, cellHost, deployTarget, requireWorkerScript, scanState } from "./deploy-target.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
@@ -26,6 +26,9 @@ import { agentDeploy, authDeploy, deployTarget, scanState } from "./deploy-targe
 const target = deployTarget(process.env)
 const auth = authDeploy(process.env, target)
 const agent = agentDeploy(process.env)
+// Preview binds the Norn cell Worker as NORN_HOST by script name; the script must already exist.
+const host = cellHost(target)
+if (host !== undefined) await requireWorkerScript(host, process.env)
 // The scan below must see the secrets' values, so keep a copy before taking them out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
@@ -60,6 +63,7 @@ export const studio = await Vite("studio", {
     BETTER_AUTH_SECRET: alchemy.secret(auth.secret),
     BETTER_AUTH_URL: auth.url,
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
+    ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
     // Magic links need a Cloudflare Email Service sender on the domain; without one they refuse.
     ...auth.emailFrom === undefined ? {} : { EMAIL: EmailSender({ allowedSenderAddresses: [auth.emailFrom] }), EMAIL_FROM: auth.emailFrom },
     ...agent === undefined ? {} : {
