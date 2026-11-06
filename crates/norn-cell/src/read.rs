@@ -1225,11 +1225,6 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         crate::quantity::posting(self.conn, world, ledger, id)
     }
 
-    /// The model this reader decodes under.
-    pub(crate) const fn model(&self) -> &'a Model {
-        self.model
-    }
-
     pub(crate) const fn new(conn: &'a E, model: &'a Model) -> Self {
         Self {
             conn,
