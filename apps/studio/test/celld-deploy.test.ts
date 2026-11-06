@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { join } from "node:path"
-import { appDir, applyMigrations, pinnedCommit, type Run } from "../scripts/celld-deploy.ts"
+import { appDir, deployThenCheck, pinnedCommit } from "../scripts/celld-deploy.ts"
 import { awaitServed, entryChunk } from "../scripts/served-build.ts"
 
 const HEAD = "93dfdc450d".padEnd(40, "a")
@@ -42,15 +42,18 @@ test("--app names another Studio checkout to build; anything else refuses", () =
   expect(() => appDir(["--app", import.meta.dir], own)).toThrow("not a Studio app directory")
 })
 
-test("pending D1 migrations are applied through celld, idempotently, and a failure fails the deploy", () => {
-  const calls: string[] = []
-  const answering = (output: string): Run => (command, args) => { calls.push([command, ...args].join(" ")); return output }
-  expect(applyMigrations(answering("Applied 0002_connector_binding.sql\n"), "norn-studio-auth-next", "s3://norn-next-celld")).toContain("Applied 0002")
-  expect(calls[0]).toBe("celld d1 migrations apply norn-studio-auth-next . --bucket s3://norn-next-celld")
-  // A second deploy applies nothing and still passes.
-  expect(applyMigrations(answering("No migrations to apply.\n"), "norn-studio-auth-next", "s3://norn-next-celld")).toContain("No migrations")
-  const failing: Run = () => { throw new Error("Command failed: celld d1 migrations apply (exit 1): near \"ALTR\": syntax error") }
-  expect(() => applyMigrations(failing, "norn-studio-auth-next", "s3://norn-next-celld")).toThrow("syntax error")
-  expect(() => applyMigrations(answering(""), "norn-studio-auth-next", "s3://norn-next-celld")).toThrow("gave no result")
-  expect(() => applyMigrations(answering("Applied x"), "norn-studio-auth-next", undefined)).toThrow("CELLD_BUCKET")
+
+test("the served-bundle check always runs and is reported, and any failed step fails the deploy", async () => {
+  const seen: (string | undefined)[] = []
+  const served = (answer: string | undefined) => async (expected: string | undefined) => { seen.push(expected); return { served: answer, matched: answer !== undefined && answer === expected } }
+  const ok = await deployThenCheck({ build: () => "/assets/index-A.js", deploy: () => {}, served: served("/assets/index-A.js") })
+  expect(ok).toEqual({ ok: true, lines: ["serves /assets/index-A.js, built /assets/index-A.js: match"] })
+  // The upload lands but celld reports an error: the check still runs and is reported; the deploy fails.
+  const deployFailed = await deployThenCheck({ build: () => "/assets/index-A.js", deploy: () => { throw new Error("migrate: connection refused") }, served: served("/assets/index-A.js") })
+  expect(deployFailed).toEqual({ ok: false, lines: ["celld deploy failed: migrate: connection refused", "serves /assets/index-A.js, built /assets/index-A.js: match"] })
+  const buildFailed = await deployThenCheck({ build: () => { throw new Error("vite failed") }, deploy: () => { throw new Error("never deployed") }, served: served("/assets/index-old.js") })
+  expect(buildFailed).toEqual({ ok: false, lines: ["build failed: vite failed", "serves /assets/index-old.js, built nothing: MISMATCH"] })
+  expect(seen).toEqual(["/assets/index-A.js", "/assets/index-A.js", undefined])
+  const stale = await deployThenCheck({ build: () => "/assets/index-B.js", deploy: () => {}, served: served("/assets/index-A.js") })
+  expect(stale.ok).toBe(false)
 })

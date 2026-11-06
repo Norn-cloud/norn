@@ -1,11 +1,12 @@
-import { execFileSync, spawnSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { celldConfig, celldStudio } from "../celld-config.ts"
 import { awaitServed, entryChunk } from "./served-build.ts"
 
-// Deploy the self-hosted Studio to a celld fleet from exactly one commit, apply its pending D1
-// migrations, then prove the fleet serves that build. Refuses before building when the commit is not given, HEAD is
+// Deploy the self-hosted Studio to a celld fleet from exactly one commit, then prove the fleet
+// serves that build. D1 migrations are applied before this, where the database lives
+// (scripts/celld-migrate.ts, on the controller), so this machine needs no host access. Refuses before building when the commit is not given, HEAD is
 // not that commit, or the tree has any change; the commit is recorded as STUDIO_BUILD.
 //
 //   bun scripts/celld-deploy.ts --commit <sha> [--app <checkout>/apps/studio]
@@ -38,21 +39,36 @@ export function pinnedCommit(argv: readonly string[], head: string, status: stri
   return head
 }
 
-/** Runs a command in the app directory and returns its combined output; throws on a non-zero exit. */
-export type Run = (command: string, args: readonly string[]) => string
+/** The deploy's steps; `served` reads what the origin serves now, given the entry this build expects. */
+export interface DeploySteps {
+  /** Builds the bundle; returns its entry chunk. */
+  readonly build: () => string
+  readonly deploy: () => void
+  readonly served: (expected: string | undefined) => Promise<{ readonly served: string | undefined; readonly matched: boolean }>
+}
 
 /**
- * Apply the stage's pending D1 migrations (`worker/migrations`, the `d1_databases` entry of
- * wrangler.json) through `celld d1 migrations apply`. celld records applied files in
- * `d1_migrations`, so a second run applies nothing. Any failure fails the deploy: a Worker that
- * needs a table its database lacks must not be reported as deployed (#772, a missing
- * 0002_connector_binding.sql shipped once).
+ * Build, deploy, then check what the origin serves. The check always runs and is reported, even
+ * when building or deploying failed: an upload can land before celld reports an error, and the
+ * origin is what people see. The deploy succeeds only if every step did and the entry matches.
  */
-export function applyMigrations(run: Run, database: string, bucket: string | undefined): string {
-  if (bucket === undefined || bucket === "") throw new Error("CELLD_BUCKET is required to apply the stage's D1 migrations")
-  const output = run("celld", ["d1", "migrations", "apply", database, ".", "--bucket", bucket])
-  if (!/Applied |No migrations to apply/.test(output)) throw new Error(`celld d1 migrations apply ${database} gave no result:\n${output}`)
-  return output
+export async function deployThenCheck(steps: DeploySteps): Promise<{ readonly ok: boolean; readonly lines: readonly string[] }> {
+  const lines: string[] = []
+  const attempt = (name: string, step: () => void) => {
+    try {
+      step()
+      return true
+    } catch (error) {
+      lines.push(`${name} failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`)
+      return false
+    }
+  }
+  let expected: string | undefined
+  const built = attempt("build", () => { expected = steps.build() })
+  const deployed = built && attempt("celld deploy", steps.deploy)
+  const { served, matched } = await steps.served(expected)
+  lines.push(`serves ${served ?? "no entry"}, built ${expected ?? "nothing"}: ${matched ? "match" : "MISMATCH"}`)
+  return { ok: built && deployed && matched, lines }
 }
 
 async function main(argv: readonly string[]) {
@@ -65,30 +81,27 @@ async function main(argv: readonly string[]) {
     if (pkg === undefined || !existsSync(join(pkg, "norn_checker_wasm_bg.wasm"))) throw new Error("NORN_CHECKER_WASM_PKG must name the built checker package (crates/norn-checker-wasm/scripts/build-pkg.sh)")
     cpSync(pkg, join(app, "worker/checker"), { recursive: true })
   }
-  execFileSync("./node_modules/.bin/vite", ["build"], { cwd: app, stdio: "inherit", env: { ...process.env, NODE_ENV: "production" } })
-  const expected = entryChunk(readFileSync(join(app, "dist/index.html"), "utf8"))
-  if (expected === undefined) throw new Error("dist/index.html names no entry chunk")
-  // The config carries secrets: written mode 0600, ignored by git, removed after the deploy.
-  const config = join(app, "wrangler.json")
-  writeFileSync(config, `${JSON.stringify(celldConfig(studio), null, 2)}\n`, { mode: 0o600 })
-  // celld d1 prints its messages on stderr; both streams are the result.
-  const run: Run = (command, args) => {
-    const done = spawnSync(command, args, { cwd: app, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
-    const output = `${done.stdout ?? ""}${done.stderr ?? ""}`
-    if (done.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (exit ${done.status ?? done.signal}):\n${output}`)
-    return output
-  }
-  try {
-    execFileSync("celld", ["deploy", ".", "--json"], { cwd: app, stdio: ["ignore", "inherit", "inherit"] })
-    // Migrations are additive (expand first), so the schema may lead the code nodes adopt next.
-    const database = `norn-studio-auth-${studio.stage}`
-    console.log(`${database}: ${applyMigrations(run, database, process.env.CELLD_BUCKET).trim().split("\n").join("; ")}`)
-  } finally {
-    rmSync(config, { force: true })
-  }
-  const { served, matched } = await awaitServed(studio.authUrl, expected, 150_000)
-  console.log(`norn-studio-${studio.stage} at ${commit}: ${studio.authUrl} serves ${served ?? "no entry"}, built ${expected}: ${matched ? "match" : "MISMATCH"}`)
-  if (!matched) process.exit(1)
+  const { ok, lines } = await deployThenCheck({
+    build: () => {
+      execFileSync("./node_modules/.bin/vite", ["build"], { cwd: app, stdio: "inherit", env: { ...process.env, NODE_ENV: "production" } })
+      const entry = entryChunk(readFileSync(join(app, "dist/index.html"), "utf8"))
+      if (entry === undefined) throw new Error("dist/index.html names no entry chunk")
+      return entry
+    },
+    deploy: () => {
+      // The config carries secrets: written mode 0600, ignored by git, removed after the deploy.
+      const config = join(app, "wrangler.json")
+      writeFileSync(config, `${JSON.stringify(celldConfig(studio), null, 2)}\n`, { mode: 0o600 })
+      try {
+        execFileSync("celld", ["deploy", ".", "--json"], { cwd: app, stdio: ["ignore", "inherit", "inherit"] })
+      } finally {
+        rmSync(config, { force: true })
+      }
+    },
+    served: (expected) => awaitServed(studio.authUrl, expected ?? "/assets/<no build>", expected === undefined ? 0 : 150_000),
+  })
+  for (const line of lines) console.log(`norn-studio-${studio.stage} at ${commit}: ${line}`)
+  if (!ok) process.exit(1)
 }
 
 if (import.meta.main) await main(process.argv.slice(2))
