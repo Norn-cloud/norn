@@ -352,7 +352,7 @@ function Facts({ concept, reads }: { readonly concept: Concept; readonly reads: 
 
 /** A labelled id row. */
 const Id = ({ label, value, short }: { readonly label: string; readonly value: string; readonly short?: number }) => (
-  <div className="flex min-w-0 items-baseline gap-3"><dt className="w-32 shrink-0 text-meta text-muted-foreground">{label}</dt><dd className="min-w-0"><CopyId value={value} short={short} /></dd></div>
+  <div className="flex min-w-0 flex-col gap-x-3 sm:flex-row sm:items-baseline"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">{label}</dt><dd className="min-w-0 flex-1"><CopyId value={value} short={short} /></dd></div>
 )
 
 /** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what this read lacks. */
@@ -390,8 +390,8 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
     )}
     <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="p-3">
       <dl className="space-y-1 text-sm">
-        <div className="flex gap-3"><dt className="w-32 shrink-0 text-meta text-muted-foreground">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None recorded: the demo read has no signed-in principal</dd></div>
-        <div className="flex gap-3"><dt className="w-32 shrink-0 text-meta text-muted-foreground">Receipt</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None in this recording</dd></div>
+        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None recorded: the demo read has no signed-in principal</dd></div>
+        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Receipt</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None in this recording</dd></div>
       </dl>
     </Well></Panel>
   </>
