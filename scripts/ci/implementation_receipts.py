@@ -594,8 +594,8 @@ def verify(root: Path, receipts: Path, expected: dict, fstar: Path | None,
             elif kind == "kani":
                 # A scoped run with no receipt reports no Kani result at all.
                 require(name in present, "no receipt from the base-owned wrapper")
-                verdicts.append(verdict_line(name, kind, CANDIDATE_REPORTED))
-                check(root, claim, receipts / name, expected, fstar)
+                # The verdict is appended only for a receipt that passed validation.
+                verdicts.append(check(root, claim, receipts / name, expected, fstar))
             elif not scoped:
                 verdicts.append(verdict_line(name, kind, UNCHANGED))
             else:
