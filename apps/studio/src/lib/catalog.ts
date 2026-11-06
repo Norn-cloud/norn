@@ -52,6 +52,8 @@ export interface Concept {
   readonly title: string
   /** A concept some connected system feeds, or a core idea the concepts build on. */
   readonly kind: "concept" | "core idea"
+  /** What the definition declares: an object type (it can have records) or a shared interface. Feed presence is `kind`. */
+  readonly definition: "object type" | "interface"
   readonly description: string | undefined
   readonly parents: readonly string[]
   readonly fields: readonly Field[]
@@ -75,7 +77,7 @@ export interface Catalog {
   readonly byName: ReadonlyMap<string, Concept>
 }
 
-const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo" }
+const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify" }
 
 /** `synthetic-erpnext` → `ERPNext`; an unknown system keeps the name the server sent. */
 export function systemName(system: string): string {
@@ -183,6 +185,7 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       name: def.name,
       title,
       kind: fed.length > 0 ? "concept" : "core idea",
+      definition: "objectType" in payload ? "object type" : "interface",
       description: def.description ?? ([def.name, title].includes(artifact.name) ? undefined : artifact.name),
       parents,
       fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types) })),
