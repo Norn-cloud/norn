@@ -55,9 +55,8 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<CellStore
     provision_set(engine, scope, &artifacts)
 }
 
-/// Admit `artifacts` with the shared checker (any `core.` or `std.` artifact
-/// as the retained trusted base) and provision, or reopen, them on `engine`
-/// as the cell's first governed definitions version.
+/// Admit `artifacts` with the shared checker and provision, or reopen, them
+/// on a fresh `engine` as the cell's first governed definitions version.
 ///
 /// # Errors
 /// The set does not admit, or the engine holds a different cell.
@@ -66,6 +65,20 @@ pub(crate) fn provision_set<E: SqlEngine>(
     scope: &CellScope,
     artifacts: &[ArtifactEnvelope],
 ) -> Result<CellStore<E>, SeedError> {
+    let (model, input) = admit_set(artifacts)?;
+    CellStore::provision_definitions(engine, model, &input, &scope.key())
+        .map_err(|e| fail("provision")(&e))
+}
+
+/// Admit `artifacts` with the shared checker (any `core.` or `std.` artifact
+/// as the retained trusted base): the projected model and the install input
+/// carrying the computed receipt, installed at the fixed logical time.
+///
+/// # Errors
+/// The set does not admit.
+pub(crate) fn admit_set(
+    artifacts: &[ArtifactEnvelope],
+) -> Result<(Model, InstalledDefinitionInput), SeedError> {
     let value = |artifact: &ArtifactEnvelope| {
         serde_json::to_value(artifact)
             .map_err(|e| fail("artifact wire")(&e))
@@ -120,8 +133,7 @@ pub(crate) fn provision_set<E: SqlEngine>(
         installed_at: INSTALLED_AT,
         layout: None,
     };
-    CellStore::provision_definitions(engine, model(artifacts)?, &input, &scope.key())
-        .map_err(|e| fail("provision")(&e))
+    Ok((model(artifacts)?, input))
 }
 
 /// The normalized model of the set's entity roots and their governing laws.
