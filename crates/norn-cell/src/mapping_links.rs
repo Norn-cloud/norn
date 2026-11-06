@@ -332,10 +332,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut links = BTreeMap::new();
         let mut sealed = Vec::new();
         for ((source, role), group) in &groups {
-            let standing = standings(group, &target);
+            let ranked = standings(group, &target);
             let current: BTreeSet<_> = group
                 .iter()
-                .zip(&standing)
+                .zip(&ranked)
                 .filter(|(_, s)| **s == Standing::Current)
                 .map(|(e, _)| target(e))
                 .collect();
@@ -347,13 +347,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let before = links.len();
-            for (entry, standing) in group.iter().zip(&standing) {
+            for (entry, standing) in group.iter().zip(&ranked) {
                 let Some(to) = target(entry) else { continue };
                 let key = LinkKey::new(source.clone(), role.as_str(), to.clone());
                 let exists = self.mapping_link_exists(&key, model)?;
                 let supported = group
                     .iter()
-                    .zip(&standing)
+                    .zip(&ranked)
                     .any(|(o, s)| *s != Standing::Superseded && target(o).as_ref() == Some(&to));
                 let mutation = match standing {
                     Standing::Current if !exists && present(source)? && present(&to)? => {
