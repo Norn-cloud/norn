@@ -1,7 +1,7 @@
 import alchemy from "alchemy"
-import { Vite } from "alchemy/cloudflare"
+import { D1Database, EmailSender, Vite } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { deployTarget, scanState } from "./deploy-target.ts"
+import { authDeploy, deployTarget, scanState } from "./deploy-target.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
@@ -14,18 +14,43 @@ import { deployTarget, scanState } from "./deploy-target.ts"
 // `vite build` runs before this script (see the deploy script), never inside
 // Alchemy: its build step hands the whole host environment to the command and
 // records it in state. Alchemy only uploads dist.
+// Every stage runs Better Auth (worker/) with its own D1 database; the
+// session secret becomes an encrypted Worker secret, never part of a bundle.
 const target = deployTarget(process.env)
+const auth = authDeploy(process.env, target)
+// The scan below must see the secret's value, so keep a copy before taking it out of the environment.
+const scanEnv = { ...process.env }
+delete process.env.BETTER_AUTH_SECRET
 const stateDir = process.env.ALCHEMY_STATE_DIR ?? ".alchemy"
 // Alchemy keeps this app's state under <stateDir>/<APP>/; the post-deploy scan reads exactly that subtree.
 const APP = "norn-studio"
 const app = await alchemy(APP, {
   stage: target.stage,
+  password: process.env.ALCHEMY_PASSWORD,
   stateStore: (scope) => new FileSystemStateStore(scope, { rootDir: stateDir }),
+})
+
+const authDb = await D1Database("auth-db", {
+  name: `norn-studio-auth-${target.stage}`,
+  migrationsDir: "./worker/migrations",
+  adopt: true,
 })
 
 export const studio = await Vite("studio", {
   name: target.worker,
-  assets: "dist",
+  assets: { directory: "dist", run_worker_first: ["/api/*"] },
+  entrypoint: "./worker/index.ts",
+  compatibilityDate: "2026-10-20",
+  compatibilityFlags: ["nodejs_compat"],
+  // Never write the Worker's secrets into the local wrangler.jsonc.
+  wrangler: { secrets: false },
+  bindings: {
+    AUTH_DB: authDb,
+    BETTER_AUTH_SECRET: alchemy.secret(auth.secret),
+    BETTER_AUTH_URL: auth.url,
+    // Magic links need a Cloudflare Email Service sender on the domain; without one they refuse.
+    ...auth.emailFrom === undefined ? {} : { EMAIL: EmailSender({ allowedSenderAddresses: [auth.emailFrom] }), EMAIL_FROM: auth.emailFrom },
+  },
   // Built beforehand; an empty command makes Alchemy skip its build step entirely.
   build: "",
   spa: true,
@@ -38,7 +63,7 @@ await app.finalize()
 
 // No credential from the environment may end up in this app's state: fail the deploy if one does, naming only the variable.
 // Only the app's own subtree is scanned; the folder may also hold the state password the assistant's secrets are encrypted with.
-const scan = scanState(stateDir, APP, process.env)
+const scan = scanState(stateDir, APP, scanEnv)
 if (Object.keys(scan.leaks).length > 0) {
   console.error(`Alchemy state holds credential values for: ${Object.keys(scan.leaks).sort().join(", ")}`)
   process.exit(1)
