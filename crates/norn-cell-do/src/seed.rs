@@ -6,11 +6,14 @@
 //! computed, not copied; an identical provision on a restarted Durable Object
 //! reopens the first revision without writing (`provision_definitions`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use norn_api::scope::CellScope;
-use norn_cell::{CellStore, InstalledDefinitionInput, Model, engine::SqlEngine};
+use norn_cell::{
+    CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
+    engine::SqlEngine,
+};
 use norn_checker::{EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
 
@@ -106,8 +109,75 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<CellStore
         installed_at: INSTALLED_AT,
         layout: None,
     };
-    CellStore::provision_definitions(engine, model(&artifacts)?, &input, &scope.key())
-        .map_err(|e| fail("provision")(&e))
+    let mut store =
+        CellStore::provision_definitions(engine, model(&artifacts)?, &input, &scope.key())
+            .map_err(|e| fail("provision")(&e))?;
+    seed_rows(&mut store, scope)?;
+    Ok(store)
+}
+
+/// The idempotency key of the demo rows' one commit: a restarted Durable
+/// Object replays it without writing, and nothing is ever wiped.
+pub const SEED_ROWS_KEY: &str = "demo.seed.rows/1";
+
+/// Logical time of the demo rows' commit; fixed so every boot is identical.
+const SEEDED_AT: u64 = 2;
+
+/// Synthetic catalog items and parties (no real or shop data) in the main
+/// world, committed once through the governed write path. The demo grants
+/// give the `viewer` role Population alone, so these rows are listed for it
+/// with their values withheld (D67), and read whole by `admin`.
+pub const SEED_ITEMS: [(&str, &str, &str); 6] = [
+    ("SYN-ITEM-01", "BAR-1KG", "Synthetic gold bar, 1 kg"),
+    ("SYN-ITEM-02", "BAR-100G", "Synthetic gold bar, 100 g"),
+    ("SYN-ITEM-03", "COIN-1OZ", "Synthetic silver coin, 1 oz"),
+    ("SYN-ITEM-04", "GRAIN-AU", "Synthetic gold grain"),
+    ("SYN-ITEM-05", "SCRAP-AG", "Synthetic silver scrap"),
+    ("SYN-ITEM-06", "WIRE-PT", "Synthetic platinum wire"),
+];
+
+/// Synthetic parties: id, display name and kind.
+pub const SEED_PARTIES: [(&str, &str, &str); 4] = [
+    ("SYN-PARTY-01", "Synthetic Refinery A", "organization"),
+    ("SYN-PARTY-02", "Synthetic Vault B", "organization"),
+    ("SYN-PARTY-03", "Synthetic Assayer", "person"),
+    ("SYN-PARTY-04", "Synthetic Ledger Feed", "system"),
+];
+
+fn seed_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &CellScope) -> Result<(), SeedError> {
+    let text = |value: &str| RuntimeValue::from(value);
+    let items = SEED_ITEMS
+        .iter()
+        .map(|(id, code, label)| FactWriteRow::Put {
+            object_type: "canon.Item".into(),
+            key: (*id).into(),
+            values: BTreeMap::from([
+                ("id".to_owned(), text(id)),
+                ("code".to_owned(), text(code)),
+                ("label".to_owned(), text(label)),
+            ]),
+        });
+    let parties = SEED_PARTIES
+        .iter()
+        .map(|(id, name, kind)| FactWriteRow::Put {
+            object_type: "canon.Party".into(),
+            key: (*id).into(),
+            values: BTreeMap::from([
+                ("display_name".to_owned(), text(name)),
+                ("kind".to_owned(), text(kind)),
+            ]),
+        });
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: scope.key(),
+            logical_time: SEEDED_AT,
+            idempotency_key: Some(SEED_ROWS_KEY.into()),
+            writes: items.chain(parties).collect(),
+            ..CommitBatch::default()
+        })
+        .map(|_outcome| ())
+        .map_err(|e| fail("demo rows")(&e))
 }
 
 /// The normalized model of the set's entity roots and their governing laws.
