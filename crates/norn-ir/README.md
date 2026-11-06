@@ -17,17 +17,17 @@ artifact-promotion protocol. It binds one pure production Rust function:
 
 The promoted extraction command selects only that Rust symbol with hax, rejects
 proof holes/admitted SMT queries, checks the generated F* module, and then
-checks the total theorem. The theorem quantifies over all current 13
-`ArtifactKind` variants and all seven `ArtifactLifecycle` variants. It proves
-that direct writes reject `Approved` and `Active` for the 12 authority-bearing
-kinds, including `Mapping`, while the evidence-only `SourceSchema` kind remains
-directly writable at every lifecycle.
+checks the total theorem. The theorem quantifies over all current 15
+`ArtifactKind` variants and all seven `ArtifactLifecycle` variants (105
+combinations). It proves that direct writes reject `Approved` and `Active` for
+the 14 authority-bearing kinds, including `Mapping`, while the evidence-only
+`SourceSchema` kind remains directly writable at every lifecycle.
 
-The promoted Rust integration tests cover the 12 authority-bearing kinds for
-`Draft`, `Proposed`, `Approved`, and `Active`, then cover all 13 kinds for
-`Deprecated`, `Superseded`, and `Rejected`. They do not currently assert the
-`SourceSchema` behavior for `Approved` or `Active`; the unconditional
-kind-by-lifecycle theorem is the exact table for those cases.
+The promoted Rust integration tests check 101 of those 105 combinations: the 14
+authority-bearing kinds for `Draft`, `Proposed`, `Approved`, and `Active`, then
+all 15 kinds for `Deprecated`, `Superseded`, and `Rejected`. They do not assert
+`SourceSchema` with `Draft`, `Proposed`, `Approved`, or `Active`; only the
+kind-by-lifecycle theorem covers those four.
 
 Until #969 provides an isolated producer, this obligation is an "F\* re-checked
 theorem about the uploaded model, correspondence candidate-reported", recorded
@@ -43,5 +43,5 @@ BAC approval, verification-receipt, active-pointer, persistence, authentication,
 authorization, or concurrency protocols are correct. Those remain under
 `INV-ART-AUTHORITY-PROMOTION`, which stays `partial`. A future enum variant or
 predicate representation change must regenerate the hax artifact and re-check
-the total theorem and exhaustive runtime table before this obligation can
+the total theorem and the runtime table before this obligation can
 return to `implementation_proved`.

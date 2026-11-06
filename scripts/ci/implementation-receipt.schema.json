@@ -66,7 +66,8 @@
         "kind": {"enum": ["kani", "extraction"]},
         "verdict": {"enum": ["candidate-reported", "unchanged"]},
         "label": {"enum": ["candidate-reported Kani result",
-                           "F* re-checked theorem about the uploaded model, correspondence candidate-reported"]},
+                           "F* re-checked theorem about the uploaded model, correspondence candidate-reported",
+                           "unchanged from the base, nothing re-checked on this run"]},
         "rechecked": {"type": "array", "items": {"enum": ["fstar-typecheck", "fstar-option-allowlist", "proof-hole-scan"]}},
         "candidateReported": {"type": "array", "items": {"enum": ["hax-extraction", "kani-baseline", "kani-mutations"]}}
       }

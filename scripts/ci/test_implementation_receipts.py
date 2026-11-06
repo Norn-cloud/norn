@@ -309,6 +309,9 @@ class ReceiptTest(unittest.TestCase):
                 ("lib/Cargo.toml", '[package]\nname = "lib"\nbuild = "../outside.rs"\n', "package.build"),
                 ("lib/src/lib.rs", '#[path = "../../outside.rs"] mod outside;\n', "outside the package"),
                 ("lib/src/lib.rs", 'const X: &str = include_str!("../../outside.rs");\n', "outside the package"),
+                ("lib/src/lib.rs", 'const X: &str = include_str!["../../outside.rs"];\n', "outside the package"),
+                ("lib/src/lib.rs", 'const X: &[u8] = include_bytes!{"../../outside.rs"};\n', "outside the package"),
+                ("lib/src/lib.rs", '#[cfg_attr(all(), path = "../../outside.rs")] mod outside;\n', "outside the package"),
                 ("lib/src/lib.rs", 'include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../outside.rs"));\n',
                  "non-literal include")):
             original = (self.root / name).read_text()
@@ -319,8 +322,9 @@ class ReceiptTest(unittest.TestCase):
 
     def test_unchanged_claims_are_labelled_but_never_admitted(self) -> None:
         errors, verdicts = receipts.verify(self.root, self.out, self.expected, None, scoped=False)
-        self.assertEqual({v["claim"]: v["verdict"] for v in verdicts},
-                         {"INV-EXTRACT": "unchanged", "INV-KANI": "candidate-reported"})
+        self.assertEqual({v["claim"]: (v["verdict"], v["label"]) for v in verdicts},
+                         {"INV-EXTRACT": ("unchanged", receipts.UNCHANGED_LABEL),
+                          "INV-KANI": ("candidate-reported", receipts.LABELS["kani"])})
         self.assertEqual([e.split(":")[0] for e in errors], ["INV-EXTRACT", "INV-KANI"])
         self.assertTrue(all(e.endswith(receipts.NOT_ADMITTED) for e in errors), errors)
 

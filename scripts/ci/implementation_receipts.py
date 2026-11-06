@@ -62,6 +62,8 @@ CANDIDATE_REPORTED, UNCHANGED = "candidate-reported", "unchanged"
 # What each kind's verdict establishes, printed with it (D47 amendment).
 LABELS = {"kani": "candidate-reported Kani result",
           "extraction": "F* re-checked theorem about the uploaded model, correspondence candidate-reported"}
+# An unchanged claim runs no tool on this run, so its label claims no check.
+UNCHANGED_LABEL = "unchanged from the base, nothing re-checked on this run"
 NOT_ADMITTED = ("not admitted as implementation_proved: the producer that compiles candidate code is not "
                 "isolated, so no receipt can establish implementation correspondence (#969)")
 # Bounds on the downloaded receipt artifact, checked before any file is parsed.
@@ -442,7 +444,8 @@ def verdict_line(name: str, kind: str, verdict: str) -> dict:
     rechecked = ["fstar-typecheck", "fstar-option-allowlist", "proof-hole-scan"] \
         if kind == "extraction" and verdict == CANDIDATE_REPORTED else []
     reported = ["hax-extraction"] if kind == "extraction" else ["kani-baseline", "kani-mutations"]
-    return {"claim": name, "kind": kind, "verdict": verdict, "label": LABELS[kind], "rechecked": rechecked,
+    label = UNCHANGED_LABEL if verdict == UNCHANGED else LABELS[kind]
+    return {"claim": name, "kind": kind, "verdict": verdict, "label": label, "rechecked": rechecked,
             "candidateReported": reported}
 
 
@@ -590,7 +593,9 @@ def inside(directory: str, path: str) -> bool:
     return not os.path.isabs(path) and (normal == directory or normal.startswith(directory.rstrip("/") + "/"))
 
 
-SOURCE_REFERENCE = re.compile(r'#\s*!?\s*\[\s*path\s*=\s*"([^"]*)"|\binclude(?:_str|_bytes)?\s*!\s*\(\s*(?:"([^"]*)"|(.))')
+# A `path = "..."` anywhere in an attribute (cfg_attr included), or an
+# include*! with any macro delimiter.
+SOURCE_REFERENCE = re.compile(r'#\s*!?\s*\[[^\]]*?\bpath\s*=\s*"([^"]*)"|\binclude(?:_str|_bytes)?\s*!\s*[(\[{]\s*(?:"([^"]*)"|(.))')
 
 
 def require_contained_sources(root: Path, directory: str, manifest: dict) -> None:
@@ -598,7 +603,8 @@ def require_contained_sources(root: Path, directory: str, manifest: dict) -> Non
 
     Scope compares the package directory, so a source outside it would change
     the extraction without putting the claim in scope. `[lib] path`, `build`,
-    and `#[path]` or `include*!` in the package's Rust sources must stay inside;
+    and `#[path]` (also under `cfg_attr`) or `include*!` with any delimiter in
+    the package's Rust sources must stay inside;
     a non-literal include cannot be scoped and is refused. Test, bench and
     example targets never reach the library build and are not read.
     """
