@@ -41,6 +41,8 @@ export interface AuthConfig {
   readonly secret: string
   /** The Studio origin, e.g. https://studio-preview.norn.cloud. */
   readonly baseURL: string
+  /** Optional server-held default cell for newly provisioned workspaces. */
+  readonly defaultEnvironmentId?: string
   /** Absent when this deployment has no mail sender: magic links then refuse. */
   readonly sendMagicLink?: (mail: MagicLinkMail) => Promise<void>
 }
@@ -52,20 +54,21 @@ interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
 
 type AuthAdapter = Awaited<ReturnType<typeof getCurrentAdapter>>
 
-async function provisionWorkspace(adapter: AuthAdapter, secret: string, user: { id: string; name: string; email: string }) {
+async function provisionWorkspace(adapter: AuthAdapter, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string) {
   const identity = await workspaceIdentity(secret, user.id)
   const find = () => adapter.findOne<{ id: string; metadata?: string | null }>({ model: "organization", where: [{ field: "id", value: identity.id }] })
   let org = await find()
   if (org === null) {
     try {
-      const data = { id: identity.id, name: `${user.name || user.email}'s workspace`, slug: `u-${identity.id.slice(10)}`, metadata: identity.metadata, createdAt: new Date() }
+      const data = { id: identity.id, name: `${user.name || user.email}'s workspace`, slug: `u-${identity.id.slice(10)}`, metadata: JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {} }), createdAt: new Date() }
       org = await adapter.create<typeof data>({ model: "organization", forceAllowId: true, data })
     } catch (error) {
       org = await find()
       if (org === null) throw error
     }
   }
-  if (org.metadata !== identity.metadata) throw new Error("Workspace ownership could not be verified")
+  const stored = metadataObject(org.metadata)
+  if (stored["norn.provisioningProof"] !== JSON.parse(identity.metadata)["norn.provisioningProof"]) throw new Error("Workspace ownership could not be verified")
   const member = await adapter.findOne<{ id: string }>({ model: "member", where: [{ field: "organizationId", value: identity.id }, { field: "userId", value: user.id }] })
   if (member === null) await adapter.create({ model: "member", data: { organizationId: identity.id, userId: user.id, role: "owner", createdAt: new Date() } })
 }
@@ -75,8 +78,16 @@ async function workspaceIdentity(secret: string, userId: string) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
   const sign = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))), (byte) => byte.toString(16).padStart(2, "0")).join("")
   const id = `workspace_${await sign(`id:${userId}`)}`
-  return { id, metadata: JSON.stringify({ studioProvisioningProof: await sign(`owner:${userId}:${id}`) }) }
+  return { id, metadata: JSON.stringify({ "norn.provisioningProof": await sign(`owner:${userId}:${id}`) }) }
 }
+
+/** Reserved metadata is assigned only by server-side provisioning. */
+const reservedMetadata = (key: string) => key === "environmentId" || key.startsWith("norn.")
+function metadataObject(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") { try { return metadataObject(JSON.parse(value)) } catch { return {} } }
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+const publicMetadata = (value: unknown) => Object.fromEntries(Object.entries(metadataObject(value)).filter(([key]) => !reservedMetadata(key)))
 
 export function authOptions(config: AuthConfig, self: Self = {}) {
   return {
@@ -137,7 +148,19 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     plugins: [
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
       // sender verifies addresses, nobody can join an organization by claiming an invited email.
-      organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true }),
+      organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true,
+        organizationHooks: {
+          beforeCreateOrganization: async ({ organization }) => ({ data: { ...organization, ...organization.metadata === undefined ? {} : { metadata: publicMetadata(organization.metadata) } } }),
+          beforeUpdateOrganization: async ({ organization, member }) => {
+            if (organization.metadata === undefined) return
+            const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
+            const stored = await adapter.findOne<{ metadata?: string | null }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
+            if (stored === null) throw new Error("Organization no longer exists")
+            const protectedFields = Object.fromEntries(Object.entries(metadataObject(stored.metadata)).filter(([key]) => reservedMetadata(key)))
+            return { data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...protectedFields } } }
+          },
+        },
+      }),
       apiKey({ references: "organization", enableMetadata: true, rateLimit: { enabled: true, timeWindow: 60_000, maxRequests: 120 } }),
       magicLink({
         expiresIn: 10 * MINUTE,
@@ -155,7 +178,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         create: {
           // This hook runs after commit; session creation retries any incomplete provisioning.
           after: async (user, ctx) => {
-            if (ctx !== null) await provisionWorkspace(await getCurrentAdapter(ctx.context.adapter), config.secret, user)
+            if (ctx !== null) await provisionWorkspace(await getCurrentAdapter(ctx.context.adapter), config.secret, user, config.defaultEnvironmentId)
           },
         },
       },
@@ -169,7 +192,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
               if (existing.length === 0) {
                 const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
                 if (user === null) throw new Error("Cannot provision a workspace for a missing user")
-                await provisionWorkspace(adapter, config.secret, user)
+                await provisionWorkspace(adapter, config.secret, user, config.defaultEnvironmentId)
               }
             }
             // The earliest membership, the same rule activeMembership uses when a session has none.

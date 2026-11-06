@@ -163,8 +163,29 @@ test("recovery refuses a workspace whose server ownership proof is altered", asy
   const db = env.AUTH_DB as unknown as Database
   expect((await enroll(env, "proof@example.com", "Proof")).status).toBe(200)
   db.run(`delete from "member"`)
-  db.run(`update "organization" set "metadata" = ?`, ['{"studioProvisioningProof":"forged"}'])
+  db.run(`update "organization" set "metadata" = ?`, ['{"norn.provisioningProof":"forged"}'])
   const response = await post(env, "/api/auth/sign-in/email", { email: "proof@example.com", password: "correct horse battery" })
   expect(response.status).not.toBe(200)
   expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 0 })
+})
+
+
+test("client organization metadata cannot assign or replace reserved cell bindings", async () => {
+  const env = { ...stage(), STUDIO_DEFAULT_ENVIRONMENT_ID: "server-cell" }
+  const db = env.AUTH_DB as unknown as Database
+  const signedIn = await enroll(env, "scope@example.com", "Scope")
+  const cookie = cookieOf(signedIn)
+  const own = db.query(`select "organizationId" from "member"`).get() as { organizationId: string }
+  const stored = () => JSON.parse((db.query(`select "metadata" from "organization" where "id" = ?`).get(own.organizationId) as { metadata: string }).metadata) as Record<string, unknown>
+  expect(stored().environmentId).toBe("server-cell")
+  const created = await post(env, "/api/auth/organization/create", { name: "Other", slug: "other-workspace", metadata: { environmentId: "analytics", "norn.test": "forged", label: "kept" } }, { cookie })
+  expect(created.status).toBe(200)
+  const row = db.query(`select "metadata" from "organization" where "slug" = 'other-workspace'`).get() as { metadata: string }
+  expect(JSON.parse(row.metadata)).toEqual({ label: "kept" })
+  const updated = await post(env, "/api/auth/organization/update", { organizationId: own.organizationId, data: { metadata: { environmentId: "analytics", "norn.provisioningProof": "forged", "norn.test": "forged", label: "changed" } } }, { cookie })
+  expect(updated.status).toBe(200)
+  expect(stored().environmentId).toBe("server-cell")
+  expect(stored()["norn.provisioningProof"]).not.toBe("forged")
+  expect(stored()["norn.test"]).toBeUndefined()
+  expect(stored().label).toBe("changed")
 })

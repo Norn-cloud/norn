@@ -8,6 +8,8 @@ export interface Env {
   readonly AUTH_DB: D1Database
   readonly BETTER_AUTH_SECRET: string
   readonly BETTER_AUTH_URL: string
+  /** Optional default data cell for newly created workspaces. */
+  readonly STUDIO_DEFAULT_ENVIRONMENT_ID?: string
   /** Cloudflare Email Service binding and sender; both absent until a sender is enabled. */
   readonly EMAIL?: { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> }
   readonly EMAIL_FROM?: string
@@ -31,7 +33,7 @@ function auth(env: Env): Auth {
   const sendMagicLink = mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
     await mail.send({ to, from, subject: "Sign in to Norn Studio", text: `Sign in to Norn Studio: ${url}\n\nThe link expires in 10 minutes. If you did not ask for it, ignore this email.` })
   }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, ...sendMagicLink === undefined ? {} : { sendMagicLink } })
+  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, ...sendMagicLink === undefined ? {} : { sendMagicLink } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
