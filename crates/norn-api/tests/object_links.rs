@@ -150,7 +150,10 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
                 world: MAIN_WORLD.to_owned(),
                 scope: physical().key(),
                 logical_time: 1,
-                facts: ["a", "b", "c", "d", HIDDEN].into_iter().map(create).collect(),
+                facts: ["a", "b", "c", "d", HIDDEN]
+                    .into_iter()
+                    .map(create)
+                    .collect(),
                 links: vec![
                     link("a", "b"),
                     link("a", "c"),
@@ -190,7 +193,11 @@ fn links(
 }
 
 /// Every page, following `next`.
-fn pages(host: &DevHost<NativeEngine>, actor: &str, params: &ObjectLinkParams) -> Vec<NornObjectLinkPage> {
+fn pages(
+    host: &DevHost<NativeEngine>,
+    actor: &str,
+    params: &ObjectLinkParams,
+) -> Vec<NornObjectLinkPage> {
     let mut all = Vec::new();
     let mut params = params.clone();
     loop {
@@ -206,7 +213,11 @@ fn pages(host: &DevHost<NativeEngine>, actor: &str, params: &ObjectLinkParams) -
 fn edges(pages: &[NornObjectLinkPage]) -> Vec<(String, String)> {
     pages
         .iter()
-        .flat_map(|page| page.items.iter().map(|edge| (edge.source.clone(), edge.target.clone())))
+        .flat_map(|page| {
+            page.items
+                .iter()
+                .map(|edge| (edge.source.clone(), edge.target.clone()))
+        })
         .collect()
 }
 
@@ -229,10 +240,16 @@ fn a_link_to_a_hidden_row_is_neither_listed_nor_counted() {
         assert!(!wire.contains("\"h\""), "limit {limit}: {wire}");
         // A last page names no next page: none of the hidden links remain.
         assert!(few.last().unwrap().next.is_none(), "limit {limit}");
-        assert!(few.iter().all(|page| page.items.len() <= limit.parse().unwrap()));
+        assert!(
+            few.iter()
+                .all(|page| page.items.len() <= limit.parse().unwrap())
+        );
     }
     let out = edges(&pages(&host, "few", &params(Some("out"), None)));
-    assert_eq!(out, [("a", "b"), ("a", "c"), ("a", "d")].map(|(s, t)| (s.to_owned(), t.to_owned())));
+    assert_eq!(
+        out,
+        [("a", "b"), ("a", "c"), ("a", "d")].map(|(s, t)| (s.to_owned(), t.to_owned()))
+    );
 }
 
 /// Links are existence-level: a caller holding Population alone sees them.
@@ -285,7 +302,10 @@ fn an_invalid_links_query_lists_every_violation() {
         ("query.property_unknown", "/link"),
         ("query.limit_invalid", "/limit"),
     ] {
-        assert!(found.contains(&(code.to_owned(), pointer.to_owned())), "{found:?}");
+        assert!(
+            found.contains(&(code.to_owned(), pointer.to_owned())),
+            "{found:?}"
+        );
     }
 }
 
@@ -303,7 +323,10 @@ fn a_links_cursor_binds_its_object_query_caller_and_snapshot() {
     let invalid = |refused: Refusal| {
         assert_eq!(refused.status, 400);
         assert_eq!(refused.diagnostics[0].code, "query.cursor_invalid");
-        assert_eq!(refused.diagnostics[0].span.as_ref().unwrap().pointer, "/after");
+        assert_eq!(
+            refused.diagnostics[0].span.as_ref().unwrap().pointer,
+            "/after"
+        );
     };
     invalid(links(&host, "few", "a", &with(params(None, Some("1")))).unwrap_err());
     invalid(links(&host, "full", "a", &with(params(Some("out"), Some("1")))).unwrap_err());
@@ -349,6 +372,10 @@ fn lineage_refuses_opaquely_without_values_sources_or_a_bundle() {
     for (actor, id) in [("full", "a"), ("pop", "a"), ("nosrc", "a"), ("few", HIDDEN)] {
         let refused = lineage(actor, id);
         assert_eq!(refused.status, 404, "{actor} {id}");
-        assert_eq!(serde_json::to_string(&refused).unwrap(), absent, "{actor} {id}");
+        assert_eq!(
+            serde_json::to_string(&refused).unwrap(),
+            absent,
+            "{actor} {id}"
+        );
     }
 }

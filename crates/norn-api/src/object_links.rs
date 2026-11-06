@@ -16,8 +16,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use norn_cell::read::{LinkDirection, LinkEdgeRecord, LinkPagePosition, LinkRef};
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
+use norn_cell::read::{LinkDirection, LinkEdgeRecord, LinkPagePosition, LinkRef};
 use norn_cell::source_provenance::InstanceSourceProvenance;
 use norn_cell::{MAIN_WORLD, ObjectRecord, engine::SqlEngine};
 use serde::{Deserialize, Serialize};
@@ -184,14 +184,20 @@ fn endpoint_listed<E: SqlEngine>(
     let collection = *collections
         .entry(row.object_type.clone())
         .or_insert_with(|| {
-            mapped(host.scope(), access, actor, Population, &row.object_type, None).is_ok_and(
-                |request| {
-                    host.read_permitted(&ReadRequest {
-                        capability: Population,
-                        access: &request,
-                    })
-                },
+            mapped(
+                host.scope(),
+                access,
+                actor,
+                Population,
+                &row.object_type,
+                None,
             )
+            .is_ok_and(|request| {
+                host.read_permitted(&ReadRequest {
+                    capability: Population,
+                    access: &request,
+                })
+            })
         });
     collection && permitted(host, access, actor, row, Population)
 }
@@ -221,19 +227,22 @@ fn visible_batch<E: SqlEngine>(
         if endpoint_listed(host, access, actor, &source, &mut scan.collections)
             && endpoint_listed(host, access, actor, &target, &mut scan.collections)
         {
-            let readable = [&source, &target]
-                .map(|row| permitted(host, access, actor, row, Values));
+            let readable =
+                [&source, &target].map(|row| permitted(host, access, actor, row, Values));
             seen.push((edge, [source, target], readable));
         }
     }
     let held = locked(host, access, &mut scan.start, |reader| {
         seen.iter()
             .map(|(_, rows, readable)| {
-                rows.iter().zip(readable).try_fold(false, |held, (row, readable)| {
-                    Ok::<bool, norn_cell::CellError>(
-                        held || (*readable && reader.observation_is_quarantined(MAIN_WORLD, row)?),
-                    )
-                })
+                rows.iter()
+                    .zip(readable)
+                    .try_fold(false, |held, (row, readable)| {
+                        Ok::<bool, norn_cell::CellError>(
+                            held || (*readable
+                                && reader.observation_is_quarantined(MAIN_WORLD, row)?),
+                        )
+                    })
             })
             .collect::<Result<Vec<bool>, norn_cell::CellError>>()
             .map_err(Refusal::host)

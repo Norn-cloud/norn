@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::host::DevHost;
-use norn_api::object_links::{ObjectLinkParams, get_object_links, get_object_lineage};
+use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_query::ObjectQueryParams;
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
@@ -244,7 +244,14 @@ fn objects<E: SqlEngine>(
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
             query,
-            &["orgId", "environmentId", "direction", "link", "limit", "after"],
+            &[
+                "orgId",
+                "environmentId",
+                "direction",
+                "link",
+                "limit",
+                "after",
+            ],
         )?;
         let scope = ScopeQuery {
             org_id: fields.remove("orgId"),
