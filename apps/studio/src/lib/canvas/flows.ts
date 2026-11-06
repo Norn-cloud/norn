@@ -13,25 +13,37 @@ export interface FlowPayload {
   readonly artifacts: readonly unknown[]
   readonly layout?: { readonly nodes: readonly CanvasNode[]; readonly edges: readonly CanvasEdge[] }
 }
-export interface StoredFlow { readonly id: string; readonly version: number; readonly lifecycle: string; readonly payload: FlowPayload }
+export interface StoredFlow {
+  readonly id: string; readonly version: number; readonly lifecycle: string; readonly payload: FlowPayload
+  /** Who signed this version off and when, and the hash of the words they read; null when installed unsigned. */
+  readonly signoff: { readonly signer: string; readonly signedAtMs: number; readonly restatementSha256: string } | null
+  /** The cell's words for this version now (recomputed at read time); a different hash than the signed one means they changed meaning. */
+  readonly restatement: FlowRestatement | null
+}
 /** One cell finding: its code (`definition.flow_*` and the checker's), message and where in the payload it points. */
 export interface FlowFinding { readonly code: string; readonly message: string; readonly pointer: string | null }
-export type FlowAdmission = { readonly admitted: true } | { readonly admitted: false; readonly findings: readonly FlowFinding[] }
+export type FlowAdmission = ({ readonly admitted: true } | { readonly admitted: false; readonly findings: readonly FlowFinding[] }) & {
+  /** The cell's plain words for this flow and their hash (DEFS' flow restatement), when it states them. */
+  readonly restatement?: FlowRestatement
+}
 export type FlowInstalled =
   | { readonly installed: true; readonly version: number; readonly receipt: string }
   | { readonly installed: false; readonly findings: readonly FlowFinding[] }
   | { readonly installed: false; readonly conflict: true }
   /** Retiring a flow with live runs is refused until they end (`definition.flow_runs_live`). */
   | { readonly installed: false; readonly runsLive: true }
+  /** The cell's words differ from the signed ones (with its own words, when they hash as it says), or it cannot verify a sign-off. */
+  | { readonly installed: false; readonly signoff: "mismatch" | "unavailable"; readonly restatement?: FlowRestatement }
 /** One saved automation in the list (no payload: open it to read the drawing). */
 export interface FlowSummary { readonly id: string; readonly title: string; readonly version: number; readonly lifecycle: string }
-/**
- * The seam for signing off a flow in plain words (D59, as questions do): once DEFS restates flows, this returns the
- * cell's words and their hash for the person to sign, and install sends the hash. Until then there are no words,
- * so there is nothing to sign and nothing is sent.
- */
+/** A flow in plain words, as the cell's restater writes it from the IR (DEFS), and that text's SHA-256: what a sign-off signs. */
 export type FlowRestatement = { readonly text: string; readonly sha256: string }
-export const restateFlow = async (_payload: FlowPayload): Promise<FlowRestatement | undefined> => undefined
+
+const sha256 = async (text: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))), (byte) => byte.toString(16).padStart(2, "0")).join("")
+/** The cell's words, only when they hash as it says: never words that do not match their digest. */
+export async function wordsOf(text: unknown, digest: unknown): Promise<FlowRestatement | undefined> {
+  return typeof text === "string" && typeof digest === "string" && /^[0-9a-f]{64}$/.test(digest) && await sha256(text) === digest ? { text, sha256: digest } : undefined
+}
 
 /** A started run, as the cell returns it. */
 export interface StartedRun { readonly id: string; readonly state: string | null; readonly flow: unknown }
@@ -61,7 +73,12 @@ export function flowStore(scope: StudioScope, fetcher: Fetch = (input, init) => 
     }
     return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null }
   }
-  const installed = ({ status, body }: { status: number; body: Record<string, unknown> | null }): FlowInstalled => {
+  const installed = async ({ status, body }: { status: number; body: Record<string, unknown> | null }): Promise<FlowInstalled> => {
+    if (status === 422 && body?.code === "definition.signoff_unavailable") return { installed: false, signoff: "unavailable" }
+    if (status === 422 && body?.code === "definition.signoff_mismatch") {
+      const words = await wordsOf(body.restatement, body.restatementSha256)
+      return { installed: false, signoff: "mismatch", ...words ? { restatement: words } : {} }
+    }
     if (status === 200 && body?.installed === true && typeof body.version === "number") return { installed: true, version: body.version, receipt: String((body.receipt as { receiptHash?: unknown } | undefined)?.receiptHash ?? "") }
     if (status === 422 && body?.code === "definition.refused") return { installed: false, findings: findingsOf(body) }
     if (status === 409 && body?.code === "definition.version_conflict") return { installed: false, conflict: true }
@@ -75,13 +92,19 @@ export function flowStore(scope: StudioScope, fetcher: Fetch = (input, init) => 
       if (status === 404 && body?.code === "definition.not_found") return undefined
       if (status === 404) throw new FlowRoutesMissing("The cell's definition routes aren't live yet; the automation stays a draft in this browser.")
       if (status !== 200 || body?.kind !== "flow" || typeof body.version !== "number" || typeof body.payload !== "object" || body.payload === null) throw new FlowCellError(status)
-      return { id: String(body.id ?? id), version: body.version, lifecycle: String(body.lifecycle ?? "active"), payload: body.payload as FlowPayload }
+      const signed = body.signoff as { signer?: unknown; signedAtMs?: unknown; restatementSha256?: unknown } | null | undefined
+      return {
+        id: String(body.id ?? id), version: body.version, lifecycle: String(body.lifecycle ?? "active"), payload: body.payload as FlowPayload,
+        signoff: signed && typeof signed.signer === "string" && typeof signed.restatementSha256 === "string" ? { signer: signed.signer, signedAtMs: typeof signed.signedAtMs === "number" ? signed.signedAtMs : 0, restatementSha256: signed.restatementSha256 } : null,
+        restatement: await wordsOf(body.restatement, body.restatementSha256) ?? null,
+      }
     },
     admit: async (id: string, payload: FlowPayload): Promise<FlowAdmission> => {
       const { status, body } = await call("/v1/definitions:admit", { kind: "flow", id, payload })
       if (status === 404) throw new FlowRoutesMissing("The cell's definition routes aren't live yet; the automation stays a draft in this browser.")
       if (status !== 200 || typeof body?.admitted !== "boolean") throw new FlowCellError(status)
-      return body.admitted ? { admitted: true } : { admitted: false, findings: findingsOf(body) }
+      const words = await wordsOf(body.restatement, body.restatementSha256)
+      return { ...body.admitted ? { admitted: true as const } : { admitted: false as const, findings: findingsOf(body) }, ...words ? { restatement: words } : {} }
     },
     /** A new version of the flow; `expectedVersion` guards against someone saving in between. Flows carry no restatement, so no sign-off (DEFS). */
     /** Every saved automation (kind "flow"), one page at a time. */

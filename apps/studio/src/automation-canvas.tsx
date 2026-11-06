@@ -11,7 +11,8 @@ import { CARD, EDGE_PILL, InspectorHead, InspectorSection, KindChip, NodeCard, c
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
 import { RunButton } from "./run-button.tsx"
-import { FlowRoutesMissing, automationId, flowStore, nodeOfFinding, restateFlow, type FlowFinding, type FlowPayload, type FlowStore } from "./lib/canvas/flows.ts"
+import { PlainWords } from "@/components/plain-words"
+import { FlowRoutesMissing, automationId, flowStore, nodeOfFinding, type FlowRestatement, type FlowFinding, type FlowPayload, type FlowStore } from "./lib/canvas/flows.ts"
 import { scopeOf } from "./lib/scope.ts"
 import { useAccount } from "./lib/session.ts"
 import { automationKinds, branchesOf, flowDefinitionPayload, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
@@ -323,6 +324,9 @@ export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
   // The cell's refusal, held for the drawing it refused: any edit makes it stale, so it goes.
   const [refused, setRefused] = useState<{ readonly drawing: string; readonly issues: readonly Issue[] } | null>(null)
   const [notice, setNotice] = useState<{ readonly tone: "refusal" | "info"; readonly text: string } | null>(null)
+  // D59: the cell's words for the drawing being saved, and whether the person signed exactly those words.
+  const [words, setWords] = useState<{ readonly drawing: string; readonly value: FlowRestatement; readonly fromCell: boolean } | null>(null)
+  const [signed, setSigned] = useState<string>()
   const [busy, setBusy] = useState(false)
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const issues = useCallback((graph: g.Graph) => {
@@ -348,18 +352,29 @@ export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
       setRefused({ drawing: JSON.stringify(graph), issues: findings.map((finding) => ({ code: finding.code, message: finding.message, ...(nodeOfFinding(finding, nodes, lowered.states) ? { node: nodeOfFinding(finding, nodes, lowered.states)! } : {}) })) })
       return { tone: "refusal" as const, text: `The cell refused the automation: ${findings.map(({ code }) => code).join(", ")}.` }
     }
+    const drawing = JSON.stringify(graph)
     const admission = await store.admit(meta.id, payload)
     if (!admission.admitted) return refuse(admission.findings)
-    // Sign-off seam: once the cell restates flows, the person signs these words and install sends their hash.
-    const words = await restateFlow(payload)
-    const result = await store.install(meta.id, payload, at?.version, words?.sha256)
+    // Saving signs the cell's words for exactly this drawing: first read them and sign off, then save installs signed.
+    const current = admission.restatement
+    if (current && !(signed === current.sha256 && words?.drawing === drawing && words.value.sha256 === current.sha256)) {
+      if (words?.drawing !== drawing || words.value.sha256 !== current.sha256) { setWords({ drawing, value: current, fromCell: false }); setSigned(undefined) }
+      return { tone: "info" as const, text: "Read the automation in plain words below and sign off; then Save installs it, signed." }
+    }
+    const result = await store.install(meta.id, payload, at?.version, current ? signed : undefined)
     if (result.installed) {
-      setRefused(null); setAt({ version: result.version })
+      setRefused(null); setAt({ version: result.version }); setWords(null); setSigned(undefined)
       void client.invalidateQueries({ queryKey: ["flow", meta.id] }); void client.invalidateQueries({ queryKey: ["flows"] })
       return { tone: "info" as const, text: `Saved as version ${result.version}; the cell admitted and installed it${result.receipt ? ` (receipt ${result.receipt.slice(0, 12)}…)` : ""}. Run starts it.` }
     }
     if ("conflict" in result) return { tone: "refusal" as const, text: "Someone saved a newer version first. Reopen the automation to see it; your drawing is kept as a draft." }
     if ("runsLive" in result) return { tone: "refusal" as const, text: "The cell refused: this flow has live runs." }
+    if ("signoff" in result) {
+      setSigned(undefined)
+      if (result.signoff === "unavailable") return { tone: "refusal" as const, text: "The cell cannot verify a sign-off yet; the automation was not saved." }
+      if (result.restatement) { setWords({ drawing, value: result.restatement, fromCell: true }); return { tone: "refusal" as const, text: "The cell reads this automation differently. Review its words and sign off again." } }
+      return { tone: "refusal" as const, text: "The cell rejected these words and sent none of its own; the automation was not saved." }
+    }
     return refuse(result.findings)
   }
   const retire = async () => {
@@ -379,6 +394,13 @@ export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
     <div className="space-y-2">
       {stored.isError && !routesDown && <p role="alert" className="text-destructive">{(stored.error as Error).message}</p>}
       <CanvasFrame key={stored.data?.version ?? "new"} {...frame} draftKey={`automation:${meta.id}:${stored.data?.version ?? "new"}`} saveBlocked={blocked} {...store && !routesDown ? { save } : {}} />
+      {words && <PlainWords words={words.value} signed={signed === words.value.sha256} fromCell={words.fromCell} onSign={() => setSigned(words.value.sha256)} testId="automation-restatement" />}
+      {stored.data?.signoff && !words && (
+        <p className="text-meta text-muted-foreground" data-testid="automation-signoff">
+          Version {stored.data.version} signed off by {stored.data.signoff.signer}{stored.data.signoff.signedAtMs ? ` on ${new Date(stored.data.signoff.signedAtMs).toLocaleString()}` : ""}.
+          {stored.data.restatement && stored.data.restatement.sha256 !== stored.data.signoff.restatementSha256 && <span className="text-destructive"> The cell now reads it differently than the words signed; save it again to sign its current words.</span>}
+        </p>
+      )}
       <div className="flex flex-wrap items-center justify-end gap-2" data-testid="automation-actions">
         <span className="text-meta text-muted-foreground">{at ? `Saved in the cell · version ${at.version}` : "Not saved in the cell"}</span>
         {notice && <span role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{notice.text}</span>}

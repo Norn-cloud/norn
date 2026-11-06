@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { FlowCellError, FlowRoutesMissing, automationId, flowStore, newRunId, nodeOfFinding, restateFlow, type FlowPayload } from "../src/lib/canvas/flows.ts"
+import { createHash } from "node:crypto"
+import { FlowCellError, FlowRoutesMissing, automationId, flowStore, newRunId, nodeOfFinding, type FlowPayload } from "../src/lib/canvas/flows.ts"
 
 const scope = { orgId: "org_demo", environmentId: "analytics" }
 const payload: FlowPayload = { flow: { id: "studio.automation", version: "0.1.0" }, artifacts: [{ kind: "entity" }], layout: { nodes: [], edges: [] } }
@@ -28,7 +29,7 @@ test("the cell's answers: refused with findings, a newer version, live runs on r
 })
 
 test("reopen reads the flow and its drawing; a missing one is undefined", async () => {
-  expect(await answering(200, { id: "studio.automation", kind: "flow", version: 2, lifecycle: "active", payload }).get("studio.automation")).toEqual({ id: "studio.automation", version: 2, lifecycle: "active", payload })
+  expect(await answering(200, { id: "studio.automation", kind: "flow", version: 2, lifecycle: "active", payload, signoff: null, restatement: null, restatementSha256: null }).get("studio.automation")).toEqual({ id: "studio.automation", version: 2, lifecycle: "active", payload, signoff: null, restatement: null })
   expect(await answering(404, { code: "definition.not_found" }).get("studio.automation")).toBeUndefined()
 })
 
@@ -55,10 +56,22 @@ test("an automation's id is minted from its title, a valid flow id, and unique a
   for (const id of [automationId("Payment reminders"), automationId("2nd pass!")]) expect(id).toMatch(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/)
 })
 
-test("the sign-off seam: no flow restatement yet, so no words and no sign-off; when there is one, install sends its hash", async () => {
-  expect(await restateFlow(payload)).toBeUndefined()
-  await answering(200, { installed: true, id: "x", version: 1, receipt: {} }).install("studio.automation", payload, undefined, "a".repeat(64))
-  expect(calls.at(-1)?.body).toMatchObject({ signoff: { restatementSha256: "a".repeat(64) } })
+const sha = (text: string) => createHash("sha256").update(text).digest("hex")
+test("the cell's words come with its check, only when they hash as it says; a signed install sends their hash", async () => {
+  const text = "Invoice follow-up, version 0.1.0: starts when a run starts; 1. Load calls billing.load_invoice@1"
+  expect(await answering(200, { admitted: true, diagnostics: [], restatement: text, restatementSha256: sha(text) }).admit("studio.automation", payload)).toEqual({ admitted: true, restatement: { text, sha256: sha(text) } })
+  expect(await answering(200, { admitted: true, diagnostics: [], restatement: text, restatementSha256: "e".repeat(64) }).admit("studio.automation", payload)).toEqual({ admitted: true })
+  await answering(200, { installed: true, id: "x", version: 1, receipt: {} }).install("studio.automation", payload, undefined, sha(text))
+  expect(calls.at(-1)?.body).toMatchObject({ signoff: { restatementSha256: sha(text) } })
+})
+
+test("a mismatch brings the cell's own words; reopening reads who signed and the words now", async () => {
+  const theirs = "Invoice follow-up, as the cell reads it now"
+  expect(await answering(422, { code: "definition.signoff_mismatch", restatement: theirs, restatementSha256: sha(theirs) }).install("studio.automation", payload, 1, "a".repeat(64))).toEqual({ installed: false, signoff: "mismatch", restatement: { text: theirs, sha256: sha(theirs) } })
+  expect(await answering(422, { code: "definition.signoff_unavailable" }).install("studio.automation", payload, 1, "a".repeat(64))).toEqual({ installed: false, signoff: "unavailable" })
+  const stored = await answering(200, { id: "studio.automation", kind: "flow", version: 2, lifecycle: "active", payload, signoff: { signer: "u_e2e", signedAtMs: 5, restatementSha256: sha(theirs) }, restatement: theirs, restatementSha256: sha(theirs) }).get("studio.automation")
+  expect(stored?.signoff).toEqual({ signer: "u_e2e", signedAtMs: 5, restatementSha256: sha(theirs) })
+  expect(stored?.restatement).toEqual({ text: theirs, sha256: sha(theirs) })
 })
 
 test("the saved automations list reads kind flow", async () => {
