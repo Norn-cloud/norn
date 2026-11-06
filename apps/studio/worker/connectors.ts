@@ -194,6 +194,12 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       if (account !== undefined && typeof account !== "string") return refusal(400, "connectors.invalid_request", "account must be an account id.")
       return ok({ url: await gateway.connect(organization, (app = part(connectRoute, 1)), part(connectRoute, 2), account) })
     }
+    const disconnectRoute = /^\/apps\/([^/]+)\/accounts\/([^/]+)\/([^/]+)$/.exec(path)
+    if (request.method === "DELETE" && disconnectRoute !== null) {
+      const account = part(disconnectRoute, 3)
+      const deleted = await gateway.disconnect(organization, (app = part(disconnectRoute, 1)), part(disconnectRoute, 2), account)
+      return ok({ disconnected: account, deleted })
+    }
     const accountRoute = /^\/accounts\/([^/]+)$/.exec(path)
     if (accountRoute !== null) {
       const account = part(accountRoute, 1)
@@ -204,10 +210,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
         await gateway.rename(organization, account, renamed)
         return ok(await gateway.account(organization, account))
       }
-      if (request.method === "DELETE") {
-        await gateway.disconnect(organization, account)
-        return ok({ disconnected: account })
-      }
+
     }
 
     const toolsRoute = /^\/apps\/([^/]+)\/tools$/.exec(path)
