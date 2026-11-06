@@ -1,0 +1,114 @@
+{
+  "bundleDigest": "b13e692ac0568e0c71a4d406cb947374aa5a967bab8ff85a8a700086108741d4",
+  "sourceRecordRef": {
+    "system": "synthetic-shopify",
+    "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-north"
+  },
+  "documentRef": {
+    "system": "synthetic-shopify",
+    "record": "SYN-SHOPIFY-holding-north"
+  },
+  "documentDigest": "7fcce0b955d5f5aa3ad6a703c8271129f4be8b9ae66ebc5acb69179c46b543bd",
+  "mappingPin": {
+    "artifactId": "shopify.three.mapping",
+    "version": "0.1.0",
+    "sha256": "3216b690fba3926e248fe8514e149d38fb6a9c5ed740bfeb3a13a3c78342ad14"
+  },
+  "fieldProvenance": {
+    "currency": {
+      "source": {
+        "system": "synthetic-shopify",
+        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-north"
+      },
+      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "transform": "holding.currency",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "id",
+        "metafield_norn_ref"
+      ]
+    },
+    "location": {
+      "source": {
+        "system": "synthetic-shopify",
+        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-north"
+      },
+      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "transform": "holding.location",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "id",
+        "metafield_norn_ref",
+        "location"
+      ]
+    },
+    "quantity": {
+      "source": {
+        "system": "synthetic-shopify",
+        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-north"
+      },
+      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "transform": "holding.quantity",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "id",
+        "metafield_norn_ref",
+        "quantity"
+      ]
+    },
+    "quantity_basis": {
+      "source": {
+        "system": "synthetic-shopify",
+        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-north"
+      },
+      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "transform": "holding.quantity_basis",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "id",
+        "metafield_norn_ref"
+      ]
+    },
+    "resource_code": {
+      "source": {
+        "system": "synthetic-shopify",
+        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-north"
+      },
+      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "transform": "holding.resource_code",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "id",
+        "metafield_norn_ref",
+        "resource_code"
+      ]
+    },
+    "unit": {
+      "source": {
+        "system": "synthetic-shopify",
+        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-north"
+      },
+      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "transform": "holding.unit",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "id",
+        "metafield_norn_ref",
+        "unit"
+      ]
+    },
+    "valuation_method": {
+      "source": {
+        "system": "synthetic-shopify",
+        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-north"
+      },
+      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "transform": "holding.valuation_method",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "id",
+        "metafield_norn_ref"
+      ]
+    }
+  }
+}
