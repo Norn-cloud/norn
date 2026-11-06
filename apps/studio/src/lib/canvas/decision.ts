@@ -36,7 +36,9 @@ const OPTION = S.record({ id: S.text(), label: S.text(), scope: S.text(), effect
  * host implementation and its hashing; D58 and CELL-DO's answer 3). The canvas
  * declares no Function and emits no manifest: this handle only gives lowering
  * the schemas the approved contract states, so a drawn decision is typed.
- * Replace it with RUNS' exported handle when that lands.
+ * Its fields follow the relayed contract exactly, so the switch is one line:
+ * `import { DECISION_FN } from "../../../../../tools/norn-ts/src/builder/index.ts"`
+ * once RUNS exports it from `builder/builtins.ts`.
  */
 export const DECISION_FN: FnRef = fn({
   id: "norn.decision",
