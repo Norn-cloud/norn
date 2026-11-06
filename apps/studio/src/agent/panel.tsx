@@ -1,8 +1,8 @@
-import { useChat } from "@ai-sdk/react"
+import { Chat, useChat } from "@ai-sdk/react"
 import { DefaultChatTransport, type UIMessage } from "ai"
 import { Bot, LoaderCircle, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useMemo, useState, type FormEvent } from "react"
+import { useState, type FormEvent } from "react"
 import { Streamdown } from "streamdown"
 import { StickToBottom } from "use-stick-to-bottom"
 import { Badge } from "@/components/ui/badge"
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionCard, VerdictCard } from "./cards.tsx"
-import { SUGGESTIONS, sessionId, verdictOf } from "./verdict.ts"
+import { SUGGESTIONS, sessionId, tabStorage, verdictOf } from "./verdict.ts"
 
 const ALTERNATIVE = "Suggest a different change that keeps the intent but that the checker would admit, and propose it."
 
@@ -47,12 +47,26 @@ function Parts({ message }: { readonly message: UIMessage }) {
   })
 }
 
-/** The assistant (AI SDK chat; scrolling and markdown from use-stick-to-bottom and streamdown): ask for a change in plain words; the server's checker admits or refuses what it proposes. */
-export function AgentPanel() {
-  const transport = useMemo(() => new DefaultChatTransport({ api: "/api/agent", headers: () => ({ "x-norn-session": sessionId(globalThis.sessionStorage) }) }), [])
-  const { messages, sendMessage, status, error, stop, regenerate, clearError } = useChat({ transport })
+/** The conversation, draft and stopped proposals, held above the sheet so closing it loses none of them. */
+export interface AgentState {
+  readonly chat: Chat<UIMessage>
+  readonly input: string
+  readonly setInput: (input: string) => void
+  readonly stopped: ReadonlySet<string>
+  readonly setStopped: (update: (set: ReadonlySet<string>) => ReadonlySet<string>) => void
+}
+
+export function useAgentState(): AgentState {
+  const [chat] = useState(() => new Chat<UIMessage>({ transport: new DefaultChatTransport({ api: "/api/agent", headers: () => ({ "x-norn-session": sessionId(tabStorage()) }) }) }))
   const [input, setInput] = useState("")
   const [stopped, setStopped] = useState<ReadonlySet<string>>(new Set())
+  return { chat, input, setInput, stopped, setStopped }
+}
+
+/** The assistant (AI SDK chat; scrolling and markdown from use-stick-to-bottom and streamdown): ask for a change in plain words; the server's checker admits or refuses what it proposes. */
+export function AgentPanel({ state }: { readonly state: AgentState }) {
+  const { chat, input, setInput, stopped, setStopped } = state
+  const { messages, sendMessage, status, error, stop, regenerate, clearError } = useChat({ chat })
   const busy = status === "submitted" || status === "streaming"
   const send = (text: string) => { if (text.trim() === "" || busy) return; clearError(); void sendMessage({ text }); setInput("") }
   const submit = (event: FormEvent) => { event.preventDefault(); send(input) }
@@ -103,6 +117,8 @@ export function AgentPanel() {
 
 /** The page bar's assistant button and its side sheet. */
 export function AgentButton() {
+  // Radix unmounts the sheet's content when it closes; the state lives here, where it stays mounted.
+  const state = useAgentState()
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -115,7 +131,7 @@ export function AgentButton() {
           {/* The world the server's checker loads (worker/world.ts). */}
           <Badge variant="outline" className="w-fit">World · Jewelry (synthetic)</Badge>
         </SheetHeader>
-        <AgentPanel />
+        <AgentPanel state={state} />
       </SheetContent>
     </Sheet>
   )
