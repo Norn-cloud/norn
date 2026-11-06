@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import importlib.util
 import json
 import re
 import shlex
@@ -19,7 +21,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from verification_attestation import selector_is_declared  # noqa: E402
+from verification_attestation import selector_is_declared, strip_comments_and_strings  # noqa: E402
 from proof_enrollment import validate as validate_enrollment  # noqa: E402
 import coverage_manifest  # noqa: E402
 
@@ -119,7 +121,7 @@ SELECTOR_KINDS_BY_STATUS = {
     ("model", "executable_reference"): {"fixture", "test"},
     ("model", "exhaustive_bounded"): {"test"},
     ("model", "partial"): {"invariant", "fixture", "checker"},
-    ("proof", "implementation_proved"): {"theorem", "predicate"},
+    ("proof", "implementation_proved"): {"theorem", "predicate", "harness"},
     ("proof", "reference_proved"): {"theorem", "harness"},
     ("proof", "partial"): {"theorem", "predicate", "harness"},
 }
@@ -131,7 +133,7 @@ REQUIRED_SELECTOR_KINDS_BY_STATUS = {
     ("model", "bounded_model_checked"): {"invariant"},
     ("model", "exhaustive_bounded"): {"test"},
     ("proof", "reference_proved"): {"theorem"},
-    ("proof", "implementation_proved"): {"theorem", "predicate"},
+    ("proof", "implementation_proved"): {"predicate"},
 }
 
 
@@ -421,53 +423,36 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     }, "workflow must cancel only superseded PR and main runs")
     require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
             "run name must attribute READY to the triggering event and head")
+    validate_rights_contract(source)
     jobs = workflow["jobs"]
-    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
-    check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
+    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy", "rights-capture", "rights-revocation",
+                          "implementation-receipts", "implementation-receipt-check"}, "workflow job inventory changed")
+    check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation",
+                   "implementation-receipts": "implementation receipts",
+                   "implementation-receipt-check": "implementation receipt check"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     trusted = jobs["trusted-policy"]
     require(trusted.get("concurrency") == {
-        "group": "trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}",
-        "cancel-in-progress": True,
+        "group": "rights-authority-v4",
+        "cancel-in-progress": False, "queue": "max",
     }, "trusted-policy: superseded approvals and revocations must share a cancelling group")
     require(" ".join(trusted.get("if", "").split()) == "!cancelled() && ( "
             "github.event_name == 'pull_request_target' || "
             "(github.event_name == 'issue_comment' && github.event.issue.pull_request && "
-            "(contains(github.event.comment.body, '/approve-gates') || "
-            "(github.event.action == 'edited' && contains(github.event.changes.body.from, '/approve-gates')))))",
-            "trusted-policy: approval creation, editing and deletion must re-evaluate")
-    trusted_reporter = '''// If resolution failed there is no validated head: look it up again so
-// the failure still replaces any earlier success on that head.
-let sha = '${{ steps.pr.outputs.head_sha }}';
-if (!sha) {
-  const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
-  sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
-}
-await github.rest.repos.createCommitStatus({
-  owner: context.repo.owner,
-  repo: context.repo.repo,
-  sha,
-  state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
-  context: 'trusted-policy',
-  description: 'Base-owned policy over candidate data',
-  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
-});'''
-    reporters = [step for step in trusted.get("steps", [])
-                 if step.get("name") == "Report trusted policy on the exact PR head"]
-    require(len(reporters) == 1 and reporters[0] == {
-        "name": "Report trusted policy on the exact PR head", "if": "always()",
-        "uses": "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
-        "with": {"retries": 3, "script": trusted_reporter + "\n"},
-    }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
+            "(contains(github.event.comment.body, '/approve-gates') || contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || "
+            "(github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))",
+            "trusted-policy: approval and rights creation, editing and deletion must re-evaluate")
+    # Complete reporter byte/execution pins are enforced by validate_rights_contract above.
     merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
         expected_runner = merge_runner if name in {"core", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve merge-only Boat opt-in and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
-                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
+                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop",
+                 "NORN_CI_HEAD": "${{ github.event.merge_group.head_sha || github.sha }}"}
     job_env = {
         "core": cache_env,
         "plan": {},
@@ -482,6 +467,42 @@ await github.rest.repos.createCommitStatus({
         return any(key in step or key in job.get("defaults", {}).get("run", {})
                    or key in workflow.get("defaults", {}).get("run", {})
                    for key in ("shell", "working-directory"))
+    # D43, D47: receipt jobs run only base-owned code, from the trusted checkout,
+    # with the candidate checked out as data beside it. The producer compiles
+    # candidate code, so it gets a read-only token, no secrets, no OIDC token
+    # and no cache; the checker uses no cache either and fails when the
+    # producer did not succeed. No executable step may be skipped or tolerated.
+    wrapper = 'python3 trusted/scripts/ci/implementation_receipts.py {} --root candidate --head "$HEAD_SHA" ' \
+              '--receipts "$RUNNER_TEMP/implementation-receipts"'
+    scope = 'python3 trusted/scripts/ci/implementation_receipts.py scope --root candidate >> "$GITHUB_OUTPUT"'
+    for name, runs, permissions, base in (
+            ("implementation-receipts", [scope, wrapper.format("run")], {"contents": "read"},
+             "${{ steps.pr.outputs.base_sha }}"),
+            ("implementation-receipt-check", ["exit 1", wrapper.format("verify")],
+             {"contents": "read", "statuses": "write"}, "${{ needs.implementation-receipts.outputs.base_sha }}")):
+        job = jobs[name]
+        steps = job.get("steps", [])
+        caches = [step for step in steps if step.get("uses", "").startswith("actions/cache")]
+        require("secrets." not in json.dumps(job) and "environment" not in job and "container" not in job
+                and "services" not in job, f"{name}: no secrets, environment, container or service")
+        require(caches == [], f"{name}: candidate-influenced tools and receipts are never cached")
+        if name == "implementation-receipt-check":
+            require(steps[0] == {"name": "Reject a receipt producer that did not succeed",
+                                 "if": "needs.implementation-receipts.result != 'success'", "run": "exit 1"},
+                    f"{name}: a producer that did not succeed must fail the check first")
+        checkouts = [step.get("with", {}) for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+        require(job.get("permissions") == permissions and not job.get("continue-on-error")
+                and "github.event_name == 'pull_request_target'" in job.get("if", "")
+                and [step["run"].strip() for step in steps if "run" in step] == runs
+                and all("if" not in step and not step.get("continue-on-error")
+                        for step in steps if "run" in step and step["run"].strip() != "exit 1")
+                and all(not has_execution_override(job, step) for step in steps)
+                and [c.get("path") for c in checkouts] == ["trusted", "candidate"]
+                and checkouts[0].get("ref") == base and set(checkouts[0]) == {"ref", "path", "persist-credentials"}
+                and all(c.get("persist-credentials") is False for c in checkouts),
+                f"{name}: only the base-owned wrapper may execute, least-privileged, beside candidate data")
+    require("norn-verification-tools" not in json.dumps(jobs),
+            "no job may cache the candidate-influenced verification tool directory")
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
         "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
@@ -632,6 +653,134 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
 
 
+# A pull_request_target evaluation of a head that is no longer the PR head writes
+# nothing: every step after Resolve, the reporter included, carries this guard.
+SUPERSEDED_GUARD = "steps.pr.outputs.superseded != 'true'"
+
+
+def validate_rights_contract(source: str, merge_source: str | None = None) -> None:
+    """The API collector and binary invocation remain base-owned and head-bound."""
+    if merge_source is None:
+        merge_source = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text()
+    # Pin complete base-owned API programs, including append-only history reads
+    # and fail-closed publishers; substring matches cannot establish execution.
+    programs = {
+        'Resolve the pull request': ('ddaf2a910172cfbad41ea7aa5e247d3893e89c7682f173ec3925f64619026d67', ['script', 'retries'], False, None),
+        'Capture the saved rights payload': ('748661200b99a0ebf6859d5638816d6ba7b60af7fb1818d2aabe9d14ff46883d', ['script'], False, None),
+        'Persist the target rights ledger': ('8b60fe98a60613841c5a345cb5860f8879635d37bede68583d372720c24e30cd', ['script', 'retries'], False, None),
+        'Record admin approvals of the exact PR head': ('9b6055f62178edf8178a8a25339d01018fc796fbcdc08d233796d21aa59f9b02', ['script'], False, SUPERSEDED_GUARD),
+        'Report trusted policy on the exact PR head': ('223c0970b6a8f6493fcca9e8a3964528a23908cd6fa9db55c373a9db8b52985d', ['script', 'retries'], False, 'always() && ' + SUPERSEDED_GUARD),
+        'Record admin approvals of the queued heads': ('3ad13b76bc4b8a2dc0d4e19bb823863bd9a6fe3678b715e3241d8e2cfa46d82a', ['script'], False, None),
+        'Report trusted policy on the group head': ('ec9e3099f381b8c71706ab6b1bd0b6c56cc3a280d67f66c956988f30650199c2', ['script', 'retries'], False, 'always()'),
+    }
+    def api_step(step: dict) -> None:
+        digest, inputs, tolerated_failure, condition = programs[step["name"]]
+        allowed = {"name", "uses", "with"} | ({"continue-on-error"} if tolerated_failure else set()) | ({"if"} if condition else set())
+        if step["name"] in {"Resolve the pull request", "Capture the saved rights payload"}:
+            allowed.add("id")
+            require(step.get("id") == ("pr" if step["name"] == "Resolve the pull request" else "payload"),
+                    "trusted event output identity changed")
+        if step["name"] == "Persist the target rights ledger":
+            allowed.add("env")
+            require(step.get("env") == {"RIGHTS_EVENT": "${{ needs.rights-capture.outputs.payload }}"},
+                    "ledger must consume the captured event as data")
+        require(set(step) == allowed
+                and step.get("uses") == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+                and step.get("continue-on-error", False) is tolerated_failure
+                and step.get("if") == condition
+                and set(step.get("with", {})) == set(inputs)
+                and ("retries" not in inputs or step["with"]["retries"] == 3)
+                and hashlib.sha256(step.get("with", {}).get("script", "").encode()).hexdigest() == digest,
+                f"trusted API program or execution changed: {step.get('name')}")
+    public = yaml.load(source, Loader=WorkflowLoader)
+    capture = public["jobs"].get("rights-capture", {})
+    expected_capture = {
+        "name": "Capture immutable rights event ${{ github.event.issue.pull_request && 'pull' || 'issue' }} ${{ (contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights')) && 'possible' || 'none' }}",
+        "if": "github.event_name == 'issue_comment'",
+        "permissions": {"contents": "read"}, "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
+        "outputs": {key: "${{ steps.payload.outputs." + key + " }}" for key in ("heads", "kind", "comment", "payload")},
+    }
+    require({k:v for k,v in capture.items() if k != "steps"} == expected_capture,
+            "saved run payload must be captured before API writes, including plain issues")
+    require(len(capture.get("steps", [])) == 2 and capture["steps"][1] == {
+        "name": "Rights event ${{ steps.payload.outputs.heads }} comment ${{ steps.payload.outputs.comment }}", "run": "true"},
+        "saved identity must be stamped before the authority queue")
+    api_step(capture["steps"][0])
+    ledger = public["jobs"].get("rights-revocation", {})
+    expected_ledger = {
+        "name": "Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}",
+        "needs": "rights-capture",
+        "if": "!cancelled() && needs.rights-capture.result == 'success' && needs.rights-capture.outputs.kind == 'pull' && needs.rights-capture.outputs.heads != 'none'",
+        "permissions": {"actions": "read", "contents": "read", "statuses": "write"},
+        "concurrency": {"group": "rights-authority-v4", "cancel-in-progress": False, "queue": "max"},
+        "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
+    }
+    require({k:v for k,v in ledger.items() if k != "steps"} == expected_ledger,
+            "target ledger must be base-owned and never superseded")
+    require(len(ledger.get("steps", [])) == 1, "missing immutable rights writer")
+    api_step(ledger["steps"][0])
+    for text, head in ((source, "${{ steps.pr.outputs.head_sha }}"),
+                       (merge_source, "${{ github.event.workflow_run.head_sha }}")):
+        workflow = yaml.load(text, Loader=WorkflowLoader)
+        job = workflow["jobs"]["trusted-policy"]
+        expected = ('python3 trusted/scripts/ci/validate-runner-policy.py --root candidate '
+                    '--maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" '
+                    '--rights-evidence "$RUNNER_TEMP/maintainer-approval.json" '
+                    f'--head "{head}" --repository "${{{{ github.repository }}}}"')
+        steps = job["steps"]
+        allowed_job = {"permissions", "if", "concurrency", "runs-on", "timeout-minutes", "steps"}
+        if text == source:
+            allowed_job |= {"name", "needs"}
+        require(set(job) == allowed_job, "trusted validation cannot override its execution environment")
+        checks = [step for step in steps if step.get("run", "").strip() == expected]
+        require(len(checks) == 1 and set(checks[0]) == ({"name", "run", "if"} if text == source else {"name", "run"})
+                and checks[0].get("if", SUPERSEDED_GUARD) == SUPERSEDED_GUARD
+                and not job.get("env") and not workflow.get("env")
+                and all(key not in scope.get("defaults", {}).get("run", {})
+                        for scope in (job, workflow) for key in ("shell", "working-directory")),
+                "trusted rights: missing or wrong exact-head evidence/binding command")
+        require(job.get("permissions", {}).get("actions") == "read", "trusted event reconciliation requires read-only Actions access")
+        is_pr = text == source
+        collector = "Record admin approvals of the exact PR head" if is_pr else "Record admin approvals of the queued heads"
+        reporter = "Report trusted policy on the exact PR head" if is_pr else "Report trusted policy on the group head"
+        for name in (collector, reporter, *(["Resolve the pull request"] if is_pr else [])):
+            matching = [step for step in steps if step.get("name") == name]
+            require(len(matching) == 1, f"missing trusted API step: {name}")
+            api_step(matching[0])
+        if is_pr:
+            require(job.get("needs") == "rights-revocation", "policy must await durable revocation recording")
+            require(steps[0].get("name") == "Resolve the pull request",
+                    "resolve the head before recording refusal so revocation still dequeues it")
+            require(steps[1] == {"name": "Require durable revocation recording", "if": SUPERSEDED_GUARD,
+                    "env": {"RESULT": "${{ needs.rights-revocation.result }}"},
+                    "run": 'test "$RESULT" = success || test "$RESULT" = skipped'},
+                    "failed/cancelled recording must fail policy before admission")
+            dequeue = "Remove a failing pull request from the merge queue"
+            require(steps[-1].get("name") == dequeue
+                    and steps[-1].get("if") == "failure() && steps.pr.outputs.head_sha != ''"
+                    and all(step.get("if") == SUPERSEDED_GUARD for step in steps[1:-2])
+                    and steps[-2].get("name") == "Report trusted policy on the exact PR head",
+                    "trusted-policy: a superseded evaluation must write nothing after Resolve")
+        scripts = "\n".join(step.get("with", {}).get("script", "") for step in steps)
+        compact = re.sub(r"\s+", "", scripts)
+        for contract in ("rights-authority-v4", "github.rest.git.createCommit", "force:false",
+                         "rights-checkpoint/target/", "rights-checkpoint/publication/",
+                         "Rights capture incomplete after bounded wait", "Rights authority queue deadline exceeded"):
+            require(contract in scripts, f"trusted authority contract missing: {contract}")
+        require(job.get("concurrency") == {"group": "rights-authority-v4", "cancel-in-progress": False, "queue": "max"},
+                "all rights authority must serialize without cancelling active or queued work")
+    condition = yaml.load(source, Loader=WorkflowLoader)["jobs"]["trusted-policy"]["if"]
+    for command in ("/ack-rights", "/revoke-rights"):
+        require(f"contains(github.event.comment.body, '{command}')" in condition
+                and f"contains(github.event.changes.body.from, '{command}')" in condition,
+                "trusted rights: edits/deletions must re-evaluate rights evidence")
+    runner = (ROOT / "scripts/ci/core.sh").read_text()
+    require('cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn' in runner,
+            "provenance must bind the event candidate")
+    require('--distribution --base-root "$PWD" --source-root "$PWD" --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn' in runner,
+            "distribution must retain an independent immutable source binding")
+
+
 def validate_timeout_budgets(
     gates: list[dict[str, Any]],
     *,
@@ -732,6 +881,39 @@ def validate_selector_gate_order(
                 )
 
 
+# D43: an implementation_proved claim is admitted only from a receipt that the
+# base-owned wrapper (scripts/ci/implementation_receipts.py) writes in the
+# trusted implementation-receipts job. Its kind is the wrapper that ran it,
+# never a reading of command or script text. This validator checks only the
+# typed fields that wrapper reads, with the wrapper's own planning functions.
+_RECEIPTS_SPEC = importlib.util.spec_from_file_location(
+    "implementation_receipts", ROOT / "scripts/ci/implementation_receipts.py")
+implementation_receipts = importlib.util.module_from_spec(_RECEIPTS_SPEC)
+_RECEIPTS_SPEC.loader.exec_module(implementation_receipts)
+IMPLEMENTATION_FIELDS = ("correspondenceSource", "correspondenceMutations", "extractionBinding")
+
+
+def validate_implementation_claim(subsystem_id: str, claim_id: str, claim: dict[str, Any]) -> None:
+    """Require the typed fields the claim's receipt wrapper will read, then refuse it until #969."""
+    label = f"{subsystem_id}.{claim_id}"
+    if claim.get("proof") != "implementation_proved":
+        present = [field for field in IMPLEMENTATION_FIELDS if field in claim]
+        require(not present, f"{label}: correspondence fields require an implementation proof: {present}")
+        return
+    try:
+        if implementation_receipts.kind_of(claim) == "kani":
+            implementation_receipts.kani_plan(claim)
+        else:
+            implementation_receipts.extraction_plan(claim, "target/implementation-receipts")
+    except implementation_receipts.Refused as error:
+        raise InvalidCoverage(f"{label}: {error}") from error
+    # D47(c): admission must not depend on the optional receipt check. Until an
+    # isolated producer exists, no receipt can establish implementation
+    # correspondence, so the manifest itself refuses the status.
+    require(False, f"{label}: implementation_proved is refused until #969 provides an isolated producer; "
+                   "record the claim as partial")
+
+
 def validate_claim_evidence_shape(
     subsystem_id: str,
     claim_id: str,
@@ -797,6 +979,84 @@ def validate_claim_evidence_shape(
                     f"{subsystem_id}.{claim_id}.evidence.{layer_name}: invalid selector {selector!r}",
                 )
                 selector_kind = selector.split(":", 1)[0]
+                if (layer_name, status, selector_kind) == ("proof", "implementation_proved", "harness"):
+                    harness = ROOT / artifact
+                    name = selector.split(":", 1)[1]
+                    declaration = re.search(
+                        r"((?:#\[[^\]]+\]\s*)+)(?:pub\s+)?fn\s+" + re.escape(name) + r"\b",
+                        strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))
+                        if harness.is_file() else "",
+                    )
+                    harness_source = (
+                        strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))
+                        if harness.is_file() else ""
+                    )
+                    require(
+                        declaration is not None
+                        # No conditional compilation anywhere in a proved harness file: an
+                        # outer, inner or enclosing-module `cfg`/`cfg_attr` (any spacing,
+                        # raw identifiers included) can remove the selected harness.
+                        and re.search(r"#\s*!?\s*\[\s*(?:r#)?cfg(?:_attr)?\b", harness_source) is None,
+                        f"{subsystem_id}.{claim_id}: implementation harness must be unconditional",
+                    )
+                    require(
+                        # include_str!/include_bytes! would let the harness assert on
+                        # production source text instead of calling production code.
+                        re.search(r"\b(?:r#)?(?:macro_rules|include(?:_str|_bytes)?)\s*!", harness_source) is None,
+                        f"{subsystem_id}.{claim_id}: implementation harness cannot contain macro_rules! or "
+                        "include!, include_str! or include_bytes!",
+                    )
+                    # Imports may only reach the production source named by this
+                    # claim and independently cited by its predicate evidence.
+                    production = claim.get("correspondenceSource")
+                    require(
+                        isinstance(production, str)
+                        and production.startswith("crates/")
+                        and production.endswith(".rs")
+                        and ".." not in Path(production).parts
+                        and (ROOT / production).is_file()
+                        and any(item["artifact"] == production and any(
+                            selector.startswith("predicate:") for selector in item["selectors"]
+                        ) for item in entries),
+                        f"{subsystem_id}.{claim_id}: Kani correspondenceSource must name its production predicate source",
+                    )
+                    raw_source = harness.read_text()
+                    imported_production = False
+                    brace_depth = 0
+                    previous_end = 0
+                    for attribute in re.finditer(r"#\s*!?\s*\[\s*(?:r#)?path\b[^\]]*\]", harness_source):
+                        preceding = harness_source[previous_end:attribute.start()]
+                        brace_depth += preceding.count("{") - preceding.count("}")
+                        previous_end = attribute.end()
+                        require(
+                            brace_depth == 0,
+                            f"{subsystem_id}.{claim_id}: #[path] imports must be at harness top level",
+                        )
+                        # The stripping helper preserves offsets. Accept only an
+                        # ordinary module item with a literal path, never a
+                        # redirected proof function or a conditional attribute.
+                        imported = re.fullmatch(
+                            r'#\s*\[\s*path\s*=\s*"([^"\\]+)"\s*\]',
+                            raw_source[attribute.start():attribute.end()],
+                        )
+                        require(
+                            imported is not None
+                            and re.match(r"\s*(?:pub\s+)?mod\s+\w+\s*;", harness_source[attribute.end():]) is not None
+                            and (harness.parent / imported.group(1)).resolve().is_relative_to(ROOT.resolve())
+                            and (harness.parent / imported.group(1)).resolve() == (ROOT / production).resolve(),
+                            f"{subsystem_id}.{claim_id}: #[path] must import the declared correspondenceSource as a module",
+                        )
+                        imported_production = True
+                    require(
+                        imported_production,
+                        f"{subsystem_id}.{claim_id}: harness must import the declared correspondenceSource with top-level #[path]",
+                    )
+                    require(
+                        harness.suffix == ".rs" and re.search(
+                            r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn\s+" + re.escape(name) + r"\b",
+                            harness_source) is not None,
+                        f"{subsystem_id}.{claim_id}: implementation harness must be a Kani proof",
+                    )
                 observed_selector_kinds.add(selector_kind)
                 allowed_kinds = SELECTOR_KINDS_BY_STATUS.get((layer_name, status))
                 require(
@@ -810,12 +1070,19 @@ def validate_claim_evidence_shape(
                 f"{subsystem_id}.{claim_id}.evidence.{layer_name}: duplicate evidence entry",
             )
             identities.add(identity)
+        if (layer_name, status) == ("proof", "implementation_proved"):
+            require(
+                bool(observed_selector_kinds & {"theorem", "harness"}),
+                f"{subsystem_id}.{claim_id}: implementation proof needs a theorem or Kani harness",
+            )
         required_kinds = REQUIRED_SELECTOR_KINDS_BY_STATUS.get((layer_name, status), set())
         require(
             required_kinds.issubset(observed_selector_kinds),
             f"{subsystem_id}.{claim_id}.evidence.{layer_name}: status {status!r} "
             f"requires selector kinds {sorted(required_kinds)}, got {sorted(observed_selector_kinds)}",
         )
+
+    validate_implementation_claim(subsystem_id, claim_id, claim)
 
 
 def validate(

@@ -19,11 +19,19 @@ pub mod evidence;
 /// Bounded declaration-to-Quint lowering, without solver execution.
 pub mod finite;
 mod induction;
+/// Conditional lifecycle inventory and finite relations.
+pub mod lifecycle;
+#[cfg(test)]
+mod lifecycle_finite_tests;
+#[cfg(test)]
+mod lifecycle_tests;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;
 /// Conjunction-only specialisation evidence provenance.
 pub mod specialisation;
+/// Exact symbolic projections of the shared declaration relation.
+pub mod transition;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
@@ -403,7 +411,7 @@ impl ApprovedContract {
             "writerStatements": induction.writers,
             "obligations": induction.goals,
         });
-        let bytes = norn_canonical::serialize_json_verbatim(&body)
+        let bytes = norn_canonical::canonical_json_exact_of(&body)
             .map_err(|_error| ChallengeError::Closure)?;
         if bytes.len() > 8_388_608 {
             return Err(ChallengeError::Limit);

@@ -175,7 +175,7 @@ impl AdmissionCache {
             "registry": context.registry,
             "tenant": context.tenant.map(|t| (t.tenant_id, &t.namespace.0)),
         });
-        let identity_bytes = norn_canonical::serialize_json_verbatim(&identity)
+        let identity_bytes = norn_canonical::canonical_json_exact_of(&identity)
             .map_err(|_error| ChallengeError::Closure)?;
         let context_digest = exact_commitment(b"admission-context", &[&identity_bytes])?;
         let body = json!({
@@ -183,7 +183,7 @@ impl AdmissionCache {
             "candidate": hashes(artifacts)?,
             "base": hashes(context.base)?,
         });
-        let bytes = norn_canonical::serialize_json_verbatim(&body)
+        let bytes = norn_canonical::canonical_json_exact_of(&body)
             .map_err(|_error| ChallengeError::Closure)?;
         Ok((
             exact_commitment(b"global-admission", &[&bytes])?,
@@ -212,7 +212,7 @@ fn admission_artifact_digest(artifact: &ArtifactEnvelope) -> Result<String, Chal
         "unknownFields": artifact.payload.unknown_fields(),
         "invalidExtensions": artifact.payload.has_invalid_extensions(),
     });
-    let bytes = norn_canonical::serialize_json_verbatim(&shape)
+    let bytes = norn_canonical::canonical_json_exact_of(&shape)
         .map_err(|_error| ChallengeError::Closure)?;
     exact_commitment(b"admission-artifact", &[envelope.as_bytes(), &bytes])
 }
@@ -220,6 +220,34 @@ fn admission_artifact_digest(artifact: &ArtifactEnvelope) -> Result<String, Chal
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "fixed exact commitment bytes")]
+    fn generated_admission_commitments_are_sorted_under_every_map_backend() {
+        let cache = AdmissionCache::new(&[0; 32], "p", "a");
+        let registry = std::collections::BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        let (global, context_digest) = cache.global_digest(&[], &context).expect("pins");
+        let expected = format!(r#"{{"base":[],"candidate":[],"context":"{context_digest}"}}"#);
+        assert_eq!(
+            global,
+            exact_commitment(b"global-admission", &[expected.as_bytes()]).expect("global")
+        );
+        let artifacts: Vec<ArtifactEnvelope> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
+                .expect("entities");
+        let artifact = artifacts.first().expect("entity");
+        let envelope = exact_artifact_digest(artifact).expect("envelope");
+        let shape = br#"{"invalidExtensions":false,"unknownFields":[]}"#;
+        assert_eq!(
+            admission_artifact_digest(artifact).expect("artifact"),
+            exact_commitment(b"admission-artifact", &[envelope.as_bytes(), shape]).expect("shape")
+        );
+    }
 
     #[test]
     #[allow(clippy::expect_used, reason = "fixed entity fixtures")]

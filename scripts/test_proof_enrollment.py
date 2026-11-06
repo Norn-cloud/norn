@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Positive/negative enrollment regressions against the actual public tree."""
 
+import contextlib
 import copy
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -18,10 +20,169 @@ from test_migrate_registry_pr import MigrationTests
 from proof_enrollment import ROOT, discover_sources, validate
 
 
+KANI_CLAIM = "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE"
+KANI_IMPLEMENTATION_FIELDS = {
+    "proof": "implementation_proved",
+    "correspondenceSource": "crates/norn-checker/src/exact_rational.rs",
+    "correspondenceMutations": [
+        {"name": "overflow-clamp", "before": "i64::try_from(numerator.checked_div(a)?).ok()?",
+         "after": "i64::try_from(numerator.checked_div(a)?).unwrap_or(i64::MAX)"},
+        {"name": "negation-sign", "before": "i128::from(self.numerator).checked_neg()?",
+         "after": "i128::from(self.numerator)"},
+    ],
+}
+EXTRACTION_CLAIM = "INV-ART-DIRECT-WRITE-PREDICATE"
+EXTRACTION_IMPLEMENTATION_FIELDS = {
+    "proof": "implementation_proved",
+    "extractionBinding": {
+        "package": "norn-ir", "items": ["norn_ir::direct_artifact_write_allowed"], "module": "Norn_ir.fst",
+        "proofRoot": "verification/stripmine-2026-08-22/proofs/fstar",
+        "models": ["FStar.Mul.fst", "Core_models.fst"], "proofs": ["ArtifactPromotionProof.fst"]},
+}
+# D47 amendment: what each downgraded claim establishes, in its claim text.
+LABELS = {KANI_CLAIM: "candidate-reported Kani result",
+          EXTRACTION_CLAIM: "F* re-checked theorem about the uploaded model, correspondence candidate-reported"}
+ISOLATION_REFUSAL = "implementation_proved is refused until #969 provides an isolated producer"
+
+
 class EnrollmentTests(unittest.TestCase):
     def setUp(self):
         self.coverage = coverage_manifest.load()
         self.gates = json.loads((ROOT / "verification/coverage-v1/promoted-gates.json").read_text())
+
+    def _validator(self):
+        """Load a fresh copy of the coverage validator module."""
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _claim(self, claim_id):
+        """Return (subsystem, claim) for an actual manifest claim."""
+        return next((s, c) for s in self.coverage["subsystems"] for c in s["obligationClaims"] if c["id"] == claim_id)
+
+    def _kani_claim(self):
+        """The actual Kani claim as it would read if promoted to implementation_proved.
+
+        D47 keeps it `partial` until Kani runs isolated (#969); the harness and
+        its gate stay, so the fixture restores only the typed correspondence fields.
+        """
+        subsystem, claim = self._claim(KANI_CLAIM)
+        self.assertEqual(claim["proof"], "partial")
+        return subsystem, copy.deepcopy(claim) | KANI_IMPLEMENTATION_FIELDS
+
+    def _extraction_claim(self):
+        """The actual extraction claim as it would read if promoted (restored via #969)."""
+        subsystem, claim = self._claim(EXTRACTION_CLAIM)
+        self.assertEqual(claim["proof"], "partial")
+        return subsystem, copy.deepcopy(claim) | copy.deepcopy(EXTRACTION_IMPLEMENTATION_FIELDS)
+
+    def _shape_refused(self, module, subsystem, claim, message=""):
+        """The claim fails a shape check of its own, not only the #969 refusal."""
+        with self.assertRaises(module.InvalidCoverage) as caught:
+            module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+        self.assertNotIn(ISOLATION_REFUSAL, str(caught.exception))
+        if message:
+            self.assertRegex(str(caught.exception), message)
+
+    def _only_isolation_refused(self, module, subsystem, claim):
+        """The claim passes every shape check and is refused only because #969 is open."""
+        with self.assertRaisesRegex(module.InvalidCoverage, f"{claim['id']}: {ISOLATION_REFUSAL}"):
+            module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+
+    def test_lexical_implementation_classification_is_deleted(self):
+        """D43: no command or script text decides an implementation claim's kind."""
+        module = self._validator()
+        for name in ("implementation_kind", "command_invokes_kani", "repository_script", "extraction_command",
+                     "validate_implementation_bindings", "require_wired", "KANI_WORD", "EXTRACTOR_WORD"):
+            self.assertFalse(hasattr(module, name), name)
+
+    def test_implementation_claims_carry_the_fields_their_wrapper_reads(self):
+        module = self._validator()
+        kani_subsystem, kani = self._kani_claim()
+        extraction_subsystem, extraction = self._extraction_claim()
+        self._only_isolation_refused(module, kani_subsystem, kani)
+        self._only_isolation_refused(module, extraction_subsystem, extraction)
+        no_mutations = copy.deepcopy(kani)
+        del no_mutations["correspondenceMutations"]
+        # Kani behind an extraction binding: the extraction wrapper refuses harness evidence.
+        disguised = copy.deepcopy(kani) | {"extractionBinding": extraction["extractionBinding"]}
+        # An F* theorem without a binding is a Kani claim, so it still needs a harness and mutations.
+        unbound = copy.deepcopy(extraction)
+        del unbound["extractionBinding"]
+        # Round 8: a gate script that only names the tools gains nothing; untyped bindings refuse.
+        untyped = copy.deepcopy(extraction) | {"extractionBinding": {
+            "gate": "artifact-governance-rust-extraction",
+            "result": "target/verification-results/artifact-governance-hax/Norn_ir.fst"}}
+        for label, subsystem, claim, message in (
+                ("no-mutations", kani_subsystem, no_mutations, "mutations"),
+                ("disguised", kani_subsystem, disguised, "theorem and predicate evidence only"),
+                ("unbound", extraction_subsystem, unbound, "harness and predicate evidence only"),
+                ("untyped", extraction_subsystem, untyped, "extractionBinding fields are exact")):
+            with self.subTest(case=label):
+                self._shape_refused(module, subsystem, claim, message)
+        # Sol S4: a cited theorem outside the re-checked proofRoot/proofs is refused.
+        unchecked = copy.deepcopy(extraction)
+        theorem = next(e for e in unchecked["evidence"]["proof"] if any(s.startswith("theorem:") for s in e["selectors"]))
+        theorem["artifact"] = "unchecked/NeverChecked.fst"
+        with self.assertRaisesRegex(module.implementation_receipts.Refused, "theorem evidence must cite a declared proof"):
+            module.implementation_receipts.extraction_plan(unchecked, "")
+
+    def test_implementation_claims_are_admitted_only_from_receipts(self):
+        """No actual claim is implementation_proved, and none promoted would be admitted (D43, D47(c))."""
+        receipts = self._validator().implementation_receipts
+        with tempfile.TemporaryDirectory() as directory:
+            errors, _ = receipts.verify(ROOT, Path(directory), {}, None)
+        self.assertEqual((receipts.implementation_claims(ROOT), errors), ({}, []))
+        # The verifier prints the claims' labels; both promoted claims are refused even unchanged.
+        self.assertEqual({"kani": LABELS[KANI_CLAIM], "extraction": LABELS[EXTRACTION_CLAIM]}, receipts.LABELS)
+        promoted = {KANI_CLAIM: self._kani_claim()[1], EXTRACTION_CLAIM: self._extraction_claim()[1]}
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+                receipts, "implementation_claims", return_value=promoted):
+            errors, verdicts = receipts.verify(ROOT, Path(directory), {}, None, scoped=False)
+        self.assertEqual(errors, [f"{EXTRACTION_CLAIM}: {receipts.UNCHANGED_LABEL}; {receipts.NOT_ADMITTED}",
+                                  f"{KANI_CLAIM}: {receipts.UNCHANGED_LABEL}; {receipts.NOT_ADMITTED}"])
+        self.assertEqual({v["claim"]: v["verdict"] for v in verdicts},
+                         {EXTRACTION_CLAIM: "unchanged", KANI_CLAIM: "unchanged"})
+
+    def test_downgraded_claims_stay_partial_with_evidence_and_label(self):
+        """D47(c): until #969, both claims are partial, labelled, and carry no implementation fields."""
+        module = self._validator()
+        for claim_id, selectors in ((KANI_CLAIM, {"harness", "predicate"}),
+                                    (EXTRACTION_CLAIM, {"theorem", "predicate"})):
+            subsystem, claim = self._claim(claim_id)
+            with self.subTest(claim=claim_id):
+                self.assertEqual(claim["proof"], "partial")
+                self.assertIn(LABELS[claim_id], claim["residual"])
+                self.assertIn("#969", claim["residual"])
+                self.assertEqual({s.split(":", 1)[0] for e in claim["evidence"]["proof"] for s in e["selectors"]},
+                                 selectors)
+                module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+                for field in module.IMPLEMENTATION_FIELDS:
+                    self.assertNotIn(field, claim)
+                    with self.assertRaisesRegex(module.InvalidCoverage,
+                                                "correspondence fields require an implementation proof"):
+                        module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim | {field: {}})
+
+    def test_validator_refuses_implementation_proved_without_receipts(self):
+        """Sol S1: the manifest validator alone refuses implementation_proved; admission never waits on receipts."""
+        module = self._validator()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            module.validate()
+        self.assertIn("0 exact implementation correspondence claim(s)", output.getvalue())
+        for claim_id, promote in ((KANI_CLAIM, self._kani_claim), (EXTRACTION_CLAIM, self._extraction_claim)):
+            with self.subTest(claim=claim_id), tempfile.TemporaryDirectory() as directory:
+                coverage = copy.deepcopy(self.coverage)
+                subsystem_id, claim = promote()
+                subsystem = next(s for s in coverage["subsystems"] if s["id"] == subsystem_id["id"])
+                subsystem["obligationClaims"] = [claim if c["id"] == claim_id else c
+                                                 for c in subsystem["obligationClaims"]]
+                manifest = Path(directory) / "manifest"
+                coverage_manifest.write(coverage, manifest)
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(
+                        module.InvalidCoverage, f"{claim_id}: {ISOLATION_REFUSAL}"):
+                    module.validate(coverage_path=manifest)
 
     def test_actual_absent_domain_tree(self):
         self.assertEqual(validate(ROOT, self.coverage, self.gates), set())
@@ -106,6 +267,114 @@ class EnrollmentTests(unittest.TestCase):
                     path.write_text(module.yaml.safe_dump(candidate, sort_keys=False))
                     with self.assertRaisesRegex(module.InvalidCoverage, "preparation actions and inputs must match the approved contract"):
                         module.validate_workflow_integrity([], formal_path=path)
+
+    def test_implementation_kani_evidence_requires_proof_and_production_predicate(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        subsystem, original = self._kani_claim()
+        self._only_isolation_refused(module, subsystem, original)
+        for mutation in ("no-proof", "no-predicate", "not-annotated"):
+            with self.subTest(mutation=mutation):
+                claim = copy.deepcopy(original)
+                evidence = claim["evidence"]["proof"]
+                if mutation == "no-proof":
+                    evidence.pop(0)
+                elif mutation == "no-predicate":
+                    evidence.pop(1)
+                else:
+                    evidence[0]["command"] = evidence[0]["command"].replace(evidence[0]["artifact"], "crates/norn-checker/src/exact_rational.rs").replace("--harness integer_negation_correspondence", "--harness checked_neg")
+                    evidence[0]["artifact"] = "crates/norn-checker/src/exact_rational.rs"
+                    evidence[0]["selectors"] = ["harness:checked_neg"]
+                self._shape_refused(module, subsystem, claim)
+
+    def test_configuration_disabled_implementation_harness_is_rejected(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        subsystem, original = self._kani_claim()
+        for attributes in (
+            "#[cfg(any())]\n#[kani::proof]",
+            "#[kani::proof]\n#[cfg(any())]",
+            "#[cfg_attr(all(), cfg(any()))]\n#[kani::proof]",
+            "#[ cfg(any())]\n#[kani::proof]",
+            "#[\tcfg_attr(all(), cfg(any()))]\n#[kani::proof]",
+            "#![cfg(any())]\n#[kani::proof]",
+            "#! [ cfg(any()) ]\n#[kani::proof]",
+            "#[r#cfg(any())]\n#[kani::proof]",
+            "#[ r#cfg_attr(all(), cfg(any()))]\n#[kani::proof]",
+        ):
+            with self.subTest(attributes=attributes), tempfile.TemporaryDirectory() as directory:
+                module.ROOT = Path(directory)
+                claim = copy.deepcopy(original)
+                entry = claim["evidence"]["proof"][0]
+                harness = module.ROOT / entry["artifact"]
+                harness.parent.mkdir(parents=True)
+                harness.write_text(attributes + "\nfn integer_negation_correspondence() {}\n#[kani::proof]\nfn other() {}\n")
+                with self.assertRaisesRegex(module.InvalidCoverage, "harness must be unconditional"):
+                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+                harness.write_text("#[cfg(any())]\nmod disabled {\n    #[kani::proof]\n    fn integer_negation_correspondence() {}\n}\n")
+                with self.assertRaisesRegex(module.InvalidCoverage, "harness must be unconditional"):
+                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+
+    def test_indirect_implementation_harness_is_rejected(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        subsystem, original = self._kani_claim()
+        proof = "#[kani::proof] fn integer_negation_correspondence() {}"
+        for prefix, suffix in (
+            ("macro_rules! unused { () => { ", " }; }"),
+            ('include!("other.rs"); ', ""),
+            ('const SOURCE: &str = include_str!("../../crates/norn-checker/src/exact_rational.rs"); ', ""),
+            ('const SOURCE: &[u8] = include_bytes !("../../crates/norn-checker/src/exact_rational.rs"); ', ""),
+            ('#[path = "other.rs"] mod other; ', ""),
+            ('#[path = "other.rs"] ', ""),
+        ):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as directory:
+                module.ROOT = Path(directory)
+                entry = original["evidence"]["proof"][0]
+                harness = module.ROOT / entry["artifact"]
+                harness.parent.mkdir(parents=True)
+                production = module.ROOT / original["correspondenceSource"]
+                production.parent.mkdir(parents=True)
+                production.write_text("pub struct Rational;\n")
+                harness.write_text(prefix + proof + suffix)
+                self._shape_refused(module, subsystem, original, "cannot contain" if "!" in prefix else "")
+                # Normalized imports bind to claim evidence, without a validator allowlist.
+                harness.write_text('#[path = "../../crates/norn-checker/src/../src/exact_rational.rs"] mod production;\n' + proof)
+                self._only_isolation_refused(module, subsystem, original)
+                for target in (None, "crates/other.rs"):
+                    candidate = copy.deepcopy(original)
+                    candidate["correspondenceSource"] = target
+                    self._shape_refused(module, subsystem, candidate)
+
+    def test_implementation_harness_requires_top_level_production_import(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        subsystem, claim = self._kani_claim()
+        proof = "#[kani::proof] fn integer_negation_correspondence() {}\n"
+        imported = '#[path = "../../crates/norn-checker/src/exact_rational.rs"] mod production;\n'
+        local_copy = "struct Rational; impl Rational { fn checked_neg(self) -> Option<Self> { Some(self) } }\n"
+        for source, message in (
+            ("mod nested {\n" + imported + "}\n" + proof, "imports must be at harness top level"),
+            (local_copy + proof, "harness must import the declared correspondenceSource"),
+            (imported.replace("exact_rational.rs", "other.rs") + proof, "must import the declared correspondenceSource as a module"),
+        ):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                module.ROOT = Path(directory)
+                harness = module.ROOT / claim["evidence"]["proof"][0]["artifact"]
+                harness.parent.mkdir(parents=True)
+                production = module.ROOT / claim["correspondenceSource"]
+                production.parent.mkdir(parents=True)
+                production.write_text(local_copy)
+                production.with_name("other.rs").write_text(local_copy)
+                harness.write_text(source)
+                self._shape_refused(module, subsystem, claim, message)
+                # Braces in comments and strings do not put the import in a module.
+                harness.write_text('/* { */ const TEXT: &str = "{";\n' + imported + proof)
+                self._only_isolation_refused(module, subsystem, claim)
 
     def test_plan_workflow_contract_is_exact(self):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
