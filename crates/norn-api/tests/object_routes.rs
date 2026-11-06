@@ -117,7 +117,8 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
     let artifact = json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
     let key = physical().key();
     {
-        let mut store = CellStore::open(&path, model.clone(), Default::default()).unwrap();
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
         store
             .install_definitions(
                 model.clone(),
@@ -147,7 +148,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
         let mut cell = norn_cell::SqliteCell::new(store, &key, |_| BTreeMap::new()).unwrap();
         capture_quality(&mut cell, 80_000, "bad-source");
     }
-    let store = CellStore::open(&path, model, Default::default()).unwrap();
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let host = DevHost::from_store(store, physical(), |command| command.payload.clone())
         .unwrap()
         .with_authorizer(Policy);
@@ -252,7 +253,7 @@ fn denied_and_foreign_scope_reads_share_one_opaque_denial() {
         org_id: Some("org_other".into()),
         environment_id: Some("dev".into()),
     };
-    for (query, actor) in [(scope(), "stranger"), (foreign.clone(), "reader")] {
+    for (query, actor) in [(scope(), "stranger"), (foreign, "reader")] {
         let page =
             get_object_page(&host, &query, Some(actor), TYPE, None, 10, &Mapping).unwrap_err();
         assert_eq!(serde_json::to_string(&page).unwrap(), anonymous);
