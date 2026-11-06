@@ -104,13 +104,17 @@ produced itself (`record_parked`, `SqliteCell::complete_parked`), at most once
 per generation; a second or concurrent resolution, another generation, or a
 command that is not parked writes nothing. Its delivery is then pending like
 any result (`Consumed::Result`), and the ordinary delivery fence consumes it
-exactly once. Every other command keeps strict FIFO order. Parking is derived
+exactly once. A recorded, unconsumed parked result is redelivered from the store
+(`SqliteCell::parked_results`), so a crash between recording and consuming never
+strands it. Every other command keeps strict FIFO order. Parking is derived
 only from the command's own payload with the compiled-in registry, so every host
 and every export replay classifies a command identically; replay checks a parked
 consumption at its own outbox position and every other at the FIFO head. Named
 scenarios (`crates/norn-cell/tests/parked.rs`): **PARKED-HEAD**, **PARKED-FIFO**,
-**PARKED-ONCE** (concurrent decide and expire, replay), **PARKED-CRASH** (restart
-before and after the consuming commit), **PARKED-INTERLEAVING** (property).
+**PARKED-ONCE** (decide then expire, replay), **PARKED-RACE** (decide racing expire,
+then two consumers, on two connections to one database file), **PARKED-CRASH**
+(restart before and after the consuming commit, redelivery from the persisted
+result), **PARKED-INTERLEAVING** (property).
 
 ### Durable flow scheduling and identity (#515)
 

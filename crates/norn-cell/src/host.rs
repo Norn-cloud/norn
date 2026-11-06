@@ -1074,6 +1074,31 @@ where
     C: DeserializeOwned,
     I: DeserializeOwned,
 {
+    /// PARKED-1: redeliver the recorded, unconsumed results of parked
+    /// commands, oldest first, decoded from the store (never from memory).
+    /// After a crash between [`Self::complete_parked`] and the consuming
+    /// commit, this is how the result is delivered again; `perform` never
+    /// returns a parked command.
+    ///
+    /// # Errors
+    ///
+    /// Engine or decode errors.
+    pub fn parked_results(&self) -> Result<Vec<Performed<I>>, CellError> {
+        self.store
+            .read()
+            .parked_commands()?
+            .into_iter()
+            .filter_map(|pending| {
+                let result = pending.result?;
+                Some(from_runtime(&result).map(|input| Performed {
+                    command: CommandId(pending.command.command_id.clone()),
+                    generation: Generation(pending.command.generation),
+                    input,
+                }))
+            })
+            .collect()
+    }
+
     /// The pending commands, oldest first.
     ///
     /// # Errors

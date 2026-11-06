@@ -181,47 +181,146 @@ fn concurrent_decide_and_expire_complete_a_parked_command_once() {
     );
 }
 
+fn open_at(path: &std::path::Path) -> Cell {
+    SqliteCell::open(
+        path,
+        Model::from_definitions(&[], &[]).unwrap(),
+        StoreOptions::default(),
+        "org_demo/dev",
+        responder(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn a_crash_between_commit_and_delivery_never_completes_twice() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cell.sqlite");
-    let open = || {
-        SqliteCell::<FactEvent, JsonObject, JsonObject>::open(
-            &path,
-            Model::from_definitions(&[], &[]).unwrap(),
-            StoreOptions::default(),
-            "org_demo/dev",
-            responder(),
-        )
-        .unwrap()
-    };
     let ask = CommandId("ask".into());
     {
-        let mut cell = open();
+        let mut cell = open_at(&path);
         dispatch(&mut cell, vec![command("ask", decision())]);
         cell.complete_parked(&ask, Generation(1), answer("approve"))
             .unwrap()
             .unwrap();
-        // Crash before the consuming commit: the recorded result survives.
+        // Crash after the result is recorded, before its delivery is consumed.
     }
     {
-        let mut cell = open();
+        let mut cell = open_at(&path);
         assert!(
             cell.complete_parked(&ask, Generation(1), answer("reject"))
                 .unwrap()
                 .is_none(),
             "the recorded result is final across restart"
         );
-        consume(&mut cell, "ask").unwrap();
+        // Recovery redelivers the result decoded from the store.
+        let redelivered = cell.parked_results().unwrap();
+        assert_eq!(redelivered.len(), 1);
+        assert_eq!(redelivered[0].command, ask);
+        assert_eq!(redelivered[0].input, answer("approve"));
+        cell.commit(CellCommit::empty().consuming(redelivered[0].consumed()))
+            .unwrap();
+        assert!(cell.parked_results().unwrap().is_empty());
         // Crash after the consuming commit, before the caller hears of it.
     }
-    let mut cell = open();
+    let mut cell = open_at(&path);
     assert!(
         not_pending(&consume(&mut cell, "ask")),
         "a retried delivery is refused"
     );
+    assert!(cell.parked_results().unwrap().is_empty());
     assert!(cell.store().read().parked_commands().unwrap().is_empty());
-    // The retained ledger and history still verify on reopen.
+    cell.store().verified_head().unwrap();
+}
+
+/// Run `first` and `second` on two connections to one database file,
+/// released together by a barrier; returns both outcomes.
+fn race<T: Send + 'static>(
+    path: &std::path::Path,
+    first: impl FnOnce(&mut Cell) -> T + Send + 'static,
+    second: impl FnOnce(&mut Cell) -> T + Send + 'static,
+) -> (T, T) {
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let spawn = |job: Box<dyn FnOnce(&mut Cell) -> T + Send>| {
+        let barrier = std::sync::Arc::clone(&barrier);
+        let path = path.to_owned();
+        std::thread::spawn(move || {
+            let mut cell = open_at(&path);
+            barrier.wait();
+            job(&mut cell)
+        })
+    };
+    let a = spawn(Box::new(first));
+    let b = spawn(Box::new(second));
+    (a.join().unwrap(), b.join().unwrap())
+}
+
+#[test]
+fn racing_connections_resolve_and_consume_a_parked_command_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cell.sqlite");
+    dispatch(&mut open_at(&path), vec![command("ask", decision())]);
+    let ask = || CommandId("ask".into());
+    // Decide races expire on two connections. The loser either sees the
+    // recorded result and writes nothing, or hits the documented SQLite
+    // contention (busy); it never records a second result.
+    let (decided, expired) = race(
+        &path,
+        move |cell| {
+            cell.complete_parked(&ask(), Generation(1), answer("approve"))
+                .map(|done| done.is_some())
+        },
+        move |cell| {
+            cell.complete_parked(
+                &ask(),
+                Generation(1),
+                BTreeMap::from([("_tag".to_owned(), text("Expired"))]),
+            )
+            .map(|done| done.is_some())
+        },
+    );
+    let recorded = [&decided, &expired]
+        .iter()
+        .filter(|outcome| matches!(outcome, Ok(true)))
+        .count();
+    assert_eq!(
+        recorded, 1,
+        "exactly one resolution is recorded: {decided:?} {expired:?}"
+    );
+    let cell = open_at(&path);
+    let parked = cell.store().read().parked_commands().unwrap();
+    assert_eq!(parked.len(), 1);
+    assert!(parked[0].result.is_some(), "exactly one stored result");
+    assert_eq!(
+        cell.store().read().runs("ask").unwrap().len(),
+        1,
+        "one run attempt"
+    );
+    drop(cell);
+    // Two consumers race the delivery: exactly one consuming commit.
+    let (first, second) = race(
+        &path,
+        |cell| consume(cell, "ask").is_ok(),
+        |cell| consume(cell, "ask").is_ok(),
+    );
+    assert_eq!(
+        usize::from(first) + usize::from(second),
+        1,
+        "one consuming commit"
+    );
+    let cell = open_at(&path);
+    let consuming = cell
+        .store()
+        .read()
+        .receipts()
+        .unwrap()
+        .into_iter()
+        .filter(|receipt| {
+            matches!(&receipt.body.consumed, Some(norn_cell::Consumption::Result { command_id, .. }) if command_id == "ask")
+        })
+        .count();
+    assert_eq!(consuming, 1);
+    assert!(cell.parked_results().unwrap().is_empty());
     cell.store().verified_head().unwrap();
 }
 
