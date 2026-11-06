@@ -40,18 +40,20 @@ export class Cell {
     });
     return this.opening;
   }
-  serve(request) {
+  serve(request, body) {
     const url = new URL(request.url);
-    return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now());
+    return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, body, Date.now());
   }
   async fetch(request) {
     await this.open(request);
-    let reply = this.serve(request);
+    // Read once: a JWKS retry serves the same body again.
+    const body = request.method === "POST" ? await request.text() : undefined;
+    let reply = this.serve(request, body);
     if (reply.refreshJwks) {
       // An unknown key id, at most once per refresh interval: refetch the pinned JWKS and retry once.
       try {
         this.cell.replaceJwks(await this.jwks());
-        reply = this.serve(request);
+        reply = this.serve(request, body);
       } catch {}
     }
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
@@ -62,7 +64,7 @@ function cors(request, env) {
   const origin = request.headers.get("origin");
   const allowed = (env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
   return origin !== null && allowed.includes(origin)
-    ? { "access-control-allow-origin": origin, "access-control-allow-headers": "authorization", "access-control-allow-methods": "GET", vary: "origin" }
+    ? { "access-control-allow-origin": origin, "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST", vary: "origin" }
     : {};
 }
 

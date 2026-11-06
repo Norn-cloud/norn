@@ -184,6 +184,7 @@ impl NornCell {
         path: &str,
         query: &str,
         authorization: Option<String>,
+        body: Option<String>,
         now_ms: f64,
     ) -> Reply {
         let questions = self
@@ -196,6 +197,7 @@ impl NornCell {
             path,
             query,
             authorization: authorization.as_deref(),
+            body: body.as_deref().unwrap_or_default(),
             now: seconds(now_ms),
         };
         let response = if path == "/v1/access" {

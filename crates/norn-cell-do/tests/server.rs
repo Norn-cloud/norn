@@ -44,9 +44,81 @@ fn call(
         path,
         query,
         authorization,
+        body: "",
         now: 0,
     };
     server::handle(&demo.host, &demo.principals, &request)
+}
+
+fn post(
+    demo: &Demo,
+    path: &str,
+    query: &str,
+    authorization: Option<&str>,
+    body: &str,
+) -> (u16, Value) {
+    let request = server::Request {
+        method: "POST",
+        path,
+        query,
+        authorization,
+        body,
+        now: 0,
+    };
+    let response = server::handle(&demo.host, &demo.principals, &request);
+    (
+        response.status,
+        serde_json::from_str(&response.body).unwrap(),
+    )
+}
+
+/// RUN-ROUTES-1 through the DO dispatch: only a declared run starter may
+/// start a run, bodies are closed, and run reads are scoped and gated.
+#[test]
+fn run_routes_dispatch_with_typed_refusals() {
+    let host = host(NativeEngine::open_in_memory().unwrap());
+    let body = r#"{"flow":"demo.no_such_flow","runId":"run-1"}"#;
+    let (status, refused) = post(&host, "/v1/runs", SCOPE, VIEWER, body);
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (403, Some("authz.denied")),
+        "{refused}"
+    );
+    let (status, refused) = post(
+        &host,
+        "/v1/runs",
+        SCOPE,
+        VIEWER,
+        r#"{"flow":"x","runId":"r","extra":1}"#,
+    );
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (400, Some("request.invalid")),
+        "{refused}"
+    );
+    let (status, refused) = post(&host, "/v1/runs", "", VIEWER, body);
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (400, Some("scope.missing")),
+        "{refused}"
+    );
+    let (status, page) = get(&host, "/v1/runs", SCOPE, VIEWER);
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(page["runs"].as_array().map(Vec::len), Some(0));
+    let (status, missing) = get(&host, "/v1/runs/run-1", SCOPE, VIEWER);
+    assert_eq!(
+        (status, missing["code"].as_str()),
+        (404, Some("run.not_found")),
+        "{missing}"
+    );
+    let (status, refused) = get(&host, "/v1/runs", "orgId=org_demo", VIEWER);
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (400, Some("scope.missing")),
+        "{refused}"
+    );
+    let deleted = call(&host, "DELETE", "/v1/runs/run-1", SCOPE, VIEWER);
+    assert_eq!(deleted.status, 405);
 }
 
 fn get(host: &Demo, path: &str, query: &str, auth: Option<&str>) -> (u16, Value) {

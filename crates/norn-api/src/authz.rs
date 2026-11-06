@@ -11,6 +11,8 @@ pub enum Operation {
     ReadDefinitions,
     /// Invoke the named admitted action.
     CallAction(String),
+    /// Start a run of the named installed flow (RUN-ROUTES-1).
+    StartRun(String),
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.

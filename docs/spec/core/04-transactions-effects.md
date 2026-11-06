@@ -109,6 +109,24 @@ export replay rebuilds it. It is a read index, not authority: reads go through t
 caller's read gates on the Run type. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
 **RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**.
 
+### RUN-ROUTES-1 — starting and reading runs
+
+`POST /v1/runs` with `{flow, runId}` starts a run of an installed flow. Scope is
+admitted first, then the host authorizer decides the `StartRun(flow)` operation
+(in the DO cell, the declared run-starter roles of `norn-cell-do-run-grants/1`).
+`runId` is 1-128 bytes of `[A-Za-z0-9._:-]`. The flow's `decide` rule evaluates its
+start turn (`{kind: "start", runId}` over an absent run), and the cell commits the
+resulting run object, dispatches and ledger row in one commit (RUN-LEDGER-1).
+An exact retry returns the existing run with 200. The same id under another flow
+refuses `run.exists`. An unknown flow refuses `run.flow_not_found`, and a refused
+start turn returns the kernel's code. `GET /v1/runs/{id}` and
+`GET /v1/runs?flow=&state=&cursor=&limit=` read the ledger in run-id order. Every
+run passes the ordinary `values` read gate on its object type. An unreadable run
+is `run.not_found`, exactly like an absent one, and listing omits it while the
+cursor advances past it. Named scenarios
+(`crates/norn-api/tests/run_routes.rs`, `crates/norn-cell-do/tests/server.rs`):
+**RUN-START-ONCE**, **RUN-START-REFUSE**, **RUN-READ-GATED**, **RUN-PAGE**.
+
 ### Durable flow scheduling and identity (#515)
 
 Flows remain compiled lifecycle/rule declarations. The pure kernel helpers in

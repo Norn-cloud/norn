@@ -63,6 +63,7 @@ pub mod decision_commit;
 mod effect;
 mod envelope;
 pub mod flow_identity;
+pub mod flow_start;
 pub mod governing_laws;
 pub mod limits;
 pub mod naming_series;
@@ -111,8 +112,8 @@ pub use decider::{
 pub use decision_commit::{
     DataQualityRuleClassification, DecisionRefusal, DecisionTurn, EffectiveValuesError, FactEvent,
     FactSlice, PreparedDecision, TypeCatalog, commit_decision, commit_decision_with_limits,
-    commit_decision_with_meter, load_slice, prepare_decision, prepare_decision_with_limits,
-    prepare_decision_with_source_owned_targets,
+    commit_decision_with_meter, decision_commit, load_slice, prepare_decision,
+    prepare_decision_with_limits, prepare_decision_with_source_owned_targets,
 };
 pub use effect::{
     Command, CommandId, DependencyToken, Effect, FreshnessPolicy, Generation, IdempotencyKey,
