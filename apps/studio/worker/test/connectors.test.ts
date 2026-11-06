@@ -113,6 +113,7 @@ test("app accounts: view, connect, reconnect, rename and disconnect, all in the 
   answer((request) => {
     const path = `${request.method} ${new URL(request.url).pathname}`
     if (path === "GET /api/organizations/gw-org/inventory") return Response.json({ apps: [{ id: "github", name: "GitHub" }], accounts: [{ id: "acc1", provider: "github", label: "Work", accessToken: "never" }], links: [{ app: "github", account: "acc1" }] })
+    if (path === "GET /api/organizations/gw-org/apps/github") return Response.json({ id: "github", requirements: { accounts: { github: { scope: "user" }, slack: { scope: "user" }, team: { scope: "app" } } } })
     if (path === "GET /api/organizations/gw-org/apps/github/accounts/user") return Response.json([{ requirement: "github", account: "acc1", state: "connected" }])
     if (path.endsWith("/connections")) return Response.json({ url: `${GATEWAY}/connect/c1`, redirectUri: `${GATEWAY}/cb` })
     if (path === "GET /api/organizations/gw-org/accounts/acc1") return Response.json({ account: { id: "acc1", label: "Personal" }, provider: { name: "GitHub" }, apps: [{ id: "github" }], health: { status: "ok" } })
@@ -120,7 +121,8 @@ test("app accounts: view, connect, reconnect, rename and disconnect, all in the 
   })
   const inventory = (await send("/inventory", { cookie: owner })).body
   expect(inventory).toEqual({ apps: [{ id: "github", name: "GitHub" }], accounts: [{ id: "acc1", provider: "github", label: "Work" }], links: [{ app: "github", account: "acc1" }] })
-  expect((await send("/apps/github/accounts", { cookie: owner })).body).toEqual({ requirements: [{ requirement: "github", account: "acc1", state: "connected" }] })
+  // Declared user requirements appear even when nothing fills them; the app-scoped one does not.
+  expect((await send("/apps/github/accounts", { cookie: owner })).body).toEqual({ requirements: [{ requirement: "github", account: "acc1", state: "connected" }, { requirement: "slack", account: null, state: null }] })
   expect((await send("/accounts/acc1", { cookie: owner })).body).toEqual({ id: "acc1", provider: "GitHub", label: "Personal", apps: ["github"], health: "ok" })
   const from = calls.length
   expect((await send("/apps/github/accounts/github/connect", { ...body("POST", {}), cookie: owner })).body).toEqual({ url: `${GATEWAY}/connect/c1` })

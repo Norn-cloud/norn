@@ -133,12 +133,28 @@ export class Gateway {
     return { app, name, description: text(tool.description), inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null, version: text(tool.version) }
   }
 
-  /** The user's links for each of an app's per-user account requirements. */
+  /**
+   * Each of the app's per-user account requirements, with the account the user linked to it, if
+   * any. The requirements are the app's declared ones (`GET /apps/{app}` → requirements.accounts,
+   * scope "user"); `…/accounts/user` lists only links, so a requirement nothing fills yet still
+   * appears, with `account: null`, and can be connected.
+   */
   async requirements(organization: string, app: string): Promise<readonly RequirementLink[]> {
-    const body = await this.request("GET", `/api/organizations/${segment(organization)}/apps/${segment(app)}/accounts/user`)
-    return list(body).map(record).flatMap((link) => {
+    const base = `/api/organizations/${segment(organization)}/apps/${segment(app)}`
+    const [detail, linked] = await Promise.all([this.request("GET", base), this.request("GET", `${base}/accounts/user`)])
+    const declared = Object.entries(record(record(record(detail).requirements).accounts))
+      .filter(([, requirement]) => text(record(requirement).scope) === "user")
+      .map(([name]) => name)
+    const links = list(linked).map(record).flatMap((link) => {
       const requirement = text(link.requirement)
       return requirement === null ? [] : [{ requirement, account: text(link.account) ?? text(record(link.account).id), state: text(link.state) ?? text(record(link.signIn).state) }]
+    })
+    // Every declared requirement once per linked account, or once unfilled; links to requirements
+    // the app no longer declares are still shown, so they can be disconnected.
+    const names = [...new Set([...declared, ...links.map((link) => link.requirement)])]
+    return names.flatMap((requirement) => {
+      const mine = links.filter((link) => link.requirement === requirement)
+      return mine.length > 0 ? mine : [{ requirement, account: null, state: null }]
     })
   }
 
