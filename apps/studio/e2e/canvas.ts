@@ -104,7 +104,6 @@ export async function clickEdge(page: Page, id: string) {
 /** Drag from one handle to another, as a user draws a connection. */
 export async function drag(page: Page, from: Locator, to: Locator) {
   await reveal(page, from, to)
-  await Promise.all([from, to].map((end) => end.waitFor({ state: "attached", timeout: 5_000 }).catch(() => undefined)))
   const a = await from.boundingBox()
   const b = await to.boundingBox()
   if (!a || !b) {

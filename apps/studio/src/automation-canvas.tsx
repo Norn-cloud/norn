@@ -47,7 +47,7 @@ export function StepBox({ data, selected }: NodeProps<StepNode>) {
 
 const NODE_TYPES = { step: StepBox }
 
-type ExitEdgeData = { readonly label?: string; readonly full?: string; readonly dim?: boolean }
+type ExitEdgeData = { readonly label?: string; readonly full?: string }
 
 /**
  * A connection whose label sits at its exit, just past the step it leaves, so a long condition never lands on
@@ -66,7 +66,7 @@ export function ExitEdge({ id, source, sourceX, sourceY, targetX, targetY, sourc
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {data?.label && room >= LABEL_MIN && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} data-exit-source={source} title={data.full} className={cn(EDGE_PILL, "cursor-pointer transition-opacity", data.dim && "opacity-35")} onClick={() => store.getState().addSelectedEdges([id])}
+          <div data-exit-label={id} data-exit-source={source} title={data.full} className={cn(EDGE_PILL, "cursor-pointer")} onClick={() => store.getState().addSelectedEdges([id])}
             style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}

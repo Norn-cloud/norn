@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { CircleAlert, Copy, LayoutGrid, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
+import { focusCss } from "./lib/canvas/focus.ts"
 import { INSET, MINIMAP, READABLE, WITH_MINIMAP, clearOfMinimap, fitsReadable, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
@@ -227,23 +228,29 @@ function Frame(props: CanvasFrameProps) {
     setMap(!fits && clearOfMinimap(boxes, view, container))
     setOpening(view)
   }, []) // Once, for the graph the canvas opened with.
-  // The path in focus: what is selected or under the pointer (a node's connections, or a connection itself) takes
-  // the accent and everything else dims, so one state's steps can be traced; a finding outranks both.
-  const [hover, setHover] = useState<{ readonly node?: string; readonly edge?: string }>()
-  const focusNodes = new Set([...selection.nodes, ...hover?.node ? [hover.node] : []])
-  const focusEdges = new Set([...selection.edges, ...hover?.edge ? [hover.edge] : []])
-  const focused = focusNodes.size + focusEdges.size > 0
+  // The path in focus: selected connections and every connection of a selected node; a finding outranks it.
   const look = (edge: g.CanvasEdge): Edge => {
     const base = props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph)
     const failing = on("edge", edge.id).length > 0
-    const active = focusEdges.has(edge.id) || focusNodes.has(edge.source) || focusNodes.has(edge.target)
-    const dim = focused && !active && !failing
+    const active = selection.edges.includes(edge.id) || selection.nodes.includes(edge.source) || selection.nodes.includes(edge.target)
     const tone = failing ? "var(--destructive)" : active ? "var(--edge-active)" : "var(--edge)"
-    return {
-      ...base, data: { ...base.data, dim }, className: cn(base.className, failing ? "canvas-edge-failing" : active ? "canvas-edge-active" : dim && "canvas-edge-dim"),
-      markerEnd: { type: MarkerType.ArrowClosed, color: tone, width: 14, height: 14 },
-    }
+    return { ...base, className: cn(base.className, failing ? "canvas-edge-failing" : active && "canvas-edge-active"), markerEnd: { type: MarkerType.ArrowClosed, color: tone, width: 14, height: 14 } }
   }
+  // Focus (selection, and what the pointer is over) dims everything not connected to it. The pointer's part is
+  // never React state: it is written straight into this canvas's stylesheet, so hovering re-renders nothing and
+  // no edge is rebuilt under the pointer (its end grabbers stay put for a reconnect).
+  const canvasId = useId()
+  const focusSheet = useRef<HTMLStyleElement>(null)
+  const pointer = useRef<{ readonly node?: string; readonly edge?: string }>({})
+  const current = useRef({ graph, selection })
+  current.current = { graph, selection }
+  const paintFocus = useCallback(() => {
+    const { graph: drawn, selection: chosen } = current.current
+    const over = pointer.current
+    if (focusSheet.current) focusSheet.current.textContent = focusCss(drawn, { nodes: [...chosen.nodes, ...over.node ? [over.node] : []], edges: [...chosen.edges, ...over.edge ? [over.edge] : []] }, canvasId)
+  }, [canvasId])
+  useEffect(paintFocus, [graph, selection, paintFocus])
+  const point = (next: { readonly node?: string; readonly edge?: string }) => { pointer.current = next; paintFocus() }
   const Sep = () => <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
 
   const inspector = props.inspector(editing, issues)
@@ -267,7 +274,8 @@ function Frame(props: CanvasFrameProps) {
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
-          <div ref={surface} data-canvas-surface className="relative h-[38rem] w-full">
+          <div ref={surface} data-canvas-surface data-canvas-id={canvasId} className="relative h-[38rem] w-full">
+            <style ref={focusSheet} />
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             {opening && <ReactFlow defaultViewport={opening}
               nodes={graph.nodes.map((node) => {
@@ -282,8 +290,8 @@ function Frame(props: CanvasFrameProps) {
               onConnect={(connection) => edit(g.connect(graph, kinds, props.newEdge(connection, graph)))}
               onReconnect={(old, connection) => edit(g.reconnect(graph, kinds, old.id, { source: connection.source, target: connection.target, sourcePort: connection.sourceHandle ?? old.sourceHandle ?? "", targetPort: connection.targetHandle ?? old.targetHandle ?? "" }))}
               onNodeDragStart={() => setState(g.checkpoint)}
-              onNodeMouseEnter={(_, node) => setHover({ node: node.id })} onNodeMouseLeave={() => setHover(undefined)}
-              onEdgeMouseEnter={(_, edge) => setHover({ edge: edge.id })} onEdgeMouseLeave={() => setHover(undefined)}
+              onNodeMouseEnter={(_, node) => point({ node: node.id })} onNodeMouseLeave={() => point({})}
+              onEdgeMouseEnter={(_, edge) => point({ edge: edge.id })} onEdgeMouseLeave={() => point({})}
               onNodesChange={(changes) => {
                 for (const change of changes) {
                   if (change.type === "position" && change.position) setState((current) => g.replace(current, g.moveNode(current.present, change.id, change.position as g.CanvasNode["position"])))

@@ -189,21 +189,23 @@ test("step label: clicking a step's label selects the step, as clicking its line
   await expect(page.getByLabel("Step id")).toHaveValue("complete")
 })
 
-test("focus: hovering or selecting a state lights its steps in the accent and dims the rest", async ({ page }) => {
+test("focus: hovering or selecting a state lights its steps and dims the rest, without rebuilding any step", async ({ page }) => {
   await open(page)
+  const opacity = (selector: string) => page.locator(selector).first().evaluate((element) => getComputedStyle(element).opacity)
   const approved = await shown(page, "approved")
+  // Hovering must not rebuild a step: the same element is there before and after.
+  await page.locator('.react-flow__edge[data-id="invoice:approved"]').evaluate((element) => { (element as HTMLElement & { marker?: number }).marker = 1 })
   await approved.hover()
-  // Approved's own steps (Approve in; Invoice, Hold and Cancel out) take the accent; the rest dim.
-  await expect(edge(page, "invoice:approved")).toHaveClass(/canvas-edge-active/)
-  await expect(edge(page, "submit:draft")).toHaveClass(/canvas-edge-dim/)
-  await expect(page.locator('[data-edge-label="submit:draft"]')).toHaveClass(/opacity-35/)
+  await expect.poll(() => opacity('.react-flow__edge[data-id="submit:draft"]')).toBe("0.35")
+  await expect.poll(() => opacity('[data-edge-label="submit:draft"]')).toBe("0.35")
+  await expect.poll(() => opacity('.react-flow__edge[data-id="invoice:approved"]')).toBe("1")
+  expect(await page.locator('.react-flow__edge[data-id="invoice:approved"]').evaluate((element) => (element as HTMLElement & { marker?: number }).marker)).toBe(1)
   // Moving away clears it.
-  await clear(page)
   await page.mouse.move(5, 5)
-  await expect(page.locator(".react-flow__edge.canvas-edge-dim")).toHaveCount(0)
+  await expect.poll(() => opacity('.react-flow__edge[data-id="submit:draft"]')).toBe("1")
   // Selecting holds the same focus.
   await approved.click()
   await page.mouse.move(5, 5)
   await expect(edge(page, "invoice:approved")).toHaveClass(/canvas-edge-active/)
-  await expect(edge(page, "submit:draft")).toHaveClass(/canvas-edge-dim/)
+  await expect.poll(() => opacity('.react-flow__edge[data-id="submit:draft"]')).toBe("0.35")
 })
