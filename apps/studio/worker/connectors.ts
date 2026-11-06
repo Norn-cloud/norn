@@ -237,7 +237,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       // The cell installs the binding as a definition (it recomputes the digest); the local record follows it.
       let outcome: Install
       try {
-        outcome = await cell.install(existing?.definition?.id ?? bindingDefinitionId(id), { connector, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, manifestDigest: digest }, existing?.definition?.version)
+        outcome = await cell.install(existing?.definition?.id ?? bindingDefinitionId(id), { connector, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, manifestDigest: digest, label: draft.label, inputMapping: draft.inputMapping, runRole: draft.runRole }, existing?.definition?.version)
       } catch (error) {
         if (error instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", error.message)
         throw error

@@ -307,6 +307,7 @@ test("a binding is installed in the cell as a definition, which the record and i
   const added = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Issues" }), cookie: owner }, { host })).body.binding as Record<string, unknown> & { id: string; manifestDigest: string }
   expect(seen[0]).toMatchObject({ path: "/v1/definitions:install", bearer: true, body: { kind: "binding", id: `studio.binding.${added.id}`, payload: {
     connector: { gateway: "executor", origin: GATEWAY, app: "github", tool: "list_issues", version: "dpl_1" }, inputSchema: ISSUES, outputSchema: null, manifestDigest: added.manifestDigest,
+    label: "Issues", inputMapping: {}, runRole: "member",
   } } })
   expect(seen[0]?.body).not.toHaveProperty("expectedVersion")
   expect(added).toMatchObject({ definition: { id: `studio.binding.${added.id}`, version: 1 }, connectorRef: "executor:github/list_issues@dpl_1" })
@@ -328,6 +329,12 @@ test("a refused or conflicting definition saves nothing; a stage without the rou
   expect((await send("/bindings", { cookie: owner })).body.bindings).toEqual([])
   const conflicting = cellHost(() => Response.json({ code: "definition.version_conflict" }, { status: 409 }))
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: conflicting.host })).body.code).toBe("connectors.binding_conflict")
+  // A cell whose binding kind does not take label, inputMapping and runRole yet: kept locally, like a 404.
+  const older = cellHost(() => Response.json({ code: "definition.refused", diagnostics: ["label", "inputMapping", "runRole"].map((f) => ({ code: "definition.unknown_field", message: `unknown field \`${f}\``, span: { pointer: `/payload/${f}` } })) }, { status: 422 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: older.host })).body.binding).toMatchObject({ definition: null })
+  // An unknown-field refusal that also names something else is still a refusal.
+  const mixed = cellHost(() => Response.json({ code: "definition.refused", diagnostics: [{ code: "definition.unknown_field", message: "unknown field `label`", span: { pointer: "/payload/label" } }, { code: "binding.role_undeclared", message: "runRole names no declared role", span: { pointer: "/payload/runRole" } }] }, { status: 422 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: mixed.host })).body.code).toBe("connectors.binding_refused")
   const noRoute = cellHost(() => Response.json({ code: "route.not_found" }, { status: 404 }))
   const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: noRoute.host })).body.binding
   expect(local).toMatchObject({ definition: null, connectorRef: "executor:github/list_issues@dpl_1" })

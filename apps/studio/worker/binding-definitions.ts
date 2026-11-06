@@ -1,6 +1,6 @@
 import { hostToken, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
-import type { ConnectorRef } from "./bindings.ts"
+import type { ConnectorRef, InputMapping, RunRole } from "./bindings.ts"
 
 /**
  * Tool bindings as cell definitions (coordinator decision, 2026-11-06): Studio saves each binding
@@ -8,8 +8,10 @@ import type { ConnectorRef } from "./bindings.ts"
  * The cell recomputes `manifestDigest` from the payload with the same canonical algorithm and
  * refuses a mismatch. Agents reference a binding by its definition id.
  *
- * Until DEFS serves the binding kind on a stage, the cell answers 404 `route.not_found`: the
- * binding is then kept as the Worker's local record only, and says so (`definition: null`).
+ * The cell is the authority for a binding, including who may run it (`runRole`); the Worker's
+ * row is a cache. Until DEFS serves the binding kind on a stage (404 `route.not_found`) or takes
+ * label, inputMapping and runRole (a refusal naming only those), the binding is kept as the
+ * Worker's local record only, and says so (`definition: null`).
  */
 
 export const BINDING_KIND = "binding"
@@ -20,6 +22,27 @@ export interface BindingPayload {
   readonly inputSchema: unknown
   readonly outputSchema: unknown
   readonly manifestDigest: string
+  /** What people see; the cell keeps it with the binding. */
+  readonly label: string
+  /** Inputs the binding fixes; the cell checks them against inputSchema. */
+  readonly inputMapping: InputMapping
+  /** The least role that may run it, checked against the cell's declared roles: the cell is the authority. */
+  readonly runRole: RunRole
+}
+
+/** The binding fields DEFS accepts once its binding kind takes them (coordinator, 2026-11-06). */
+const NEWER_FIELDS = new Set(["label", "inputMapping", "runRole"])
+
+/**
+ * A refusal only because the cell's binding kind does not take label, inputMapping or runRole
+ * yet: every finding is an unknown field among those. Such a binding stays a local record.
+ */
+export function refusedOnlyForNewerFields(findings: readonly Finding[]): boolean {
+  if (findings.length === 0) return false
+  return findings.every((finding) => {
+    const field = /^\/payload\/([^/]+)$/.exec(finding.pointer ?? "")?.[1] ?? /`?(label|inputMapping|runRole)`?/.exec(finding.message)?.[1]
+    return field !== undefined && NEWER_FIELDS.has(field) && /unknown|not allowed|unexpected|additional/i.test(`${finding.code} ${finding.message}`)
+  })
 }
 
 export interface Finding { readonly code: string; readonly message: string; readonly pointer: string | null }
@@ -66,7 +89,11 @@ export class BindingDefinitions {
     const { status, body } = answer
     const b = body as { installed?: unknown; id?: unknown; version?: unknown; code?: unknown } | null
     if (status === 200 && b?.installed === true && typeof b.id === "string" && typeof b.version === "number") return { kind: "installed", id: b.id, version: b.version }
-    if (status === 422 && b?.code === "definition.refused") return { kind: "refused", findings: findingsOf(b) }
+    if (status === 422 && b?.code === "definition.refused") {
+      const findings = findingsOf(b)
+      // Until DEFS takes label, inputMapping and runRole, that refusal keeps the local record, like a 404.
+      return refusedOnlyForNewerFields(findings) ? { kind: "local" } : { kind: "refused", findings }
+    }
     if (status === 409 && b?.code === "definition.version_conflict") return { kind: "conflict" }
     // No definition route on this stage yet, or the binding kind is not served: the local record stands.
     if (status === 404 && (b?.code === "route.not_found" || b?.code === "definition.kind_unknown")) return { kind: "local" }
