@@ -1006,8 +1006,8 @@ fn a_short_handle_key_refuses() {
     struct Short(Runtime);
     impl QuestionRuntime<NativeEngine> for Short {
         fn plan(&self, question: &str) -> Result<QuestionPlan, Refusal> { self.0.plan(question) }
-        fn snapshot(&self, store: &CellStore, plan: &QuestionPlan, a: &str) -> Result<QuestionSnapshot, Refusal> { self.0.snapshot(store, plan, actor) }
-        fn access(&self, scope: &CellScope, actor: &str, question: &str, capability: ReadCapability, r: Option<&ObjectRecord>) -> Result<PdpRequest, Refusal> { self.0.access(scope, actor, question, capability, row) }
+        fn snapshot(&self, store: &CellStore, plan: &QuestionPlan, actor: &str) -> Result<QuestionSnapshot, Refusal> { self.0.snapshot(store, plan, actor) }
+        fn access(&self, scope: &CellScope, actor: &str, question: &str, capability: ReadCapability, row: Option<&ObjectRecord>) -> Result<PdpRequest, Refusal> { self.0.access(scope, actor, question, capability, row) }
         fn min_disclosed_bucket(&self) -> usize { 3 }
         fn handle_key(&self) -> &[u8] { &HANDLE_KEY[..31] }
     }
