@@ -10,6 +10,7 @@ export const PAGES = {
   "/sources/$concept/$": "/sources/canon.Item/demo/item/gold",
   "/questions": "/questions",
   "/questions/new": "/questions/new",
+  "/questions/build": "/questions/build",
   "/questions/$name": "/questions/demo.yield_week",
   "/dashboards": "/dashboards",
   "/dashboards/new": "/dashboards/new",
