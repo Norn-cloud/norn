@@ -57,7 +57,12 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
   return (
     <>
       <Sheet open={open !== null} onOpenChange={(next) => { if (!next) request() }}>
-        <SheetContent className="w-[min(36rem,100vw)] gap-0 overflow-y-auto border-node-border shadow-float sm:max-w-xl">
+        <SheetContent className="w-[min(36rem,100vw)] gap-0 overflow-y-auto border-node-border shadow-float sm:max-w-xl"
+          onOpenAutoFocus={(event) => {
+            // Start in the first field to fill, not on the close button or the wizard's step bar.
+            const first = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>("form input:not([readonly]), form select, form textarea")
+            if (first) { event.preventDefault(); first.focus() }
+          }}>
           {open !== null && <>
             <SheetHeader className="px-6 pt-6 pb-4">
               <SheetTitle>{open.action.title}</SheetTitle>

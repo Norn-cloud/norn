@@ -44,7 +44,7 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
   for (const [i, name] of names.entries()) await expect(steps(page).nth(i)).toHaveAccessibleName(name)
   await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step")
   await expect(steps(page).nth(2)).toHaveAttribute("aria-disabled", "true")
-  await steps(page).nth(2).click()
+  await steps(page).nth(2).click({ force: true })
   await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step") // a step not reached stays closed
   // Hover (or focus) names a step; one not reached yet says so.
   await steps(page).nth(3).hover()
@@ -56,6 +56,7 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
   await form.getByRole("button", { name: "Next" }).click()
   await expect(steps(page).nth(1)).toHaveAttribute("aria-current", "step")
   await expect(form.getByText("Step 2 of 4")).toBeVisible()
+  await expect(form.getByLabel("Location › Site")).toBeFocused() // each step starts in its first field
   await steps(page).nth(0).focus()
   await expect(page.getByRole("tooltip")).toHaveText("What is held")
   await form.getByLabel("Location › Site").fill("vault-b")

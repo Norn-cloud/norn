@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, ChevronLeft, Lock, Pencil, Plus, X } from "lucide-react"
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -60,6 +60,15 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const review = sections.length
   const [step, setStep] = useState(0)
   const [reached, setReached] = useState(remembered === undefined ? 0 : review)
+  const formRef = useRef<HTMLFormElement>(null)
+  const moved = useRef(false)
+  // Moving between steps puts focus in the new step's first field (the submit button on the review).
+  useEffect(() => {
+    if (!wizard || !moved.current) return
+    const root = formRef.current
+    const target = root?.querySelector<HTMLElement>("section input:not([readonly]), section select, section textarea") ?? root?.querySelector<HTMLElement>('button[type="submit"]')
+    target?.focus()
+  }, [step, wizard])
   const [key, setKey] = useState(newKey)
   const [phase, setPhase] = useState<Phase>({ kind: "editing" })
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && phase.kind !== "done"
@@ -97,10 +106,10 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
 
   const top = unplaced(diagnostics, fields)
   const counts = problemsBySection(sections, diagnostics)
-  const go = (to: number) => { setStep(to); setReached((r) => Math.max(r, to)); if (phase.kind === "confirm") setPhase({ kind: "editing" }) }
+  const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); if (phase.kind === "confirm") setPhase({ kind: "editing" }) }
   const shown = wizard ? (step < review ? [sections[step]!] : []) : sections
   return (
-    <form noValidate className="grid gap-5" aria-label={action.title} aria-busy={phase.kind === "sending"}
+    <form ref={formRef} noValidate className="grid gap-5" aria-label={action.title} aria-busy={phase.kind === "sending"}
       onSubmit={(event) => {
         event.preventDefault()
         if (phase.kind === "sending") return
