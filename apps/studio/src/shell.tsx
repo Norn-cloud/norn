@@ -111,11 +111,11 @@ export function Submenu({ section }: { readonly section: Section }) {
         {groups.map((group) => (
           <SidebarGroup key={group}>
             <SidebarGroupLabel asChild className="text-xs font-normal text-muted-foreground">
-              <button type="button" aria-expanded={!closed.has(group)} onClick={() => setClosed((set) => toggle(set, group))} className="w-full gap-1 hover:text-foreground">
-                {group}<ChevronDown className={cn("size-3.5! transition-transform", closed.has(group) && "-rotate-90")} />
+              <button type="button" aria-expanded={groupOpen(closed, group, query)} onClick={() => setClosed((set) => toggle(set, group))} className="w-full gap-1 hover:text-foreground">
+                {group}<ChevronDown className={cn("size-3.5! transition-transform", !groupOpen(closed, group, query) && "-rotate-90")} />
               </button>
             </SidebarGroupLabel>
-            {!closed.has(group) && <SidebarGroupContent>
+            {groupOpen(closed, group, query) && <SidebarGroupContent>
               <SidebarMenu>
                 {entries.filter((entry) => (entry.group ?? section.label) === group).filter((entry, index, list) => {
                   const active = entry.href === pathname || pathname.startsWith(`${entry.href}/`)
@@ -147,6 +147,9 @@ export function Submenu({ section }: { readonly section: Section }) {
   )
 }
 
+/** A group shows its entries unless the user closed it; a search opens every group so its matches stay visible. */
+export const groupOpen = (closed: ReadonlySet<string>, group: string, query: string) => query !== "" || !closed.has(group)
+
 /** "Search or add… ⌘K": every section and every entry the sections list. */
 function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   const [open, setOpen] = useState(false)
@@ -162,8 +165,8 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   const go = (to: { to: string; hash?: string }) => { setOpen(false); void navigate(to) }
   return (
     <>
-      <Button variant="outline" className="h-10 w-full justify-start rounded-full bg-background px-4 font-normal text-muted-foreground shadow-none dark:bg-background" onClick={() => setOpen(true)}>
-        <Search /> Search or add… <kbd className="ms-auto font-sans text-meta">⌘K</kbd>
+      <Button variant="outline" className="h-10 w-full min-w-0 justify-start rounded-full bg-background px-4 font-normal text-muted-foreground shadow-none dark:bg-background" onClick={() => setOpen(true)}>
+        <Search /> <span className="min-w-0 truncate">Search or add…</span> <kbd className="ms-auto hidden font-sans text-meta sm:inline">⌘K</kbd>
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen} title="Search Studio" description="Go to a section or an item">
         <Command>
@@ -262,7 +265,7 @@ export function Shell({ sections, tools }: { readonly sections: readonly Section
         </Sidebar>
         <SidebarInset>
           <header className="grid h-16 grid-cols-[1fr_minmax(0,28rem)_1fr] items-center gap-3 px-4">
-            <div><SidebarTrigger className="md:hidden" /></div>
+            <div><SidebarTrigger /></div>
             <CommandMenu sections={sections} />
             <BarButtons tools={tools} />
           </header>

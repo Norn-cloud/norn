@@ -4,7 +4,7 @@ import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import { Shell, Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, Submenu, groupOpen, sectionOf, target, type Section } from "../src/shell.tsx"
 
 const sources: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "",
@@ -70,4 +70,20 @@ test("a rail count sits inside its tile in the theme's destructive pair", async 
   expect(badge).toContain("text-destructive-foreground")
   expect(badge).toContain("top-0.5 right-0.5")
   expect(badge).not.toContain("text-white")
+})
+
+test("a search shows matches in a group the user closed", () => {
+  const closed = new Set(["Object types"])
+  expect(groupOpen(closed, "Object types", "")).toBe(false)
+  expect(groupOpen(closed, "Object types", "hold")).toBe(true)
+  expect(groupOpen(closed, "Metrics", "")).toBe(true)
+})
+
+test("the page bar keeps a sidebar trigger on every screen and a search label that fits a narrow bar", async () => {
+  const html = await at("/sources", () => <Shell sections={[sources, questions]} />)
+  const trigger = html.match(/<button[^>]*data-sidebar="trigger"[^>]*>/)?.[0] ?? ""
+  expect(trigger).not.toBe("")
+  expect(trigger).not.toContain("md:hidden")
+  expect(html).toMatch(/<span class="min-w-0 truncate">Search or add…<\/span>/)
+  expect(html).toMatch(/<kbd class="[^"]*hidden[^"]*sm:inline[^"]*">⌘K<\/kbd>/)
 })
