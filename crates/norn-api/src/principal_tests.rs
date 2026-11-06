@@ -134,15 +134,15 @@ fn forged_foreign_stale_and_undeclared_tokens_deny_identically() {
     variant("not yet valid", |c| c["nbf"] = json!(NOW + 120));
     variant("lives too long", |c| c["exp"] = json!(NOW + 3_600));
     variant("another organization", |c| {
-        c["norn"]["org"] = json!("org_b")
+        c["norn"]["org"] = json!("org_b");
     });
     variant("undeclared role", |c| {
-        c["norn"]["role"] = json!("superuser")
+        c["norn"]["role"] = json!("superuser");
     });
     variant("unknown kind", |c| c["norn"]["kind"] = json!("system"));
     variant("blank subject", |c| c["sub"] = json!(" "));
     variant("extra Norn claim", |c| {
-        c["norn"]["roles"] = json!(["admin"])
+        c["norn"]["roles"] = json!(["admin"]);
     });
     variant("no Norn claims (a plain session JWT)", |c| {
         c.as_object_mut().unwrap().remove("norn");

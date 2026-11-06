@@ -184,7 +184,7 @@ impl TokenVerifier {
         let claims: Claims = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()?;
         let audience_ok = match &claims.aud {
             Audience::One(aud) => *aud == self.audience,
-            Audience::Many(auds) => auds.iter().any(|aud| *aud == self.audience),
+            Audience::Many(auds) => auds.contains(&self.audience),
         };
         let late = now.saturating_add(LEEWAY_SECONDS);
         let fresh = claims.exp.saturating_add(LEEWAY_SECONDS) > now
