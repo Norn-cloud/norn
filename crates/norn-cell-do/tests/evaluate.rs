@@ -301,10 +301,6 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     inadmissible["groupBy"] = json!([{"path": {"property": "occurred_at"}, "grain": "day"}]);
     // Anonymous, inadmissible: the denial, not the 422.
     assert_eq!(evaluate(&cell, None, &inadmissible).body, baseline.body);
-    // An undeclared metric, from a granted caller: the same denial.
-    let mut undeclared = inadmissible.clone();
-    undeclared["aggregate"] = json!([{"metric": "demo.margin"}]);
-    assert_eq!(evaluate(&cell, ADMIN, &undeclared).body, baseline.body);
     // A declared metric the caller holds no grant on — here the ratio's
     // numerator, read only transitively: the same denial, for any question.
     cell.runtime.ungranted = Some("demo.recovered");
@@ -388,4 +384,47 @@ fn submissions_are_posted_json_and_malformed_ones_refuse() {
         400,
         "unknown members refuse"
     );
+}
+
+/// D62: an undeclared metric is the checker's 422, with its pointer, only for
+/// a caller who can read every metric the cell declares. A caller missing any
+/// metric grant gets the opaque 403, byte-identical for an undeclared and an
+/// ungranted metric: no existence oracle over the catalog.
+#[test]
+fn an_undeclared_metric_is_a_diagnostic_only_for_a_caller_who_reads_every_metric() {
+    let mut cell = cell();
+    let mut undeclared = question("gold");
+    undeclared["aggregate"] = json!([{"metric": "demo.margin"}]);
+    // Full grant: the 422 says where.
+    let refused = evaluate(&cell, ADMIN, &undeclared);
+    assert_eq!(refused.status, 422, "{}", refused.body);
+    let refused = json_of(&refused);
+    assert_eq!(refused["code"], "question.refused");
+    let unknown: Vec<&Value> = refused["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "metric.validation.unknown_metric")
+        .collect();
+    assert_eq!(unknown.len(), 1, "{refused}");
+    assert_eq!(
+        unknown[0]["span"]["pointer"],
+        "/question/aggregate/0/metric"
+    );
+    // Partial grant (no grant on demo.input, which this question does not read):
+    // undeclared and ungranted are one denial, byte for byte.
+    cell.runtime.ungranted = Some("demo.input");
+    let baseline = evaluate(&cell, None, &question("gold"));
+    assert_eq!(baseline.status, 403);
+    let hidden_undeclared = evaluate(&cell, ADMIN, &undeclared);
+    let mut ungranted = question("gold");
+    ungranted["aggregate"] = json!([{"metric": "demo.input"}]);
+    let hidden_ungranted = evaluate(&cell, ADMIN, &ungranted);
+    assert_eq!(hidden_undeclared.status, 403);
+    assert_eq!(hidden_undeclared.body, hidden_ungranted.body);
+    assert_eq!(hidden_undeclared.body, baseline.body);
+    // A question within the partial grant still answers.
+    let mut recovered = question("gold");
+    recovered["aggregate"] = json!([{"metric": "demo.recovered"}]);
+    assert_eq!(evaluate(&cell, ADMIN, &recovered).status, 200);
 }
