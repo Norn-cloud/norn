@@ -23,7 +23,8 @@ export interface Recommendations {
 }
 
 /** The server's verdict with the question in plain words and that text's hash. */
-export interface CheckedQuestion { readonly verdict: QuestionVerdict; readonly restatement: { readonly text: string; readonly sha256: string } }
+/** The server's verdict with the question in plain words (the checker's restatement) and that text's hash; none, with the reason, when it cannot be stated. */
+export interface CheckedQuestion { readonly verdict: QuestionVerdict; readonly restatement: { readonly text: string; readonly sha256: string } | null; readonly restatementError?: string }
 
 /** A sign-off: the person read exactly these words (by their hash) and said "This is what I asked for". */
 export interface SignOff { readonly sha256: string; readonly atMs: number }
@@ -36,10 +37,10 @@ async function readRecommendations(): Promise<Recommendations> {
 
 async function checkQuestion(question: unknown): Promise<CheckedQuestion> {
   const response = await fetch("/api/questions/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) })
-  const body = await response.json().catch(() => null) as { restatement?: CheckedQuestion["restatement"] } | null
+  const body = await response.json().catch(() => null) as { restatement?: CheckedQuestion["restatement"]; restatementError?: unknown } | null
   const verdict = questionVerdictOf(body)
-  if (!response.ok || verdict === undefined || !body?.restatement) throw new Error("The checker could not be reached.")
-  return { verdict, restatement: body.restatement }
+  if (!response.ok || verdict === undefined || body?.restatement === undefined) throw new Error("The checker could not be reached.")
+  return { verdict, restatement: body.restatement, ...typeof body.restatementError === "string" ? { restatementError: body.restatementError } : {} }
 }
 
 const words = (name: string) => name.replaceAll("_", " ")
@@ -94,7 +95,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const restated = checked?.restatement
   const admitted = checked?.verdict.admitted === true
   // A sign-off holds only for the exact words signed; any edit changes them and clears it.
-  const signed = signOff !== undefined && restated !== undefined && signOff.sha256 === restated.sha256 && admitted
+  const signed = signOff !== undefined && restated != null && signOff.sha256 === restated.sha256 && admitted
   useEffect(() => { if (signOff && restated && signOff.sha256 !== restated.sha256) setSignOff(undefined) }, [restated?.sha256])
   const chosen = selection(tree, draft)
   const issues = issuesOf(checked?.verdict)
@@ -166,6 +167,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       <PathSummary numbers={numbers}><span className="text-meta text-muted-foreground">{tree.basis}</span></PathSummary>
       {failure && <p role="alert" className="text-destructive">{failure}</p>}
       {checked && !admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{checked.verdict.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
+      {checked && restated === null && <p role="status" className="text-sm text-muted-foreground">This question cannot be stated in plain words, so it cannot be signed off: {checked.restatementError ?? "the checker gave no reason"}.</p>}
       {restated && (
         <Panel icon={ShieldCheck} label="In plain words" action={<span className="font-mono text-xs text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span>}>
           <div className="space-y-3 p-1">
