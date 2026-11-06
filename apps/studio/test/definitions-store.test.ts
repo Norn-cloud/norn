@@ -44,7 +44,7 @@ test("the cell's route: admit, install, retire as CELL-DO documents them; anythi
   expect(await cellDefinitions(reader(200, { items: [{ id: "studio.dashboard.refinery", kind: "dashboard", title: "Refinery", version: 3, lifecycle: "active", updatedAtMs: 5 }], cursor: "c2" })).list())
     .toEqual({ items: [{ id: "studio.dashboard.refinery", title: "Refinery", version: 3, lifecycle: "active", updatedAtMs: 5 }], cursor: "c2" })
   await cellDefinitions(reader(200, { items: [], cursor: null })).list("c2")
-  expect(reads.slice(-2)).toEqual(["/api/host/v1/definitions?kind=dashboard", "/api/host/v1/definitions?kind=dashboard&cursor=c2"])
+  expect(reads.slice(-2)).toEqual(["/api/host/v1/definitions:list?kind=dashboard&limit=50", "/api/host/v1/definitions:list?kind=dashboard&limit=50&cursor=c2"])
   expect(await cellDefinitions(reader(200, { id: "studio.dashboard.refinery", kind: "dashboard", version: 3, lifecycle: "active", payload: dashboard, receipt })).get("studio.dashboard.refinery")).toEqual({ id: "studio.dashboard.refinery", version: 3, dashboard })
   expect(await cellDefinitions(reader(404, { code: "definition.not_found" })).get("nope")).toBeUndefined()
   await expect(cellDefinitions(reader(404, {})).get("x")).rejects.toThrow("no route to read them back")
@@ -61,5 +61,3 @@ test("a cell finding lands on the title, one tile, or the dashboard as a whole",
   expect(dashboardField("/tiles")).toBe("tiles")
   expect(dashboardField(null)).toBeNull()
 })
-
-const render = (stored?: StoredDashboard) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><DashboardEditor store={cellDouble()} catalog={catalog} stored={stored} /></QueryClientProvider>)
