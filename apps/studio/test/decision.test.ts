@@ -1,0 +1,74 @@
+import { expect, test } from "bun:test"
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+import { loadInvoice, notify } from "../../../tools/norn-ts/fixtures/flows/support/billing.builder.ts"
+import { lower } from "../src/lib/canvas/automation.ts"
+import { decisionView, nextOptionId, optionPort, setOptions, type DecisionOption } from "../src/lib/canvas/decision.ts"
+import type { CanvasEdge, CanvasNode, Graph } from "../src/lib/canvas/graph.ts"
+
+const tools = [loadInvoice, notify]
+const meta = { id: "billing.overdue_review", version: "1.0.0" }
+const scope = { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "apps/studio/canvas" }
+const node = (id: string, kind: string, config: Record<string, string> = {}): CanvasNode => ({ id, kind, position: { x: 0, y: 0 }, config })
+const edge = (source: string, sourcePort: string, target: string): CanvasEdge => ({ id: `${source}.${sourcePort}`, source, sourcePort, target, targetPort: "in", config: {} })
+const options = (...all: DecisionOption[]) => JSON.stringify(all)
+
+/** Load an invoice, ask whether to remind; reminding asks a follow-up. */
+const graph: Graph = {
+  nodes: [
+    node("start", "start"),
+    node("load", "perform", { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
+    node("chase", "decide", { question: "Invoice is overdue: what should I do?", risk: "high", deciderRoles: "admin", agentPick: "o1", options: options({ id: "o1", label: "Send a reminder", scope: "Email · customer" }, { id: "o2", label: "Leave it", scope: "Nothing sent" }) }),
+    node("remind", "perform", { tool: "billing.notify", input: JSON.stringify({ invoiceId: "invoice.id", outcome: "overdue" }) }),
+    node("escalate", "decide", { question: "Tell the account owner too?", risk: "low", deciderRoles: "admin", options: options({ id: "o1", label: "Yes", scope: "#accounts" }, { id: "o2", label: "No", scope: "Nothing more" }) }),
+    node("reminded", "succeed", { outcome: "reminded" }),
+    node("escalated", "succeed", { outcome: "escalated" }),
+    node("left", "succeed", { outcome: "left" }),
+  ],
+  edges: [
+    edge("start", "next", "load"), edge("load", "next", "chase"),
+    edge("chase", "opt:o1", "remind"), edge("remind", "next", "escalate"),
+    edge("escalate", "opt:o1", "escalated"), edge("escalate", "opt:o2", "reminded"),
+    edge("chase", "opt:o2", "left"),
+  ],
+}
+
+test("an ask step lowers to a wait for norn.decision and a route on the choice", () => {
+  const { lowered, problems } = lower(graph, tools, meta, scope)
+  expect(problems).toEqual([])
+  expect(lowered?.states.get("chase")).toContain("awaiting_perform_ask_chase")
+  expect(lowered?.states.get("escalate")).toContain("awaiting_perform_ask_escalate")
+  const rule = JSON.stringify(lowered?.artifacts.find(({ kind }) => kind === "rule"))
+  expect(rule).toContain("norn.decision")
+})
+
+test("the decider's tree: question, options with the agent's pick and their tools, and the follow-up", () => {
+  const view = decisionView(graph, "chase")
+  expect(view?.risk).toBe("high")
+  expect(view?.options.map(({ option, agentPick, tools: called }) => `${option.label}${agentPick ? "*" : ""}:${called.join("+")}`)).toEqual(["Send a reminder*:billing.notify", "Leave it:"])
+  expect(view?.options[0]?.followUp?.question).toBe("Tell the account owner too?")
+  expect(view?.options[1]?.followUp).toBeNull()
+})
+
+test("removing an option removes its exit and clears the agent's pick when it was that option", () => {
+  const chase = graph.nodes.find(({ id }) => id === "chase")!
+  const kept = setOptions(graph, "chase", [{ id: "o2", label: "Leave it", scope: "Nothing sent" }])
+  expect(kept.edges.some(({ source, sourcePort }) => source === "chase" && sourcePort === optionPort({ id: "o1" }))).toBe(false)
+  expect(kept.nodes.find(({ id }) => id === "chase")?.config.agentPick).toBe("")
+  expect(nextOptionId(JSON.parse(chase.config.options ?? "[]"))).toBe("o3")
+})
+
+test("the canvas names a decision without a question, options or deciders, and an option that leads nowhere", () => {
+  const bare: Graph = { nodes: [node("start", "start"), node("ask", "decide", { options: options({ id: "o1", label: "Go", scope: "" }) })], edges: [edge("start", "next", "ask")] }
+  expect(lower(bare, tools, meta, scope).problems.map(({ code }) => code).sort()).toEqual(["canvas.decision.no_decider", "canvas.decision.no_question", "canvas.decision.option_leads_nowhere"])
+})
+
+// The real checker over what an automation with decisions lowers to (built into worker/checker or src/checker on Boat).
+const pkg = [join(import.meta.dir, "../worker/checker"), join(import.meta.dir, "../src/checker")].find((dir) => existsSync(join(dir, "norn_checker_wasm_bg.wasm")))
+test.skipIf(!pkg)("the checker admits what a drawn decision lowers to", async () => {
+  const wasm = await import(join(pkg!, "norn_checker_wasm.js")) as { initSync: (input: { module: BufferSource }) => unknown; checkArtifactSet: (a: string, c: string) => string }
+  wasm.initSync({ module: readFileSync(join(pkg!, "norn_checker_wasm_bg.wasm")) })
+  const artifacts = lower(graph, tools, meta, scope).lowered?.artifacts ?? []
+  const result = JSON.parse(wasm.checkArtifactSet(JSON.stringify(artifacts), "null")) as { diagnostics: { diagnostics: { code: string; message: string }[] } }
+  expect(result.diagnostics.diagnostics).toEqual([])
+})

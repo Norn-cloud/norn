@@ -12,7 +12,9 @@ import { Badge } from "@/components/ui/badge"
 import { CanvasFrame, writeDraft, type Issue } from "./canvas-frame.tsx"
 import { CanvasPageView, StateBox, lifecycleFrame } from "./canvas.tsx"
 import { StepBox, automationFrame } from "./automation-canvas.tsx"
-import { EXAMPLE } from "./lib/canvas/tools.ts"
+import { DECISION_EXAMPLE, EXAMPLE } from "./lib/canvas/tools.ts"
+import { DecisionTree } from "./decision-tree.tsx"
+import { decisionView } from "./lib/canvas/decision.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { lifecyclesIn } from "./lib/canvas/lifecycle.ts"
 import type { Envelope } from "./lib/transport.ts"
@@ -29,7 +31,7 @@ function Box(data: { readonly label: string; readonly flags?: string; readonly i
 }
 
 function Step({ id, issues = [] }: { readonly id: string; readonly issues?: readonly Issue[] }) {
-  const step = EXAMPLE.nodes.find((one) => one.id === id)
+  const step = [...EXAMPLE.nodes, ...DECISION_EXAMPLE.nodes].find((one) => one.id === id)
   if (!step) return null
   const node: Node = automationFrame(() => ({ issues: [], status: null })).toNode({ ...step, position: { x: 20, y: 20 } }, issues, false)
   return <div className="h-36 w-72"><ReactFlowProvider><ReactFlow nodes={[node]} edges={[]} nodeTypes={{ step: StepBox }} proOptions={{ hideAttribution: true }} panOnDrag={false} zoomOnScroll={false} /></ReactFlowProvider></div>
@@ -72,6 +74,10 @@ const SPECIMENS: Record<string, () => ReactNode> = {
   "automation/default": () => automation("default"),
   "automation/route-selected": () => automation("route", { initialSelection: { nodes: ["settled"], edges: [] } }),
   "automation/tool-selected": () => automation("tool", { initialSelection: { nodes: ["remind"], edges: [] } }),
+  "step/ask": () => <Step id="chase" />,
+  "decision/default": () => { const view = decisionView(DECISION_EXAMPLE, "chase"); return view && <DecisionTree view={view} /> },
+  "decision/path": () => { const view = decisionView(DECISION_EXAMPLE, "chase"); return view && <DecisionTree view={view} initialPath={["o1", "o2"]} /> },
+  "automation/ask-selected": () => automation("ask", { initial: DECISION_EXAMPLE, initialSelection: { nodes: ["chase"], edges: [] } }),
   "page/loading": () => <CanvasPageView definitions={{ isPending: true, error: null, data: undefined }} />,
   "page/error": () => <CanvasPageView definitions={{ isPending: false, error: new Error("The cell did not answer (503)"), data: undefined }} />,
   "page/no-lifecycles": () => <CanvasPageView definitions={{ isPending: false, error: null, data: [] }} />,

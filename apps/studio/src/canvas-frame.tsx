@@ -51,6 +51,15 @@ export interface CanvasFrameProps {
   readonly empty: ReactNode
   /** Why the server save is not available, until the admission route is live. */
   readonly saveBlocked: string
+  /**
+   * Save to the cell (admission, then a governed install). Present only when
+   * the surface's route is live; ⌘S then saves to the cell instead of a draft.
+   * It resolves with what to tell the user; the cell's findings come back
+   * through `issues`.
+   */
+  readonly save?: (graph: g.Graph) => Promise<{ readonly tone: "refusal" | "info"; readonly text: string }>
+  /** Shown under the canvas for the current selection (a decision's preview). */
+  readonly below?: (editing: Editing) => ReactNode
   /** Open with these selected (a link to a finding, or a contact-sheet state). */
   readonly initialSelection?: Selection
   /** Open with this notice (a contact-sheet state). */
@@ -127,6 +136,12 @@ function Frame(props: CanvasFrameProps) {
       : { tone: "refusal", text: "This browser does not allow saving a draft here." })
     if (dirty) setDraftAt(at)
   }
+  const [saving, setSaving] = useState(false)
+  const saveServer = async () => {
+    if (!props.save || saving) return
+    setSaving(true)
+    try { setNotice(await props.save(graph)) } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) } finally { setSaving(false) }
+  }
   const discard = () => {
     writeDraft(draftKey, undefined)
     setState(g.history(initial))
@@ -146,7 +161,7 @@ function Frame(props: CanvasFrameProps) {
       else if (key === "c") act(() => { clipboard = g.subgraph(graph, copyable(selection.nodes)); setNotice({ tone: "info", text: `Copied ${clipboard.nodes.length} ${clipboard.nodes.length === 1 ? "item" : "items"}.` }) })
       else if (key === "v" && clipboard) act(() => clipboard && duplicate(clipboard))
       else if (key === "a") act(() => setSelection({ nodes: graph.nodes.map(({ id }) => id), edges: graph.edges.map(({ id }) => id) }))
-      else if (key === "s") act(saveDraft)
+      else if (key === "s") act(props.save ? () => void saveServer() : saveDraft)
     }
     window.addEventListener("keydown", keys)
     return () => window.removeEventListener("keydown", keys)
@@ -173,7 +188,9 @@ function Frame(props: CanvasFrameProps) {
           <Button size="sm" variant="outline" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
           <Button size="sm" variant="outline" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
           <Button size="sm" variant="outline" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
-          <Button size="sm" disabled title={props.saveBlocked}>Save to server</Button>
+          {props.save
+            ? <Button size="sm" title="Save to the cell (⌘S): it checks again and decides" disabled={saving} onClick={() => void saveServer()}>{saving ? "Saving…" : "Save to server"}</Button>
+            : <Button size="sm" disabled title={props.saveBlocked}>Save to server</Button>}
           {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
         </div>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
@@ -203,6 +220,7 @@ function Frame(props: CanvasFrameProps) {
             </ReactFlow>
           </div>
         </Well>
+        {props.below && <div className="px-1.5 pt-3">{props.below(editing)}</div>}
       </Panel>
       <div className="space-y-3">
         <Panel label="Inspector">
