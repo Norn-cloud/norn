@@ -357,16 +357,24 @@ jobs:
             core.setOutput('base_sha', data.base.sha);
             core.setOutput('head_sha', data.head.sha);
             core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
+            // A pull_request_target event for an older head: the newer head has its own
+            // queued pull_request_target evaluation, so this run writes nothing.
+            const superseded = context.eventName === 'pull_request_target' && event.head.sha !== data.head.sha;
+            core.setOutput('superseded', String(superseded));
+            if (superseded) core.notice(`Head ${event.head.sha} superseded by ${data.head.sha}; its own evaluation decides`);
       - name: Require durable revocation recording
+        if: steps.pr.outputs.superseded != 'true'
         env:
           RESULT: ${{ needs.rights-revocation.result }}
         run: test "$RESULT" = success || test "$RESULT" = skipped
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pr.outputs.superseded != 'true'
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
           path: trusted
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pr.outputs.superseded != 'true'
         with:
           repository: ${{ steps.pr.outputs.head_repository }}
           ref: ${{ steps.pr.outputs.head_sha }}
@@ -378,6 +386,7 @@ jobs:
       # Without this evidence such changes fail closed; data-only PRs
       # never need it.
       - name: Record admin approvals of the exact PR head
+        if: steps.pr.outputs.superseded != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -671,9 +680,10 @@ jobs:
             fs.writeFileSync(prefix+'/maintainer-approval.json',JSON.stringify(evidence));
             fs.writeFileSync(prefix+'/rights-decision.json',JSON.stringify(evidence.publication));
       - name: Validate candidate as data with base-owned policy
+        if: steps.pr.outputs.superseded != 'true'
         run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" --rights-evidence "$RUNNER_TEMP/maintainer-approval.json" --head "${{ steps.pr.outputs.head_sha }}" --repository "${{ github.repository }}"
       - name: Report trusted policy on the exact PR head
-        if: always()
+        if: always() && steps.pr.outputs.superseded != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           retries: 3

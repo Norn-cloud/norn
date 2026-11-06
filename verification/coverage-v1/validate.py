@@ -653,6 +653,11 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
 
 
+# A pull_request_target evaluation of a head that is no longer the PR head writes
+# nothing: every step after Resolve, the reporter included, carries this guard.
+SUPERSEDED_GUARD = "steps.pr.outputs.superseded != 'true'"
+
+
 def validate_rights_contract(source: str, merge_source: str | None = None) -> None:
     """The API collector and binary invocation remain base-owned and head-bound."""
     if merge_source is None:
@@ -660,11 +665,11 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     # Pin complete base-owned API programs, including append-only history reads
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
-        'Resolve the pull request': ('6a0efef21e1a4aa9ac444b976856fdb27f43ef1a07bdfb34e004cad59c241032', ['script', 'retries'], False, None),
+        'Resolve the pull request': ('ddaf2a910172cfbad41ea7aa5e247d3893e89c7682f173ec3925f64619026d67', ['script', 'retries'], False, None),
         'Capture the saved rights payload': ('748661200b99a0ebf6859d5638816d6ba7b60af7fb1818d2aabe9d14ff46883d', ['script'], False, None),
         'Persist the target rights ledger': ('8b60fe98a60613841c5a345cb5860f8879635d37bede68583d372720c24e30cd', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('9b6055f62178edf8178a8a25339d01018fc796fbcdc08d233796d21aa59f9b02', ['script'], False, None),
-        'Report trusted policy on the exact PR head': ('223c0970b6a8f6493fcca9e8a3964528a23908cd6fa9db55c373a9db8b52985d', ['script', 'retries'], False, 'always()'),
+        'Record admin approvals of the exact PR head': ('9b6055f62178edf8178a8a25339d01018fc796fbcdc08d233796d21aa59f9b02', ['script'], False, SUPERSEDED_GUARD),
+        'Report trusted policy on the exact PR head': ('223c0970b6a8f6493fcca9e8a3964528a23908cd6fa9db55c373a9db8b52985d', ['script', 'retries'], False, 'always() && ' + SUPERSEDED_GUARD),
         'Record admin approvals of the queued heads': ('3ad13b76bc4b8a2dc0d4e19bb823863bd9a6fe3678b715e3241d8e2cfa46d82a', ['script'], False, None),
         'Report trusted policy on the group head': ('ec9e3099f381b8c71706ab6b1bd0b6c56cc3a280d67f66c956988f30650199c2', ['script', 'retries'], False, 'always()'),
     }
@@ -728,7 +733,8 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
             allowed_job |= {"name", "needs"}
         require(set(job) == allowed_job, "trusted validation cannot override its execution environment")
         checks = [step for step in steps if step.get("run", "").strip() == expected]
-        require(len(checks) == 1 and set(checks[0]) == {"name", "run"}
+        require(len(checks) == 1 and set(checks[0]) == ({"name", "run", "if"} if text == source else {"name", "run"})
+                and checks[0].get("if", SUPERSEDED_GUARD) == SUPERSEDED_GUARD
                 and not job.get("env") and not workflow.get("env")
                 and all(key not in scope.get("defaults", {}).get("run", {})
                         for scope in (job, workflow) for key in ("shell", "working-directory")),
@@ -745,10 +751,16 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
             require(job.get("needs") == "rights-revocation", "policy must await durable revocation recording")
             require(steps[0].get("name") == "Resolve the pull request",
                     "resolve the head before recording refusal so revocation still dequeues it")
-            require(steps[1] == {"name": "Require durable revocation recording",
+            require(steps[1] == {"name": "Require durable revocation recording", "if": SUPERSEDED_GUARD,
                     "env": {"RESULT": "${{ needs.rights-revocation.result }}"},
                     "run": 'test "$RESULT" = success || test "$RESULT" = skipped'},
                     "failed/cancelled recording must fail policy before admission")
+            dequeue = "Remove a failing pull request from the merge queue"
+            require(steps[-1].get("name") == dequeue
+                    and steps[-1].get("if") == "failure() && steps.pr.outputs.head_sha != ''"
+                    and all(step.get("if") == SUPERSEDED_GUARD for step in steps[1:-2])
+                    and steps[-2].get("name") == "Report trusted policy on the exact PR head",
+                    "trusted-policy: a superseded evaluation must write nothing after Resolve")
         scripts = "\n".join(step.get("with", {}).get("script", "") for step in steps)
         compact = re.sub(r"\s+", "", scripts)
         for contract in ("rights-authority-v4", "github.rest.git.createCommit", "force:false",
