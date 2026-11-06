@@ -67,4 +67,4 @@ test("an account stored on Cloudflare signs in on a pure-JS deployment", async (
   const js = env(new Database(file), "js")
   expect((await post(js, "/api/auth/sign-in/email", { email, password: CLOUDFLARE.password })).status).toBe(200)
   expect((await post(js, "/api/auth/sign-in/email", { email, password: "a native password" })).status).toBe(401)
-})
+}, 120_000) // three scrypt runs, two in pure JS
