@@ -977,9 +977,11 @@ pub const QUESTION_FORMAT: &str = "norn-checker-abi/question@1";
 /// entity envelopes (the catalog), `metrics_json` its metric definitions and
 /// `question_json` one `QuestionIR`. Runs `check_metrics_and_questions` and
 /// `metric::compute::admit` (the same admission the cell uses) and returns
-/// `{"format", "admitted", "diagnostics", "plan"}`. `plan` is the checked
-/// question with its grain, the sums it reduces to and the declarations used;
-/// it is `null` when refused. Nothing is evaluated: admission is not a result.
+/// `{"format", "admitted", "diagnostics", "plan"}`. The artifact set is
+/// checked first (`check_artifact_set`, as one installed layer); its error
+/// findings refuse the question. `plan` is the checked question with its
+/// grain, the sums it reduces to and the full metric declarations used; it is
+/// `null` when refused. Nothing is evaluated: admission is not a result.
 ///
 /// # Errors
 ///
@@ -1001,6 +1003,20 @@ pub fn admit_question_json(
         .map_err(|error| invalid("metrics", error.to_string()))?;
     let question: norn_ir::QuestionIR = serde_json::from_str(question_json)
         .map_err(|error| invalid("question", error.to_string()))?;
+    // The world is one installed layer: no base, no tenant, no registry refs.
+    // A malformed catalog is refused before any question is admitted over it.
+    let registry = BTreeSet::new();
+    let set_findings = check_artifact_set(
+        &envelopes,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    if has_errors(&set_findings) {
+        return Ok(refused(&set_findings));
+    }
     let catalog = norn_checker::EffectiveCatalog::from_artifacts(&envelopes);
     // The cell's bound for one question's population (norn-cell-do analytics).
     match norn_checker::metric::compute::admit(&metrics, &question, &catalog, 100) {
@@ -1014,7 +1030,7 @@ pub fn admit_question_json(
                     "grain": plan.grain(),
                     "question": plan.question(),
                     "sums": plan.sums().iter().map(|sum| json!({ "metric": sum.name, "property": sum.property.id })).collect::<Vec<_>>(),
-                    "metrics": plan.definitions().iter().map(|definition| json!({ "name": definition.name, "label": definition.label })).collect::<Vec<_>>(),
+                    "metrics": plan.definitions(),
                 },
             });
             Ok(output.to_string())

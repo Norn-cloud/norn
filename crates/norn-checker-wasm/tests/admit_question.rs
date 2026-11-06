@@ -53,6 +53,11 @@ fn the_cells_weekly_yield_question_is_admitted_with_its_plan() {
         .collect();
     assert_eq!(sums, vec![json!("recovered"), json!("input")]);
     assert_eq!(out["plan"]["question"]["name"], question["name"]);
+    // The plan carries each declaration as admitted, not just its name.
+    for metric in out["plan"]["metrics"].as_array().expect("metrics") {
+        assert!(metric["type_params"].is_object(), "{metric:#}");
+        assert!(metric["x-norn"].is_object(), "{metric:#}");
+    }
 }
 
 #[test]
@@ -95,4 +100,31 @@ fn a_world_that_is_not_envelopes_is_refused_not_admitted() {
 fn a_question_that_is_not_question_ir_is_an_input_error() {
     let (artifacts, metrics, _) = world();
     assert!(admit_question_json(&artifacts, &metrics, "{\"name\":1}").is_err());
+}
+
+#[test]
+fn a_world_with_an_invalid_artifact_is_refused_before_the_question() {
+    let (artifacts, metrics, question) = world();
+    let mut artifacts: Vec<Value> = serde_json::from_str(&artifacts).expect("artifacts");
+    let mut other = artifacts[0].clone();
+    other["artifactId"] = json!("demo.Other.entity.v2");
+    other["name"] = json!("demo.Other");
+    other["payload"]["objectType"]["name"] = json!("demo.Other");
+    let first = other["payload"]["objectType"]["properties"][0].clone();
+    other["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .push(first);
+    artifacts.push(other);
+    let out: Value = serde_json::from_str(
+        &admit_question_json(
+            &Value::Array(artifacts).to_string(),
+            &metrics,
+            &question.to_string(),
+        )
+        .expect("ABI"),
+    )
+    .expect("JSON");
+    assert_eq!(out["admitted"], false, "{out:#}");
+    assert!(out["plan"].is_null());
 }
