@@ -117,8 +117,8 @@ function TileCard({ tile, index, count, invalid, catalog, onChange, onEdit, onMo
 }
 
 /** One dashboard: title and tiles, each an admitted question with its view. The cell admits and keeps it. */
-export function DashboardEditor({ store, catalog, stored, guard, onSaved, onReload }: {
-  readonly store: DefinitionStore; readonly catalog: QuestionCatalog; readonly stored?: StoredDashboard
+export function DashboardEditor({ store, catalog, stored, guard, onSaved, onReload, cellAvailable = true }: {
+  readonly store: DefinitionStore; readonly catalog: QuestionCatalog; readonly stored?: StoredDashboard; readonly cellAvailable?: boolean
   readonly guard?: (dirty: boolean) => ReactNode; readonly onSaved?: (saved: { readonly id: string; readonly version: number }) => void
   /** Reopen the stored version, dropping this one (after a conflict). */
   readonly onReload?: () => void
@@ -138,16 +138,16 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       if ("saved" in result) { setAt(result.saved); editor.markSaved(dashboard); onSaved?.(result.saved) }
     },
   })
-  const editor = useEditor<Dashboard>({ initial: stored?.dashboard ?? EMPTY, onSave: (dashboard) => save.mutate({ dashboard }) })
+  const editor = useEditor<Dashboard>({ initial: stored?.dashboard ?? EMPTY, onSave: (dashboard) => { if (cellAvailable) save.mutate({ dashboard }) } })
   const { value: dashboard, set } = editor
   // Live validation: the cell's admit is side-effect free, so it runs on every edit (after a pause).
   useEffect(() => {
-    if (dashboard.title.trim() === "" && dashboard.tiles.length === 0) return
+    if (!cellAvailable || (dashboard.title.trim() === "" && dashboard.tiles.length === 0)) return
     const timer = setTimeout(() => {
       store.admit(at?.id ?? dashboardId(dashboard.title), dashboard).then((admission) => setFindings(admission.admitted ? [] : admission.findings), () => {})
     }, 400)
     return () => clearTimeout(timer)
-  }, [store, at?.id, dashboard])
+  }, [store, at?.id, dashboard, cellAvailable])
   const tiles = (next: readonly Tile[]) => set((current) => ({ ...current, tiles: layoutTiles(next) }))
   const issues = issuesOfFindings(findings)
   const invalid = (field: string) => issues.some((issue) => issue.field === field)
@@ -160,7 +160,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
   return (
     <div className="space-y-4">
       {guard?.(editor.dirty)}
-      <EditorToolbar editor={editor} onSave={() => save.mutate({ dashboard })} saving={save.isPending}>
+      <EditorToolbar editor={editor} onSave={() => save.mutate({ dashboard })} saving={save.isPending || !cellAvailable}>
         {at && <Badge variant="outline">Version {at.version}</Badge>}
       </EditorToolbar>
       {save.isError && <p role="alert" className="text-destructive">{failure(save.error).startsWith("Not saved") ? failure(save.error) : `Not saved. ${failure(save.error)}`}</p>}
@@ -168,7 +168,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
         <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
           <span>Someone saved a newer version of this dashboard since you opened it.</span>
           <Button type="button" size="sm" variant="outline" onClick={() => onReload?.()}>Reload theirs</Button>
-          <Button type="button" size="sm" variant="destructive" onClick={() => save.mutate({ dashboard, overwrite: true })}>Overwrite with mine</Button>
+          <Button type="button" size="sm" variant="destructive" disabled={!cellAvailable} onClick={() => save.mutate({ dashboard, overwrite: true })}>Overwrite with mine</Button>
         </div>
       )}
       <ValidationPanel issues={issues} title="The cell refused this dashboard" />
@@ -208,7 +208,7 @@ export function DashboardEditorPage() {
   const navigate = useNavigate()
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
   // A query may not resolve to undefined: a missing dashboard is null, and a new one reads nothing.
-  const stored = useQuery({ queryKey: ["dashboard", id], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined && cellAvailable, retry: false })
+  const stored = useQuery({ queryKey: ["dashboard", id, scope.data?.orgId, scope.data?.environmentId], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined && cellAvailable, retry: false })
   const fresh = id === undefined
   const [title, setTitle] = useState(id === undefined ? "New dashboard" : "Dashboard")
   useEffect(() => { if (stored.data) setTitle(stored.data.dashboard.title || "Untitled dashboard") }, [stored.data])
@@ -221,8 +221,8 @@ export function DashboardEditorPage() {
       {catalog.isError && <EmptyState icon={LayoutDashboard}>{catalog.error.message}</EmptyState>}
       {stored.isError && <EmptyState icon={LayoutDashboard}>{failure(stored.error)}</EmptyState>}
       {!fresh && stored.isSuccess && stored.data === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
-      {cellAvailable && catalog.data && (fresh || stored.data) && (
-        <DashboardEditor key={`${stored.data?.id ?? "new"}:${stored.data?.version ?? 0}`} store={store} catalog={catalog.data} stored={stored.data ?? undefined} guard={(dirty) => <DirtyGuard dirty={dirty} />}
+      {catalog.data && (fresh || stored.data) && (
+        <DashboardEditor key={`${scope.data?.orgId ?? "none"}:${scope.data?.environmentId ?? "none"}:${stored.data?.id ?? "new"}:${stored.data?.version ?? 0}`} cellAvailable={cellAvailable} store={store} catalog={catalog.data} stored={stored.data ?? undefined} guard={(dirty) => <DirtyGuard dirty={dirty} />}
           onReload={() => void stored.refetch()}
           onSaved={(saved) => { if (id === undefined) setTimeout(() => void navigate({ to: "/dashboards/$id", params: { id: saved.id }, replace: true })) }} />
       )}
