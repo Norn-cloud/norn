@@ -992,7 +992,8 @@ fn restatement_document(text: &str) -> String {
 ///
 /// # Errors
 ///
-/// Invalid JSON, or a question selecting an undeclared metric.
+/// Invalid JSON, or a question that cannot be restated (an undeclared or
+/// inline metric, a malformed timestamp).
 pub fn restate_question_json(question_json: &str, metrics_json: &str) -> Result<String, AbiError> {
     let question: norn_ir::QuestionIR = serde_json::from_str(question_json)
         .map_err(|error| invalid("question", error.to_string()))?;

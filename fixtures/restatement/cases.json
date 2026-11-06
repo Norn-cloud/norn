@@ -1,5 +1,5 @@
 {
-  "note": "Golden restatements (D59 sign-off). The question cases are the outputs of Studio's first generator (worker/question-tree.ts), byte for byte; the dashboard case follows the dashboard rule. restatementSha256 is lower-case hex SHA-256 of the restatement's UTF-8 bytes. A change here changes every signed hash.",
+  "note": "Golden restatements (D59 sign-off), from norn_checker::metric::restate, the one implementation Studio (through norn-checker-wasm) and the cell share. restatementSha256 is lower-case hex SHA-256 of the restatement's UTF-8 bytes. A change here changes every signed hash.",
   "metrics": "fixtures/demo/answers/scrap-yield.metrics.json",
   "questions": [
     {
@@ -40,8 +40,8 @@
           "maxAgeMs": 5000
         }
       },
-      "restatement": "Yield (recovered ÷ input) of Conversion records, by week of occurred at, where metal is gold, from 6 Jul to 26 Oct 2026 (26 Oct not included)",
-      "restatementSha256": "6130c1d5a42fd5baaf82f23405db098354a795d79b5620e54679ae62cd6cec67"
+      "restatement": "Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, where metal is \"gold\", from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old",
+      "restatementSha256": "36e67e979895bd4f478e7884f66023a3d7ca174646e926ecc6cd79e2b53805c8"
     },
     {
       "name": "two measures, in total, every record",
@@ -69,8 +69,8 @@
           "maxAgeMs": 5000
         }
       },
-      "restatement": "Input (sum of input) and Recovered (sum of recovered) of Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included)",
-      "restatementSha256": "5e3d57fc5602a135c08945a495d5abe9ee1dbb5d0c7bf0ac499f468d02d8291e"
+      "restatement": "Input (sum of input) and Recovered (sum of recovered) of demo Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old",
+      "restatementSha256": "e44422bf9d3d850967560d37b057b20ec12890831a24f84366e9406b3549c303"
     },
     {
       "name": "two conditions, a number and a negation",
@@ -117,8 +117,8 @@
           "maxAgeMs": 5000
         }
       },
-      "restatement": "Yield (recovered ÷ input) of Conversion records, by week of occurred at, where input is at least 50 and metal is not silver, from 6 Jul to 26 Oct 2026 (26 Oct not included)",
-      "restatementSha256": "658df17166d364584ac865e4bf2543763586a45a777af84f3344b9000e382737"
+      "restatement": "Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, where input is at least 50 and metal is not \"silver\", from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old",
+      "restatementSha256": "3c3f692e8a1d85bb7acaef89c26d10f1b424156ca80fa4f581715550c2007277"
     },
     {
       "name": "a window across a year end",
@@ -158,8 +158,170 @@
           "maxAgeMs": 5000
         }
       },
-      "restatement": "Yield (recovered ÷ input) of Conversion records, by week of occurred at, where metal is gold, from 29 Dec 2025 to 5 Jan 2026 (5 Jan not included)",
-      "restatementSha256": "d2f73e14ea0bf221e6ace09d92329b1aff11c7f96e42353c139d0da88e94b748"
+      "restatement": "Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, where metal is \"gold\", from 29 Dec 2025 to 5 Jan 2026 (5 Jan not included), live data at most 5 seconds old",
+      "restatementSha256": "3106ce56fa1787faaf34b635cee41997ae0b83d29323ffd1d46476512bccaa35"
+    },
+    {
+      "name": "two dimensions, in order",
+      "question": {
+        "irVersion": "0.1",
+        "name": "demo.yield_week_metal",
+        "objectSet": "demo.Conversion",
+        "aggregate": [
+          {
+            "metric": "demo.yield"
+          }
+        ],
+        "groupBy": [
+          {
+            "path": {
+              "property": "occurred_at"
+            },
+            "grain": "week"
+          },
+          {
+            "path": {
+              "property": "metal"
+            }
+          }
+        ],
+        "window": {
+          "start": "2026-07-06T00:00:00Z",
+          "end": "2026-10-26T00:00:00Z"
+        },
+        "calendar": "iso_utc",
+        "freshness": {
+          "kind": "live",
+          "maxAgeMs": 5000
+        }
+      },
+      "restatement": "Yield (recovered ÷ input) of demo Conversion records, by week of occurred at and by metal, from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old",
+      "restatementSha256": "37002557ca31c018847c8352b47b4a4bf67ca806f6bc8245bc0274fd5774e22d"
+    },
+    {
+      "name": "bounds that are not midnight, to the instant",
+      "question": {
+        "irVersion": "0.1",
+        "name": "demo.yield_shift",
+        "objectSet": "demo.Conversion",
+        "aggregate": [
+          {
+            "metric": "demo.yield"
+          }
+        ],
+        "groupBy": [
+          {
+            "path": {
+              "property": "occurred_at"
+            },
+            "grain": "week"
+          }
+        ],
+        "filter": [
+          {
+            "path": {
+              "property": "metal"
+            },
+            "operator": "eq",
+            "value": "gold"
+          }
+        ],
+        "window": {
+          "start": "2026-07-06T09:30:00Z",
+          "end": "2026-10-26T17:45:30.250Z"
+        },
+        "calendar": "iso_utc",
+        "freshness": {
+          "kind": "live",
+          "maxAgeMs": 5000
+        }
+      },
+      "restatement": "Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, where metal is \"gold\", from 6 Jul 2026 09:30 to 26 Oct 2026 17:45:30.25 UTC (26 Oct 2026 17:45:30.25 not included), live data at most 5 seconds old",
+      "restatementSha256": "1b6dfc04242628762f95e48ed5b867309c6a5adbb09a79f178bcb903d0477cb2"
+    },
+    {
+      "name": "one bound not midnight: both written to the minute",
+      "question": {
+        "irVersion": "0.1",
+        "name": "demo.yield_from_shift",
+        "objectSet": "demo.Conversion",
+        "aggregate": [
+          {
+            "metric": "demo.yield"
+          }
+        ],
+        "groupBy": [
+          {
+            "path": {
+              "property": "occurred_at"
+            },
+            "grain": "week"
+          }
+        ],
+        "filter": [
+          {
+            "path": {
+              "property": "metal"
+            },
+            "operator": "eq",
+            "value": "gold"
+          }
+        ],
+        "window": {
+          "start": "2026-07-06T09:30:00Z",
+          "end": "2026-10-26T00:00:00Z"
+        },
+        "calendar": "iso_utc",
+        "freshness": {
+          "kind": "live",
+          "maxAgeMs": 5000
+        }
+      },
+      "restatement": "Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, where metal is \"gold\", from 6 Jul 2026 09:30 to 26 Oct 2026 00:00 UTC (26 Oct 2026 00:00 not included), live data at most 5 seconds old",
+      "restatementSha256": "d4abe633989524ce3281cb74df5a6da1dc3a4b573bfb809f44126c9486821bc3"
+    },
+    {
+      "name": "a roll-up, data as of an instant, against the period before",
+      "question": {
+        "irVersion": "0.1",
+        "name": "demo.input_rollup",
+        "objectSet": "demo.Conversion",
+        "aggregate": [
+          {
+            "metric": "demo.input",
+            "reaggregate": {
+              "aggregate": "max",
+              "across": [
+                {
+                  "property": "metal"
+                }
+              ],
+              "overTime": true
+            }
+          }
+        ],
+        "groupBy": [
+          {
+            "path": {
+              "property": "metal"
+            }
+          }
+        ],
+        "window": {
+          "start": "2026-07-06T00:00:00Z",
+          "end": "2026-10-26T00:00:00Z"
+        },
+        "calendar": "iso_utc",
+        "freshness": {
+          "kind": "as_of",
+          "at": "2026-10-26T00:00:00Z"
+        },
+        "compare": {
+          "kind": "previous_period"
+        }
+      },
+      "restatement": "Input (sum of input; then the greatest across metal and over time) of demo Conversion records, by metal, from 6 Jul to 26 Oct 2026 (26 Oct not included), data as of 26 Oct 2026 00:00 UTC, compared with the period before",
+      "restatementSha256": "e8ae2d3258e094eb732eb95fec0bf30f902e10d02bfc0a4de9a3aec3eeaea466"
     }
   ],
   "dashboards": [
@@ -257,8 +419,8 @@
           }
         ]
       },
-      "restatement": "Refinery weekly\n1. Gold Yield, weekly: Yield (recovered ÷ input) of Conversion records, by week of occurred at, where metal is gold, from 6 Jul to 26 Oct 2026 (26 Oct not included)\n2. Input in total: Input (sum of input) and Recovered (sum of recovered) of Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included)",
-      "restatementSha256": "ca6a3e772097c553e7405fcdd94629de7c489dd98f1b9452d6eec1d33f38ff93"
+      "restatement": "Refinery weekly\n1. Gold Yield, weekly: Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, where metal is \"gold\", from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old\n2. Input in total: Input (sum of input) and Recovered (sum of recovered) of demo Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old",
+      "restatementSha256": "25fee0ad971f77c4caec9df5a2a28fb551d438a816bc9e00f27eaaa3922d6c72"
     }
   ]
 }

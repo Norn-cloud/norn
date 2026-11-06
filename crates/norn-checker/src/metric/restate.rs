@@ -8,13 +8,28 @@
 //!
 //! The wording is a contract fixed by golden fixtures
 //! (`fixtures/restatement/cases.json`): a change to it changes every hash.
+//!
+//! Every field that changes what a question means is restated, so two
+//! questions that mean different things never share a hash (the property
+//! test in `tests/restatement.rs` holds this): the object set and its
+//! namespace, the links searched around, each measure with its roll-up,
+//! every dimension in order with its links and grain, every filter with its
+//! typed value, the window to the instant, the freshness and the comparison.
+//! A declared metric reads as its label and how it is computed; the
+//! declarations themselves are pinned by the admission the cell repeats.
+//! Not restated, because they name rather than mean: the question's `name`
+//! and `irVersion`. An inline calculation is refused ([`RestateError::Inline`])
+//! rather than restated in part. `calendar` has one policy, ISO/Gregorian
+//! UTC; a new policy is a new variant and fails to compile here until it has
+//! words.
 
 use std::fmt;
 
 use norn_ir::RuntimeValue;
 use norn_ir::metric::{
-    FilterOperator, MeasureAggregate, MetricDefinition, MetricFilter, MetricType, QuestionIR,
-    QuestionTimeWindow, TimeGrain,
+    CalendarPolicy, DimensionPath, FilterOperator, FreshnessPolicy, MeasureAggregate,
+    MetricDefinition, MetricFilter, MetricRollup, MetricType, QuestionComparison, QuestionIR,
+    QuestionMetric, QuestionTimeWindow, Reaggregate, TimeGrain,
 };
 use sha2::{Digest, Sha256};
 
@@ -34,6 +49,15 @@ pub enum RestateError {
     },
     /// A dashboard payload that is not `{title, tiles: [{title, question}]}`.
     Dashboard(String),
+    /// A timestamp that is not `YYYY-MM-DDTHH:MM:SS[.f]Z`.
+    Timestamp(String),
+    /// A filter value with no canonical form.
+    Value(String),
+    /// An inline calculation (named by the metric it outputs). Its governance
+    /// (currency conversion, deduplication, default filters) changes the
+    /// answer and has no words yet, so it is not signed off by a partial
+    /// restatement.
+    Inline(String),
 }
 
 impl fmt::Display for RestateError {
@@ -44,6 +68,12 @@ impl fmt::Display for RestateError {
                 write!(f, "ratio metric {metric} names undeclared metric {operand}")
             }
             Self::Dashboard(detail) => write!(f, "not a dashboard: {detail}"),
+            Self::Timestamp(timestamp) => write!(f, "not a UTC timestamp: {timestamp}"),
+            Self::Value(detail) => write!(f, "not a canonical value: {detail}"),
+            Self::Inline(metric) => write!(
+                f,
+                "inline calculation {metric} has no restatement; select a declared metric"
+            ),
         }
     }
 }
@@ -56,6 +86,13 @@ const MONTHS: [&str; 12] = [
 
 fn words(name: &str) -> String {
     name.replace('_', " ")
+}
+
+/// A property reached through links: `metal`, `lot's metal`.
+fn path_words(path: &DimensionPath) -> String {
+    let mut steps: Vec<String> = path.links.iter().map(|link| words(link.as_str())).collect();
+    steps.push(words(path.property.as_str()));
+    steps.join("'s ")
 }
 
 fn operator_words(operator: FilterOperator) -> &'static str {
@@ -90,14 +127,29 @@ fn aggregate_words(aggregate: MeasureAggregate) -> &'static str {
     }
 }
 
-fn value_words(value: &RuntimeValue) -> String {
+fn reaggregate_words(aggregate: Reaggregate) -> &'static str {
+    match aggregate {
+        Reaggregate::Sum => "total",
+        Reaggregate::First => "first value",
+        Reaggregate::Last => "last value",
+        Reaggregate::Min => "least",
+        Reaggregate::Max => "greatest",
+    }
+}
+
+/// A filter value, typed: a string is quoted (`"5"` is not `5`), a list or
+/// an object is written as its canonical JSON, nothing is `no value`.
+fn value_words(value: &RuntimeValue) -> Result<String, RestateError> {
     match value {
-        RuntimeValue::Null => "no value".to_owned(),
-        RuntimeValue::Bool(flag) => flag.to_string(),
-        RuntimeValue::Number(number) => number.canonical(),
-        RuntimeValue::String(text) => text.clone(),
-        RuntimeValue::Array(items) => items.iter().map(value_words).collect::<Vec<_>>().join(", "),
-        RuntimeValue::Object(_) => "an object".to_owned(),
+        RuntimeValue::Null => Ok("no value".to_owned()),
+        RuntimeValue::Bool(flag) => Ok(flag.to_string()),
+        RuntimeValue::Number(number) => Ok(number.canonical()),
+        RuntimeValue::String(_) | RuntimeValue::Array(_) | RuntimeValue::Object(_) => {
+            let bytes = value
+                .canonical_json()
+                .map_err(|error| RestateError::Value(error.to_string()))?;
+            String::from_utf8(bytes).map_err(|error| RestateError::Value(error.to_string()))
+        }
     }
 }
 
@@ -105,18 +157,19 @@ fn metric<'a>(metrics: &'a [MetricDefinition], name: &str) -> Option<&'a MetricD
     metrics.iter().find(|definition| definition.name == name)
 }
 
-/// A metric in words: its label and, where it says how it is computed, how:
-/// `Yield (recovered ÷ input)`, `Input (sum of input)`.
-fn measure_words(metrics: &[MetricDefinition], name: &str) -> Result<String, RestateError> {
-    let definition =
-        metric(metrics, name).ok_or_else(|| RestateError::UnknownMetric(name.to_owned()))?;
-    let how = match definition.metric_type {
+/// How a declared metric is computed, where its type says:
+/// `recovered ÷ input`, `sum of input`.
+fn declared_how(
+    metrics: &[MetricDefinition],
+    definition: &MetricDefinition,
+) -> Result<Option<String>, RestateError> {
+    Ok(match definition.metric_type {
         MetricType::Ratio => {
             let operand = |operand: Option<&String>| -> Result<String, RestateError> {
                 let operand = operand.map_or("", String::as_str);
                 let declared =
                     metric(metrics, operand).ok_or_else(|| RestateError::UnknownOperand {
-                        metric: name.to_owned(),
+                        metric: definition.name.clone(),
                         operand: operand.to_owned(),
                     })?;
                 Ok(words(
@@ -147,99 +200,284 @@ fn measure_words(metrics: &[MetricDefinition], name: &str) -> Result<String, Res
             Some(format!("{} {}", aggregate_words(aggregate), words(subject)))
         }
         MetricType::Cumulative | MetricType::Derived | MetricType::Conversion => None,
-    };
-    Ok(match how {
-        Some(how) => format!("{} ({how})", definition.label),
-        None => definition.label.clone(),
     })
 }
 
-/// A UTC timestamp's calendar day: `(day, "Jul", 2026)`.
-fn day(timestamp: &str) -> Option<(u32, &'static str, &str)> {
-    let year = timestamp.get(0..4)?;
-    let month: usize = timestamp.get(5..7)?.parse().ok()?;
-    let day: u32 = timestamp.get(8..10)?.parse().ok()?;
-    let month = MONTHS.get(month.checked_sub(1)?)?;
-    Some((day, month, year))
-}
-
-/// A half-open window in words: `from 6 Jul to 26 Oct 2026 (26 Oct not
-/// included)`; the start's year is written only when it differs.
-#[must_use]
-pub fn window_words(window: &QuestionTimeWindow) -> String {
-    match (day(window.start.as_str()), day(window.end.as_str())) {
-        (Some((start_day, start_month, start_year)), Some((end_day, end_month, end_year))) => {
-            let start_year = if start_year == end_year {
-                String::new()
-            } else {
-                format!(" {start_year}")
-            };
-            format!(
-                "from {start_day} {start_month}{start_year} to {end_day} {end_month} {end_year} ({end_day} {end_month} not included)"
-            )
-        }
-        _ => "over no stated window".to_owned(),
+/// A roll-up: `then the greatest across metal and over time`.
+fn rollup_words(rollup: &MetricRollup) -> String {
+    let aggregate = reaggregate_words(rollup.aggregate);
+    let across: Vec<String> = rollup.across.iter().map(path_words).collect();
+    match (across.is_empty(), rollup.over_time) {
+        (true, false) => format!("then the {aggregate}"),
+        (true, true) => format!("then the {aggregate} over time"),
+        (false, false) => format!("then the {aggregate} across {}", across.join(" and ")),
+        (false, true) => format!(
+            "then the {aggregate} across {} and over time",
+            across.join(" and ")
+        ),
     }
 }
 
-fn condition_words(filter: &MetricFilter) -> String {
-    format!(
+/// A selected metric in words: its label and, where known, how it is
+/// computed and rolled up: `Yield (recovered ÷ input)`, `Input (sum of
+/// input; then the total over time)`.
+fn measure_words(
+    metrics: &[MetricDefinition],
+    selection: &QuestionMetric,
+) -> Result<String, RestateError> {
+    if selection.inline.is_some() {
+        return Err(RestateError::Inline(selection.metric.clone()));
+    }
+    let definition = metric(metrics, &selection.metric)
+        .ok_or_else(|| RestateError::UnknownMetric(selection.metric.clone()))?;
+    let label = definition.label.clone();
+    let how = declared_how(metrics, definition)?;
+    let rollup = selection.reaggregate.as_ref().map(rollup_words);
+    Ok(match (how, rollup) {
+        (None, None) => label,
+        (Some(how), None) => format!("{label} ({how})"),
+        (None, Some(rollup)) => format!("{label} ({rollup})"),
+        (Some(how), Some(rollup)) => format!("{label} ({how}; {rollup})"),
+    })
+}
+
+/// A UTC instant, parsed from `YYYY-MM-DDTHH:MM:SS[.f]Z`.
+struct Instant<'a> {
+    day: u32,
+    month: &'static str,
+    year: &'a str,
+    /// `09:30`, `09:30:15`, `09:30:15.5`; `None` at midnight.
+    time: Option<String>,
+}
+
+fn instant(timestamp: &str) -> Result<Instant<'_>, RestateError> {
+    let malformed = || RestateError::Timestamp(timestamp.to_owned());
+    let digits = |range: std::ops::Range<usize>| -> Result<&str, RestateError> {
+        timestamp
+            .get(range)
+            .filter(|part| part.bytes().all(|byte| byte.is_ascii_digit()))
+            .ok_or_else(malformed)
+    };
+    let year = digits(0..4)?;
+    let month: usize = digits(5..7)?.parse().ok().ok_or_else(malformed)?;
+    let day: u32 = digits(8..10)?.parse().ok().ok_or_else(malformed)?;
+    let (hour, minute, second) = (digits(11..13)?, digits(14..16)?, digits(17..19)?);
+    let shape = [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')];
+    if shape
+        .iter()
+        .any(|&(at, byte)| timestamp.as_bytes().get(at) != Some(&byte))
+    {
+        return Err(malformed());
+    }
+    let rest = timestamp.get(19..).ok_or_else(malformed)?;
+    let fraction = match rest.strip_suffix('Z').ok_or_else(malformed)? {
+        "" => "",
+        dotted => dotted
+            .strip_prefix('.')
+            .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+            .ok_or_else(malformed)?
+            .trim_end_matches('0'),
+    };
+    let month = month
+        .checked_sub(1)
+        .and_then(|index| MONTHS.get(index))
+        .ok_or_else(malformed)?;
+    let time = match (second, fraction) {
+        ("00", "") if hour == "00" && minute == "00" => None,
+        ("00", "") => Some(format!("{hour}:{minute}")),
+        (_, "") => Some(format!("{hour}:{minute}:{second}")),
+        _ => Some(format!("{hour}:{minute}:{second}.{fraction}")),
+    };
+    Ok(Instant {
+        day,
+        month,
+        year,
+        time,
+    })
+}
+
+impl Instant<'_> {
+    /// `6 Jul 2026`, `6 Jul 2026 09:30`; `with_time` writes midnight too.
+    fn full(&self, with_time: bool) -> String {
+        let date = format!("{} {} {}", self.day, self.month, self.year);
+        match (&self.time, with_time) {
+            (Some(time), _) => format!("{date} {time}"),
+            (None, true) => format!("{date} 00:00"),
+            (None, false) => date,
+        }
+    }
+}
+
+/// A half-open window in words. Midnight to midnight reads as days: `from
+/// 6 Jul to 26 Oct 2026 (26 Oct not included)`, the start's year written
+/// only when it differs. Any other bound is written to the instant, both
+/// years and both times: `from 6 Jul 2026 09:30 to 26 Oct 2026 00:00 UTC
+/// (26 Oct 2026 00:00 not included)`.
+///
+/// # Errors
+///
+/// A bound that is not a UTC timestamp.
+pub fn window_words(window: &QuestionTimeWindow) -> Result<String, RestateError> {
+    let start = instant(window.start.as_str())?;
+    let end = instant(window.end.as_str())?;
+    if start.time.is_none() && end.time.is_none() {
+        let start_year = if start.year == end.year {
+            String::new()
+        } else {
+            format!(" {}", start.year)
+        };
+        return Ok(format!(
+            "from {} {}{start_year} to {} {} {} ({} {} not included)",
+            start.day, start.month, end.day, end.month, end.year, end.day, end.month
+        ));
+    }
+    let end_words = end.full(true);
+    Ok(format!(
+        "from {} to {end_words} UTC ({end_words} not included)",
+        start.full(true)
+    ))
+}
+
+/// A freshness bound: `5 seconds`, `1500 ms`.
+fn age_words(max_age_ms: u64) -> String {
+    match (max_age_ms.checked_rem(1000), max_age_ms.checked_div(1000)) {
+        (Some(0), Some(1)) => "1 second".to_owned(),
+        (Some(0), Some(seconds)) => format!("{seconds} seconds"),
+        _ => format!("{max_age_ms} ms"),
+    }
+}
+
+fn freshness_words(freshness: &FreshnessPolicy) -> Result<String, RestateError> {
+    Ok(match freshness {
+        FreshnessPolicy::Live { max_age_ms } => {
+            format!("live data at most {} old", age_words(max_age_ms.0))
+        }
+        FreshnessPolicy::Delayed { max_age_ms } => {
+            format!("delayed data at most {} old", age_words(max_age_ms.0))
+        }
+        FreshnessPolicy::AsOf { at } => {
+            format!("data as of {} UTC", instant(at.as_str())?.full(true))
+        }
+    })
+}
+
+fn comparison_words(comparison: &QuestionComparison) -> String {
+    let (kind, question, mapping) = match comparison {
+        QuestionComparison::PreviousPeriod => {
+            return "compared with the period before".to_owned();
+        }
+        QuestionComparison::Plan { question, mapping } => ("plan", question, mapping),
+        QuestionComparison::Forecast { question, mapping } => ("forecast", question, mapping),
+    };
+    let matching = if mapping.is_empty() {
+        String::new()
+    } else {
+        let pairs: Vec<String> = mapping
+            .iter()
+            .map(|pair| format!("{} to {}", pair.metric, pair.reference_metric))
+            .collect();
+        format!(" (matching {})", pairs.join(" and "))
+    };
+    format!("compared with the {kind} in question {question}{matching}")
+}
+
+fn condition_words(filter: &MetricFilter) -> Result<String, RestateError> {
+    Ok(format!(
         "{} {} {}",
-        words(filter.path.property.as_str()),
+        path_words(&filter.path),
         operator_words(filter.operator),
-        value_words(&filter.value)
-    )
+        value_words(&filter.value)?
+    ))
+}
+
+fn conditions_words(filters: &[MetricFilter]) -> Result<String, RestateError> {
+    Ok(filters
+        .iter()
+        .map(condition_words)
+        .collect::<Result<Vec<_>, _>>()?
+        .join(" and "))
+}
+
+/// The records a question counts: `demo Conversion records`, or, after a
+/// search around, `the records reached from demo Conversion records through
+/// lot then supplier`.
+fn population_words(question: &QuestionIR) -> String {
+    let object_set = question.object_set.as_str();
+    let (namespace, object_type) = object_set.rsplit_once('.').unwrap_or(("", object_set));
+    let start = if namespace.is_empty() {
+        format!("{} records", words(object_type))
+    } else {
+        format!("{} {} records", words(namespace), words(object_type))
+    };
+    if question.search_around.is_empty() {
+        start
+    } else {
+        let links: Vec<String> = question
+            .search_around
+            .iter()
+            .map(|link| words(link.as_str()))
+            .collect();
+        format!(
+            "the records reached from {start} through {}",
+            links.join(" then ")
+        )
+    }
 }
 
 /// The question in plain words, from its IR and the metric declarations it
 /// was admitted with: measures, of what records, how grouped, which records
-/// count, over which window.
+/// count, over which window, how fresh, compared with what.
 ///
 /// # Errors
 ///
-/// A selected metric, or a ratio's operand, that is not declared.
+/// A selected metric, or a ratio's operand, that is not declared; an inline
+/// calculation; a bound that is not a UTC timestamp; a value with no
+/// canonical form.
 pub fn restate_question(
     question: &QuestionIR,
     metrics: &[MetricDefinition],
 ) -> Result<String, RestateError> {
+    // The one calendar policy, which the window's words assume; a new
+    // policy fails to compile here until it has words.
+    let CalendarPolicy::IsoUtc = question.calendar;
     let measures = question
         .metrics
         .iter()
-        .map(|selection| measure_words(metrics, &selection.metric))
+        .map(|selection| measure_words(metrics, selection))
         .collect::<Result<Vec<_>, _>>()?;
     let measures = if measures.is_empty() {
         "No measure".to_owned()
     } else {
         measures.join(" and ")
     };
-    let object_set = question.object_set.as_str();
-    let set = words(
-        object_set
-            .rsplit('.')
-            .next()
-            .filter(|name| !name.is_empty())
-            .unwrap_or("record"),
-    );
-    let grouping = match question.dimensions.first() {
-        None => "in total".to_owned(),
-        Some(dimension) => {
-            let property = words(dimension.path.property.as_str());
-            match dimension.grain {
-                Some(grain) => format!("by {} of {property}", grain_words(grain)),
-                None => format!("by {property}"),
-            }
-        }
-    };
-    let mut parts = vec![format!("{measures} of {set} records"), grouping];
-    if !question.filters.is_empty() {
-        let conditions = question
-            .filters
+    let grouping = if question.dimensions.is_empty() {
+        "in total".to_owned()
+    } else {
+        question
+            .dimensions
             .iter()
-            .map(condition_words)
-            .collect::<Vec<_>>();
-        parts.push(format!("where {}", conditions.join(" and ")));
+            .map(|dimension| {
+                let path = path_words(&dimension.path);
+                match dimension.grain {
+                    Some(grain) => format!("by {} of {path}", grain_words(grain)),
+                    None => format!("by {path}"),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" and ")
+    };
+    let mut parts = vec![
+        format!("{measures} of {}", population_words(question)),
+        grouping,
+    ];
+    if !question.filters.is_empty() {
+        parts.push(format!("where {}", conditions_words(&question.filters)?));
     }
-    parts.push(window_words(&question.time_window));
+    parts.push(window_words(&question.time_window)?);
+    parts.push(freshness_words(&question.freshness)?);
+    if let Some(comparison) = &question.comparison {
+        parts.push(comparison_words(comparison));
+    }
     Ok(parts.join(", "))
 }
 
