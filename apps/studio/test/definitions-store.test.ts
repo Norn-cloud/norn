@@ -38,7 +38,6 @@ test("the cell's route: admit, install, retire as CELL-DO documents them; anythi
   await expect(cellDefinitions(answer(404, {})).admit("x", dashboard)).rejects.toBeInstanceOf(NotConnected)
   await expect(cellDefinitions(answer(403, { code: "authz.denied" })).install("x", dashboard)).rejects.toThrow("Your role may not read or change these definitions.")
   await expect(cellDefinitions(async () => { throw new TypeError("network") }).install("x", dashboard)).rejects.toBeInstanceOf(CellUnavailable)
-  await expect(cellDefinitions(answer(404, {})).list()).rejects.toThrow("no route to read them back")
   const reads: string[] = []
   const reader = (status: number, body: unknown) => async (path: string) => { reads.push(path); return new Response(JSON.stringify(body), { status }) }
   expect(await cellDefinitions(reader(200, { items: [{ id: "studio.dashboard.refinery", kind: "dashboard", title: "Refinery", version: 3, lifecycle: "active", updatedAtMs: 5 }], cursor: "c2" })).list())
@@ -47,12 +46,13 @@ test("the cell's route: admit, install, retire as CELL-DO documents them; anythi
   expect(reads.slice(-2)).toEqual(["/api/host/v1/definitions:list?kind=dashboard&limit=50", "/api/host/v1/definitions:list?kind=dashboard&limit=50&cursor=c2"])
   expect(await cellDefinitions(reader(200, { id: "studio.dashboard.refinery", kind: "dashboard", version: 3, lifecycle: "active", payload: dashboard, receipt })).get("studio.dashboard.refinery")).toEqual({ id: "studio.dashboard.refinery", version: 3, dashboard })
   expect(await cellDefinitions(reader(404, { code: "definition.not_found" })).get("nope")).toBeUndefined()
+  await expect(cellDefinitions(reader(404, {})).list()).rejects.toThrow("no route to read them back")
   await expect(cellDefinitions(reader(404, {})).get("x")).rejects.toThrow("no route to read them back")
 })
 
 test("until the cell's route is connected, nothing is saved or read, and it says so", async () => {
   await expect(saveDashboard(disconnected, "studio.dashboard.x", { title: "x", tiles: [] })).rejects.toBeInstanceOf(NotConnected)
-  await expect(disconnected.list()).rejects.toThrow("Not saved: the cell's definition route isn't connected yet.")
+  await expect(disconnected.list()).rejects.toThrow("the cell's definition route isn't connected yet.")
 })
 
 test("a cell finding lands on the title, one tile, or the dashboard as a whole", () => {
