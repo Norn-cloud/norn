@@ -15,6 +15,7 @@ import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
 import { RISKS, decisionView, effectOf, nextOptionId, optionPort, optionsOf, setOptions, type DecisionOption } from "./lib/canvas/decision.ts"
 import { DecisionTree } from "./decision-tree.tsx"
+import { STEP_SPACING, tidy } from "./lib/canvas/layout.ts"
 import { LABEL_ROOM_MAX, exitLabel, exitLabels, formatCondition } from "./lib/canvas/exits.ts"
 import { words } from "./lib/format.ts"
 
@@ -158,7 +159,7 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
   if (count === 0) return (
     <>
       <p className="text-muted-foreground">Select a step. Drag from a step's right edge to the next one, or drag a connection's end to reconnect it.</p>
-      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · Delete removes</p>
+      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · ⇧⌘L tidy up · Delete removes</p>
     </>
   )
   if (count > 1) return (
@@ -235,6 +236,7 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
     draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
     saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
     fixed: (node) => node.kind === "start",
+    tidy: (graph) => tidy(graph, STEP_SPACING),
     nodeSize: (node) => ({ width: CARD.step, height: cardHeight({ kindLine: node.kind !== "start", subtitle: node.kind !== "start" }) }),
     toNode: (node, found, selected): StepNode => ({
       id: node.id, type: "step", position: node.position, selected,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
-import { CircleAlert, Copy, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
+import { CircleAlert, Copy, LayoutGrid, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
@@ -41,6 +41,8 @@ export interface CanvasFrameProps {
   readonly nodeTypes: NodeTypes
   /** A node's card size, known from its kind and content (cards have fixed widths), for the opening viewport. */
   readonly nodeSize?: (node: g.CanvasNode) => { readonly width: number; readonly height: number }
+  /** Lay the whole graph out again ("Tidy up", ⇧⌘L); one undoable step. */
+  readonly tidy?: (graph: g.Graph) => g.Graph
   /** Custom edge renderers (an automation's exit labels), when a surface needs them. */
   readonly edgeTypes?: EdgeTypes
   readonly issues: (graph: g.Graph) => { readonly issues: readonly Issue[]; readonly status: ReactNode }
@@ -172,7 +174,8 @@ function Frame(props: CanvasFrameProps) {
       if (!(event.ctrlKey || event.metaKey) || typing(event.target)) return
       const key = event.key.toLowerCase()
       const act = (run: () => void) => { event.preventDefault(); run() }
-      if (key === "z" && !event.shiftKey) act(() => setState(g.undo))
+      if (key === "l" && event.shiftKey && props.tidy) act(tidyUp)
+      else if (key === "z" && !event.shiftKey) act(() => setState(g.undo))
       else if ((key === "z" && event.shiftKey) || key === "y") act(() => setState(g.redo))
       // Copy, paste, duplicate and select-all belong to the canvas only while it is in use, and never take over
       // copying text the reader has selected elsewhere (a finding's message in Problems).
@@ -200,6 +203,12 @@ function Frame(props: CanvasFrameProps) {
     }
   }
   const editing: Editing = { graph, selection, edit, select: setSelection }
+  // Tidy up only on request, as one step: a single undo puts back the person's own layout.
+  const tidyUp = () => {
+    if (!props.tidy) return
+    edit(props.tidy(graph))
+    window.requestAnimationFrame(() => void flow.fitView({ padding: PADDING, minZoom: READABLE, maxZoom: 1, duration: 200 }))
+  }
   // Below the rail width the inspector is a drawer: selecting something opens it, clearing the selection closes it.
   const selected = selection.nodes.length + selection.edges.length > 0
   useEffect(() => { setDrawer(selected) }, [selected, selection])
@@ -289,6 +298,7 @@ function Frame(props: CanvasFrameProps) {
                   <Button size="sm" variant="ghost" aria-label="Duplicate" title="Duplicate (⌘D)" disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
                   <Button size="sm" variant="ghost" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
                   <Button size="sm" variant="ghost" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
+                  {props.tidy && <Button size="sm" variant="ghost" aria-label="Tidy up" title="Tidy up: lay the whole graph out again (⇧⌘L)" onClick={tidyUp}><LayoutGrid /></Button>}
                   <Button size="sm" variant="ghost" aria-label="Minimap" aria-pressed={map} title={map ? "Hide the minimap" : "Show the minimap"} className={cn(map && "bg-muted")} onClick={() => setMap((on) => !on)}><MapIcon /></Button>
                   <Sep />
                   <Button size="sm" variant="ghost" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>

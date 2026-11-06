@@ -12,6 +12,7 @@ import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
 import * as g from "./lib/canvas/graph.ts"
+import { STATE_SPACING, tidy } from "./lib/canvas/layout.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, stepKey, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { AutomationEditor } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
@@ -46,7 +47,7 @@ function Inspector({ editing, issues, standing }: { readonly editing: Editing; r
   if (count === 0) return (
     <>
       <p className="text-muted-foreground">Select a state or a step. Drag from a state's right edge to another state to add a step, or drag a step's end to reconnect it. Shift-click or shift-drag selects several.</p>
-      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · Delete removes</p>
+      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · ⇧⌘L tidy up · Delete removes</p>
       {standing.length > 0 && (
         <details className="text-meta text-muted-foreground">
           <summary className="cursor-pointer select-none">{standing.length} findings the loaded definitions already had</summary>
@@ -104,6 +105,7 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     initial: decompile(envelope, lifecycle), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
     empty: "This lifecycle has no states. Add one to start.",
     nodeSize: () => ({ width: CARD.state, height: cardHeight({}) }),
+    tidy: (graph) => tidy(graph, STATE_SPACING),
     toNode: (node, found, selected): StateNode => ({ id: node.id, type: "state", position: node.position, selected, data: { label: words(node.id), flags: FLAGS.filter((flag) => node.config[flag] === "yes").join(" · "), issues: found } }),
     toEdge: (edge, found, selected): Edge => ({
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,

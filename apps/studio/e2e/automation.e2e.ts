@@ -156,3 +156,40 @@ test("selection and problems: multi-select, copy/paste, delete selected, jump to
   await page.getByTestId("problem").first().click()
   await expect(page.getByRole("heading", { name: /^Outcome\s*·\s*(paid|draft)_copy$/ })).toBeVisible()
 })
+
+// Positions as drawn (React Flow's node transforms), by node id.
+const placed = (page: Parameters<typeof node>[0]) => page.locator(".react-flow__node").evaluateAll((all) =>
+  Object.fromEntries(all.map((one) => [one.getAttribute("data-id") ?? "", (one as HTMLElement).style.transform])))
+const boxes = (page: Parameters<typeof node>[0], selector: string) => page.locator(selector).evaluateAll((all) => all.map((one) => one.getBoundingClientRect().toJSON() as DOMRect))
+const overlap = (a: DOMRect, b: DOMRect) => a.x < b.x + b.width - 0.5 && a.x + a.width > b.x + 0.5 && a.y < b.y + b.height - 0.5 && a.y + a.height > b.y + 0.5
+
+test("tidy up: lays the whole graph out with room for labels, as one step undo puts back", async ({ page }) => {
+  await open(page, "Automation")
+  const before = await placed(page)
+  await page.getByRole("button", { name: "Tidy up" }).click()
+  await expect.poll(async () => JSON.stringify(await placed(page))).not.toBe(JSON.stringify(before))
+  const after = await placed(page)
+  await page.waitForTimeout(400)
+  // No label lies under a card or another label.
+  const labels = await boxes(page, "[data-exit-label]")
+  const nodes = await boxes(page, ".react-flow__node")
+  labels.forEach((label, index) => {
+    for (const card of nodes) expect(overlap(label, card)).toBe(false)
+    for (const other of labels.slice(index + 1)) expect(overlap(label, other)).toBe(false)
+  })
+  // The order holds: every connection runs left to right.
+  const x = Object.fromEntries((await page.locator(".react-flow__node").evaluateAll((all) => all.map((one) => [one.getAttribute("data-id") ?? "", one.getBoundingClientRect().x] as const))))
+  // React Flow names each connection "Edge from <source> to <target>".
+  const ends = await page.locator(".react-flow__edge").evaluateAll((all) => all.map((one) => /^Edge from (\S+) to (\S+)$/.exec(one.getAttribute("aria-label") ?? "")?.slice(1) ?? []))
+  expect(ends.length).toBeGreaterThan(0)
+  for (const [source, target] of ends) expect(x[target!]!).toBeGreaterThan(x[source!]!)
+  // One undo restores the person's layout; redo tidies again. The shortcut does the same.
+  await press(page, "z")
+  await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(before))
+  await press(page, "Shift+z")
+  await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(after))
+  await press(page, "z")
+  await (await shown(page, "load")).click()
+  await press(page, "Shift+l")
+  await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(after))
+})
