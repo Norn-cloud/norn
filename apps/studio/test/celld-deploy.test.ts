@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { pinnedCommit } from "../scripts/celld-deploy.ts"
+import { join } from "node:path"
+import { appDir, pinnedCommit } from "../scripts/celld-deploy.ts"
 import { awaitServed, entryChunk } from "../scripts/served-build.ts"
 
 const HEAD = "93dfdc450d".padEnd(40, "a")
@@ -31,3 +32,12 @@ test("the check passes only once the origin serves this build's entry", async ()
   const down = (async () => { throw new Error("offline") }) as unknown as typeof fetch
   expect(await awaitServed("https://demo.norn.cloud", "/assets/index-B4eJ2Gv7.js", 0, down)).toEqual({ served: undefined, matched: false })
 }, 20_000)
+
+test("--app names another Studio checkout to build; anything else refuses", () => {
+  const own = join(import.meta.dir, "..")
+  expect(appDir([], own)).toBe(own)
+  expect(appDir(["--commit", HEAD], own)).toBe(own)
+  expect(() => appDir(["--app"], own)).toThrow("--app needs a directory")
+  expect(() => appDir(["--app", "--commit"], own)).toThrow("--app needs a directory")
+  expect(() => appDir(["--app", import.meta.dir], own)).toThrow("not a Studio app directory")
+})

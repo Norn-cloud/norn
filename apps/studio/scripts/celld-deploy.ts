@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process"
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { celldConfig, celldStudio } from "../celld-config.ts"
 import { awaitServed, entryChunk } from "./served-build.ts"
 
@@ -8,15 +8,25 @@ import { awaitServed, entryChunk } from "./served-build.ts"
 // fleet serves that build. Refuses before building when the commit is not given, HEAD is
 // not that commit, or the tree has any change; the commit is recorded as STUDIO_BUILD.
 //
-//   bun scripts/celld-deploy.ts --commit <sha>
+//   bun scripts/celld-deploy.ts --commit <sha> [--app <checkout>/apps/studio]
+//
+// --app builds another clean checkout (the integration commit need not contain this
+// script); the checks then apply to that checkout. It defaults to this script's own app.
 //
 // Environment (see #1027): STUDIO_STAGE, BETTER_AUTH_URL, BETTER_AUTH_SECRET,
 // STUDIO_DEFAULT_ORG, NORN_HOST_SERVICE, AI_GATEWAY_URL + AI_GATEWAY_TOKEN +
 // NORN_CHECKER_WASM_PKG (the assistant), CELLD_BUCKET, S3_ENDPOINT, AWS_REGION,
 // AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY. `celld` and `esbuild` on PATH.
 
-const app = join(import.meta.dir, "..")
-const git = (...args: string[]) => execFileSync("git", args, { cwd: app, encoding: "utf8" }).trim()
+/** The Studio app directory to build: `--app <dir>`, or this script's own. */
+export function appDir(argv: readonly string[], own: string): string {
+  const at = argv.indexOf("--app")
+  if (at < 0) return own
+  const dir = argv[at + 1]
+  if (dir === undefined || dir.startsWith("--")) throw new Error("--app needs a directory")
+  if (!existsSync(join(dir, "worker/index.ts")) || !existsSync(join(dir, "package.json"))) throw new Error(`${dir} is not a Studio app directory (no worker/index.ts)`)
+  return resolve(dir)
+}
 
 /** The commit to deploy: given, equal to HEAD, and with a clean tree. */
 export function pinnedCommit(argv: readonly string[], head: string, status: string): string {
@@ -29,6 +39,8 @@ export function pinnedCommit(argv: readonly string[], head: string, status: stri
 }
 
 async function main(argv: readonly string[]) {
+  const app = appDir(argv, join(import.meta.dir, ".."))
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: app, encoding: "utf8" }).trim()
   const commit = pinnedCommit(argv, git("rev-parse", "HEAD"), git("status", "--porcelain"))
   const studio = celldStudio({ ...process.env, STUDIO_BUILD: commit })
   if (studio.agent !== undefined) {
