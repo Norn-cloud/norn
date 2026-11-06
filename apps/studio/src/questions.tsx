@@ -14,7 +14,9 @@ import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answe
 import { conceptTitle } from "./lib/catalog.ts"
 import { chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
+import { amountTexts, liveAnswer, liveTrace, type Refusal } from "./lib/live.ts"
 import { transport, type QuestionAnswer } from "./lib/transport.ts"
+import { CopyId } from "@/components/copy-id"
 import { RestatementCard } from "./restatement.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
@@ -24,7 +26,41 @@ function Exact({ value, totals }: { readonly value: string; readonly totals: rea
     : <b className="tabular-nums">{value}</b>
 }
 
-function DrillDown({ bucket, onClose }: { readonly bucket: Bucket | undefined; readonly onClose: () => void }) {
+/** A bucket's records from the live trace: who contributed, under which receipt, and what the server withheld. */
+function LiveRecords({ question, lineageRef, bucket }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket }) {
+  const trace = useQuery({ queryKey: ["live-trace", question, lineageRef, bucket.key], queryFn: () => liveTrace(question, lineageRef, bucket.key), retry: false })
+  const data = trace.data
+  if (trace.isPending) return <p className="text-sm text-muted-foreground">Reading the records…</p>
+  if (trace.isError || data === undefined || data.kind === "unavailable") return <p className="text-sm text-muted-foreground">The live records could not be read.</p>
+  if (data.kind === "refused") return <RefusedNote refusal={data.refusal} />
+  const read = data.read
+  return (
+    <TableCard><Table>
+      <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
+      <TableBody>
+        {read.document.contributions.map((contribution, index) => (
+          <TableRow key={`${contribution.fact.key}@${contribution.fact.version}`}>
+            <TableCell className="font-mono">{contribution.fact.key}{contribution.restricted && <Badge variant="outline" className="ms-2 font-sans" title="The server withheld this record's values from your role.">Values withheld</Badge>}</TableCell>
+            <TableCell className="text-right tabular-nums">{fraction(amountTexts(read, index))}</TableCell>
+            <TableCell><CopyId value={contribution.receiptHash} short={10} /><div className="text-xs text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table></TableCard>
+  )
+}
+
+/** The server's refusal, as an answer: its reason in its own words, and its code. */
+function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
+  return (
+    <div role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+      <div><span className="font-medium">Refused:</span> {refusal.message}</div>
+      <div className="font-mono text-xs text-muted-foreground">{refusal.code}{refusal.explanation ? ` · ${refusal.explanation}` : ""}</div>
+    </div>
+  )
+}
+
+function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefined; readonly onClose: () => void; readonly live?: { readonly question: string; readonly lineageRef: string } }) {
   return (
     <Sheet open={bucket !== undefined} onOpenChange={(open) => { if (!open) onClose() }}>
       <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
@@ -35,6 +71,7 @@ function DrillDown({ bucket, onClose }: { readonly bucket: Bucket | undefined; r
           </SheetHeader>
           <div className="px-4">
             <p className="pb-3 text-sm text-muted-foreground">The {bucket.members.length} records the server added up, exactly as it counted them.</p>
+            {live ? <LiveRecords question={live.question} lineageRef={live.lineageRef} bucket={bucket} /> : <>
             <TableCard><Table>
               <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead></TableRow></TableHeader>
               <TableBody>
@@ -45,6 +82,7 @@ function DrillDown({ bucket, onClose }: { readonly bucket: Bucket | undefined; r
               <TableFooter><TableRow><TableCell>Total</TableCell><TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell></TableRow></TableFooter>
             </Table></TableCard>
             <p className="pt-4 text-xs text-muted-foreground">The source rows behind each record are not available yet.</p>
+            </>}
           </div>
         </>}
       </SheetContent>
@@ -54,8 +92,11 @@ function DrillDown({ bucket, onClose }: { readonly bucket: Bucket | undefined; r
 
 const changes = (count: number) => `${count} committed ${count === 1 ? "change" : "changes"}`
 
-function QuestionCard({ read, heading = "h2" }: { readonly read: QuestionAnswer; readonly heading?: "h1" | "h2" }) {
+function QuestionCard({ read: recorded, heading = "h2" }: { readonly read: QuestionAnswer; readonly heading?: "h1" | "h2" }) {
   const [open, setOpen] = useState<Bucket>()
+  // The live answer when the host serves one; otherwise the recording, labelled as such.
+  const live = useQuery({ queryKey: ["live-answer", recorded.question.document.name], queryFn: () => liveAnswer(recorded.question.document.name), retry: false, staleTime: 60_000 })
+  const read: QuestionAnswer = live.data?.kind === "read" ? { ...recorded, answer: live.data.read } : recorded
   const question = read.question.document
   const answer = read.answer.document
   const rows = buckets(declarations(read), { answer, numbers: read.answer.numbers, at: "" })
@@ -72,8 +113,11 @@ function QuestionCard({ read, heading = "h2" }: { readonly read: QuestionAnswer;
             ? <h1 className="text-title font-medium">{headline(question)}</h1>
             : <h2 className="text-section font-medium"><Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{headline(question)}</Link></h2>}
           <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
-          {read.answer.origin === "recorded" && <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded</Badge>}
+          {read.answer.origin === "live"
+            ? <Badge variant="secondary" title="Read now from the cell as your account.">Live</Badge>
+            : <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Badge>}
         </div>
+        {live.data?.kind === "refused" && <RefusedNote refusal={live.data.refusal} />}
         <p className="text-meta text-muted-foreground">{scope(question)} · {period(question.window)} · Sources: {sources.join(", ")}</p>
       </div>
       {latest && (
@@ -124,7 +168,7 @@ function QuestionCard({ read, heading = "h2" }: { readonly read: QuestionAnswer;
           </TableBody>
         </Table></TableCard>
       </Panel>
-      <DrillDown bucket={open} onClose={() => setOpen(undefined)} />
+      <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef } : undefined} />
     </section>
   )
 }
