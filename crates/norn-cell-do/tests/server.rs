@@ -1,6 +1,10 @@
 //! Native correspondence for the Durable Object read dispatch: the same
 //! `server::handle` over `NativeEngine` that the DO runs over DO SQLite.
-#![allow(clippy::unwrap_used, clippy::expect_used, reason = "dispatch correspondence")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "dispatch correspondence"
+)]
 use norn_api::host::DevHost;
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::principal::{DEMO_PRINCIPALS, FixturePolicy};
@@ -20,18 +24,31 @@ fn host(engine: NativeEngine) -> DevHost<NativeEngine> {
 
 fn get(host: &DevHost<NativeEngine>, path: &str, query: &str, auth: Option<&str>) -> (u16, Value) {
     let response = server::handle(host, &DEMO_PRINCIPALS, "GET", path, query, auth);
-    (response.status, serde_json::from_str(&response.body).unwrap())
+    (
+        response.status,
+        serde_json::from_str(&response.body).unwrap(),
+    )
 }
 
 #[test]
 fn viewer_reads_the_admitted_demo_definitions() {
     let host = host(NativeEngine::open_in_memory().unwrap());
-    let raw = server::handle(&host, &DEMO_PRINCIPALS, "GET", "/v1/definitions", SCOPE, VIEWER);
+    let raw = server::handle(
+        &host,
+        &DEMO_PRINCIPALS,
+        "GET",
+        "/v1/definitions",
+        SCOPE,
+        VIEWER,
+    );
     // The DO smoke compares its body bytes with this native body (parity).
     if let Some(out) = std::env::var_os("NORN_CELL_DO_PARITY_OUT") {
         std::fs::write(out, &raw.body).unwrap();
     }
-    let (status, document) = (raw.status, serde_json::from_str::<Value>(&raw.body).unwrap());
+    let (status, document) = (
+        raw.status,
+        serde_json::from_str::<Value>(&raw.body).unwrap(),
+    );
     assert_eq!(status, 200, "{document}");
     assert_eq!(document["admitted"], true);
     assert_eq!(document["version"], 1);
@@ -50,7 +67,14 @@ fn viewer_reads_the_admitted_demo_definitions() {
 #[test]
 fn anonymous_foreign_and_unknown_principals_get_one_denial() {
     let host = host(NativeEngine::open_in_memory().unwrap());
-    let denied = server::handle(&host, &DEMO_PRINCIPALS, "GET", "/v1/definitions", SCOPE, None);
+    let denied = server::handle(
+        &host,
+        &DEMO_PRINCIPALS,
+        "GET",
+        "/v1/definitions",
+        SCOPE,
+        None,
+    );
     assert_eq!(denied.status, 403);
     for (query, auth) in [
         (SCOPE, Some("Bearer fixture:admin@demo")),
@@ -58,8 +82,19 @@ fn anonymous_foreign_and_unknown_principals_get_one_denial() {
         ("orgId=foreign&environmentId=dev", VIEWER),
         ("orgId=org_demo", VIEWER),
     ] {
-        let response = server::handle(&host, &DEMO_PRINCIPALS, "GET", "/v1/definitions", query, auth);
-        assert_eq!((response.status, &response.body), (403, &denied.body), "{query} {auth:?}");
+        let response = server::handle(
+            &host,
+            &DEMO_PRINCIPALS,
+            "GET",
+            "/v1/definitions",
+            query,
+            auth,
+        );
+        assert_eq!(
+            (response.status, &response.body),
+            (403, &denied.body),
+            "{query} {auth:?}"
+        );
     }
     assert!(!denied.body.contains("org_demo"));
 }
@@ -73,13 +108,33 @@ fn malformed_requests_and_other_routes_refuse_without_reading() {
         "orgId=org_demo&environmentId=dev&version=-1",
     ] {
         let (status, refusal) = get(&host, "/v1/definitions", query, VIEWER);
-        assert_eq!((status, refusal["code"].as_str()), (400, Some("request.invalid")), "{query}");
+        assert_eq!(
+            (status, refusal["code"].as_str()),
+            (400, Some("request.invalid")),
+            "{query}"
+        );
     }
     let long = format!("{SCOPE}&{}", "x".repeat(server::MAX_QUERY_BYTES));
     assert_eq!(get(&host, "/v1/definitions", &long, VIEWER).0, 400);
-    assert_eq!(get(&host, "/v1/definitions", &format!("{SCOPE}&version=9"), VIEWER).0, 404);
+    assert_eq!(
+        get(
+            &host,
+            "/v1/definitions",
+            &format!("{SCOPE}&version=9"),
+            VIEWER
+        )
+        .0,
+        404
+    );
     assert_eq!(get(&host, "/v1/tables", SCOPE, VIEWER).0, 404);
-    let post = server::handle(&host, &DEMO_PRINCIPALS, "POST", "/v1/definitions", SCOPE, VIEWER);
+    let post = server::handle(
+        &host,
+        &DEMO_PRINCIPALS,
+        "POST",
+        "/v1/definitions",
+        SCOPE,
+        VIEWER,
+    );
     assert_eq!(post.status, 405);
 }
 
@@ -90,10 +145,19 @@ fn reprovisioning_a_restarted_cell_reopens_the_same_revision() {
     let path = directory.join("cell.sqlite");
     let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
     let scope = seed::demo_scope();
-    let first = seed::provision(open(), &scope).unwrap().verified_head().unwrap();
+    let first = seed::provision(open(), &scope)
+        .unwrap()
+        .verified_head()
+        .unwrap();
     let document = get(&host(open()), "/v1/definitions", SCOPE, VIEWER).1;
-    let reopened = seed::provision(open(), &scope).unwrap().verified_head().unwrap();
+    let reopened = seed::provision(open(), &scope)
+        .unwrap()
+        .verified_head()
+        .unwrap();
     assert_eq!(reopened, first, "an identical provision writes nothing");
-    assert_eq!(get(&host(open()), "/v1/definitions", SCOPE, VIEWER).1, document);
+    assert_eq!(
+        get(&host(open()), "/v1/definitions", SCOPE, VIEWER).1,
+        document
+    );
     std::fs::remove_dir_all(&directory).unwrap();
 }
