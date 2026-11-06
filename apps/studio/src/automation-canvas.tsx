@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStoreApi, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
-import { ArrowDown, ArrowUp, Copy, Play, Plus, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,7 +10,8 @@ import { cn } from "@/lib/utils"
 import { CARD, EDGE_PILL, InspectorHead, InspectorSection, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
-import { FlowRoutesMissing, flowStore, newRunId, nodeOfFinding, type FlowFinding, type FlowPayload, type FlowStore } from "./lib/canvas/flows.ts"
+import { RunButton } from "./run-button.tsx"
+import { FlowRoutesMissing, flowStore, nodeOfFinding, type FlowFinding, type FlowPayload, type FlowStore } from "./lib/canvas/flows.ts"
 import { scopeOf } from "./lib/scope.ts"
 import { useAccount } from "./lib/session.ts"
 import { automationKinds, branchesOf, flowDefinitionPayload, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
@@ -301,7 +301,6 @@ export function AutomationEditor({ store: given }: { readonly store?: FlowStore 
   const store = useMemo(() => given !== undefined ? given : scope ? flowStore(scope) : null, [given, scope?.orgId, scope?.environmentId])
   const noCell = store === null && !account.isPending
   const client = useQueryClient()
-  const navigate = useNavigate()
   const stored = useQuery({ queryKey: ["flow", META.id, scope?.orgId, scope?.environmentId], queryFn: async () => (await store!.get(META.id)) ?? null, enabled: store !== null, retry: false })
   const routesDown = stored.error instanceof FlowRoutesMissing
   const [at, setAt] = useState<{ readonly version: number }>()
@@ -346,15 +345,6 @@ export function AutomationEditor({ store: given }: { readonly store?: FlowStore 
     if ("runsLive" in result) return { tone: "refusal" as const, text: "The cell refused: this flow has live runs." }
     return refuse(result.findings)
   }
-  const run = async () => {
-    if (!store || !at || busy) return
-    setBusy(true); setNotice(null)
-    try {
-      const started = await store.start(META.id, newRunId())
-      void navigate({ to: "/runs/$id", params: { id: started.id } })
-    } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) }
-    finally { setBusy(false) }
-  }
   const retire = async () => {
     if (!store || !at || busy || !globalThis.confirm("Retire this automation? It stops being runnable; the cell keeps its history.")) return
     setBusy(true); setNotice(null)
@@ -377,7 +367,7 @@ export function AutomationEditor({ store: given }: { readonly store?: FlowStore 
         {notice && <span role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{notice.text}</span>}
         {at && store ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void retire()}>Retire</Button> : null}
         {at && store
-          ? <Button size="sm" disabled={busy} title={`Start a run of version ${at.version} in the cell`} onClick={() => void run()}><Play />{busy ? "Starting…" : "Run in the cell"}</Button>
+          ? <RunButton flow={META.id} label="Run in the cell" />
           : <Unavailable reason={noCell ? NO_CELL : "Save the automation to the cell first; a run starts the saved version."}>Run in the cell</Unavailable>}
       </div>
     </div>
