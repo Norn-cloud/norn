@@ -672,6 +672,73 @@ context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:
     return json.loads(result.stdout)
 
 
+def workflow_superseded_canaries(source: str) -> None:
+    """A superseded pull_request_target evaluation writes nothing; comment events never skip."""
+    workflow = yaml.safe_load(source)
+    steps = workflow["jobs"]["trusted-policy"]["steps"]
+    resolve = next(step for step in steps if step.get("name") == "Resolve the pull request")
+
+    def outputs(script: str, event: str, payload: str, live: str) -> dict[str, str]:
+        harness = ("const out={};const core={setOutput:(k,v)=>{out[k]=v},notice:()=>{}};"
+                   f"const context={{eventName:{json.dumps(event)},repo:{{owner:'o',repo:'r'}},payload:{payload}}};"
+                   "const github={rest:{pulls:{get:async()=>({data:{number:7,base:{sha:'b'.repeat(40)},"
+                   "head:{sha:" + json.dumps(live) + ",repo:{full_name:'Norn-cloud/norn'}}}})}}};"
+                   "(async()=>{\n" + script + "\nconsole.log(JSON.stringify(out))})()"
+                   ".catch(error=>{console.error(error);process.exit(1)});")
+        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10, check=True)
+        return json.loads(result.stdout)
+
+    old, new = "a" * 40, "c" * 40
+    target = lambda head: "{pull_request:{number:7,head:{sha:'" + head + "'}}}"
+    for event, payload, live, expected in (
+            ("pull_request_target", target(old), new, "true"),
+            ("pull_request_target", target(new), new, "false"),
+            # Comment events re-evaluate the live head: approvals and revocations never skip.
+            ("issue_comment", "{issue:{number:7,pull_request:{}}}", new, "false"),
+            ("issue_comment", "{issue:{number:7,pull_request:{}},pull_request:{head:{sha:'" + old + "'}}}", new, "false")):
+        value = outputs(resolve["with"]["script"], event, payload, live)
+        if value.get("superseded") != expected or value.get("head_sha") != live:
+            raise AssertionError(f"superseded resolution drift: {event}/{payload}/{live}: {value}")
+
+    validator = load_module("norn_superseded_canaries", VALIDATOR)
+    guard = "steps.pr.outputs.superseded != 'true'"
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+
+        def rejected(label: str, document: dict[str, Any]) -> None:
+            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate)
+            except validator.InvalidCoverage:
+                return
+            raise AssertionError(f"superseded mutation passed: {label}")
+
+        for index, step in enumerate(steps[1:-1], start=1):
+            label = step.get("name") or step.get("uses")
+            for value in (None, "always()", "!cancelled()", guard.replace("!=", "=="),
+                          guard.replace("superseded", "head_sha")):
+                if value == step.get("if"):
+                    continue
+                document = copy.deepcopy(workflow)
+                if value is None:
+                    document["jobs"]["trusted-policy"]["steps"][index].pop("if", None)
+                else:
+                    document["jobs"]["trusted-policy"]["steps"][index]["if"] = value
+                rejected(f"unguarded {label} after a superseded resolution: {value}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["trusted-policy"]["steps"].insert(2, {"name": "extra", "run": "true"})
+        rejected("unguarded step inserted after Resolve", document)
+        for before, after in (("context.eventName === 'pull_request_target' && ", ""),
+                              ("event.head.sha !== data.head.sha", "true"),
+                              ("String(superseded)", "'false'")):
+            if before not in resolve["with"]["script"]:
+                raise AssertionError(f"superseded canary target drifted: {before}")
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["steps"][0]
+            changed["with"]["script"] = changed["with"]["script"].replace(before, after)
+            rejected(f"superseded resolution mutation {before}", document)
+
+
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -2161,6 +2228,7 @@ def main() -> int:
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
         workflow_trusted_policy_canaries(source)
+        workflow_superseded_canaries(source)
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
         rights_workflow_canaries()
