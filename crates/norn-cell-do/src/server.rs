@@ -94,9 +94,11 @@ pub fn handle_with<E: SqlEngine>(
     let known = path == "/v1/definitions"
         || ad_hoc
         || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
-    let result = if path == "/v1/runs" || run.is_some() {
-        runs(host, actor, method, query, body, run)
-    } else if !known {
+    if path == "/v1/runs" || run.is_some() {
+        // A new run answers 201 and an exact retry 200.
+        return respond(runs(host, actor, method, query, body, run));
+    }
+    let result = if !known {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
             "route.not_found",
@@ -147,9 +149,13 @@ pub fn handle_with<E: SqlEngine>(
             )),
         }
     };
+    respond(result.map(|body| (StatusCode::OK, body)))
+}
+
+fn respond(result: Result<(StatusCode, String), Refusal>) -> Response {
     match result {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
+        Ok((status, body)) => Response {
+            status: status.as_u16(),
             body,
         },
         Err(refused) => Response {
@@ -168,7 +174,7 @@ fn runs<E: SqlEngine>(
     query: &str,
     body: &str,
     run: Option<&str>,
-) -> Result<String, Refusal> {
+) -> Result<(StatusCode, String), Refusal> {
     let subject = actor.unwrap_or_default();
     let access = |capability, object_type: &str| {
         collection_access(host.scope(), subject, capability, object_type)
@@ -182,6 +188,7 @@ fn runs<E: SqlEngine>(
             let mut fields = parse(query, &["orgId", "environmentId"])?;
             get_run(host, &scope_of(&mut fields), id, &access)
                 .and_then(|document| document_json(&document))
+                .map(|body| (StatusCode::OK, body))
         }
         ("GET", None) => {
             let mut fields = parse(
@@ -203,7 +210,9 @@ fn runs<E: SqlEngine>(
                 cursor: fields.remove("cursor"),
                 limit,
             };
-            list_runs(host, &query, &access).and_then(|document| document_json(&document))
+            list_runs(host, &query, &access)
+                .and_then(|document| document_json(&document))
+                .map(|body| (StatusCode::OK, body))
         }
         ("POST", None) => {
             if body.len() > MAX_BODY_BYTES {
@@ -213,7 +222,7 @@ fn runs<E: SqlEngine>(
             let start: StartRunRequest = serde_json::from_str(body)
                 .map_err(|error| Refusal::invalid(format!("body: {error}")))?;
             start_run(host, &scope_of(&mut fields), actor, &start, &access)
-                .and_then(|(_, document)| document_json(&document))
+                .and_then(|(status, document)| Ok((status, document_json(&document)?)))
         }
         _ => Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,

@@ -271,6 +271,37 @@ fn reads_pass_the_values_gate_and_never_reveal_invisible_runs() {
     )
     .unwrap();
     assert!(hidden.runs.is_empty());
+    // A full page of invisible runs never names one in the cursor.
+    for run in ["run-2", "run-3"] {
+        start(&host, run).unwrap();
+    }
+    let page = list_runs(
+        &host,
+        &RunsQuery {
+            scope: query(),
+            limit: Some(1),
+            ..RunsQuery::default()
+        },
+        &access("user:bob"),
+    )
+    .unwrap();
+    assert!(page.runs.is_empty());
+    assert_eq!(
+        page.next_cursor, None,
+        "the cursor reveals no invisible run"
+    );
+    // A reader's cursor names the last run it was shown.
+    let page = list_runs(
+        &host,
+        &RunsQuery {
+            scope: query(),
+            limit: Some(2),
+            ..RunsQuery::default()
+        },
+        &access("user:ada"),
+    )
+    .unwrap();
+    assert_eq!(page.next_cursor.as_deref(), Some("run-2"));
 }
 
 #[test]

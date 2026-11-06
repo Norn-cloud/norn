@@ -21,6 +21,10 @@ use crate::host::DevHost;
 use crate::refusal::Refusal;
 use crate::scope::ScopeQuery;
 
+/// The most ledger rows one list request examines. A caller who can read
+/// few of them gets a short page; filtering by flow keeps pages dense.
+pub const MAX_RUN_SCAN: usize = 2000;
+
 /// The longest run id, in bytes.
 pub const MAX_RUN_ID_BYTES: usize = 128;
 
@@ -106,6 +110,15 @@ pub struct RunsQuery {
     pub cursor: Option<String>,
     /// Page size, 1 to 200 (default 50).
     pub limit: Option<u32>,
+}
+
+fn run_exists() -> Refusal {
+    Refusal::new(
+        StatusCode::CONFLICT,
+        "run.exists",
+        "the run id is taken",
+        "choose another runId",
+    )
 }
 
 fn run_not_found() -> Refusal {
@@ -247,12 +260,7 @@ pub fn start_run<E: SqlEngine>(
         return if row.flow.id == body.flow && readable(host, access, &row) {
             Ok((StatusCode::OK, row.into()))
         } else {
-            Err(Refusal::new(
-                StatusCode::CONFLICT,
-                "run.exists",
-                "the run id is taken",
-                "choose another runId",
-            ))
+            Err(run_exists())
         };
     }
     commit_start(&mut cell, body)?;
@@ -319,21 +327,27 @@ fn commit_start<E: SqlEngine>(
         state_property: flow.state_property,
     };
     cell.commit_run_start(commit, &start).map_err(|error| {
-        if let norn_kernel::CommitError::Host(norn_cell::CellError::RunRefused(code)) = &error {
-            Refusal::new(
+        let norn_kernel::CommitError::Host(host_error) = error else {
+            return Refusal::new(
+                StatusCode::CONFLICT,
+                "run.start_conflict",
+                "the run start was refused",
+                "the cell changed while the run started; retry with the same runId",
+            );
+        };
+        if let norn_cell::CellError::RunRefused(code) = host_error {
+            if code == "run.exists" {
+                return run_exists();
+            }
+            return Refusal::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 code,
                 "the run start was refused",
                 "the flow's start turn must create its run object",
-            )
-        } else {
-            Refusal::new(
-                StatusCode::CONFLICT,
-                "run.start_conflict",
-                "the run start was refused",
-                error.to_string(),
-            )
+            );
         }
+        // A storage failure is the host's, never the caller's conflict.
+        Refusal::host(host_error)
     })?;
     Ok(())
 }
@@ -385,29 +399,47 @@ pub fn list_runs<E: SqlEngine>(
         return Err(Refusal::invalid("limit must be 1-200"));
     }
     let cell = host.cell()?;
-    let rows = cell
-        .store()
-        .read()
-        .flow_runs(
-            norn_cell::MAIN_WORLD,
-            &RunFilter {
-                flow: query.flow.clone(),
-                state: query.state.clone(),
-                after: query.cursor.clone(),
-                limit,
-            },
-        )
-        .map_err(Refusal::host)?;
-    let full = rows.len() == usize::try_from(limit).unwrap_or(usize::MAX);
-    let next_cursor = full
-        .then(|| rows.last().map(|row| row.run_id.clone()))
-        .flatten();
-    Ok(RunPage {
-        runs: rows
-            .into_iter()
-            .filter(|row| readable(host, access, row))
-            .map(RunDocument::from)
-            .collect(),
-        next_cursor,
-    })
+    let reader = cell.store().read();
+    let wanted = usize::try_from(limit).unwrap_or(usize::MAX);
+    let mut runs = Vec::new();
+    let mut after = query.cursor.clone();
+    let mut scanned = 0_usize;
+    let mut exhausted = false;
+    // Scan whole ledger pages until the page holds `limit` readable runs, the
+    // ledger ends, or the scan bound is reached. The cursor names only a run
+    // the caller may read, so it never reveals an invisible one.
+    while runs.len() < wanted && scanned < MAX_RUN_SCAN {
+        let rows = reader
+            .flow_runs(
+                norn_cell::MAIN_WORLD,
+                &RunFilter {
+                    flow: query.flow.clone(),
+                    state: query.state.clone(),
+                    after: after.clone(),
+                    limit: norn_cell::flow_run::MAX_RUN_PAGE,
+                },
+            )
+            .map_err(Refusal::host)?;
+        exhausted = rows.len() < usize::try_from(norn_cell::flow_run::MAX_RUN_PAGE).unwrap_or(0);
+        for row in rows {
+            scanned = scanned.saturating_add(1);
+            after = Some(row.run_id.clone());
+            if readable(host, access, &row) {
+                runs.push(RunDocument::from(row));
+                if runs.len() == wanted {
+                    exhausted = false;
+                    break;
+                }
+            }
+        }
+        if exhausted {
+            break;
+        }
+    }
+    let next_cursor = if exhausted {
+        None
+    } else {
+        runs.last().map(|run| run.id.clone())
+    };
+    Ok(RunPage { runs, next_cursor })
 }
