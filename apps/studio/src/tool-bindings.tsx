@@ -41,6 +41,8 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
   const [runRole, setRunRole] = useState<RunRole>(binding?.runRole ?? "member")
   const [fixed, setFixed] = useState<Record<string, string>>(Object.fromEntries(Object.entries(binding?.inputMapping ?? {}).map(([name, { fixed: value }]) => [name, show(value)])))
   const [problem, setProblem] = useState<string | null>(null)
+  // Fixed inputs the tool's schema no longer declares: the server refuses them, so saving drops them, and the editor says so first.
+  const dropped = Object.keys(binding?.inputMapping ?? {}).filter((name) => !fields.some((field) => field.name === name))
   const save = useMutation({
     mutationFn: (inputMapping: InputMapping) => binding === undefined
       ? api<{ binding: Binding }>("/bindings", { method: "POST", body: { app: tool.app, tool: tool.name, label, runRole, inputMapping } })
@@ -81,6 +83,7 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
           </div>
         ))}
       </fieldset>
+      {dropped.length > 0 && <p role="status" className="text-sm text-amber-700 dark:text-amber-400">The tool no longer takes {dropped.join(", ")}; saving removes {dropped.length === 1 ? "that fixed input" : "those fixed inputs"} from this binding.</p>}
       <div className="flex gap-2">
         <Button size="sm" type="submit" disabled={save.isPending}>{binding === undefined ? "Add binding" : "Save binding"}</Button>
         <Button size="sm" variant="ghost" type="button" onClick={onDone}>Cancel</Button>

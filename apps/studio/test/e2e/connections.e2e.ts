@@ -98,7 +98,6 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).click(); await gatewaySignIn(page)
   },
   "App account": async (page, did) => {
-    page.on("dialog", (dialog) => void dialog.accept())
     await open(page)
     const section = page.getByRole("region", { name: app() })
     await section.waitFor()
@@ -137,7 +136,6 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
   },
   "Tool binding": async (page, did) => {
     // E2E_TOOL is a tool of E2E_APP with a string input E2E_TOOL_FIELD; the signed-in person is an admin.
-    page.on("dialog", (dialog) => void dialog.accept())
     // The gateway lists an app's tools only for a caller with its account connected.
     await ensureAccount(page)
     const tool = env("E2E_TOOL"), field = env("E2E_TOOL_FIELD"), name = `e2e binding ${Date.now()}`
@@ -170,6 +168,8 @@ const { chromium } = await import("playwright-core" as string) as { chromium: { 
 const browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/usr/bin/google-chrome", args: ["--no-sandbox"] })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await context.newPage() as Page
+// One handler for the whole run: every confirmation the suite triggers (disconnect, remove) is accepted once.
+page.on("dialog", (dialog) => void dialog.accept())
 await signIn(page)
 let failed = 0
 for (const [kind, verbs] of Object.entries(MATRIX) as [keyof typeof MATRIX, Readonly<Record<string, VerbSupport>>][]) {
