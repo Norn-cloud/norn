@@ -21,8 +21,12 @@ pub mod mcp;
 pub mod objects;
 /// HOST-READ-2: authorized typed object pages and objects.
 pub mod object_routes;
+/// Authorized exact question answers and numeric traces.
+pub mod question_routes;
 /// Authorized read services shared by transports.
 pub mod routes;
+/// Native numeric trace schema projections.
+pub mod trace_contract;
 
 /// Scoped PDP authority for complete refusal diagnostics.
 pub mod refusal_disclosure;
