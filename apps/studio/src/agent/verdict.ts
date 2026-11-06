@@ -31,21 +31,33 @@ export const STAGE: Record<string, string> = {
   admitted: "Admitted",
 }
 
+const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object"
+
 /** A tool output is a verdict only if it has the fields the Worker writes; anything else is shown as unreadable. */
 export function verdictOf(output: unknown): Verdict | undefined {
-  if (output === null || typeof output !== "object" || !("proposal" in output)) return undefined
-  if ("error" in output && typeof output.error === "string") return output as Verdict
-  if ("admitted" in output && typeof output.admitted === "boolean" && "refusals" in output && Array.isArray(output.refusals)) return output as Verdict
+  if (!isObject(output) || !isObject(output.proposal)) return undefined
+  if (typeof output.error === "string") return output as unknown as Verdict
+  if (typeof output.admitted === "boolean" && Array.isArray(output.refusals) && output.refusals.every((refusal) => isObject(refusal) && typeof refusal.message === "string")) return output as unknown as Verdict
   return undefined
 }
 
+/** The tab's session storage, or undefined where the browser blocks it (reading the property can throw). */
+export function tabStorage(): Pick<Storage, "getItem" | "setItem"> | undefined {
+  try { return globalThis.sessionStorage } catch { return undefined }
+}
+
+/** The id this tab uses when its storage is missing or fails, so the id still holds for the page's lifetime. */
+let memoryId: string | undefined
+
 /** One id per browser tab, for the server's per-session budget. */
 export function sessionId(storage: Pick<Storage, "getItem" | "setItem"> | undefined): string {
-  const existing = storage?.getItem("norn-agent-session")
-  if (existing && /^[0-9a-f-]{36}$/.test(existing)) return existing
-  const id = crypto.randomUUID()
-  storage?.setItem("norn-agent-session", id)
-  return id
+  try {
+    const existing = storage?.getItem("norn-agent-session")
+    if (existing && /^[0-9a-f-]{36}$/.test(existing)) return existing
+  } catch { /* storage blocked: fall back to the in-memory id */ }
+  memoryId ??= crypto.randomUUID()
+  try { storage?.setItem("norn-agent-session", memoryId) } catch { /* storage blocked or full: keep the in-memory id */ }
+  return memoryId
 }
 
 /**

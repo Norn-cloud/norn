@@ -2,6 +2,9 @@ import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, verdictOf } from "../src/agent/verdict.ts"
+import { Chat } from "@ai-sdk/react"
+import type { UIMessage } from "ai"
+import { AgentPanel, type AgentState } from "../src/agent/panel.tsx"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
 const refusal = {
@@ -48,4 +51,28 @@ test("a nested checker finding reads as its own message, with the raw text kept 
   const html = renderToStaticMarkup(<VerdictCard verdict={verdict as never} />)
   expect(html).toContain("Details")
   expect(html).toContain("is not a member of")
+})
+
+test("a proposal or refusal without the fields the card reads is not a verdict", () => {
+  expect(verdictOf({ ...refusal, proposal: null })).toBeUndefined()
+  expect(verdictOf({ proposal: "x", error: "No artifact x." })).toBeUndefined()
+  expect(verdictOf({ ...refusal, refusals: [null] })).toBeUndefined()
+  expect(verdictOf({ ...refusal, refusals: [{ code: "x" }] })).toBeUndefined()
+})
+
+test("a tab keeps one session id when its storage throws", () => {
+  const broken = { getItem: (): string | null => { throw new Error("SecurityError") }, setItem: () => { throw new Error("QuotaExceededError") } }
+  const first = sessionId(broken)
+  expect(first).toMatch(/^[0-9a-f-]{36}$/)
+  expect(sessionId(broken)).toBe(first)
+  expect(sessionId(undefined)).toBe(first)
+})
+
+test("the panel renders the conversation and draft it is given, so reopening the sheet keeps them", () => {
+  const chat = new Chat<UIMessage>({ messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Let Receive start from draft" }] }] })
+  const state: AgentState = { chat, input: "half-typed draft", setInput: () => {}, stopped: new Set(), setStopped: () => {} }
+  const html = renderToStaticMarkup(<AgentPanel state={state} />)
+  expect(html).toContain("Let Receive start from draft")
+  expect(html).toContain("half-typed draft")
+  expect(html).not.toContain("Propose a change")
 })
