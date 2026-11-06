@@ -11,10 +11,11 @@ interface CheckerModule {
 // src/checker/ holds the checker ABI package (crates/norn-checker-wasm,
 // `--target web`), built into place before `vite build`; it is not committed.
 // A glob, so a build without it still succeeds and the canvas says the checker is absent.
-const PACKAGE = import.meta.glob<CheckerModule>("../../checker/norn_checker_wasm.js")
+// Called, not evaluated at import: only Vite provides import.meta.glob, and tests import this module through the pages.
+const PACKAGE = () => import.meta.glob<CheckerModule>("../../checker/norn_checker_wasm.js")
 
 /** Load the checker; rejects when the package is absent, so an edit is never shown as clean unchecked. */
-export async function loadChecker(packages: Record<string, () => Promise<CheckerModule>> = PACKAGE): Promise<Checker> {
+export async function loadChecker(packages: Record<string, () => Promise<CheckerModule>> = PACKAGE()): Promise<Checker> {
   const load = Object.values(packages)[0]
   if (!load) throw new Error("The checker is not part of this build")
   const module = await load()
