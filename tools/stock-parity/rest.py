@@ -28,19 +28,14 @@ class NativeError(Exception):
 class API:
     def __init__(self, url, password):
         self.url = url
-        self.cookies = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
-            urllib.request.HTTPCookieProcessor(self.cookies))
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         self.call('POST', '/api/method/login', {'usr': 'Administrator', 'pwd': password})
 
     def call(self, method, path, body=None):
         data = None if body is None else encode(body).encode()
-        headers = {'Content-Type': 'application/json', 'Host': 'parity.localhost'}
-        # Frappe checks session writes against the CSRF token its login cookie carries.
-        token = next((cookie.value for cookie in self.cookies if cookie.name == 'csrf_token'), None)
-        if token:
-            headers['X-Frappe-CSRF-Token'] = token
-        req = urllib.request.Request(self.url + path, data=data, method=method, headers=headers)
+        req = urllib.request.Request(self.url + path, data=data, method=method,
+                                     headers={'Content-Type': 'application/json', 'Host': 'parity.localhost'})
         try:
             with self.opener.open(req, timeout=60) as response:
                 result = json.load(response, parse_float=Decimal)
