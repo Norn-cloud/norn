@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { loadInvoice, notify } from "../../../tools/norn-ts/fixtures/flows/support/billing.builder.ts"
 import { lower } from "../src/lib/canvas/automation.ts"
+import { formatDuration } from "../src/decision-tree.tsx"
 import { DECISION_FN as RUNS_DECISION } from "../../../tools/norn-ts/src/builder/index.ts"
 import { DECISION_FN, decisionView, nextOptionId, optionPort, setOptions, type DecisionOption } from "../src/lib/canvas/decision.ts"
 import type { CanvasEdge, CanvasNode, Graph } from "../src/lib/canvas/graph.ts"
@@ -86,4 +87,12 @@ test.skipIf(!pkg)("the checker admits what a drawn decision lowers to", async ()
   const artifacts = lower(graph, tools, meta, scope).lowered?.artifacts ?? []
   const result = JSON.parse(wasm.checkArtifactSet(JSON.stringify(artifacts), "null")) as { diagnostics: { diagnostics: { code: string; message: string }[] } }
   expect(result.diagnostics.diagnostics).toEqual([])
+})
+
+test("the decider reads the real time limit, never rounded to whole hours", () => {
+  expect(formatDuration(30 * 60_000)).toBe("30 min")
+  expect(formatDuration(10 * 60_000)).toBe("10 min")
+  expect(formatDuration(90 * 60_000)).toBe("1 h 30 min")
+  expect(formatDuration(4 * 3_600_000)).toBe("4 h")
+  expect(formatDuration(52 * 3_600_000)).toBe("2 d 4 h")
 })

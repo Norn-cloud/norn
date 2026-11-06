@@ -5,6 +5,16 @@ import { cn } from "@/lib/utils"
 import { Unavailable } from "./canvas-frame.tsx"
 import type { DecisionView } from "./lib/canvas/decision.ts"
 
+/** A time limit as the decider should read it: exact, never rounded to whole hours (30 min, 1 h 30 min, 2 d 4 h). */
+export function formatDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000)
+  if (minutes < 1) return `${Math.round(ms / 1000)} s`
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const rest = minutes % 60
+  return [days ? `${days} d` : "", hours ? `${hours} h` : "", rest ? `${rest} min` : ""].filter(Boolean).join(" ")
+}
+
 /** Why the answer cannot be sent from here yet. */
 export const DECIDE_BLOCKED = "Decisions are sent from the inbox once the cell's decide route is live; the cell checks the laws again and issues the receipt."
 
@@ -74,7 +84,7 @@ export function DecisionTree({ view, agent, initialPath = [] }: { readonly view:
             <p className="font-medium">{view.question || "No question yet"}</p>
             <p className="text-meta text-muted-foreground">Context numbers and money at risk come from the cell's admitted questions when it asks.</p>
             <p className="text-meta text-muted-foreground">Decided by: {view.deciderRoles.join(", ") || "no role named"}{view.law ? ` · under ${view.law}` : ""}</p>
-            {view.expiresInMs !== undefined && <p className="text-meta text-muted-foreground">Expires {Math.round(view.expiresInMs / 3_600_000)} h after it is asked; then it is withdrawn, not decided.</p>}
+            {view.expiresInMs !== undefined && <p className="text-meta text-muted-foreground">Expires {formatDuration(view.expiresInMs)} after it is asked; then it is withdrawn, not decided.</p>}
           </div>
         </div>
         {view.options.length > 0 ? <Level view={view} path={path} depth={0} choose={choose} /> : <p className="text-sm text-muted-foreground">No options yet.</p>}
