@@ -47,7 +47,8 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
     mutationFn: (inputMapping: InputMapping) => binding === undefined
       ? api<{ binding: Binding }>("/bindings", { method: "POST", body: { app: tool.app, tool: tool.name, label, runRole, inputMapping } })
       : api<{ binding: Binding }>(`/bindings/${encode(binding.id)}`, { method: "PATCH", body: { label, runRole, inputMapping } }),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ["connectors"] }); onDone() },
+    // Close at once: the save is done. The lists refresh behind it (the gateway's tool list can be slow).
+    onSuccess: () => { onDone(); void client.invalidateQueries({ queryKey: ["connectors"] }) },
   })
   const submit = () => {
     const mapping: Record<string, { fixed: unknown }> = {}
