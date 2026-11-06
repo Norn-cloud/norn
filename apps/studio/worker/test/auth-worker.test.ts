@@ -49,7 +49,7 @@ test("signing in after sign-up sets an HTTP-only, secure, same-site session cook
   expect(row.authMethod).toBe("password")
 })
 
-test("the active organization selects its server-configured environment", async () => {
+test("the active organization selects its metadata environment", async () => {
   const env = stage()
   const cookie = cookieOf(await enroll(env, "scope@example.com", "Scope"))
   const db = env.AUTH_DB as unknown as Database
@@ -59,7 +59,10 @@ test("the active organization selects its server-configured environment", async 
   db.run("update session set activeOrganizationId = 'org_demo' where userId = ?", [user])
   const body = await (await call(env, "/api/me", { headers: { cookie } })).json() as { organization: { id: string }; environmentId: string | null }
   expect(body.organization.id).toBe("org_demo")
-  expect(body.environmentId).toBe("analytics")
+  expect(body.environmentId).toBeNull()
+  db.run("update organization set metadata = ? where id = ?", [JSON.stringify({ environmentId: "warehouse" }), "org_demo"])
+  const changed = await (await call(env, "/api/me", { headers: { cookie } })).json() as { environmentId: string | null }
+  expect(changed.environmentId).toBe("warehouse")
 })
 
 test("sign-out ends the session", async () => {

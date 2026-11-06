@@ -1,5 +1,7 @@
+import { cellScope } from "./scope.ts"
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
+import { connectors } from "./connectors.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -13,12 +15,19 @@ export interface Env {
   readonly EMAIL_FROM?: string
   /** The Norn cell host (service binding); absent until a host is connected to this stage. */
   readonly NORN_HOST?: Fetcher
+  /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
+  readonly TOOL_GATEWAY_URL?: string
+  readonly TOOL_GATEWAY_CLIENT_ID?: string
+  readonly TOOL_GATEWAY_CLIENT_SECRET?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
   Response.json({ error: reason }, { status, headers: { "cache-control": "no-store", ...headers } })
 
 /** Identity reaches Norn only from the verified session; a client-supplied actor header is refused on every stage. */
+/** Better Auth's third-party sign-in endpoints: Studio offers none of them. */
+export const SIGN_IN_ELSEWHERE = new Set(["/api/auth/sign-in/social", "/api/auth/sign-in/oauth2"])
+
 export const ACTOR_HEADERS = ["x-norn-actor", "x-norn-principal", "x-norn-roles"] as const
 
 // One Better Auth instance per database binding (per isolate in production).
@@ -31,7 +40,9 @@ function auth(env: Env): Auth {
   const sendMagicLink = mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
     await mail.send({ to, from, subject: "Sign in to Norn Studio", text: `Sign in to Norn Studio: ${url}\n\nThe link expires in 10 minutes. If you did not ask for it, ignore this email.` })
   }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, ...sendMagicLink === undefined ? {} : { sendMagicLink } })
+  const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
+  const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
+  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...gateway === undefined ? {} : { gateway } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
@@ -49,7 +60,6 @@ export async function publicSignUp(response: Response): Promise<Response> {
 }
 
 /** Server-held workspace-to-cell configuration. Unmapped workspaces have no data cell. */
-const WORKSPACE_ENVIRONMENTS = new Map<string, string>([["org_demo", "analytics"]])
 
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
 async function me(request: Request, env: Env): Promise<Response> {
@@ -57,7 +67,7 @@ async function me(request: Request, env: Env): Promise<Response> {
   if (session === null) return refuse(401, "Sign in first.")
   const member = await activeMembership(auth(env), session.user.id, session.session.activeOrganizationId)
   return Response.json(
-    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role }, environmentId: member === null ? null : WORKSPACE_ENVIRONMENTS.get(member.organizationId) ?? null },
+    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role }, environmentId: member === null ? null : (await cellScope(auth(env), member.organizationId)).environmentId },
     { headers: { "cache-control": "no-store" } },
   )
 }
@@ -68,6 +78,9 @@ export default {
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
     if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
+    // The gateway provider is link-only: refuse every sign-in that could start from it (social and
+    // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
+    if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
     // Every Norn call goes to the host as the resolved actor; the host and its PDP decide.
@@ -77,6 +90,11 @@ export default {
       if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
+    }
+    if (pathname.startsWith("/api/connectors/")) {
+      // A gateway URL without its OAuth client is not a gateway this stage can use.
+      const gatewayEnv = env.TOOL_GATEWAY_CLIENT_ID === undefined || env.TOOL_GATEWAY_CLIENT_SECRET === undefined ? { ...env, TOOL_GATEWAY_URL: undefined } : env
+      return connectors(request, gatewayEnv, auth(env), pathname.slice("/api/connectors".length), { db: env.AUTH_DB, ...env.NORN_HOST === undefined ? {} : { host: env.NORN_HOST } })
     }
     const session = await auth(env).api.getSession({ headers: request.headers })
     if (session === null) return refuse(401, "Sign in first.")
