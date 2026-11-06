@@ -245,7 +245,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
                 <div className="sticky left-0 w-full max-w-[min(100%,64rem)] p-6">
                   {filterCount > 0
                     ? <EmptyState icon={Filter} title="No matches">No records match this filter. <Button variant="link" className="h-auto p-0" onClick={clearFilter}>Clear filter</Button></EmptyState>
-                    : <EmptyState icon={Rows3}>No {concept.title.toLowerCase()} records are stored yet.</EmptyState>}
+                    : <EmptyState icon={Rows3} title="No records yet">No {concept.title.toLowerCase()} records are stored yet.</EmptyState>}
                 </div>
               )}
               <div className="relative" style={{ height: virtual.getTotalSize() }}>
@@ -298,7 +298,7 @@ function RecordDrawer({ concept, fields, row, origin, onClose }: {
   const links = object.data?.links.document.items ?? []
   return (
     <Sheet open={row !== null} onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="w-[min(32rem,100vw)] overflow-y-auto sm:max-w-lg">
+      <SheetContent className="w-[min(32rem,100vw)] overflow-y-auto border-node-border shadow-float sm:max-w-lg">
         {row !== null && record !== undefined && <>
           <SheetHeader>
             <SheetTitle>{nameOf(row)}</SheetTitle>

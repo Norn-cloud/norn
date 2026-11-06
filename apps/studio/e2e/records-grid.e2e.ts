@@ -10,7 +10,7 @@ async function shoot(page: Page, name: string) {
   if (!shots) return
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme })
-    await page.waitForTimeout(150)
+    await page.waitForTimeout(400) // past the 200ms colour transitions, so no frame is caught between schemes
     await page.screenshot({ path: `${shots}/grid-${name}-${scheme}.png` })
   }
   await page.emulateMedia({ colorScheme: "light" })
