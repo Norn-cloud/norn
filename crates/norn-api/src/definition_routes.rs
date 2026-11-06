@@ -995,12 +995,17 @@ fn verify_signoff(
     let restatement = restate(kind, canonical, metrics).map_err(unavailable)?;
     let recomputed = payload_sha256(&restatement);
     if recomputed != claimed.restatement_sha256 {
-        return Err(Refusal::new(
+        // The caller's own admitted payload, restated: it discloses nothing
+        // the caller did not submit, and lets them sign these exact words.
+        let mut refusal = Refusal::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             codes::SIGNOFF_MISMATCH,
             "the sign-off does not match the definition",
-            "the restatement the signer read is not the one this definition restates to; reread it and sign again",
-        ));
+            "the restatement the signer read is not the one this definition restates to; read the returned restatement and sign it",
+        );
+        refusal.restatement = Some(restatement);
+        refusal.restatement_sha256 = Some(recomputed);
+        return Err(refusal);
     }
     Ok(recomputed)
 }
