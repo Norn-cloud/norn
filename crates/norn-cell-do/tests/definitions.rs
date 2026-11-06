@@ -175,7 +175,10 @@ fn admit_runs_the_dashboard_validator_without_side_effects() {
     let body = json!({ "kind": "dashboard", "id": "studio.dashboard.a", "payload": dashboard("Refinery") });
     let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
     assert_eq!(status, 200, "{admitted}");
-    assert_eq!(admitted, json!({ "admitted": true, "diagnostics": [] }));
+    assert_eq!(
+        admitted,
+        json!({ "admitted": true, "diagnostics": [], "restatement": null, "restatementSha256": null })
+    );
     // Nothing was installed: the catalog version did not move.
     let (_, after) = get(&cell, "/v1/definitions", "", ADMIN);
     assert_eq!(before["version"], after["version"]);
@@ -779,4 +782,101 @@ fn a_saved_question_signed_with_the_golden_digest_installs() {
         case["restatementSha256"]
     );
     assert_eq!(document["signoff"]["signer"], json!("viewer@demo"));
+}
+
+fn reworded(kind: &str, payload: &str, _metrics: &[MetricDefinition]) -> Result<String, String> {
+    let payload: Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+    Ok(format!("The {kind} called {}", payload["title"]))
+}
+
+/// Admit and GET return the server's restatement; GET recomputes it at read
+/// time, so a recorded sign-off whose words now restate differently shows it.
+#[test]
+fn admit_and_get_return_the_recomputed_restatement() {
+    let mut cell = cell(DefinitionKinds::default().with_restater(stub_restate));
+    let words = r#"A dashboard titled "Signed""#;
+    let body = json!({ "kind": "dashboard", "id": "studio.dashboard.signed", "payload": dashboard("Signed") });
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(status, 200, "{admitted}");
+    assert_eq!(admitted["restatement"], json!(words));
+    assert_eq!(admitted["restatementSha256"], json!(sha256(words)));
+    // Nothing to sign when the payload is not admitted.
+    let bad =
+        json!({ "kind": "dashboard", "id": "studio.dashboard.signed", "payload": dashboard("") });
+    let (_, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &bad);
+    assert_eq!(
+        (
+            refused["restatement"].clone(),
+            refused["restatementSha256"].clone()
+        ),
+        (Value::Null, Value::Null)
+    );
+
+    let mut signed = body;
+    signed["signoff"] = json!({ "restatementSha256": sha256(words) });
+    assert_eq!(
+        post(&cell, "/v1/definitions:install", ADMIN, &signed).0,
+        200
+    );
+    let read = |cell: &Cell| get(cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER).1;
+    let document = read(&cell);
+    assert_eq!(document["restatement"], json!(words));
+    assert_eq!(
+        document["restatementSha256"],
+        document["signoff"]["restatementSha256"]
+    );
+
+    // The same stored payload now restates differently: the recorded
+    // sign-off stays as it was, and the read shows the drift.
+    cell.kinds = DefinitionKinds::default().with_restater(reworded);
+    let drifted = read(&cell);
+    assert_eq!(
+        drifted["restatement"],
+        json!(r#"The dashboard called "Signed""#)
+    );
+    assert_eq!(drifted["signoff"], document["signoff"]);
+    assert_ne!(
+        drifted["restatementSha256"],
+        drifted["signoff"]["restatementSha256"]
+    );
+    // A cell without a restater has none to give.
+    cell.kinds = DefinitionKinds::default();
+    let bare = read(&cell);
+    assert_eq!(
+        (
+            bare["restatement"].clone(),
+            bare["restatementSha256"].clone()
+        ),
+        (Value::Null, Value::Null)
+    );
+}
+
+/// `:admit` returns the shared generator's golden words and digest for an
+/// admitted saved question, so a first sign-off signs exactly those.
+#[test]
+fn admit_returns_the_golden_restatement_to_sign() {
+    use norn_api::definition_routes::checker_restater;
+    let cell = cell(DefinitionKinds::default().with_restater(checker_restater));
+    let cases: Value = serde_json::from_str(CASES).unwrap();
+    let case = &cases["questions"][0];
+    let body =
+        json!({ "kind": "question", "id": "studio.question.golden", "payload": case["question"] });
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(status, 200, "{admitted}");
+    assert_eq!(admitted["admitted"], json!(true), "{admitted}");
+    assert_eq!(admitted["restatement"], case["restatement"]);
+    assert_eq!(admitted["restatementSha256"], case["restatementSha256"]);
+    // Signed with those words, it installs, and GET recomputes the same.
+    let mut signed = body;
+    signed["signoff"] = json!({ "restatementSha256": case["restatementSha256"] });
+    assert_eq!(
+        post(&cell, "/v1/definitions:install", ADMIN, &signed).0,
+        200
+    );
+    let (_, document) = get(&cell, "/v1/definitions/studio.question.golden", "", VIEWER);
+    assert_eq!(document["restatement"], case["restatement"]);
+    assert_eq!(
+        document["restatementSha256"],
+        document["signoff"]["restatementSha256"]
+    );
 }

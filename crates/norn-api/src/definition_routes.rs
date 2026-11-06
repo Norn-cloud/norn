@@ -310,6 +310,13 @@ pub struct AdmitDefinitionResponse {
     pub admitted: bool,
     /// Every finding, each pointing into the payload.
     pub diagnostics: Vec<RefusalDiagnostic>,
+    /// The plain-words restatement of the admitted payload a signer signs
+    /// (D59); null when not admitted or the kind has no restatement.
+    #[schema(required = true, nullable = true)]
+    pub restatement: Option<String>,
+    /// Lower-case hex SHA-256 of `restatement`; null with it.
+    #[schema(required = true, nullable = true)]
+    pub restatement_sha256: Option<String>,
 }
 
 /// The commit that installed a version.
@@ -418,6 +425,15 @@ pub struct DefinitionDocument {
     /// This version's sign-off; null when it was installed unsigned.
     #[schema(required = true, nullable = true)]
     pub signoff: Option<SignoffDocument>,
+    /// The restatement of this version's payload, recomputed at read time
+    /// against the cell's current declarations; null when the kind has none.
+    /// When it no longer hashes to `signoff.restatementSha256`, the words the
+    /// signer read have changed meaning since they signed.
+    #[schema(required = true, nullable = true)]
+    pub restatement: Option<String>,
+    /// Lower-case hex SHA-256 of `restatement`; null with it.
+    #[schema(required = true, nullable = true)]
+    pub restatement_sha256: Option<String>,
 }
 
 /// Whether `id` matches `^[a-z][a-z0-9._-]{0,127}$`.
@@ -809,7 +825,7 @@ pub fn admit_definition<E: SqlEngine>(
     authorize(host, scope, actor, Operation::WriteDefinitions)?;
     let actor = actor.ok_or_else(read_denied)?;
     check_id(&request.id)?;
-    let (_, diagnostics) = validate(
+    let (payload, diagnostics) = validate(
         host,
         scope,
         actor,
@@ -818,10 +834,36 @@ pub fn admit_definition<E: SqlEngine>(
         &request.kind,
         &request.payload,
     )?;
+    let admitted = admitted(&diagnostics);
+    let (restatement, restatement_sha256) = if admitted {
+        restate(kinds, questions, &request.kind, &payload.canonical)
+    } else {
+        (None, None)
+    };
     Ok(AdmitDefinitionResponse {
-        admitted: admitted(&diagnostics),
+        admitted,
         diagnostics,
+        restatement,
+        restatement_sha256,
     })
+}
+
+/// The registered restatement of `canonical` and its digest, against the
+/// cell's admitted metric declarations; `(None, None)` when the kind has none.
+fn restate<E: SqlEngine>(
+    kinds: &DefinitionKinds,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kind: &str,
+    canonical: &str,
+) -> (Option<String>, Option<String>) {
+    let metrics = questions.map_or(&[][..], |runtime| runtime.definitions());
+    kinds
+        .restater
+        .and_then(|restater| restater(kind, canonical, metrics).ok())
+        .map_or((None, None), |restatement| {
+            let digest = payload_sha256(&restatement);
+            (Some(restatement), Some(digest))
+        })
 }
 
 fn receipt<E: SqlEngine>(
@@ -1211,6 +1253,8 @@ pub fn get_definition<E: SqlEngine>(
     host: &DevHost<E>,
     query: &GetDefinitionQuery,
     actor: Option<&str>,
+    kinds: &DefinitionKinds,
+    questions: Option<&dyn AdHocQuestions<E>>,
     id: &str,
 ) -> Result<DefinitionDocument, Refusal> {
     let scope = ScopeQuery {
@@ -1229,7 +1273,15 @@ pub fn get_definition<E: SqlEngine>(
             .ok_or_else(not_found)?
     };
     let receipt = receipt(host, &record)?;
+    let (restatement, restatement_sha256) = restate(
+        kinds,
+        questions,
+        &record.definition.kind,
+        &record.definition.payload,
+    );
     Ok(DefinitionDocument {
+        restatement,
+        restatement_sha256,
         id: record.definition.id,
         kind: record.definition.kind,
         version: record.definition.revision,
