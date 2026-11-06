@@ -22,6 +22,9 @@ pub enum FlowStartError {
     /// The rule refused or failed the start turn.
     #[error("run.start_refused: {0}")]
     Refused(String),
+    /// The rule refused or failed a result turn.
+    #[error("run.turn_refused: {0}")]
+    TurnRefused(String),
 }
 
 impl FlowStartError {
@@ -31,6 +34,7 @@ impl FlowStartError {
         match self {
             Self::Inadmissible(_) => "run.flow_inadmissible",
             Self::Refused(_) => "run.start_refused",
+            Self::TurnRefused(_) => "run.turn_refused",
         }
     }
 }
@@ -97,8 +101,20 @@ pub fn flow_result(
             )])),
         ),
     ]);
+    // An unset property is absent from the slice, as the closed slice schema
+    // expects; the stored object carries it as null.
+    let run = run
+        .into_iter()
+        .filter(|(_, value)| !matches!(value, RuntimeValue::Null))
+        .collect();
     let slice = BTreeMap::from([("run".to_owned(), RuntimeValue::Object(run))]);
-    flow_turn(rule, environment_hash, slice, event)
+    flow_turn(rule, environment_hash, slice, event).map_err(|error| {
+        if let FlowStartError::Refused(reason) = error {
+            FlowStartError::TurnRefused(reason)
+        } else {
+            error
+        }
+    })
 }
 
 fn flow_turn(
