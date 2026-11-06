@@ -93,16 +93,20 @@ function Frame(props: CanvasFrameProps) {
   const [notice, setNotice] = useState<{ readonly tone: "refusal" | "info"; readonly text: string } | null>(props.initialNotice
     ?? (restored.current ? { tone: "info", text: `Restored your unsaved draft from ${new Date(restored.current.at).toLocaleString()}.` } : null))
   const flow = useReactFlow()
-  // Whether the last pointer-down was on the canvas: its shortcuts apply only then.
+  // Whether the canvas is in use: the last pointer-down landed on it, or keyboard focus moved into it
+  // (React Flow nodes take focus and selection from the keyboard). Its shortcuts apply only then.
   const canvasActive = useRef(false)
   useEffect(() => {
-    const track = (event: PointerEvent) => {
-      canvasActive.current = event.target instanceof Element && event.target.closest("[data-canvas-surface]") !== null
+    const inCanvas = (target: EventTarget | null) => target instanceof Element && target.closest("[data-canvas-surface]") !== null
+    const pointer = (event: PointerEvent) => {
+      canvasActive.current = inCanvas(event.target)
       // React Flow keeps the browser from clearing a page text selection on the canvas; clear it, so copy means the canvas.
       if (canvasActive.current) window.getSelection()?.removeAllRanges()
     }
-    window.addEventListener("pointerdown", track, true)
-    return () => window.removeEventListener("pointerdown", track, true)
+    const focus = (event: FocusEvent) => { canvasActive.current = inCanvas(event.target) }
+    window.addEventListener("pointerdown", pointer, true)
+    window.addEventListener("focusin", focus, true)
+    return () => { window.removeEventListener("pointerdown", pointer, true); window.removeEventListener("focusin", focus, true) }
   }, [])
   const graph = state.present
   const dirty = JSON.stringify(graph) !== JSON.stringify(initial)
