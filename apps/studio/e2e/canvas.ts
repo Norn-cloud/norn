@@ -104,9 +104,14 @@ export async function clickEdge(page: Page, id: string) {
 /** Drag from one handle to another, as a user draws a connection. */
 export async function drag(page: Page, from: Locator, to: Locator) {
   await reveal(page, from, to)
+  await Promise.all([from, to].map((end) => end.waitFor({ state: "attached", timeout: 5_000 }).catch(() => undefined)))
   const a = await from.boundingBox()
   const b = await to.boundingBox()
-  if (!a || !b) throw new Error("handle not visible")
+  if (!a || !b) {
+    // Say which end is missing and what its edge or node holds, so a failure names its cause.
+    const holder = async (end: Locator) => end.evaluate((element) => (element.closest(".react-flow__edge, .react-flow__node") ?? element).outerHTML.slice(0, 600)).catch(() => "not in the page")
+    throw new Error(`drag end not visible: ${!a ? `from (${await holder(from)})` : ""} ${!b ? `to (${await holder(to)})` : ""}`)
+  }
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2)
   await page.mouse.down()
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 })
