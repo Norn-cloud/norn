@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, type ConnectorDeps } from "../connectors.ts"
+import { canonicalJson, manifestDigest, toolManifest } from "../bindings.ts"
 import worker, { type Env } from "../index.ts"
 
 // The Worker takes an execution context on the integration line (the assistant spends through ctx.waitUntil).
@@ -33,6 +34,7 @@ function stage(gatewayClient = false) {
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   db.exec(migration("0002_connector_binding.sql"))
+  db.exec(migration("0003_connector_binding_manifest.sql"))
   const env: Env = {
     ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
     AUTH_DB: db as unknown as D1Database,
@@ -47,7 +49,7 @@ function stage(gatewayClient = false) {
     calls.push(request)
     const { pathname } = new URL(request.url)
     if (pathname === "/api/context") return Response.json({ organization: "gw-org", slug: "acme", role: "member", gitOrigins: [GATEWAY] })
-    if (pathname === "/api/organizations/gw-org/apps/github/tools/list_issues") return Response.json({ name: "list_issues", inputSchema: ISSUES })
+    if (pathname === "/api/organizations/gw-org/apps/github/tools/list_issues") return Response.json({ name: "list_issues", inputSchema: ISSUES, version: "dpl_1" })
     return answer(request)
   }) as typeof fetch
   const deps: ConnectorDeps = { db: d1(db), grant: async () => TOKEN, fetch: fetcher }
@@ -58,7 +60,7 @@ function stage(gatewayClient = false) {
     const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { TOOL_GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides })
     const text = await response.text()
     expect(text).not.toContain(TOKEN)
-    return { status: response.status, body: JSON.parse(text) as Record<string, unknown> }
+    return { status: response.status, body: JSON.parse(text) as Record<string, unknown>, cookies: response.headers.getSetCookie() }
   }
   /** A new person; with `colleagueOf`, a member of that person's organization instead of their own. */
   const signUp = async (email: string, role = "owner", colleagueOf?: string) => {
@@ -79,7 +81,7 @@ const gatewayCalls = (calls: Request[], from: number) => calls.slice(from).filte
 
 test("every route needs a signed-in person and names its refusal", async () => {
   const { send } = stage()
-  expect(await send("/inventory")).toEqual({ status: 401, body: { code: "connectors.sign_in", error: "Sign in first." } })
+  expect(await send("/inventory")).toMatchObject({ status: 401, body: { code: "connectors.sign_in", error: "Sign in first." } })
 })
 
 test("gateway sign-in: status, connect, reconnect and disconnect", async () => {
@@ -92,11 +94,16 @@ test("gateway sign-in: status, connect, reconnect and disconnect", async () => {
   expect((await send("/inventory", { cookie: owner }, { grant: undefined })).body).toMatchObject({ code: "connectors.not_linked", action: { kind: "sign_in_gateway" } })
   for (let attempt = 0; attempt < 2; attempt++) {
     // Connecting and reconnecting are the same authorization-code link with PKCE, back to Connections.
-    const url = new URL(String((await send("/link", { method: "POST", cookie: owner })).body.url))
+    const linked = await send("/link", { method: "POST", cookie: owner })
+    // The OAuth state cookie reaches the browser, so the callback can match it.
+    expect(linked.cookies.some((cookie) => /state/i.test(cookie.split("=")[0] ?? ""))).toBe(true)
+    const url = new URL(String(linked.body.url))
     expect(`${url.origin}${url.pathname}`).toBe(`${GATEWAY}/api/auth/oauth2/authorize`)
     expect([url.searchParams.get("client_id"), url.searchParams.get("code_challenge_method")]).toEqual(["studio", "S256"])
     expect(url.searchParams.get("scope")?.split(" ").sort()).toEqual(["executor", "offline_access"])
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/callback/executor`)
+    // RFC 8707: the gateway refuses an authorization without its product API as the resource.
+    expect(url.searchParams.get("resource")).toBe(`${GATEWAY}/api`)
   }
   expect((await send("/unlink", { method: "POST", cookie: owner }, { grant: undefined })).body).toEqual({ linked: false })
 })
@@ -139,9 +146,13 @@ test("tool bindings: an admin adds, edits and removes them; the mapping is check
   const added = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Norn issues", inputMapping: { repo: { fixed: "norn" } } }), cookie: owner })
   const binding = added.body.binding as { id: string }
   expect(added.body.binding).toMatchObject({ app: "github", tool: "list_issues", label: "Norn issues", inputMapping: { repo: { fixed: "norn" } }, runRole: "member" })
+  // Pinned by manifest digest, with the connector it came from.
+  const digest = await manifestDigest(toolManifest({ app: "github", name: "list_issues", inputSchema: ISSUES, outputSchema: null }))
+  expect(added.body.binding).toMatchObject({ manifestDigest: digest, connector: { gateway: "executor", origin: GATEWAY, app: "github", tool: "list_issues", version: "dpl_1" } })
+  expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/)
   const edited = await send(`/bindings/${binding.id}`, { ...body("PATCH", { label: "Open Norn issues", inputMapping: { repo: { fixed: "norn" }, state: { fixed: "open" } }, runRole: "admin" }), cookie: owner })
   expect(edited.body.binding).toMatchObject({ id: binding.id, label: "Open Norn issues", runRole: "admin", inputMapping: { state: { fixed: "open" } } })
-  expect((await send("/bindings", { cookie: owner })).body).toMatchObject({ manage: true, bindings: [{ id: binding.id, label: "Open Norn issues" }] })
+  expect((await send("/bindings", { cookie: owner })).body).toMatchObject({ manage: true, bindings: [{ id: binding.id, label: "Open Norn issues", manifestDigest: digest, connector: { app: "github", tool: "list_issues" } }] })
   for (const [mapping, field] of [[{ nope: { fixed: 1 } }, "inputMapping.nope"], [{ limit: { fixed: "ten" } }, "inputMapping.limit"], [{ state: { fixed: "merged" } }, "inputMapping.state"]] as const) {
     expect((await send(`/bindings/${binding.id}`, { ...body("PATCH", { inputMapping: mapping }), cookie: owner })).body).toMatchObject({ code: "connectors.binding_invalid", field })
   }
@@ -158,8 +169,8 @@ test("tools list with their schemas and the bindings that let them run", async (
   const { body: added } = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner })
   answer(() => Response.json({ items: [{ name: "list_issues", description: "List issues", inputSchema: ISSUES }, { name: "delete_repo", inputSchema: { type: "object" } }] }))
   expect((await send("/apps/github/tools", { cookie: owner })).body.tools).toEqual([
-    { app: "github", name: "list_issues", description: "List issues", inputSchema: ISSUES, outputSchema: null, bindings: [(added.binding as { id: string }).id] },
-    { app: "github", name: "delete_repo", description: null, inputSchema: { type: "object" }, outputSchema: null, bindings: [] },
+    { app: "github", name: "list_issues", description: "List issues", inputSchema: ISSUES, outputSchema: null, version: null, bindings: [(added.binding as { id: string }).id] },
+    { app: "github", name: "delete_repo", description: null, inputSchema: { type: "object" }, outputSchema: null, version: null, bindings: [] },
   ])
 })
 
@@ -222,4 +233,13 @@ test("the gateway subject comes from introspection with Studio's client credenti
   expect(await seen[0]?.text()).toBe("token=tok&token_type_hint=access_token")
   expect(await gatewaySubject(client, "tok", answer({ active: false }))).toBeNull()
   expect(await gatewaySubject(client, undefined, answer({}))).toBeNull()
+})
+
+test("the manifest digest is over canonical JSON: key order does not change it, the contract does", async () => {
+  expect(canonicalJson({ b: [1, { d: true, c: null }], a: "x" })).toBe('{"a":"x","b":[1,{"c":null,"d":true}]}')
+  const a = await manifestDigest(toolManifest({ app: "github", name: "t", inputSchema: { type: "object", properties: { x: { type: "string" } } }, outputSchema: null }))
+  const reordered = await manifestDigest(toolManifest({ app: "github", name: "t", inputSchema: { properties: { x: { type: "string" } }, type: "object" }, outputSchema: null }))
+  const changed = await manifestDigest(toolManifest({ app: "github", name: "t", inputSchema: { type: "object", properties: { x: { type: "integer" } } }, outputSchema: null }))
+  expect(a).toBe(reordered)
+  expect(a).not.toBe(changed)
 })

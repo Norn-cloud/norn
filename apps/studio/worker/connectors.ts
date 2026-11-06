@@ -1,6 +1,6 @@
 import { originAllowed, resolveActor, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
-import { getBinding, listBindings, readDraft, removeBinding, runInput, saveBinding, type Binding } from "./bindings.ts"
+import { getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, saveBinding, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
@@ -121,8 +121,12 @@ export async function connectors(request: Request, env: ConnectorEnv, auth: Auth
   if (gatewayOrigin === undefined) return refusal(503, "connectors.not_configured", "No tool gateway is configured for this deployment.")
   if (route === "POST /link") {
     // Connect and reconnect: the generic OAuth provider is a social provider to Better Auth; linking needs the session.
-    const { url } = await auth.api.linkSocialAccount({ body: { provider: GATEWAY_PROVIDER, callbackURL: "/connections" }, headers: request.headers })
-    return ok({ url })
+    // Better Auth keeps the OAuth state in a signed cookie it sets here; the browser must receive
+    // it, or the callback refuses with a state mismatch.
+    const { headers: set, response } = await auth.api.linkSocialAccount({ body: { provider: GATEWAY_PROVIDER, callbackURL: "/connections" }, headers: request.headers, returnHeaders: true })
+    const answer = ok({ url: response.url })
+    for (const cookie of set.getSetCookie()) answer.headers.append("set-cookie", cookie)
+    return answer
   }
   if (route === "POST /unlink") {
     const accountId = await gatewayAccount(auth, request)
@@ -184,7 +188,9 @@ export async function connectors(request: Request, env: ConnectorEnv, auth: Auth
       const tool = await gateway.tool(organization, target.app, target.tool)
       const draft = readDraft(body, tool.inputSchema, existing)
       if ("error" in draft) return refusal(400, "connectors.binding_invalid", draft.error, undefined, draft.field)
-      return ok({ binding: await saveBinding(db, actor.orgId, actor.subjectId, draft, existing?.id) })
+      // Pinned to the tool as the gateway serves it now: the canvas and the host admit by this digest, never by name.
+      const pin = { manifestDigest: await manifestDigest(toolManifest(tool)), connector: { gateway: "executor" as const, origin: gatewayOrigin, app: tool.app, tool: tool.name, version: tool.version } }
+      return ok({ binding: await saveBinding(db, actor.orgId, actor.subjectId, draft, pin, existing?.id) })
     }
 
     const runRoute = /^\/bindings\/([^/]+)\/run$/.exec(path)

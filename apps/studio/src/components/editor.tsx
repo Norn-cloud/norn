@@ -75,7 +75,7 @@ export function RowActions({ index, count, label, onDuplicate, onMove, onRemove 
 }
 
 /** The server's findings, each a link to the field it concerns. */
-export function ValidationPanel({ issues, title = "The server found problems" }: { readonly issues: readonly Issue[]; readonly title?: string }) {
+export function ValidationPanel({ issues, title = "The server found problems", details }: { readonly issues: readonly Issue[]; readonly title?: string; readonly details?: React.ReactNode }) {
   if (issues.length === 0) return null
   const jump = (field: string) => {
     const target = globalThis.document?.querySelector<HTMLElement>(`[data-field="${CSS.escape(field)}"]`)
@@ -93,6 +93,7 @@ export function ValidationPanel({ issues, title = "The server found problems" }:
           </li>
         ))}
       </ul>
+      {details !== undefined && <details className="text-meta text-muted-foreground"><summary className="cursor-pointer">Details</summary><div className="mt-1">{details}</div></details>}
     </div>
   )
 }

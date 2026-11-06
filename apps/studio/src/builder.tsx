@@ -64,9 +64,9 @@ export function buildQuestion(draft: Draft, catalog: QuestionCatalog) {
  * groupBy, filter) and the checker's own (metrics, dimensions, filters) place.
  */
 export function fieldOf(pointer: string | null): string | null {
-  // The checker's pointers start at the checked document (/questions/0/...); the cell's evaluate route at the question itself.
   const parts = (pointer ?? "").split("/").slice(1)
-  const [section, index] = parts[0] === "questions" ? parts.slice(2) : parts
+  // The checker's pointers start at the checked document (/questions/0/...), the cell's evaluate route at /question.
+  const [section, index] = parts[0] === "questions" ? parts.slice(2) : parts[0] === "question" ? parts.slice(1) : parts
   if (section === "aggregate" || section === "metrics") return index === undefined ? "measures" : `measure.${index}`
   if (section === "groupBy" || section === "dimensions") return "by"
   if (section === "filter" || section === "filters") return index === undefined ? "filters" : `filter.${index}`
@@ -193,8 +193,9 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
       <div className="space-y-3">
         {check.isIdle && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
         {check.isError && <p role="alert" className="text-destructive">{check.error.message}</p>}
-        {check.data && <ValidationPanel issues={issues} title="The checker refused this question" />}
-        {check.data && <QuestionCard verdict={check.data} />}
+        {/* One place for a refusal: the panel links each finding to its field; its codes are under Details. */}
+        {check.data && !check.data.admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{check.data.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
+        {check.data?.admitted && <QuestionCard verdict={check.data} />}
         {/* Only the question the checker admitted, and only while the form still shows it. */}
         {/* Run: the question exactly as the checker admitted it, while the form still shows it. */}
         {check.data?.admitted && check.variables && JSON.stringify(check.variables) === JSON.stringify(draft) && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}

@@ -38,6 +38,8 @@ test("the cell's route: admit, install, retire as CELL-DO documents them; anythi
   await expect(cellDefinitions(answer(404, {})).admit("x", dashboard)).rejects.toBeInstanceOf(NotConnected)
   await expect(cellDefinitions(answer(403, { code: "authz.denied" })).install("x", dashboard)).rejects.toThrow("Your role may not read or change these definitions.")
   await expect(cellDefinitions(async () => { throw new TypeError("network") }).install("x", dashboard)).rejects.toBeInstanceOf(CellUnavailable)
+  expect(new CellUnavailable(404).message).toBe("The cell's definition route isn't connected yet; nothing was read or saved.")
+  expect(new CellUnavailable(502).message).toBe("The cell did not answer (502); nothing was read or saved.")
   const reads: string[] = []
   const reader = (status: number, body: unknown) => async (path: string) => { reads.push(path); return new Response(JSON.stringify(body), { status }) }
   expect(await cellDefinitions(reader(200, { items: [{ id: "studio.dashboard.refinery", kind: "dashboard", title: "Refinery", version: 3, lifecycle: "active", updatedAtMs: 5 }], cursor: "c2" })).list())

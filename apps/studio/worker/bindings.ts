@@ -9,6 +9,17 @@ export type RunRole = "member" | "admin"
 /** A field the binding fixes; the person running it supplies every other field. */
 export type InputMapping = Readonly<Record<string, { readonly fixed: unknown }>>
 
+/** What a binding binds, as the canvas and the host admission identify it: never by name alone. */
+export interface ConnectorRef {
+  readonly gateway: "executor"
+  /** The gateway origin the tool came from. */
+  readonly origin: string
+  readonly app: string
+  readonly tool: string
+  /** The app version the tool was read from when the binding was last saved; null when the gateway did not say. */
+  readonly version: string | null
+}
+
 export interface Binding {
   readonly id: string
   readonly app: string
@@ -18,6 +29,9 @@ export interface Binding {
   readonly runRole: RunRole
   readonly updatedBy: string
   readonly updatedAt: number
+  /** `sha256:<hex>` of the tool manifest (see `toolManifest`) the binding was saved against. */
+  readonly manifestDigest: string
+  readonly connector: ConnectorRef
 }
 
 export interface BindingDraft {
@@ -28,12 +42,13 @@ export interface BindingDraft {
   readonly runRole: RunRole
 }
 
-interface Row { id: string; app: string; tool: string; label: string; input_mapping: string; run_role: RunRole; updated_by: string; updated_at: number }
+interface Row { id: string; app: string; tool: string; label: string; input_mapping: string; run_role: RunRole; updated_by: string; updated_at: number; manifest_digest: string; connector: string }
 const fromRow = (row: Row): Binding => ({
   id: row.id, app: row.app, tool: row.tool, label: row.label, inputMapping: JSON.parse(row.input_mapping) as InputMapping,
   runRole: row.run_role, updatedBy: row.updated_by, updatedAt: row.updated_at,
+  manifestDigest: row.manifest_digest, connector: JSON.parse(row.connector) as ConnectorRef,
 })
-const COLUMNS = "id, app, tool, label, input_mapping, run_role, updated_by, updated_at"
+const COLUMNS = "id, app, tool, label, input_mapping, run_role, updated_by, updated_at, manifest_digest, connector"
 
 export async function listBindings(db: D1Database, orgId: string): Promise<readonly Binding[]> {
   const { results } = await db.prepare(`SELECT ${COLUMNS} FROM connector_binding WHERE org_id = ? ORDER BY app, tool, label`).bind(orgId).all<Row>()
@@ -46,13 +61,43 @@ export async function getBinding(db: D1Database, orgId: string, id: string): Pro
   return row === undefined ? null : fromRow(row)
 }
 
-export async function saveBinding(db: D1Database, orgId: string, actor: string, draft: BindingDraft, id: string = crypto.randomUUID()): Promise<Binding> {
+/** The manifest a binding is pinned to: the tool's identity and its input and output contract. */
+export interface ToolManifest {
+  readonly format: "norn.connector-tool-manifest/1"
+  readonly gateway: "executor"
+  readonly app: string
+  readonly tool: string
+  readonly inputSchema: unknown
+  readonly outputSchema: unknown
+}
+
+export const toolManifest = (tool: { readonly app: string; readonly name: string; readonly inputSchema: unknown; readonly outputSchema: unknown }): ToolManifest =>
+  ({ format: "norn.connector-tool-manifest/1", gateway: "executor", app: tool.app, tool: tool.name, inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null })
+
+/** JSON with object keys sorted at every level and no whitespace (RFC 8785 for the JSON schemas carry). */
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null"
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  const entries = Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`
+}
+
+/** `sha256:<hex>` of the manifest's canonical JSON. */
+export async function manifestDigest(manifest: ToolManifest): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJson(manifest))))
+  return `sha256:${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`
+}
+
+/** What the live tool contributes to a save: its manifest digest and connector reference. */
+export interface Pin { readonly manifestDigest: string; readonly connector: ConnectorRef }
+
+export async function saveBinding(db: D1Database, orgId: string, actor: string, draft: BindingDraft, pin: Pin, id: string = crypto.randomUUID()): Promise<Binding> {
   const now = Date.now()
   await db.prepare(
-    "INSERT INTO connector_binding (id, org_id, app, tool, label, input_mapping, run_role, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-    "ON CONFLICT (id) DO UPDATE SET label = excluded.label, input_mapping = excluded.input_mapping, run_role = excluded.run_role, updated_by = excluded.updated_by, updated_at = excluded.updated_at",
-  ).bind(id, orgId, draft.app, draft.tool, draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, actor, now).run()
-  return { id, ...draft, updatedBy: actor, updatedAt: now }
+    "INSERT INTO connector_binding (id, org_id, app, tool, label, input_mapping, run_role, created_by, created_at, updated_by, updated_at, manifest_digest, connector) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT (id) DO UPDATE SET label = excluded.label, input_mapping = excluded.input_mapping, run_role = excluded.run_role, updated_by = excluded.updated_by, updated_at = excluded.updated_at, manifest_digest = excluded.manifest_digest, connector = excluded.connector",
+  ).bind(id, orgId, draft.app, draft.tool, draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, actor, now, pin.manifestDigest, JSON.stringify(pin.connector)).run()
+  return { id, ...draft, updatedBy: actor, updatedAt: now, ...pin }
 }
 
 export async function removeBinding(db: D1Database, orgId: string, id: string): Promise<boolean> {
