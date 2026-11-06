@@ -31,6 +31,9 @@ where
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
         self.inner.authorize(request)
     }
+    fn read(&self, request: &crate::authz::ReadRequest<'_>) -> Result<(), Refusal> {
+        self.inner.read(request)
+    }
     fn action(
         &self,
         request: &norn_kernel::ActionAuthzRequest<'_>,
