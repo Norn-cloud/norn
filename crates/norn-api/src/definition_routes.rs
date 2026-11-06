@@ -200,7 +200,7 @@ pub struct DefinitionKinds {
 pub type Restater = fn(&str, &str, &[MetricDefinition]) -> Result<String, String>;
 
 /// The shared generator (`norn_checker::metric::restate`) as a [`Restater`]:
-/// a saved `question` is restated as its QuestionIR, a `dashboard` as its
+/// a saved `question` is restated as its `QuestionIR`, a `dashboard` as its
 /// title line and one line per tile; other kinds have nothing to restate.
 ///
 /// # Errors
