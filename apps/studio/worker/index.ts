@@ -110,6 +110,8 @@ export default {
     if (pathname === "/api/agent") {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
+      // The assistant is for people; organization API keys may not spend its budget.
+      if (actor.actorKind !== "user") return refuse(403, "The assistant is for signed-in users, not API keys.")
       if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
       return agent(request, env, ctx)
     }

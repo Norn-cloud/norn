@@ -145,8 +145,8 @@ test("a member removed from the organization, or switched to one they left, reac
   expect(seen).toHaveLength(0)
 })
 
-test("the assistant answers only a signed-in actor, from the Studio's own origin, and never a client-named actor", async () => {
-  const { env } = stage()
+test("the assistant answers only a signed-in user, from the Studio's own origin, never an API key or a client-named actor", async () => {
+  const { env, auth } = stage()
   const post = (headers: Record<string, string>) => call(env, "/api/agent", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ messages: [] }) })
   expect((await post({ origin: ORIGIN })).status).toBe(401)
   expect((await post({ origin: ORIGIN, "x-norn-actor": "admin" })).status).toBe(400)
@@ -154,4 +154,9 @@ test("the assistant answers only a signed-in actor, from the Studio's own origin
   expect((await post({ cookie, origin: "https://elsewhere.example" })).status).toBe(403)
   // Signed in and same-origin, it reaches the assistant, which this stage runs without.
   expect((await post({ cookie, origin: ORIGIN })).status).toBe(503)
+  const owner = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner?.orgId }, headers: new Headers({ cookie }) })
+  const refused = await post({ "x-api-key": key.key })
+  expect(refused.status).toBe(403)
+  expect(await refused.json()).toEqual({ error: "The assistant is for signed-in users, not API keys." })
 })
