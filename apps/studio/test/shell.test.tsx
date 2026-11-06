@@ -53,14 +53,17 @@ test("the page bar holds search, the view toggle, shortcuts and notifications; t
   expect(html).toMatch(/aria-checked="true"[^>]*>Business</)
   expect(html).toContain("Keyboard shortcuts")
   expect(html).toContain("Notifications")
-  expect(html).toContain("Synthetic world")
+  expect(html).toContain("Jewelry")
   expect(html).toContain("Viewing as Recorded demo")
 })
 
-test("only workspaces with recorded documents open; the rest say they have none", () => {
+test("only the recorded jewelry world opens; the NC benchmark points to its offline results; the rest say why they are empty", () => {
   expect(new Set(WORKSPACES.map(({ group }) => group))).toEqual(new Set(["Class demos", "Industry benchmarks", "First-party"]))
-  expect(WORKSPACES.filter(({ recorded }) => recorded).map(({ id }) => id)).toEqual(["synthetic"])
-  for (const workspace of WORKSPACES.filter(({ recorded }) => !recorded)) expect(workspace.detail).toBe("No recorded run in Studio yet")
+  expect(WORKSPACES.filter(({ recorded }) => recorded).map(({ id, group }) => `${group}/${id}`)).toEqual(["First-party/jewelry"])
+  const olist = WORKSPACES.find(({ id }) => id === "olist")
+  expect(olist?.detail).toBe("Benchmark run offline (licence NC)")
+  expect(olist?.results).toBe("https://github.com/Norn-cloud/norn/issues/531")
+  expect(WORKSPACES.find(({ group }) => group === "Class demos")?.detail).toBe("Coming soon")
 })
 
 test("a long section shows six entries and offers the rest, keeping the open one in view", async () => {
