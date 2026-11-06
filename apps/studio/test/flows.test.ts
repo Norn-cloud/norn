@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { FlowCellError, FlowRoutesMissing, flowStore, newRunId, nodeOfFinding, type FlowPayload } from "../src/lib/canvas/flows.ts"
+import { FlowCellError, FlowRoutesMissing, automationId, flowStore, newRunId, nodeOfFinding, restateFlow, type FlowPayload } from "../src/lib/canvas/flows.ts"
 
 const scope = { orgId: "org_demo", environmentId: "analytics" }
 const payload: FlowPayload = { flow: { id: "studio.automation", version: "0.1.0" }, artifacts: [{ kind: "entity" }], layout: { nodes: [], edges: [] } }
@@ -45,4 +45,23 @@ test("a refusal lands on the step it names, or on a step by a state it lowered t
   expect(nodeOfFinding({ code: "c", message: "step remind calls an unknown function", pointer: null }, ["load", "remind"], states)).toBe("remind")
   expect(nodeOfFinding({ code: "c", message: "state awaiting_perform_load has no way out", pointer: null }, ["start"], states)).toBe("load")
   expect(nodeOfFinding({ code: "c", message: "the flow id does not match", pointer: "/flow/id" }, ["load", "remind"], states)).toBeUndefined()
+})
+
+test("an automation's id is minted from its title, a valid flow id, and unique against the ids taken", () => {
+  expect(automationId("Payment reminders")).toBe("studio.automation.payment_reminders")
+  expect(automationId("Payment reminders", ["studio.automation.payment_reminders"])).toBe("studio.automation.payment_reminders_2")
+  expect(automationId("2nd pass!")).toBe("studio.automation.a_2nd_pass")
+  expect(automationId("  ")).toBe("studio.automation.untitled")
+  for (const id of [automationId("Payment reminders"), automationId("2nd pass!")]) expect(id).toMatch(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/)
+})
+
+test("the sign-off seam: no flow restatement yet, so no words and no sign-off; when there is one, install sends its hash", async () => {
+  expect(await restateFlow(payload)).toBeUndefined()
+  await answering(200, { installed: true, id: "x", version: 1, receipt: {} }).install("studio.automation", payload, undefined, "a".repeat(64))
+  expect(calls.at(-1)?.body).toMatchObject({ signoff: { restatementSha256: "a".repeat(64) } })
+})
+
+test("the saved automations list reads kind flow", async () => {
+  expect(await answering(200, { items: [{ id: "studio.automation.a", title: "A", version: 2, lifecycle: "active" }], cursor: null }).list()).toEqual({ items: [{ id: "studio.automation.a", title: "A", version: 2, lifecycle: "active" }], cursor: null })
+  expect(calls.at(-1)?.path).toBe("/api/host/v1/definitions:list?orgId=org_demo&environmentId=analytics&kind=flow&limit=50")
 })

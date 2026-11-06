@@ -11,7 +11,7 @@ import { CARD, EDGE_PILL, InspectorHead, InspectorSection, KindChip, NodeCard, c
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
 import { RunButton } from "./run-button.tsx"
-import { FlowRoutesMissing, flowStore, nodeOfFinding, type FlowFinding, type FlowPayload, type FlowStore } from "./lib/canvas/flows.ts"
+import { FlowRoutesMissing, automationId, flowStore, nodeOfFinding, restateFlow, type FlowFinding, type FlowPayload, type FlowStore } from "./lib/canvas/flows.ts"
 import { scopeOf } from "./lib/scope.ts"
 import { useAccount } from "./lib/session.ts"
 import { automationKinds, branchesOf, flowDefinitionPayload, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
@@ -25,7 +25,16 @@ import { LABEL_ROOM_MAX, exitLabel, exitLabels, formatCondition } from "./lib/ca
 import { words } from "./lib/format.ts"
 
 /** The automation's identity and display title (the frame's label); the title rides into the flow as display data. */
-const META = { id: "studio.automation", version: "0.1.0", title: "Automation" }
+/** One automation: its definition id (minted from its title at creation, kept for good) and its title. */
+export interface Automation { readonly id: string; readonly title: string }
+/** The automation the canvas opens with, drawn as the billing example until it is saved and reopened. */
+export const FIRST: Automation = { id: "studio.automation.invoice_follow_up", title: "Invoice follow-up" }
+/** A new automation starts with its start and one outcome, a flow that lowers and can be built on. */
+export const NEW_AUTOMATION: g.Graph = {
+  nodes: [{ id: "start", kind: "start", position: { x: 0, y: 120 }, config: {} }, { id: "done", kind: "succeed", position: { x: 280, y: 120 }, config: { outcome: "done" } }],
+  edges: [{ id: "start.next", source: "start", sourcePort: "next", target: "done", targetPort: "in", config: {} }],
+}
+const metaOf = (automation: Automation) => ({ id: automation.id, version: "0.1.0", title: automation.title })
 export const STEP_KINDS = { start: "Start", perform: "Tool", decide: "Ask a person", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
 export const RUN_BLOCKED = "Running happens in the cell with receipts; the run route is not live yet."
 
@@ -245,9 +254,9 @@ const DEFAULTS: Record<string, Record<string, string>> = {
 }
 
 /** The frame's props for an automation; the sheet renders the same props with fixed findings. */
-export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.Graph = EXAMPLE): CanvasFrameProps {
+export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.Graph = EXAMPLE, automation: Automation = FIRST): CanvasFrameProps {
   return {
-    draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
+    draftKey: `automation:${automation.id}`, label: automation.title, initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
     saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
     fixed: (node) => node.kind === "start",
     tidy: (graph) => tidy(graph, STEP_SPACING),
@@ -295,13 +304,19 @@ export const NO_CELL = "This workspace has no data cell yet"
  * (admit, then install as the version after the one opened); the cell's refusals land on the steps they name. Run
  * starts the saved version and opens its run. Retire takes it out of use; the cell keeps its history.
  */
-export function AutomationEditor({ store: given }: { readonly store?: FlowStore | null } = {}) {
+export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
+  readonly automation?: Automation
+  /** The drawing a newly created automation starts from (until it is saved). */
+  readonly fresh?: g.Graph
+  readonly store?: FlowStore | null
+} = {}) {
+  const meta = metaOf(automation)
   const account = useAccount()
   const scope = given !== undefined ? null : scopeOf(account.data)
   const store = useMemo(() => given !== undefined ? given : scope ? flowStore(scope) : null, [given, scope?.orgId, scope?.environmentId])
   const noCell = store === null && !account.isPending
   const client = useQueryClient()
-  const stored = useQuery({ queryKey: ["flow", META.id, scope?.orgId, scope?.environmentId], queryFn: async () => (await store!.get(META.id)) ?? null, enabled: store !== null, retry: false })
+  const stored = useQuery({ queryKey: ["flow", meta.id, scope?.orgId, scope?.environmentId], queryFn: async () => (await store!.get(meta.id)) ?? null, enabled: store !== null, retry: false })
   const routesDown = stored.error instanceof FlowRoutesMissing
   const [at, setAt] = useState<{ readonly version: number }>()
   useEffect(() => { setAt(stored.data ? { version: stored.data.version } : undefined) }, [stored.data])
@@ -311,7 +326,7 @@ export function AutomationEditor({ store: given }: { readonly store?: FlowStore 
   const [busy, setBusy] = useState(false)
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const issues = useCallback((graph: g.Graph) => {
-    const { lowered, problems } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
+    const { lowered, problems } = lower(graph, RECORDED_TOOLS, meta, RECORDED_SCOPE)
     const own: Issue[] = problems.map(({ code, message, node }) => ({ code, message, ...(node ? { node } : {}) }))
     const cell = refused && refused.drawing === JSON.stringify(graph) ? refused.issues : []
     if (!lowered) return { issues: [...own, ...cell], status: <Badge variant="destructive">{own.length} {own.length === 1 ? "finding" : "findings"}</Badge> }
@@ -321,10 +336,10 @@ export function AutomationEditor({ store: given }: { readonly store?: FlowStore 
     const owner = (message: string) => [...lowered.states].find(([, states]) => states.some((name) => message.includes(`"${name}"`)))?.[0]
     const found: Issue[] = [...checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message }) => ({ code, message, ...(owner(message) ? { node: owner(message) } : {}) })), ...cell]
     return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no findings</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
-  }, [checker.isError, checker.data, refused])
+  }, [checker.isError, checker.data, refused, meta.id, meta.title])
   const save = async (graph: g.Graph) => {
     if (!store) return { tone: "refusal" as const, text: NO_CELL }
-    const { lowered } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
+    const { lowered } = lower(graph, RECORDED_TOOLS, meta, RECORDED_SCOPE)
     if (!lowered) return { tone: "refusal" as const, text: "The drawing does not lower to a flow; fix its findings first." }
     // The flow, its artifacts, and the drawing itself, so it reopens exactly as it was left.
     const payload: FlowPayload = { ...flowDefinitionPayload(lowered), layout: { nodes: graph.nodes, edges: graph.edges } }
@@ -333,12 +348,14 @@ export function AutomationEditor({ store: given }: { readonly store?: FlowStore 
       setRefused({ drawing: JSON.stringify(graph), issues: findings.map((finding) => ({ code: finding.code, message: finding.message, ...(nodeOfFinding(finding, nodes, lowered.states) ? { node: nodeOfFinding(finding, nodes, lowered.states)! } : {}) })) })
       return { tone: "refusal" as const, text: `The cell refused the automation: ${findings.map(({ code }) => code).join(", ")}.` }
     }
-    const admission = await store.admit(META.id, payload)
+    const admission = await store.admit(meta.id, payload)
     if (!admission.admitted) return refuse(admission.findings)
-    const result = await store.install(META.id, payload, at?.version)
+    // Sign-off seam: once the cell restates flows, the person signs these words and install sends their hash.
+    const words = await restateFlow(payload)
+    const result = await store.install(meta.id, payload, at?.version, words?.sha256)
     if (result.installed) {
       setRefused(null); setAt({ version: result.version })
-      void client.invalidateQueries({ queryKey: ["flow", META.id] })
+      void client.invalidateQueries({ queryKey: ["flow", meta.id] }); void client.invalidateQueries({ queryKey: ["flows"] })
       return { tone: "info" as const, text: `Saved as version ${result.version}; the cell admitted and installed it${result.receipt ? ` (receipt ${result.receipt.slice(0, 12)}…)` : ""}. Run starts it.` }
     }
     if ("conflict" in result) return { tone: "refusal" as const, text: "Someone saved a newer version first. Reopen the automation to see it; your drawing is kept as a draft." }
@@ -349,27 +366,65 @@ export function AutomationEditor({ store: given }: { readonly store?: FlowStore 
     if (!store || !at || busy || !globalThis.confirm("Retire this automation? It stops being runnable; the cell keeps its history.")) return
     setBusy(true); setNotice(null)
     try {
-      const result = await store.retire(META.id, at.version)
-      if (result.installed) { setAt(undefined); setNotice({ tone: "info", text: `Retired. The cell keeps versions 1 to ${result.version - 1} and their runs.` }); void client.invalidateQueries({ queryKey: ["flow", META.id] }) }
+      const result = await store.retire(meta.id, at.version)
+      if (result.installed) { setAt(undefined); setNotice({ tone: "info", text: `Retired. The cell keeps versions 1 to ${result.version - 1} and their runs.` }); void client.invalidateQueries({ queryKey: ["flow", meta.id] }); void client.invalidateQueries({ queryKey: ["flows"] }) }
       else setNotice({ tone: "refusal", text: "runsLive" in result ? "The cell refused: this automation has runs still going. Retire it once they end." : "conflict" in result ? "Someone changed it first; reopen it." : `The cell refused: ${result.findings.map(({ code }) => code).join(", ")}.` })
     } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) }
     finally { setBusy(false) }
   }
   const blocked = noCell ? NO_CELL : routesDown ? (stored.error as Error).message : SAVE_BLOCKED
-  const frame = automationFrame(issues, stored.data?.payload.layout ? { nodes: [...stored.data.payload.layout.nodes], edges: [...stored.data.payload.layout.edges] } : EXAMPLE)
+  const frame = automationFrame(issues, stored.data?.payload.layout ? { nodes: [...stored.data.payload.layout.nodes], edges: [...stored.data.payload.layout.edges] } : fresh ?? EXAMPLE, automation)
   if (store && stored.isLoading) return <p role="status" className="text-sm text-muted-foreground">Opening the automation…</p>
   return (
     <div className="space-y-2">
       {stored.isError && !routesDown && <p role="alert" className="text-destructive">{(stored.error as Error).message}</p>}
-      <CanvasFrame key={stored.data?.version ?? "new"} {...frame} draftKey={`automation:${META.id}:${stored.data?.version ?? "new"}`} saveBlocked={blocked} {...store && !routesDown ? { save } : {}} />
+      <CanvasFrame key={stored.data?.version ?? "new"} {...frame} draftKey={`automation:${meta.id}:${stored.data?.version ?? "new"}`} saveBlocked={blocked} {...store && !routesDown ? { save } : {}} />
       <div className="flex flex-wrap items-center justify-end gap-2" data-testid="automation-actions">
         <span className="text-meta text-muted-foreground">{at ? `Saved in the cell · version ${at.version}` : "Not saved in the cell"}</span>
         {notice && <span role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{notice.text}</span>}
         {at && store ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void retire()}>Retire</Button> : null}
         {at && store
-          ? <RunButton flow={META.id} label="Run in the cell" />
+          ? <RunButton flow={meta.id} label="Run in the cell" />
           : <Unavailable reason={noCell ? NO_CELL : "Save the automation to the cell first; a run starts the saved version."}>Run in the cell</Unavailable>}
       </div>
+    </div>
+  )
+}
+
+/**
+ * The automations in this workspace: the one open, every one saved in the cell, and a new one by name. Each saves
+ * under its own definition id (`studio.automation.<slug>`), minted at creation and kept on reopen.
+ */
+export function AutomationsView() {
+  const account = useAccount()
+  const scope = scopeOf(account.data)
+  const store = useMemo(() => scope ? flowStore(scope) : null, [scope?.orgId, scope?.environmentId])
+  const saved = useQuery({ queryKey: ["flows", scope?.orgId, scope?.environmentId], queryFn: () => store!.list(), enabled: store !== null, retry: false })
+  const [open, setOpen] = useState<{ readonly automation: Automation; readonly fresh?: g.Graph }>({ automation: FIRST })
+  const [name, setName] = useState("")
+  const create = () => {
+    const title = name.trim()
+    if (!title) return
+    const taken = [FIRST.id, open.automation.id, ...saved.data?.items.map(({ id }) => id) ?? []]
+    setOpen({ automation: { id: automationId(title, taken), title }, fresh: NEW_AUTOMATION })
+    setName("")
+  }
+  const items = saved.data?.items ?? []
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-node-border bg-card p-2 shadow-node" data-testid="automations">
+        <span className="px-1 text-sm font-medium">Automations</span>
+        {items.length === 0 && saved.isSuccess && <span className="text-meta text-muted-foreground">None saved in the cell yet</span>}
+        {items.map((item) => (
+          <Button key={item.id} size="sm" variant={item.id === open.automation.id ? "secondary" : "ghost"} aria-pressed={item.id === open.automation.id}
+            onClick={() => setOpen({ automation: { id: item.id, title: item.title || item.id } })}>{item.title || item.id}<span className="text-meta text-muted-foreground">v{item.version}</span></Button>
+        ))}
+        <span className="ms-auto flex items-center gap-2">
+          <Input aria-label="New automation name" className="h-8 w-48" placeholder="New automation" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") create() }} />
+          <Button size="sm" variant="outline" disabled={!name.trim()} onClick={create}><Plus />New automation</Button>
+        </span>
+      </div>
+      <AutomationEditor key={open.automation.id} automation={open.automation} {...open.fresh ? { fresh: open.fresh } : {}} />
     </div>
   )
 }

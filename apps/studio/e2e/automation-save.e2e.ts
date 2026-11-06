@@ -6,7 +6,7 @@ import { node, open, shown } from "./canvas.ts"
  * stand-in answers the definitions routes for kind "flow" (DEFS #1078) and the run routes (RUNS #1047), checking
  * scope and the request shapes; against a deployment these rows need the cell's own data and are skipped.
  */
-interface Kept { version: number; payload: { flow: { id: string }; artifacts: unknown[]; layout?: { nodes: { id: string; position: { x: number; y: number } }[] } }; retired: boolean }
+interface Kept { version: number; payload: { flow: { id: string; title?: string }; artifacts: unknown[]; layout?: { nodes: { id: string; position: { x: number; y: number } }[] } }; retired: boolean }
 
 async function cell(page: Page, options: { refuseOnce?: string; runsLive?: boolean } = {}) {
   test.skip(Boolean(process.env.E2E_BASE), "these rows use a deterministic stand-in cell; the deployed suite runs against next")
@@ -42,6 +42,10 @@ async function cell(page: Page, options: { refuseOnce?: string; runsLive?: boole
       kept.version += 1; kept.retired = true
       return route.fulfill({ json: { installed: true, id: retire[1], version: kept.version, receipt: { receiptHash: "retired000000", commitSeq: kept.version, recordedAtMs: 0 } } })
     }
+    if (path === "definitions:list") {
+      expect(url.searchParams.get("kind")).toBe("flow")
+      return route.fulfill({ json: { items: [...state.flows].filter(([, kept]) => !kept.retired).map(([id, kept]) => ({ id, kind: "flow", title: (kept.payload.flow as { title?: string }).title ?? "", version: kept.version, lifecycle: "active" })), cursor: null } })
+    }
     const get = /^definitions\/([^:]+)$/.exec(path)
     if (get?.[1]) {
       const kept = state.flows.get(decodeURIComponent(get[1]))
@@ -75,8 +79,8 @@ test("automation: create, save to the cell, reopen as drawn, edit and save the n
   await expect(page.getByText(/Saved as version 1; the cell admitted and installed it/)).toBeVisible()
   // The install carried the flow (id, version, title, labelled steps), its two artifacts and the drawing.
   const first = state.installs[0] as { id: string; payload: { flow: { id: string; title?: string; steps: { id: string; label: string }[] }; artifacts: unknown[]; layout: { nodes: unknown[] } } }
-  expect(first.id).toBe("studio.automation")
-  expect(first.payload.flow).toMatchObject({ id: "studio.automation", title: "Automation" })
+  expect(first.id).toBe("studio.automation.invoice_follow_up")
+  expect(first.payload.flow).toMatchObject({ id: "studio.automation.invoice_follow_up", title: "Invoice follow-up" })
   expect(first.payload.flow.steps.map(({ id }) => id)).toContain("load")
   expect(first.payload.artifacts.length).toBe(2)
   expect(first.payload.layout.nodes.length).toBeGreaterThan(0)
@@ -122,7 +126,7 @@ test("automation: Run starts the saved version in the cell and opens its run", a
   await expect(page).toHaveURL(/\/runs\/run_[0-9a-z]+_[0-9a-z]{6}$/)
   await expect(page.getByRole("heading", { name: /^Run run_/ })).toBeVisible()
   await expect(page.getByTestId("run-state")).toHaveText("awaiting_perform_load")
-  expect([...state.runs.values()][0]?.flow).toBe("studio.automation")
+  expect([...state.runs.values()][0]?.flow).toBe("studio.automation.invoice_follow_up")
 })
 
 test("automation: retire is refused while runs are live, then retires; Run is no longer offered", async ({ page }) => {
@@ -136,4 +140,34 @@ test("automation: retire is refused while runs are live, then retires; Run is no
   await expect(actions(page)).toContainText("Retired.")
   await expect(actions(page)).toContainText("Not saved in the cell")
   await expect(page.getByRole("button", { name: /Run in the cell/ })).toBeDisabled()
+})
+
+test("automations: two saved side by side under their own ids, and each reopens as itself", async ({ page }) => {
+  const state = await cell(page)
+  await open(page, "Automation")
+  await saveButton(page).click()
+  await expect(actions(page)).toContainText("Saved in the cell · version 1")
+  // A second automation, by name: a new id minted from it, starting from its start and one outcome.
+  await page.getByLabel("New automation name").fill("Payment reminders")
+  await page.getByRole("button", { name: "New automation" }).click()
+  await expect(node(page, "done")).toBeVisible()
+  await expect(actions(page)).toContainText("Not saved in the cell")
+  await saveButton(page).click()
+  await expect(actions(page)).toContainText("Saved in the cell · version 1")
+  expect([...state.flows.keys()].sort()).toEqual(["studio.automation.invoice_follow_up", "studio.automation.payment_reminders"])
+  // Both are listed; each reopens as itself (the first with its example steps, the second with its own).
+  const list = page.getByTestId("automations")
+  await expect(list.getByRole("button", { name: /^Invoice follow-up/ })).toBeVisible()
+  await expect(list.getByRole("button", { name: /^Payment reminders/ })).toBeVisible()
+  await list.getByRole("button", { name: /^Invoice follow-up/ }).click()
+  await expect(node(page, "load")).toBeVisible()
+  await expect(actions(page)).toContainText("version 1")
+  await list.getByRole("button", { name: /^Payment reminders/ }).click()
+  await expect(node(page, "done")).toBeVisible()
+  await expect(node(page, "load")).toHaveCount(0)
+  await page.reload()
+  await page.getByRole("button", { name: "Automation", exact: true }).click()
+  await page.getByTestId("automations").getByRole("button", { name: /^Payment reminders/ }).click()
+  await expect(node(page, "done")).toBeVisible()
+  await expect(actions(page)).toContainText("Saved in the cell · version 1")
 })

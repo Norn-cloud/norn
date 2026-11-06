@@ -19,7 +19,7 @@ import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { STATE_SPACING, tidyLifecycle } from "./lib/canvas/layout.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, stepKey, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
-import { AutomationEditor } from "./automation-canvas.tsx"
+import { AutomationsView } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
 import type { Envelope } from "./lib/transport.ts"
 
@@ -282,7 +282,7 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
         {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{words(ref.objectType)}</Button>)}
         <Button size="sm" variant={kind === "automation" ? "default" : "outline"} onClick={() => setKind("automation")}>Automation</Button>
       </div>
-      {kind === "automation" && <AutomationEditor />}
+      {kind === "automation" && <AutomationsView />}
       {kind === "lifecycle" && definitions.isPending && <Panel label="Canvas"><Well><p className="p-6 text-sm text-muted-foreground" role="status">Reading definitions…</p></Well></Panel>}
       {kind === "lifecycle" && definitions.error && <Panel label="Canvas"><Well><p className="p-6 text-sm text-destructive" role="alert">The definitions could not be read: {definitions.error.message}</p></Well></Panel>}
       {kind === "lifecycle" && definitions.data && found.length === 0 && <Panel label="Canvas"><Well><EmptyState icon={Network}>No admitted definition declares a lifecycle yet.</EmptyState></Well></Panel>}

@@ -23,6 +23,16 @@ export type FlowInstalled =
   | { readonly installed: false; readonly conflict: true }
   /** Retiring a flow with live runs is refused until they end (`definition.flow_runs_live`). */
   | { readonly installed: false; readonly runsLive: true }
+/** One saved automation in the list (no payload: open it to read the drawing). */
+export interface FlowSummary { readonly id: string; readonly title: string; readonly version: number; readonly lifecycle: string }
+/**
+ * The seam for signing off a flow in plain words (D59, as questions do): once DEFS restates flows, this returns the
+ * cell's words and their hash for the person to sign, and install sends the hash. Until then there are no words,
+ * so there is nothing to sign and nothing is sent.
+ */
+export type FlowRestatement = { readonly text: string; readonly sha256: string }
+export const restateFlow = async (_payload: FlowPayload): Promise<FlowRestatement | undefined> => undefined
+
 /** A started run, as the cell returns it. */
 export interface StartedRun { readonly id: string; readonly state: string | null; readonly flow: unknown }
 
@@ -74,7 +84,17 @@ export function flowStore(scope: StudioScope, fetcher: Fetch = (input, init) => 
       return body.admitted ? { admitted: true } : { admitted: false, findings: findingsOf(body) }
     },
     /** A new version of the flow; `expectedVersion` guards against someone saving in between. Flows carry no restatement, so no sign-off (DEFS). */
-    install: async (id: string, payload: FlowPayload, expectedVersion?: number) => installed(await call("/v1/definitions:install", { kind: "flow", id, payload, ...expectedVersion === undefined ? {} : { expectedVersion } })),
+    /** Every saved automation (kind "flow"), one page at a time. */
+    list: async (cursor?: string): Promise<{ readonly items: readonly FlowSummary[]; readonly cursor: string | null }> => {
+      const { status, body } = await call("/v1/definitions:list", undefined, { kind: "flow", limit: "50", ...cursor ? { cursor } : {} })
+      if (status === 404) throw new FlowRoutesMissing("The cell's definition routes aren't live yet; automations stay drafts in this browser.")
+      if (status !== 200 || !Array.isArray(body?.items)) throw new FlowCellError(status)
+      return {
+        items: (body.items as { id: string; title?: string; version: number; lifecycle?: string }[]).map((row) => ({ id: row.id, title: row.title ?? "", version: row.version, lifecycle: row.lifecycle ?? "" })),
+        cursor: typeof body.cursor === "string" ? body.cursor : null,
+      }
+    },
+    install: async (id: string, payload: FlowPayload, expectedVersion?: number, signoff?: string) => installed(await call("/v1/definitions:install", { kind: "flow", id, payload, ...expectedVersion === undefined ? {} : { expectedVersion }, ...signoff === undefined ? {} : { signoff: { restatementSha256: signoff } } })),
     retire: async (id: string, expectedVersion: number) => installed(await call(`/v1/definitions/${encodeURIComponent(id)}:retire`, { expectedVersion })),
     /** Start one run of the installed flow; the same `runId` again returns the same run (an exact retry). */
     start: async (flow: string, runId: string): Promise<StartedRun> => {
@@ -105,4 +125,15 @@ export function nodeOfFinding(finding: FlowFinding, nodes: readonly string[], st
   const text = `${finding.message} ${finding.pointer ?? ""}`
   const named = nodes.find((id) => new RegExp(`(^|[^A-Za-z0-9_])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9_]|$)`).test(text))
   return named ?? [...states].find(([, generated]) => generated.some((state) => text.includes(state)))?.[0]
+}
+
+/**
+ * An automation's definition id, minted once from its title when it is created and kept for good (reopening
+ * reads it back): `studio.automation.<slug>`, a valid flow id, made unique against the ids already taken.
+ */
+export function automationId(title: string, taken: readonly string[] = []): string {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(?=[0-9])/, "a_") || "untitled"
+  const base = `studio.automation.${slug}`
+  if (!taken.includes(base)) return base
+  for (let n = 2; ; n += 1) if (!taken.includes(`${base}_${n}`)) return `${base}_${n}`
 }
