@@ -96,7 +96,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const [checked, setChecked] = useState<CheckedQuestion>()
   const [failure, setFailure] = useState<string>()
-  const [signOff, setSignOff] = useState<(SignOff & { readonly revision: object })>()
+  const [signOff, setSignOff] = useState<SignOff>()
   const [saved, setSaved] = useState<{ readonly id: string; readonly version: number }>()
   const [saving, setSaving] = useState(false)
   const [verified, setVerified] = useState(false)
@@ -111,9 +111,11 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   revision.current = editor.revision
   const question = buildQuestion(draft, catalog)
   const questionKey = JSON.stringify(question)
+  const { name: _name, ...restatedQuestion } = question
+  const restatementKey = JSON.stringify(restatedQuestion)
   const [checkedKey, setCheckedKey] = useState<string>()
   const [checkedRevision, setCheckedRevision] = useState<object>()
-  const [serverWords, setServerWords] = useState<{ readonly revision: object; readonly value: { readonly text: string; readonly sha256: string } }>()
+  const [serverWords, setServerWords] = useState<{ readonly key: string; readonly value: { readonly text: string; readonly sha256: string } }>()
   // Only the newest check may authorize this exact editor revision.
   useEffect(() => {
     let current = true
@@ -123,10 +125,11 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     return () => { current = false; clearTimeout(timer) }
   }, [questionKey, editor.revision])
   const currentCheck = checkedKey === questionKey && checkedRevision === editor.revision ? checked : undefined
-  const fromCell = serverWords?.revision === editor.revision ? serverWords.value : undefined
+  const fromCell = serverWords?.key === restatementKey ? serverWords.value : undefined
   const restated = fromCell ?? currentCheck?.restatement
   const admitted = currentCheck?.verdict.admitted === true
-  const signed = signOff !== undefined && signOff.revision === editor.revision && restated != null && signOff.sha256 === restated.sha256 && admitted
+  const signed = signOff !== undefined && restated != null && signOff.sha256 === restated.sha256 && admitted
+  useEffect(() => { if (signOff && restated && signOff.sha256 !== restated.sha256) setSignOff(undefined) }, [signOff, restated?.sha256])
   const openSaved = async (id: string) => {
     if (editor.dirty && !globalThis.confirm("Discard your unsaved changes and open this question?")) return
     try {
@@ -150,7 +153,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
         setSignOff(undefined)
         if (revision.current !== at) setSaveError("The earlier question was not saved. Review the current question and sign off again.")
         else if (error.restatement) {
-          setServerWords({ revision: at, value: error.restatement })
+          setServerWords({ key: restatementKey, value: error.restatement })
           setSaveError("The server reads this question differently. Review its words and sign off again.")
         } else {
           setChecked(undefined); setCheckedKey(undefined); setServerWords(undefined)
@@ -262,7 +265,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
             <div className="flex flex-wrap items-center gap-3">
               {signed
                 ? <span className="flex items-center gap-2 text-sm font-medium"><BadgeCheck className="size-4 text-success" />Signed off: this is what you asked for</span>
-                : <Button type="button" size="sm" disabled={!admitted} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => restated && setSignOff({ sha256: restated.sha256, atMs: Date.now(), revision: editor.revision })}>This is what I asked for</Button>}
+                : <Button type="button" size="sm" disabled={!admitted} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => restated && setSignOff({ sha256: restated.sha256, atMs: Date.now() })}>This is what I asked for</Button>}
               {!admitted && <span className="text-meta text-muted-foreground">Sign-off opens once the checker admits the question.</span>}
             </div>
           </div>
