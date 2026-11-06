@@ -8,8 +8,8 @@
 //! creates a new definitions version, its ledger event and commit receipt
 //! atomically, with the kernel set and its checker receipt unchanged.
 //!
-//! Reads need [`Operation::ReadDefinitions`]; writes need
-//! [`Operation::WriteDefinitions`]. Every denied or out-of-scope request gets
+//! Reads need [`Operation::ReadDefinitions`](crate::authz::Operation::ReadDefinitions); writes need
+//! [`Operation::WriteDefinitions`](crate::authz::Operation::WriteDefinitions). Every denied or out-of-scope request gets
 //! the one opaque 403, decided before the body is interpreted.
 
 use std::collections::BTreeSet;

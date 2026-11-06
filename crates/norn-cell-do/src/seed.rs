@@ -47,7 +47,7 @@ pub fn demo_scope() -> CellScope {
 }
 
 /// Admit the demo definitions and provision, reopen or upgrade them on
-/// `engine` (see [`open_governed`]).
+/// `engine` (see `open_governed`).
 ///
 /// # Errors
 /// The retained set no longer admits, or the engine holds a different cell.
