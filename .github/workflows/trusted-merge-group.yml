@@ -135,7 +135,30 @@ jobs:
               const cache=new Map(), changed=new Set(), definitions=new Map(), seen=new Set(), suffix=[];
               let expected, witnessed=false, boundary=false;
               const before=metadata.cursor;
-              for(let page=1;!boundary;page++){
+              if(before){
+                // Runs list newest id first, but run_number can disagree with id order
+                // for runs created in the same second. Collect every number above the
+                // cursor regardless of order, then require exactly before.number+1..top.
+                const found=new Map();let top=before.number;
+                for(let page=1;;page++){
+                  until();
+                  const {data}=await github.rest.actions.listWorkflowRuns({owner,repo,workflow_id:'ci-policy.yml',per_page:100,page});
+                  if(!Array.isArray(data.workflow_runs))throw new Error('Rights history checkpoint unavailable');
+                  for(const run of data.workflow_runs){
+                    if(seen.has(run.id))continue;
+                    seen.add(run.id);
+                    if(!Number.isSafeInteger(run.run_number)||run.run_number<1)throw new Error('Incomplete rights event history');
+                    if(run.run_number<=before.number)continue;
+                    if(found.has(run.run_number))throw new Error('Duplicate rights event number');
+                    found.set(run.run_number,run);top=Math.max(top,run.run_number);
+                  }
+                  if(found.size===top-before.number)break;
+                  if(!data.workflow_runs.length)throw new Error('Incomplete rights event history');
+                }
+                suffix.push(...[...found.values()].sort((a,b)=>b.run_number-a.run_number));
+                witnessed=suffix.some(run=>run.id===sourceId);
+              }
+              for(let page=1;!before&&!boundary;page++){
                 until();
                 const {data}=await github.rest.actions.listWorkflowRuns({owner,repo,workflow_id:'ci-policy.yml',per_page:100,page});
                 if(!Array.isArray(data.workflow_runs)||!data.workflow_runs.length){

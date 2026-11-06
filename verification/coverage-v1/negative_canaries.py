@@ -1953,6 +1953,24 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     history.find(s=>s.context.startsWith('rights-ledger/')).context=
       history.find(s=>s.context.startsWith('rights-ledger/')).context.toUpperCase();
     await snapshot(prefix+'case');
+    // Runs created in the same second can list (newest id first) in an order that
+    // disagrees with run_number. The walk accepts any order but no missing number.
+    const swapA=nextRun++,swapB=nextRun++;
+    await record(swapA,payload(comment(14,'ordinary text',clock)));
+    await record(swapB,payload(comment(15,'ordinary text',clock)));
+    assert.deepEqual(runs.slice(0,2).map(r=>r.id),[swapB,swapA]);
+    [runs[0],runs[1]]=[runs[1],runs[0]];
+    const swapped=runs.find(r=>r.id===swapA);
+    runs=runs.filter(r=>r!==swapped);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Incomplete rights event history/);assert(!fs.existsSync(path))}
+    runs.splice(0,0,swapped);
+    await snapshot(prefix+'inverted');
+    // A run numbered above the cursor can also list after the cursor run itself.
+    const cursorRun=runs[0], straddle=nextRun++;
+    await record(straddle,payload(comment(16,'ordinary text',clock)));
+    assert.equal(runs[0].id,straddle);assert.equal(runs[1],cursorRun);
+    [runs[0],runs[1]]=[runs[1],runs[0]];
+    await snapshot(prefix+'straddle');
     const complete=[...runs];
     for(const id of [revokeRun,admission,firstRun]){
       runs=complete.filter(r=>r.id!==id);
