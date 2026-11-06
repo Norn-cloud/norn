@@ -83,11 +83,17 @@ function WorkspaceSwitcher() {
             <DropdownMenuGroup key={group}>
               {index > 0 && <DropdownMenuSeparator />}
               <DropdownMenuLabel className="text-xs text-muted-foreground">{group}</DropdownMenuLabel>
-              {WORKSPACES.filter((workspace) => workspace.group === group).map((workspace) => (
-                <DropdownMenuCheckboxItem key={workspace.id} checked={workspace === open} disabled={!workspace.recorded} className="flex-col items-start gap-0">
-                  <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
-                </DropdownMenuCheckboxItem>
-              ))}
+              {WORKSPACES.filter((workspace) => workspace.group === group).map((workspace) => workspace.results !== undefined
+                ? (
+                  <DropdownMenuItem key={workspace.id} asChild className="flex-col items-start gap-0">
+                    <a href={workspace.results} target="_blank" rel="noreferrer"><span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span></a>
+                  </DropdownMenuItem>
+                )
+                : (
+                  <DropdownMenuCheckboxItem key={workspace.id} checked={workspace === open} disabled={!workspace.recorded} className="flex-col items-start gap-0">
+                    <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
+                  </DropdownMenuCheckboxItem>
+                ))}
             </DropdownMenuGroup>
           ))}
         </DropdownMenuContent>
