@@ -295,7 +295,7 @@ export function Shell({ sections, tools, account, onSignOut }: { readonly sectio
           <SidebarFooter><NavAccount account={account} onSignOut={onSignOut} /></SidebarFooter>
           <SidebarRail />
         </Sidebar>
-        <SidebarInset className="flex-row">
+        <SidebarInset className="min-w-0 flex-row">
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 md:px-4">
               <SidebarTrigger className="-ms-1" />
