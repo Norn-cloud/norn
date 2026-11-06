@@ -443,7 +443,8 @@ def verdict_line(name: str, kind: str, verdict: str) -> dict:
     """One verifier line: what was re-checked here and what stays candidate-reported."""
     rechecked = ["fstar-typecheck", "fstar-option-allowlist", "proof-hole-scan"] \
         if kind == "extraction" and verdict == CANDIDATE_REPORTED else []
-    reported = ["hax-extraction"] if kind == "extraction" else ["kani-baseline", "kani-mutations"]
+    reported = [] if verdict == UNCHANGED else (
+        ["hax-extraction"] if kind == "extraction" else ["kani-baseline", "kani-mutations"])
     label = UNCHANGED_LABEL if verdict == UNCHANGED else LABELS[kind]
     return {"claim": name, "kind": kind, "verdict": verdict, "label": label, "rechecked": rechecked,
             "candidateReported": reported}
@@ -593,36 +594,31 @@ def inside(directory: str, path: str) -> bool:
     return not os.path.isabs(path) and (normal == directory or normal.startswith(directory.rstrip("/") + "/"))
 
 
-# A `path = "..."` anywhere in an attribute (cfg_attr included), or an
-# include*! with any macro delimiter.
-SOURCE_REFERENCE = re.compile(r'#\s*!?\s*\[[^\]]*?\bpath\s*=\s*"([^"]*)"|\binclude(?:_str|_bytes)?\s*!\s*[(\[{]\s*(?:"([^"]*)"|(.))')
+# Source constructs that can read a file chosen by a value scope does not
+# parse: any `path` attribute (raw strings and cfg_attr included) or include*!.
+UNSCOPABLE = re.compile(r"#\s*!?\s*\[\s*(?:r#)?(?:path\b|cfg_attr\s*\([^;{}]*?\bpath\b)|\binclude(?:_str|_bytes)?\s*!")
 
 
 def require_contained_sources(root: Path, directory: str, manifest: dict) -> None:
-    """Refuse a package whose library build can read files outside its directory.
+    """Refuse a package layout whose library inputs scope cannot bound (Sol S3).
 
-    Scope compares the package directory, so a source outside it would change
-    the extraction without putting the claim in scope. `[lib] path`, `build`,
-    and `#[path]` (also under `cfg_attr`) or `include*!` with any delimiter in
-    the package's Rust sources must stay inside;
-    a non-literal include cannot be scoped and is refused. Test, bench and
-    example targets never reach the library build and are not read.
+    Scope compares the package directory. `[lib]`, `[[bin]]` and `build` paths
+    must lie inside it, and the package's Rust sources may hold no `path`
+    attribute and no include*!: their values are never parsed, the layout is
+    refused. Test, bench and example directories are not read.
     """
-    package, lib = manifest.get("package", {}), manifest.get("lib", {})
-    for key, value in (("lib.path", lib.get("path")), ("package.build", package.get("build"))):
+    package = manifest.get("package", {})
+    targets = [("lib.path", manifest.get("lib", {}).get("path")), ("package.build", package.get("build")),
+               *(("bin.path", b.get("path")) for b in manifest.get("bin", []))]
+    for key, value in targets:
         require(not isinstance(value, str) or inside(directory, os.path.join(directory, value)),
                 f"{directory}: {key} {value!r} is outside the package, so it cannot be scoped")
     skipped = {os.path.join(directory, name) for name in ("tests", "benches", "examples", "target")}
     for source in sorted((root / directory).rglob("*.rs")):
         path = os.path.relpath(source, root)
-        if any(inside(skip, path) for skip in skipped):
-            continue
-        for match in SOURCE_REFERENCE.finditer(source.read_text(encoding="utf-8", errors="replace")):
-            reference = match.group(1) if match.group(1) is not None else match.group(2)
-            require(reference is not None, f"{path}: a non-literal include cannot be scoped")
-            # Resolved from the file's directory: never shallower than rustc's own base.
-            require(inside(directory, os.path.join(os.path.dirname(path), reference)),
-                    f"{path}: {reference!r} is outside the package, so it cannot be scoped")
+        require(any(inside(skip, path) for skip in skipped)
+                or UNSCOPABLE.search(source.read_text(encoding="utf-8", errors="replace")) is None,
+                f"{path}: a path attribute or include macro cannot be scoped; the layout is refused")
 
 
 def scope_inputs(root: Path, claims: dict[str, dict]) -> list[str]:
@@ -671,7 +667,9 @@ def verify(root: Path, receipts: Path, expected: dict, fstar: Path | None,
         try:
             kind = kind_of(claim)
             if kind == "kani":
-                verdicts.append(verdict_line(name, kind, CANDIDATE_REPORTED))
+                # Without a receipt on an out-of-scope run, no Kani ran at all.
+                verdicts.append(verdict_line(name, kind, UNCHANGED if not scoped and name not in present
+                                             else CANDIDATE_REPORTED))
                 if name in present:
                     check(root, claim, receipts / name, expected, fstar)
             elif not scoped:
