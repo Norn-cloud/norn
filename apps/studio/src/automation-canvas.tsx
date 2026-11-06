@@ -141,7 +141,7 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
       id: node.id, type: "step", position: node.position, selected,
       data: {
         kind: node.kind, title: words(node.id), issues: found,
-        detail: node.kind === "perform" ? node.config.tool ?? "" : node.kind === "sleep" ? `${node.config.millis ?? 0} ms` : node.kind === "succeed" ? node.config.outcome ?? "" : node.kind === "route" ? `${branchesOf(node).length} branches` : "",
+        detail: node.kind === "perform" ? node.config.tool ?? "" : node.kind === "sleep" ? `${node.config.millis ?? 0} ms` : node.kind === "succeed" ? node.config.outcome ?? "" : node.kind === "route" ? `${branchesOf(node).length} ${branchesOf(node).length === 1 ? "branch" : "branches"}` : "",
         outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id }) => id),
       },
     }),
