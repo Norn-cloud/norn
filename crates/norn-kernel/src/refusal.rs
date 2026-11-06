@@ -615,6 +615,13 @@ impl<X> ActionRefusal<X> {
             Self::IdempotencyConflict { .. } | Self::StalePreconditionRead { .. } => {
                 RefusalCategory::Conflict
             }
+            Self::ReceiptRefused { code } => match code.as_bytes() {
+                b"action.receipt_unknown" => RefusalCategory::Visibility,
+                b"action.receipt_replayed" | b"action.receipt_not_pending" => {
+                    RefusalCategory::Conflict
+                }
+                _ => RefusalCategory::Invalid,
+            },
             Self::InputBoundExceeded { .. } | Self::ExpressionBudgetExceeded { .. } => {
                 RefusalCategory::Limit
             }

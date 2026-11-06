@@ -5,7 +5,7 @@
 use crate::result_reconciliation::Acceptance;
 use norn_ir::{
     RuntimeValue,
-    function::{Digest, FunctionOutcome, FunctionReceipt},
+    function::{Digest, FunctionOutcome, FunctionReceipt, RunRef},
 };
 use serde::de::DeserializeOwned;
 
@@ -106,15 +106,56 @@ pub enum ReceiptBindingError<E> {
     Store(E),
 }
 
+impl<E> ReceiptBindingError<E> {
+    /// Stable refusal code; host failures are not receipt refusals.
+    #[must_use]
+    pub const fn code(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::Unknown => "action.receipt_unknown",
+            Self::Replayed => "action.receipt_replayed",
+            Self::Mismatch => "action.receipt_binding_mismatch",
+            Self::NotAccepted => "action.receipt_not_accepted",
+            Self::ResultType => "action.receipt_result_type",
+            Self::Canonical(_) => "action.receipt_binding_mismatch",
+            Self::Store(_) => return None,
+        })
+    }
+}
+
+impl ReferenceError {
+    /// Stable refusal code.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::BodyForbidden => "action.receipt_body_forbidden",
+            Self::InvalidDigest => "action.receipt_reference_invalid",
+        }
+    }
+}
+
 /// A checked digest/result pair, retaining reconciliation reads for the commit.
 #[derive(Debug)]
 pub struct ReceiptBinding<T> {
     digest: Digest,
     result: T,
     acceptance: Acceptance,
+    run: RunRef,
+    manifest: Digest,
 }
 
 impl<T> ReceiptBinding<T> {
+    /// The authenticated receipt's `Run` and generation.
+    #[must_use]
+    pub const fn run(&self) -> &RunRef {
+        &self.run
+    }
+
+    /// The Function manifest the authenticated receipt executed.
+    #[must_use]
+    pub const fn manifest(&self) -> &Digest {
+        &self.manifest
+    }
+
     /// Move the typed result and its exact receipt/acceptance pins into preparation.
     #[must_use]
     pub fn into_parts(self) -> (Digest, T, Acceptance) {
@@ -176,5 +217,7 @@ pub fn bind_receipt<T: DeserializeOwned, S: AcceptedReceiptStore>(
         digest,
         result,
         acceptance: acceptance.clone(),
+        run: receipt.run.clone(),
+        manifest: receipt.manifest.clone(),
     })
 }

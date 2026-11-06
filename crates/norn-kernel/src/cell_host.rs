@@ -984,16 +984,23 @@ pub trait CellHost {
 
     /// Resolve and authenticate an unconsumed receipt within this cell's scope,
     /// world and pinned Function manifest. Action JSON supplies only a reference.
-    /// RECEIPT-EFFECT-1: unsupported hosts return no evidence; acceptance alone
-    /// does not commit effects or consume the receipt.
+    /// RECEIPT-EFFECT-1: `Ok(None)` means the host does not support receipt
+    /// effects and the action refuses. A binding alone neither commits effects
+    /// nor consumes the receipt: the accepting action commit consumes the
+    /// binding's delivery (`Acceptance::consumed`) in the same commit as its
+    /// transition, and the host's pending check refuses a second consumption.
     ///
     /// # Errors
-    /// Host storage, authentication or manifest-binding failure.
+    /// A typed binding refusal (unknown, replayed, mismatched, not accepted,
+    /// result type), or [`ReceiptBindingError::Store`] for a host failure.
     fn resolve_accepted_receipt(
         &self,
         _reference: &crate::receipt_binding::ReceiptReference,
         _manifest: &norn_ir::function::Digest,
-    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, Self::Error> {
+    ) -> Result<
+        Option<crate::receipt_binding::ReceiptBinding<JsonObject>>,
+        crate::receipt_binding::ReceiptBindingError<Self::Error>,
+    > {
         Ok(None)
     }
 
