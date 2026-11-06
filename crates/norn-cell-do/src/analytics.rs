@@ -112,7 +112,7 @@ fn conversions() -> Result<Vec<FactWriteRow>, SeedError> {
         .skip(1)
         .map(|line| {
             let fields: Vec<&str> = line.split(',').collect();
-            let [_, _, key, metal, input, recovered, loss, _, at, _] = fields.as_slice() else {
+            let &[_, _, key, metal, input, recovered, loss, _, at, _] = fields.as_slice() else {
                 return Err(SeedError(format!("malformed conversion row: {line}")));
             };
             Ok(FactWriteRow::Put {
