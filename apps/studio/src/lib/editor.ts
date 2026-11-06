@@ -59,12 +59,14 @@ export interface Issue {
  * fields, Maps and Sets by their entries, Dates by their time, and a cycle by
  * the pair it returns to, so no value is lost to JSON or makes it throw.
  */
-export function sameValue(a: unknown, b: unknown, seen: Map<object, object> = new Map()): boolean {
+export function sameValue(a: unknown, b: unknown, seen: { readonly left: Map<object, object>; readonly right: Map<object, object> } = { left: new Map(), right: new Map() }): boolean {
   if (Object.is(a, b)) return true
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false
   if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false
-  if (seen.get(a) === b) return true
-  seen.set(a, b)
+  // A pair already under comparison: equal only if each side met the other there (so a self-cycle differs from a longer cycle).
+  if (seen.left.has(a) || seen.right.has(b)) return seen.left.get(a) === b && seen.right.get(b) === a
+  seen.left.set(a, b)
+  seen.right.set(b, a)
   if (a instanceof Date) return a.getTime() === (b as Date).getTime()
   if (a instanceof Map) {
     const other = b as Map<unknown, unknown>
@@ -74,6 +76,8 @@ export function sameValue(a: unknown, b: unknown, seen: Map<object, object> = ne
     const other = b as Set<unknown>
     return a.size === other.size && [...a].every((value) => other.has(value))
   }
+  // Arrays by length as well as entries, so a sparse slot differs from no slot.
+  if (Array.isArray(a) && a.length !== (b as unknown[]).length) return false
   const keys = Object.keys(a)
   return keys.length === Object.keys(b).length && keys.every((key) => Object.hasOwn(b, key) && sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], seen))
 }
