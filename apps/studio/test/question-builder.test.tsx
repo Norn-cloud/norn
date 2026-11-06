@@ -97,3 +97,12 @@ test("a check result shows only for the draft it was run on, so an edit or a lat
   expect(checkedFor(result, edited)).toEqual({ data: undefined, error: null })
   expect(checkedFor({ variables: first, data: undefined, error: new Error("down") }, edited)).toEqual({ data: undefined, error: null })
 })
+
+test("undo back to a checked draft does not revive its result: the result belongs to the editor revision it ran at", () => {
+  const a = { title: "a" }
+  const ranAt = {}, edited = {}, undone = {}
+  const result = { variables: a, data: "verdict", error: null }
+  expect(checkedFor(result, a, { ranAt, revision: ranAt })).toEqual({ data: "verdict", error: null })
+  expect(checkedFor(result, { title: "b" }, { ranAt, revision: edited })).toEqual({ data: undefined, error: null })
+  expect(checkedFor(result, a, { ranAt, revision: undone })).toEqual({ data: undefined, error: null })
+})
