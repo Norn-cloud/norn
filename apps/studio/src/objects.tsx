@@ -17,6 +17,7 @@ import { ProvenanceChain, ProvenanceValue } from "@/components/provenance"
 import { useInspector } from "@/lib/inspector"
 import { KINDS, STATUS } from "@/lib/kinds"
 import { ViewToggle, useCardView, useView } from "@/lib/view"
+import { useViewer } from "@/lib/viewer"
 import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
@@ -231,7 +232,9 @@ export function ObjectPage() {
                 <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
               </Panel>
             ))}
+            <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
             <Facts concept={concept} reads={data} />
+            <RelatedInline concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} />
             {view === "technical" && <Technical name={name} lineage={lineage} />}
           </TabsContent>
           <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} /></TabsContent>
@@ -355,9 +358,11 @@ const Id = ({ label, value, short }: { readonly label: string; readonly value: s
   <div className="flex min-w-0 flex-col gap-x-3 sm:flex-row sm:items-baseline"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">{label}</dt><dd className="min-w-0 flex-1"><CopyId value={value} short={short} /></dd></div>
 )
 
-/** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what this read lacks. */
+/** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what a recorded snapshot cannot hold. */
 function Technical({ name, lineage }: { readonly name: string; readonly lineage: SourceLineage | undefined }) {
   const { read } = useCatalog()
+  // Who is reading, for display; the server decides what they may see.
+  const viewer = useViewer()
   const artifacts = read.data?.document ?? []
   const index = artifacts.findIndex((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name)
   const entity = artifacts[index]
@@ -388,11 +393,49 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
         </DenseTable>
       </Well></Panel>
     )}
-    <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="p-3">
+    <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="space-y-3 p-3">
+      <p className="text-sm">This page shows a recorded snapshot. Live reads return the access decision and receipt for your account.</p>
       <dl className="space-y-1 text-sm">
-        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None recorded: the demo read has no signed-in principal</dd></div>
-        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Receipt</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None in this recording</dd></div>
+        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Viewing as</dt><dd>{viewer.name}{viewer.role !== null && <span className="text-muted-foreground"> · {viewer.role}</span>}</dd></div>
+        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />Not in the recorded snapshot</dd></div>
+        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Receipt</dt><dd className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />Not in the recorded snapshot</dd></div>
       </dl>
     </Well></Panel>
   </>
+}
+
+/** Other object types' declared relations that point at this one: `Holding.item → Item` is "held by" from the item's side. */
+const incomingOf = (concept: Concept, concepts: readonly Concept[]) =>
+  concepts.flatMap((other) => other.relationships.filter(({ target }) => target === concept.name).map((relationship) => ({ from: other, relationship })))
+
+/** One plain sentence from what the server sent: the record, its type, where it was read from and what its stored links say. */
+export function summaryOf(concept: Concept, reads: ObjectReads, concepts: readonly Concept[]): string {
+  const source = reads.source?.document
+  const stored = reads.links.document.items.length
+  const declared = concept.relationships.length + incomingOf(concept, concepts).length
+  const from = source ? `, read from ${systemName(source.sourceRecordRef.system)} by mapping ${source.mappingPin.artifactId}` : ""
+  const links = declared === 0 ? "Its type declares no relations." : stored === 0 ? (declared === 1 ? "Its one declared relation has no stored link in this snapshot." : `None of the ${declared} relations its type declares has a stored link in this snapshot.`) : `${stored} stored ${stored === 1 ? "link connects" : "links connect"} it to other records.`
+  return `${recordName(reads.object.document)} is ${/^[aeiou]/i.test(concept.title) ? "an" : "a"} ${concept.title.toLowerCase()} record${from}. ${links}`
+}
+
+/** The record's relations on its overview, both directions, each with the stored links the server returned or an honest "none". */
+function RelatedInline({ concept, id, links, concepts }: { readonly concept: Concept; readonly id: string; readonly links: LinkPage; readonly concepts: readonly Concept[] }) {
+  const incoming = incomingOf(concept, concepts)
+  if (concept.relationships.length === 0 && incoming.length === 0) return null
+  const none = <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none in this snapshot"}</span>
+  const record = (type: string, target: string) => <Link key={`${type}/${target}`} to="/sources/$concept/$" params={{ concept: type, _splat: target }} className="me-2 font-medium underline-offset-4 hover:underline">{target}</Link>
+  return (
+    <Panel icon={Link2} label="Related"><Well className="p-3">
+      <dl className="space-y-2 text-sm">
+        {concept.relationships.map((relationship) => {
+          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id)
+          return <div key={`out/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{relationship.id.replaceAll("_", " ")} → {relationship.count} {conceptTitle(relationship.target)}</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge.targetType, edge.target))}</dd></div>
+        })}
+        {incoming.map(({ from, relationship }) => {
+          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.sourceType === from.name)
+          return <div key={`in/${from.name}/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{from.title} records ({relationship.id.replaceAll("_", " ")})</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge.sourceType, edge.source))}</dd></div>
+        })}
+      </dl>
+    </Well></Panel>
+  )
 }

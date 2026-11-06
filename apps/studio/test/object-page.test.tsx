@@ -48,7 +48,9 @@ test("the technical view shows only Norn artefacts: the definition, the mapping 
   expect(html).toContain("Record document")
   expect(html).toContain("Copy erpnext.three.mapping@0.1.0")
   expect(html).toContain("Copy 6ec08e5b9fc6375526a98b96eeff65f402fbad558e4df418ed603f32b3017980")
-  expect(html).toContain("None recorded: the demo read has no signed-in principal")
+  expect(html).toContain("This page shows a recorded snapshot. Live reads return the access decision and receipt for your account.")
+  expect(html).toContain("Viewing as")
+  expect(html).not.toContain("no signed-in principal")
   expect(html).toContain("&quot;objectType&quot;: &quot;canon.Item&quot;")
 })
 
@@ -73,4 +75,11 @@ test("the object type's own URL still opens the type, not an empty record", asyn
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
   expect(html).not.toContain("This record is not available yet")
   expect(html).toContain("canon.Holding")
+})
+
+test("the overview says in one sentence what the record is and what its stored links show, and lists who points at it", async () => {
+  const html = await page("canon.Item", "demo/item/gold")
+  expect(html).toContain("Gold scrap is an item record, read from ERPNext by mapping erpnext.three.mapping. Its one declared relation has no stored link in this snapshot.")
+  expect(html).toContain("Holding records (item)")
+  expect(html).toContain("none in this snapshot")
 })
