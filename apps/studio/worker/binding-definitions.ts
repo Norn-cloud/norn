@@ -1,6 +1,7 @@
 import { hostToken, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import type { ConnectorRef, InputMapping, RunRole } from "./bindings.ts"
+import { scopeQuery } from "./scope.ts"
 
 /**
  * Tool bindings as cell definitions (coordinator decision, 2026-11-06): Studio saves each binding
@@ -71,12 +72,12 @@ export class CellUnavailable extends Error {}
 
 /** The cell's definition writes, as one actor, over the NORN_HOST service binding. */
 export class BindingDefinitions {
-  /** `environmentId` is the cell environment of the actor's active organization (`activeEnvironment`). */
+  /** `environmentId` is the session's cell environment, from `cellScope` (scope.ts). */
   constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string) {}
 
-  /** DEFS's scope query: the actor's server-resolved organization and the environment. */
+  /** DEFS's scope query: the actor's server-resolved organization and its environment. */
   private scoped(path: string): string {
-    return `${path}?${new URLSearchParams({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
+    return `${path}?${scopeQuery({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
   }
 
   private async post(path: string, body: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {
@@ -120,21 +121,4 @@ export class BindingDefinitions {
   async retire(id: string, expectedVersion: number): Promise<Install> {
     return BindingDefinitions.outcome(await this.post(`/v1/definitions/${encodeURIComponent(id)}:retire`, { expectedVersion }))
   }
-}
-
-/**
- * The active Studio scope's cell environment: the `environmentId` in the active organization's
- * metadata (`{"environmentId": "analytics"}` for the demo organization). Null when the
- * organization names none; the caller refuses rather than guess, as the cell does.
- */
-export async function activeEnvironment(auth: Auth, orgId: string): Promise<string | null> {
-  const { adapter } = await auth.$context
-  const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: orgId }] })
-  const raw = org?.metadata
-  let metadata: unknown = raw
-  if (typeof raw === "string") {
-    try { metadata = JSON.parse(raw) } catch { return null }
-  }
-  const environmentId = (metadata as { environmentId?: unknown } | null)?.environmentId
-  return typeof environmentId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(environmentId) ? environmentId : null
 }

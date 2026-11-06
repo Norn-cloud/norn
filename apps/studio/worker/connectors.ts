@@ -1,6 +1,7 @@
 import { originAllowed, resolveActor, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
-import { activeEnvironment, BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
+import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
+import { cellScope } from "./scope.ts"
 import { connectorString, connectorVersion, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, saveBinding, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
@@ -136,7 +137,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   // Bindings are Norn's own records: viewing and removing them needs no gateway.
   const shown = (binding: Binding) => ({ ...binding, connectorRef: connectorString(binding.connector) })
   // The cell scope is the session's: its active organization and that organization's environment.
-  const environmentId = await activeEnvironment(auth, actor.orgId)
+  const { environmentId } = await cellScope(auth, actor.orgId)
   // Without a cell host there is nothing to scope: the binding stays a local record, as before.
   const cellFor = () => deps.host === undefined ? new BindingDefinitions(undefined, auth, actor, "") : environmentId === null ? null : new BindingDefinitions(deps.host, auth, actor, environmentId)
   const noEnvironment = () => refusal(409, "connectors.no_environment", "Your organization has no cell environment yet, so tool bindings cannot be saved there.", { kind: "ask_admin" })
