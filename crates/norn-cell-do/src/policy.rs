@@ -293,3 +293,27 @@ pub fn collection_access(
         delegation: norn_kernel::authz::Delegation::Direct,
     }
 }
+
+/// The cell's object read mapping (HOST-READ-2/3): the collection request, or
+/// for one row the same request naming that row's id and type. Nothing in a
+/// request chooses the principal, scope or capability.
+pub struct CellObjectAccess;
+
+impl norn_api::object_routes::ObjectAccess for CellObjectAccess {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&norn_cell::ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        let mut request = collection_access(scope, actor, capability, object_type);
+        if let Some(row) = row {
+            row.object_type
+                .clone_into(&mut request.resource.object_type);
+            row.id.clone_into(&mut request.resource.id);
+        }
+        Ok(request)
+    }
+}
