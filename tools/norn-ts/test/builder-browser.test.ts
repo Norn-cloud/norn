@@ -7,12 +7,14 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
-const IMPORT = /^\s*(?:import|export)\s[^"']*?from\s+["']([^"']+)["']/gm
+// Static imports and re-exports, side-effect imports, and dynamic `import()`.
+const IMPORT = /^\s*(?:import|export)\s[^"';]*?\bfrom\s+["']([^"']+)["']|^\s*import\s+["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']/gm
 
 function reached(entry: string, seen = new Set<string>()): Set<string> {
   if (seen.has(entry)) return seen
   seen.add(entry)
-  for (const [, target = ""] of readFileSync(entry, "utf8").matchAll(IMPORT)) {
+  for (const [, from, bare, dynamic] of readFileSync(entry, "utf8").matchAll(IMPORT)) {
+    const target = from ?? bare ?? dynamic ?? ""
     if (target.startsWith(".")) reached(join(dirname(entry), target), seen)
     else seen.add(target)
   }

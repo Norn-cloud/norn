@@ -101,12 +101,12 @@ export function compile(envelope: Envelope, ref: LifecycleRef, graph: Graph): { 
   const groups = new Map<string, CanvasEdge[]>()
   // Edges sharing an id but not a target stay apart, so the checker names the clash.
   for (const edge of graph.edges) {
-    const key = `${edge.config.transition ?? edge.id}->${edge.target}`
+    const key = `${edge.config.transition || edge.id}->${edge.target}`
     groups.set(key, [...(groups.get(key) ?? []), edge])
   }
   const transitions: Transition[] = [...groups.values()].map((edges, position) => {
     const [first] = edges as [CanvasEdge, ...CanvasEdge[]]
-    const id = first.config.transition ?? first.id
+    const id = first.config.transition || first.id
     edges.forEach((edge, index) => origins.push({ pointer: `${at}/transitions/${position}/from/${index}`, edge: edge.id }))
     origins.push({ pointer: `${at}/transitions/${position}`, edge: first.id })
     const guards = (first.config.guards ?? "").split("\n").map((guard) => guard.trim()).filter(Boolean)

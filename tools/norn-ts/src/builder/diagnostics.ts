@@ -58,7 +58,7 @@ export function callSite(): SourceLocation | undefined {
     const match = FRAME.exec(frame.trim())
     if (!match) continue
     const file = (match[1] ?? "").replace(/^file:\/\//, "")
-    if (file.includes("/src/builder/")) continue
+    if (file.startsWith(`${TOOL_ROOT}src/builder/`)) continue
     if (!file.startsWith("/")) continue
     return { file: relativeTo(TOOL_ROOT, file), line: Number(match[2]) }
   }
