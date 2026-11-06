@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
-import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import { Background, Handle, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -8,79 +8,171 @@ import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { words } from "./lib/format.ts"
 import { recordedTransport } from "./lib/transport.ts"
-import { focusOf, guardedFields, workflows, type Focus, type Workflow } from "./lib/workflows.ts"
+import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
+import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
 import type { MenuEntry } from "./shell.tsx"
 
 const state = (name: string) => words(name)
 
-type StateNode = Node<{ label: string; tone: string; onFocus: () => void }, "state">
+type Pick = (id: string | undefined) => void
+type StateData = { pinned: string | undefined; label: string; start: boolean; terminal: boolean; description?: string; laws: number; backs: { id: string; label: string; to: string; toLabel: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
+type StepData = { pinned: string | undefined; order: number; label: string; sub: string; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick; id: string }
+type MoreData = { count: number; onExpand: () => void }
 
-/** A state with forward handles on its sides and handles below for steps that go back. */
-function StateBox({ data }: NodeProps<StateNode>) {
+const tile = (faded: boolean, lit: boolean) => cn("rounded-xl border bg-card text-card-foreground transition-opacity duration-200", faded && "opacity-30", lit && "border-primary ring-2 ring-primary/20")
+const hidden = "!opacity-0 !border-0 !bg-transparent"
+
+/** The tree's fixed zoom and padding: readable at any width, scrolled sideways when wider than the page. */
+const ZOOM = 0.85
+const PAD = 24
+
+/**
+ * Activate on pointer down for a mouse (hover re-renders the cards, which can swallow a later click)
+ * and on click for the keyboard (Enter and Space make a click with no pointer detail), never twice.
+ */
+const activate = (run: () => void) => ({
+  onPointerDown: (event: React.PointerEvent) => { if (event.button === 0) { event.stopPropagation(); run() } },
+  onClick: (event: React.MouseEvent) => { event.stopPropagation(); if (event.detail === 0) run() },
+})
+
+function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
   return (
-    <button type="button" onClick={data.onFocus} className={cn("w-36 rounded-lg border-2 bg-background px-3 py-2 text-center text-sm transition-opacity duration-200 ease-spring", data.tone)}>
-      <Handle type="target" position={Position.Left} id="in" className="!opacity-0" />
-      <Handle type="source" position={Position.Right} id="out" className="!opacity-0" />
-      <Handle type="target" position={Position.Bottom} id="back-in" className="!left-1/3 !opacity-0" />
-      <Handle type="source" position={Position.Bottom} id="back-out" className="!left-2/3 !opacity-0" />
-      {data.label}
+    <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), data.start ? "w-60 p-3" : "w-48 px-3 py-2")}>
+      <Handle type="target" position={Position.Left} className={hidden} />
+      <Handle type="source" position={Position.Right} className={hidden} />
+      <button type="button" aria-pressed={data.pinned === id} {...activate(() => data.onPick(id))} className="block w-full rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+        <div className={cn("font-medium", data.start && "text-base")}>{data.label}</div>
+        {data.start && data.description && <div className="line-clamp-1 text-meta text-muted-foreground">{data.description}</div>}
+      </button>
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        {data.start && <Badge variant="secondary">Starts here</Badge>}
+        {data.terminal && <Badge variant="outline">Ends here</Badge>}
+        {data.start && data.laws > 0 && <Badge variant="outline">{data.laws} {data.laws === 1 ? "law" : "laws"}</Badge>}
+        {/* A step back: the chip opens the step itself; the arrow goes to the state it returns to. */}
+        {data.backs.map((back) => (
+          <span key={back.id} className="inline-flex items-center rounded-full border text-meta text-muted-foreground">
+            <button type="button" aria-pressed={data.pinned === back.id} {...activate(() => data.onPick(back.id))} className="rounded-s-full px-2 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">↺ {back.label}</button>
+            <button type="button" aria-label={`Go to ${back.toLabel}`} title={`Go to ${back.toLabel}`} {...activate(() => data.onPick(back.to))} className="rounded-e-full border-s px-1.5 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">→</button>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
+  return (
+    <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
+      <Handle type="target" position={Position.Left} className={hidden} />
+      <Handle type="source" position={Position.Right} className={hidden} />
+      <div className="flex items-center gap-2 font-medium"><span className="flex size-5 items-center justify-center rounded-full bg-muted text-[11px] tabular-nums">{data.order}</span>{data.label}</div>
+      <div className="truncate text-meta text-muted-foreground">{data.sub}</div>
     </button>
   )
 }
 
-const NODE_TYPES = { state: StateBox }
+function More({ data }: NodeProps<Node<MoreData, "more">>) {
+  return <Button size="sm" variant="outline" className="rounded-full" onClick={data.onExpand}>+{data.count} more states</Button>
+}
 
-/** The lifecycle as a graph: the focused step bright, the steps beside it visible, the rest dimmed. */
-function Chart({ workflow, focus, onFocus }: { readonly workflow: Workflow; readonly focus: Focus; readonly onFocus: (step: string) => void }) {
+const NODE_TYPES = { state: StateCard, step: StepCard_, more: More }
+
+/** Where the arrow keys go from an element: along its steps, back along its path, or to its siblings. */
+function moveFrom(tree: Tree, at: string, key: string): string | undefined {
+  const node = tree.nodes.find(({ id }) => id === at)
+  if (node === undefined) return undefined
+  if (key === "ArrowRight") return tree.edges.find(({ source }) => source === at)?.target
+  if (key === "ArrowLeft") return pathTo(tree, at).path.at(-2)
+  if (node.kind !== "step") return undefined
+  const siblings = tree.nodes.filter((other) => other.kind === "step" && other.from === node.from).sort((a, b) => a.row - b.row)
+  const index = siblings.findIndex(({ id }) => id === at)
+  return siblings[index + (key === "ArrowDown" ? 1 : -1)]?.id
+}
+
+/** The lifecycle as a left-to-right decision tree: hover or pin an element to light its path from the start and its next options. */
+function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; readonly pinned: string | undefined; readonly onPin: Pick }) {
   const { lifecycle } = workflow
-  const near = new Set([...focus.states, ...workflow.steps.filter(({ transition }) => focus.adjacent.has(transition.id)).flatMap(({ transition }) => [...transition.from, transition.to])])
-  const nodes: StateNode[] = [...workflow.layout].map(([name, { column, row }]) => {
-    const initial = lifecycle.initial.includes(name)
-    const terminal = lifecycle.terminal?.includes(name) ?? false
-    return {
-      id: name,
-      position: { x: column * 220, y: row * 110 },
-      type: "state",
-      data: {
-        label: state(name),
-        tone: cn(focus.states.has(name) ? "border-primary font-medium" : initial ? "border-foreground/40" : terminal ? "border-muted-foreground bg-muted" : "border-border", !near.has(name) && "border-dashed border-muted-foreground font-normal text-muted-foreground"),
-        onFocus: () => {
-          const step = workflow.steps.find(({ transition }) => transition.from.includes(name)) ?? workflow.steps.find(({ transition }) => transition.to === name)
-          if (step) onFocus(step.transition.id)
-        },
-      },
+  const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
+  const [hover, setHover] = useState<string>()
+  const [expanded, setExpanded] = useState(false)
+  const active = hover ?? pinned
+  // Keep keyboard focus on the canvas when a pin came from inside it.
+  const frame = useRef<HTMLDivElement>(null)
+  const pin: Pick = (id) => {
+    const inside = frame.current?.contains(document.activeElement) ?? false
+    onPin(id)
+    if (inside) requestAnimationFrame(() => frame.current?.focus())
+  }
+  // Scroll the pinned card (a step back's source state) into view inside the sideways-scrolling frame.
+  useEffect(() => {
+    if (pinned === undefined) return
+    const card = frame.current?.querySelector(`[data-id="${CSS.escape(anchorOf(tree, pinned))}"]`)
+    card?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" })
+  }, [pinned, tree])
+  // A step back is a chip on its source state: light the path to that state.
+  const back = backOf(tree, active)
+  const route = active === undefined ? undefined : pathTo(tree, back?.from ?? active)
+  const lit = route && new Set([...route.path, ...route.next, ...back ? [back.from, back.to] : []])
+  const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
+  const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
+    const position = { x: (node.column >> 1) * 420 + (node.column % 2) * 230, y: node.row * 120 }
+    const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active || node.id === back?.from, pinned, onPick: pin, onHover: setHover }
+    if (node.kind === "state") {
+      return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, description: workflow.description, laws: workflow.laws.length,
+        backs: (tree.backs.get(node.state) ?? []).map(({ transition, to }) => ({ id: stepId(transition, node.state), label: `${state(transition.id)} → ${state(to)}`, to, toLabel: state(to) })) } }
     }
+    const guards = node.transition.guards ?? []
+    const fields = guardedFields(guards)
+    return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${fields.join(", ")}`) } }
   })
-  const columnOf = (name: string) => workflow.layout.get(name)?.column ?? 0
-  const edges: Edge[] = workflow.steps.flatMap(({ transition }) => transition.from.map((from) => {
-    // A step back or sideways leaves and enters below the states instead of crossing them.
-    const forward = columnOf(transition.to) > columnOf(from)
-    const focused = transition.id === focus.step
-    const visible = focused || focus.adjacent.has(transition.id)
-    return {
-      id: `${transition.id}:${from}`,
-      source: from,
-      target: transition.to,
-      sourceHandle: forward ? "out" : "back-out",
-      targetHandle: forward ? "in" : "back-in",
-      type: forward ? "default" : "smoothstep",
-      label: state(transition.id),
-      markerEnd: { type: MarkerType.ArrowClosed, color: focused ? "var(--primary)" : "var(--muted-foreground)" },
-      labelBgPadding: [4, 2] as [number, number],
-      // Theme tokens, not React Flow's white defaults, so labels read in dark mode too; a dimmed step stays at muted-text contrast.
-      labelBgStyle: { fill: "var(--card)" },
-      labelStyle: { fontSize: 12, fontWeight: focused ? 600 : 400, cursor: "pointer", fill: visible ? "var(--foreground)" : "var(--muted-foreground)" },
-      style: { stroke: focused ? "var(--primary)" : "var(--muted-foreground)", strokeWidth: focused ? 2 : 1, strokeDasharray: visible ? undefined : "4 3", transition: "stroke 200ms" },
-      zIndex: focused ? 1 : 0,
-    }
+  if (folded > 0) {
+    const right = Math.max(...nodes.map(({ position }) => position.x)) + 260
+    nodes.push({ id: "more", type: "more", position: { x: right, y: 8 }, data: { count: folded, onExpand: () => setExpanded(true) } })
+  }
+  const edges: Edge[] = tree.edges.filter(({ source, target }) => shown.has(source) && shown.has(target)).map(({ source, target }) => ({
+    id: `${source}>${target}`, source, target, type: "default",
+    style: { stroke: lit?.has(source) && lit.has(target) ? "var(--primary)" : "var(--muted-foreground)", strokeWidth: 1.25, opacity: lit && !(lit.has(source) && lit.has(target)) ? 0.3 : 1, transition: "opacity 200ms" },
   }))
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") { pin(undefined); setHover(undefined); return }
+    // A focused card or chip handles its own Enter and Space as a click.
+    if (event.target !== event.currentTarget && (event.key === "Enter" || event.key === " ")) return
+    if (event.key === "Enter" && active) { pin(active); return }
+    if (!event.key.startsWith("Arrow")) return
+    event.preventDefault()
+    // A pinned step back is a chip on its source state; move from that state.
+    const next = moveFrom(tree, anchorOf(tree, active ?? tree.spine[0] ?? ""), event.key)
+    if (next) { setHover(next); pin(next) }
+  }
+  // The tree at one readable zoom, as wide as it needs: the page scrolls it sideways instead of cutting it off or shrinking it.
+  const width = Math.max(...nodes.map(({ position }) => position.x)) + 280 + 2 * PAD
+  const height = Math.max(...nodes.map(({ position }) => position.y)) + 200 + 2 * PAD
   return (
-    <div className="h-80 w-full">
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} onEdgeClick={(_, edge) => onFocus(edge.id.slice(0, edge.id.indexOf(":")))} fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }}>
-        <Background />
-      </ReactFlow>
+    <div ref={frame} role="group" className="w-full overflow-x-auto rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
+      <div style={{ width: width * ZOOM, height: height * ZOOM, minWidth: "100%" }}>
+        <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
+          // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
+          onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
+          colorMode="system" defaultViewport={{ x: PAD * ZOOM, y: PAD * ZOOM, zoom: ZOOM }} panOnDrag={false} panOnScroll={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}
+          nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} nodesFocusable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
+          <Background />
+        </ReactFlow>
+      </div>
     </div>
   )
+}
+
+/** The pinned element's place on its path, as a breadcrumb. */
+function Breadcrumb({ tree, pinned }: { readonly tree: Tree; readonly pinned: string }) {
+  const back = backOf(tree, pinned)
+  const path = back ? [...pathTo(tree, back.from).path, pinned] : pathTo(tree, pinned).path
+  const name = (id: string) => {
+    if (back && id === pinned) return `${state(back.transition.id)} (back to ${state(back.to)})`
+    const node = tree.nodes.find((each) => each.id === id)
+    return node === undefined ? id : state(node.kind === "state" ? node.state : node.transition.id)
+  }
+  const steps = path.filter((id) => id === pinned && back !== undefined || tree.nodes.find((node) => node.id === id)?.kind === "step").length
+  return <p className="px-1 text-meta text-muted-foreground">{steps} {steps === 1 ? "step" : "steps"} from the start · {path.map(name).join(" › ")}</p>
 }
 
 /** The step's declared description, else the fields its guard reads, with the declared rule one click away. */
@@ -141,9 +233,12 @@ function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly st
 
 function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
   const { lifecycle } = workflow
-  const [step, setStep] = useState(workflow.steps[0]?.transition.id ?? "")
-  const focus = focusOf(workflow, step)
-  const current = workflow.steps.find(({ transition }) => transition.id === step)
+  const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
+  const [pinned, setPinned] = useState<string>()
+  const node = tree.nodes.find(({ id }) => id === pinned)
+  const back = backOf(tree, pinned)
+  const stepped = node?.kind === "step" ? node.transition : back?.transition
+  const step = stepped && workflow.steps.find(({ transition }) => transition.id === stepped.id)
   return (
     <section id={anchor(workflow)} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
@@ -160,19 +255,33 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
         </p>
       </div>
       <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <Panel label="Steps" action="Select a step to focus it">
-          <div className="flex flex-wrap gap-1.5 px-2.5 pb-2">
-            {workflow.steps.map(({ transition }) => (
-              <Button key={transition.id} size="sm" variant={transition.id === step ? "default" : "outline"} aria-pressed={transition.id === step} onClick={() => setStep(transition.id)}>
-                {state(transition.id)}
-              </Button>
-            ))}
-          </div>
-          <Well><Chart workflow={workflow} focus={focus} onFocus={setStep} /></Well>
+        <Panel label="Steps" action="Hover or select a state or step; arrow keys move, Enter pins, Esc clears">
+          {pinned && <Breadcrumb tree={tree} pinned={pinned} />}
+          <Well><Chart workflow={workflow} pinned={pinned} onPin={setPinned} /></Well>
         </Panel>
-        <Panel label="Focused step">{current ? <Well><StepCard workflow={workflow} step={current} /></Well> : null}</Panel>
+        <Panel label={node?.kind === "state" ? "Pinned state" : "Pinned step"}>
+          <Well>
+            {step && <StepCard workflow={workflow} step={step} />}
+            {node?.kind === "state" && <StateSummary workflow={workflow} name={node.state} />}
+            {node === undefined && step === undefined && <p className="p-4 text-sm text-muted-foreground">Select a state or a step to see its condition, action and laws.</p>}
+          </Well>
+        </Panel>
       </div>
     </section>
+  )
+}
+
+/** A pinned state: the steps that reach it and leave it, and whether it ends or locks the record. */
+function StateSummary({ workflow, name }: { readonly workflow: Workflow; readonly name: string }) {
+  const into = workflow.steps.filter(({ transition }) => transition.to === name).map(({ transition }) => state(transition.id))
+  const out = workflow.steps.filter(({ transition }) => transition.from.includes(name)).map(({ transition }) => `${state(transition.id)} → ${state(transition.to)}`)
+  return (
+    <div className="space-y-2 p-4 text-sm">
+      <div className="text-panel font-medium">{state(name)}</div>
+      <div><span className="text-muted-foreground">Reached by: </span>{into.join(", ") || "nothing; it is where records start"}</div>
+      <div><span className="text-muted-foreground">Leads to: </span>{out.join(", ") || "nothing; it ends here"}</div>
+      {workflow.lifecycle.immutable?.includes(name) && <div className="text-muted-foreground">Its details are locked here.</div>}
+    </div>
   )
 }
 
