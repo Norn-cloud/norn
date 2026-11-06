@@ -82,7 +82,8 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
 
   const onConnect = ({ source, target, sourceHandle, targetHandle }: Connection) => {
     const transition = g.freshName(graph.edges.map(({ config }) => config.transition ?? ""), `${source}_to_${target}`)
-    const next = g.connect(graph, kinds, { id: edgeId(transition, source), source, target, sourcePort: sourceHandle ?? "out", targetPort: targetHandle ?? "in", config: { transition, guards: "", description: "" } })
+    const id = g.freshName(graph.edges.map((edge) => edge.id), edgeId(transition, source))
+    const next = g.connect(graph, kinds, { id, source, target, sourcePort: sourceHandle ?? "out", targetPort: targetHandle ?? "in", config: { transition, guards: "", description: "" } })
     if (g.isRefusal(next)) setRefusal(next); else edit(next)
   }
   const node = graph.nodes.find(({ id }) => id === selected.node)
@@ -124,18 +125,18 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
             {!node && !edge && <p className="text-muted-foreground">Select a state or a step. Drag from a state's right edge to another state to add a step; press Backspace to delete.</p>}
             {node && <>
               <label className="block space-y-1"><span className="text-meta text-muted-foreground">Name</span>
-                <Input defaultValue={node.id} key={node.id} onBlur={(event) => { const to = event.target.value.trim(); if (to && to !== node.id) { edit(g.renameNode(graph, node.id, to)); setSelected({ node: to }) } }} /></label>
+                <Input defaultValue={node.id} key={`name:${node.id}`} onBlur={(event) => { const to = event.target.value.trim(); if (to && to !== node.id) { edit(g.renameNode(graph, node.id, to)); setSelected({ node: to }) } }} /></label>
               {FLAGS.map((flag) => (
                 <label key={flag} className="flex items-center gap-2"><input type="checkbox" checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
               ))}
             </>}
             {edge && <>
               <label className="block space-y-1"><span className="text-meta text-muted-foreground">Step id</span>
-                <Input defaultValue={edge.config.transition} key={edge.id} onBlur={(event) => edit(g.configureEdges(graph, siblings, { transition: event.target.value.trim() }))} /></label>
+                <Input defaultValue={edge.config.transition} key={`${edge.id}:id:${edge.config.transition}`} onBlur={(event) => { const id = event.target.value.trim(); if (id) edit(g.configureEdges(graph, siblings, { transition: id })) }} /></label>
               <label className="block space-y-1"><span className="text-meta text-muted-foreground">Allowed only when (one rule per line)</span>
-                <Textarea defaultValue={edge.config.guards} key={`${edge.id}:guards`} className="font-mono text-xs" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
+                <Textarea defaultValue={edge.config.guards} key={`${edge.id}:guards:${edge.config.guards}`} className="font-mono text-xs" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
               <label className="block space-y-1"><span className="text-meta text-muted-foreground">Description</span>
-                <Input defaultValue={edge.config.description} key={`${edge.id}:description`} onBlur={(event) => edit(g.configureEdges(graph, siblings, { description: event.target.value }))} /></label>
+                <Input defaultValue={edge.config.description} key={`${edge.id}:description:${edge.config.description}`} onBlur={(event) => edit(g.configureEdges(graph, siblings, { description: event.target.value }))} /></label>
             </>}
             {[...(node ? on("node", node.id) : []), ...(edge ? on("edge", edge.id) : [])].map(({ finding }, index) => <Problem key={index} placed={{ finding }} />)}
           </Well>
