@@ -113,3 +113,8 @@ test("an answer whose members' amounts are withheld still reads, its totals inta
   expect(rows.map(({ value, totals }) => ({ value, totals }))).toEqual(plain.map(({ value, totals }) => ({ value, totals })))
   expect(rows.every(({ members }) => members.every(({ amounts }) => amounts === null && contribution(amounts) === "Withheld"))).toBe(true)
 })
+
+test("a network failure or a 200 that is not JSON is no live read, so the page keeps its recording", async () => {
+  expect(await hostRead("/v1/x", async () => { throw new TypeError("network") })).toEqual({ kind: "unavailable", status: 0 })
+  expect(await hostRead("/v1/x", respond(200, "<html>gateway</html>"))).toEqual({ kind: "unavailable", status: 200 })
+})

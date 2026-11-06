@@ -46,9 +46,22 @@ export interface Trace {
  * stage) mean live reads are not available, and the page keeps its recording.
  */
 export async function hostRead<T>(path: string, fetcher: Fetch = fetch): Promise<LiveRead<T>> {
-  const response = await fetcher(`/api/host${path}`, { headers: { accept: "application/json" } })
-  const text = await response.text()
-  if (response.ok) return { kind: "read", read: readDocument<T>(text, "live") }
+  let response: Response
+  let text: string
+  try {
+    response = await fetcher(`/api/host${path}`, { headers: { accept: "application/json" } })
+    text = await response.text()
+  } catch {
+    // The network failed: no live read, so the page shows its recording rather than a stale "Live".
+    return { kind: "unavailable", status: 0 }
+  }
+  if (response.ok) {
+    try {
+      return { kind: "read", read: readDocument<T>(text, "live") }
+    } catch {
+      return { kind: "unavailable", status: response.status }
+    }
+  }
   if (response.status === 403) {
     try {
       const body = JSON.parse(text) as Partial<Refusal>
@@ -77,3 +90,14 @@ export function amountTexts(read: Read<Trace>, index: number): readonly (string 
   if (amounts == null) return null
   return amounts.map((amount, at) => amount === null ? null : read.numbers.get(`/contributions/${index}/amounts/${at}`) ?? String(amount))
 }
+
+/** The host's access document (`GET /v1/access`): who the server verified, and its decision per read capability. */
+export interface Access {
+  readonly principal: { readonly subjectId: string; readonly actorKind: string; readonly roles: readonly string[]; readonly roleTable: string }
+  readonly policy: string
+  readonly grantTable: string
+  readonly capabilities: Readonly<Record<"population" | "values" | "sources", { readonly decision: "permit" | "deny"; readonly rule: string | null }>>
+}
+
+/** The signed-in account's access decisions in the demo cell, computed by the host on each read. */
+export const liveAccess = (fetcher?: Fetch) => hostRead<Access>(`/v1/access?${DEMO}&environmentId=dev`, fetcher)
