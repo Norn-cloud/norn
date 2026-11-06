@@ -1971,6 +1971,26 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     assert.equal(runs[0].id,straddle);assert.equal(runs[1],cursorRun);
     [runs[0],runs[1]]=[runs[1],runs[0]];
     await snapshot(prefix+'straddle');
+    // A complete first page is no upper bound: a run numbered above every run seen so
+    // far (here a revocation whose ledger has not run) can list on a later page.
+    paging=true;shifted=true;
+    for(const [index,kind] of ['pr','group'].entries()){
+      const lowA=nextRun++,lowB=nextRun++,high=nextRun++,ids=20+index*3;
+      await record(lowA,payload(comment(ids,'ordinary text',clock)));
+      await record(lowB,payload(comment(ids+1,'ordinary text',clock)));
+      await record(high,payload(comment(ids+2,'/revoke-rights '+head,clock)),1,true);
+      assert.deepEqual(runs.slice(0,3).map(r=>r.id),[high,lowB,lowA]);
+      runs.splice(2,0,runs.shift());
+      assert(pending(await collect(kind)).includes(high),'a later-page run above the first page must be read');
+    }
+    paging=false;
+    // A repeated run_number must not stand in for a missing one.
+    const n=Math.max(...runs.map(r=>r.run_number));
+    const dupes=[makeRun(nextRun++,'push'),makeRun(nextRun++,'push'),makeRun(nextRun++,'push')];
+    dupes[0].run_number=dupes[1].run_number=n+1;dupes[2].run_number=n+3;
+    runs.unshift(dupes[2],dupes[1],dupes[0]);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Incomplete rights event history/);assert(!fs.existsSync(path))}
+    runs=runs.filter(r=>!dupes.includes(r));nextRun-=3;
     const complete=[...runs];
     for(const id of [revokeRun,admission,firstRun]){
       runs=complete.filter(r=>r.id!==id);

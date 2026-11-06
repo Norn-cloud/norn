@@ -465,20 +465,26 @@ jobs:
               }
               const cache=new Map(), changed=new Set(), definitions=new Map(), seen=new Set(), suffix=[];
               let expected, witnessed=false, boundary=false;
-              const before=metadata.cursor;let top=before?.number;
-              // Listing is by id, which can disagree with run_number for runs created together:
-              // above a cursor accept any order, but exactly the numbers before.number+1..top.
+              const before=metadata.cursor;let top=before?.number,floor;
+              // Listing is by id, which can disagree with run_number for runs created together.
+              // Above a cursor: any order, read 10 minutes of runs past the cursor run, then
+              // require exactly the numbers before.number+1..top.
               for(let page=1;!boundary;page++){
                 until();
                 const {data}=await github.rest.actions.listWorkflowRuns({owner,repo,workflow_id:'ci-policy.yml',per_page:100,page});
-                if(!Array.isArray(data.workflow_runs)||!data.workflow_runs.length)throw new Error('Rights history checkpoint unavailable');
+                if(!Array.isArray(data.workflow_runs))throw new Error('Rights history checkpoint unavailable');
+                if(!data.workflow_runs.length){if(before&&floor&&suffix.length===top-before.number)break;throw new Error('Rights history checkpoint unavailable')}
                 for(const run of data.workflow_runs){
                   if(seen.has(run.id))continue;
                   seen.add(run.id);
                   if(!Number.isSafeInteger(run.run_number)||run.run_number<1||(before&&suffix.some(r=>r.run_number===run.run_number))||
                       (!before&&expected!==undefined&&run.run_number!==expected))throw new Error('Incomplete rights event history');
                   witnessed||=run.id===sourceId;
-                  if(before){if(run.run_number>before.number){suffix.push(run);top=Math.max(top,run.run_number)}continue}
+                  if(before){
+                    if(run.id<=before.id)floor??=Date.parse(run.created_at)-600000;
+                    if(run.run_number>before.number){suffix.push(run);top=Math.max(top,run.run_number)}
+                    continue;
+                  }
                   expected=run.run_number-1;
                   if(run.event==='issue_comment'&&!before){
                     if(!definitions.has(run.head_sha)){
@@ -491,7 +497,7 @@ jobs:
                   suffix.push(run);
                   if(run.run_number===1){boundary=true;break}
                 }
-                if(before&&suffix.length===top-before.number)boundary=true;
+                if(before&&floor&&suffix.length===top-before.number&&Date.parse(data.workflow_runs.at(-1).created_at)<floor)boundary=true;
               }
               suffix.sort((a,b)=>b.run_number-a.run_number);
               if(!witnessed&&(!before||source.run_number>before.number))throw new Error('Missing admission event');
