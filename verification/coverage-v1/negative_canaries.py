@@ -740,33 +740,94 @@ def workflow_superseded_canaries(source: str) -> None:
 
 
 def workflow_sccache_canaries(source: str) -> None:
-    """A dead cache backend never fails a build: without a server, jobs compile with plain rustc."""
+    """A dead cache backend never fails a build; a real compile error always does."""
     workflow = yaml.safe_load(source)
     for name in ("core", "test"):
         job = workflow["jobs"][name]
         if "RUSTC_WRAPPER" in job.get("env", {}) or job["env"].get("SCCACHE_IGNORE_SERVER_IO_ERROR") != "1":
             raise AssertionError(f"{name}: sccache must be opt-in per run and tolerate server IO errors")
         start = next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")
-        for runner, starts, expected in (("github-hosted", True, {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache"}),
-                                         ("github-hosted", False, {"SCCACHE_GHA_ENABLED": "true"}),
-                                         ("self-hosted", True, {"SCCACHE_GHA_ENABLED": "false", "RUSTC_WRAPPER": "sccache"}),
-                                         ("self-hosted", False, {"SCCACHE_GHA_ENABLED": "false"})):
+        for runner, starts in itertools.product(("github-hosted", "self-hosted"), (True, False)):
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                fake = root / "bin" / "sccache"
-                fake.parent.mkdir()
-                # The dead backend: ServerBusy (egress over the account limit) at server start.
-                fake.write_text("#!/bin/sh\n" + ("exit 0\n" if starts else
-                                "echo 'sccache: error: Server startup failed: ServerBusy: Egress is over the account limit' >&2\nexit 2\n"))
-                fake.chmod(0o755)
+                (root / "bin").mkdir()
+                (root / "tmp").mkdir()
+                # Fake sccache: `--start-server` succeeds or dies like the egress outage; a
+                # compile either dies like a server that cannot restart, or runs the compiler.
+                sccache = root / "bin" / "sccache"
+                sccache.write_text("#!/bin/sh\n"
+                    "if [ \"$1\" = --start-server ]; then\n"
+                    + ("  exit 0\n" if starts else
+                       "  echo 'sccache: error: Server startup failed: ServerBusy: Egress is over the account limit' >&2; exit 2\n")
+                    + "fi\n"
+                    "if [ \"$FAKE_SCCACHE\" = dead ]; then echo 'sccache: error: failed to start server: Address in use' >&2; exit 2; fi\n"
+                    "exec \"$@\"\n")
+                # Fake rustc: records each run; fails like a type error when asked to.
+                rustc = root / "bin" / "rustc"
+                rustc.write_text("#!/bin/sh\necho run >> \"$RUSTC_LOG\"\n"
+                    "if [ \"$FAKE_RUSTC\" = broken ]; then echo 'error[E0308]: mismatched types' >&2; exit 1; fi\necho compiled\n")
+                for tool in (sccache, rustc):
+                    tool.chmod(0o755)
                 github_env = root / "env"
                 github_env.write_text("")
-                result = subprocess.run(["bash", "-c", start["run"]], capture_output=True, text=True, timeout=30, env={
-                    "PATH": f"{fake.parent}:{os.environ.get('PATH', '')}", "RUNNER_ENVIRONMENT": runner,
-                    "GITHUB_ENV": str(github_env)})
+                base = {"PATH": f"{root / 'bin'}:{os.environ.get('PATH', '')}", "RUNNER_TEMP": str(root / "tmp")}
+                result = subprocess.run(["bash", "-c", start["run"]], capture_output=True, text=True, timeout=30,
+                                        env={**base, "RUNNER_ENVIRONMENT": runner, "GITHUB_ENV": str(github_env)})
                 exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines() if line)
+                wrapper = str(root / "tmp" / "sccache-rustc")
+                expected = {"SCCACHE_GHA_ENABLED": "true" if runner == "github-hosted" else "false",
+                            **({"RUSTC_WRAPPER": wrapper} if starts else {})}
                 if result.returncode != 0 or exported != expected:
                     raise AssertionError(f"{name}: sccache start drift on {runner}/{starts}: {result.returncode} {exported}")
+                if not starts:
+                    continue
+                for server, compiler, status, runs in (("alive", "ok", 0, 1), ("dead", "ok", 0, 1),
+                                                       ("alive", "broken", 1, 1), ("dead", "broken", 1, 1)):
+                    log = root / f"rustc-{server}-{compiler}.log"
+                    compiled = subprocess.run([wrapper, str(rustc), "--crate-name", "probe"], capture_output=True, text=True,
+                                              timeout=30, env={**base, "FAKE_SCCACHE": server, "FAKE_RUSTC": compiler,
+                                                               "RUSTC_LOG": str(log)})
+                    calls = len(log.read_text().splitlines()) if log.exists() else 0
+                    fell_back = "compiling with plain rustc" in compiled.stderr
+                    if compiled.returncode != status or calls != runs or fell_back != (server == "dead") \
+                            or (compiler == "broken" and "E0308" not in compiled.stderr):
+                        raise AssertionError(f"{name}: sccache wrapper drift {server}/{compiler}: "
+                                             f"{compiled.returncode} runs={calls} {compiled.stderr!r}")
+
+
+def bundle_prune_containment_canaries() -> None:
+    """The bundle prune deletes only the workspace's own target dir, never anything else."""
+    core = (ROOT / "scripts/ci/core.sh").read_text(encoding="utf-8")
+    start = core.index("prune_target() {\n")
+    function = core[start:core.index("\n}\n", start) + 3]
+    with tempfile.TemporaryDirectory() as directory:
+        top = Path(directory).resolve()
+        home, workspace = top / "home", top / "home" / "work" / "norn"
+        outside = top / "outside"
+        for path in (workspace / "target" / "debug", workspace / "src", outside, home / ".cargo"):
+            path.mkdir(parents=True, exist_ok=True)
+        (workspace / "escape").symlink_to(outside)
+        (workspace / "target-link").symlink_to(outside)
+        cases = {
+            None: True, "": True, "target": True, "target/": True, str(workspace / "target"): True,
+            "target/../target": True,
+            "/": False, str(home): False, str(workspace): False, str(workspace.parent): False, ".": False, "..": False,
+            "../sibling": False, str(outside): False, "escape": False, "target-link": False, "target/debug": False,
+            "src/../../norn": False,
+        }
+        for value, deletes in cases.items():
+            (workspace / "target" / "debug").mkdir(parents=True, exist_ok=True)
+            marker = [workspace, workspace / "src", home, home / ".cargo", outside, workspace / "target"]
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home)}
+            if value is not None:
+                env["CARGO_TARGET_DIR"] = value
+            result = subprocess.run(["bash", "-c", function + "prune_target"], cwd=workspace, env=env,
+                                    capture_output=True, text=True, timeout=30)
+            survivors = [path.exists() for path in marker]
+            if result.returncode or survivors[:5] != [True] * 5 or survivors[5] == deletes:
+                raise AssertionError(f"bundle prune containment drift for {value!r}: {survivors} {result.stdout}")
+            if not deletes and "refusing to prune" not in result.stdout:
+                raise AssertionError(f"bundle prune refused {value!r} silently")
 
 
 def workflow_trusted_policy_canaries(source: str) -> None:
@@ -1059,6 +1120,14 @@ def workflow_context_canaries(source: str) -> None:
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
                         .replace("gha=false", "gha=true"))),
+                    ("masked compile failure", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace('exit "$status"', "exit 0"))),
+                    ("fallback without compiling", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace('  exec "$@"\n', "  exit 0\n"))),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
@@ -1070,11 +1139,12 @@ def workflow_context_canaries(source: str) -> None:
         core = source_runner.read_text(encoding="utf-8")
         try:
             for label, before, after in (
-                    ("broad", 'rm -rf -- "${CARGO_TARGET_DIR:-$PWD/target}"', 'rm -rf -- "$PWD"'),
+                    ("broad", 'rm -rf -- "$target"', 'rm -rf -- "$root"'),
+                    ("uncontained", 'if [[ $target != "$root/target" ]]; then', "if false; then"),
+                    ("uncanonical", 'target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}")', 'target=${CARGO_TARGET_DIR:-$PWD/target}'),
                     ("unconditional", "if [[ -n $pruned ]] && ((", "if true || [[ -n $pruned ]] && (("),
                     ("first task", "      pruned=1\n", ""),
-                    ("extra deletion", "        rm -rf -- \"${CARGO_TARGET_DIR:-$PWD/target}\"\n",
-                     "        rm -rf -- \"${CARGO_TARGET_DIR:-$PWD/target}\" \"$HOME/.cargo\"\n")):
+                    ("extra deletion", "        prune_target\n", '        prune_target; rm -rf -- "$HOME/.cargo"\n')):
                 if core.count(before) != 1:
                     raise AssertionError(f"bundle prune canary target drifted: {label}")
                 mutated = Path(directory) / "core.sh"
@@ -2311,6 +2381,7 @@ def main() -> int:
         workflow_verdict_canaries(source)
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
+        bundle_prune_containment_canaries()
         workflow_sccache_canaries(source)
         workflow_trusted_policy_canaries(source)
         workflow_superseded_canaries(source)

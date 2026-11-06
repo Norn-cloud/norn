@@ -107,9 +107,27 @@ gha=false
 [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
 export SCCACHE_GHA_ENABLED=$gha
 echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
-# A cache outage must never fail a build: without a running server, compile with plain rustc.
+# A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+# sccache itself fails (it reports `sccache: ...`, e.g. a dead server that cannot
+# restart), compile again with plain rustc; a compiler failure keeps its exit status.
+wrapper="$RUNNER_TEMP/sccache-rustc"
+cat > "$wrapper" <<'WRAPPER'
+#!/usr/bin/env bash
+log=$(mktemp)
+sccache "$@" 2> "$log"
+status=$?
+if [ "$status" -ne 0 ] && grep -q '^sccache: ' "$log"; then
+  echo "::warning::sccache failed ($(grep -m1 '^sccache: ' "$log")); compiling with plain rustc" >&2
+  rm -f "$log"
+  exec "$@"
+fi
+cat "$log" >&2
+rm -f "$log"
+exit "$status"
+WRAPPER
+chmod +x "$wrapper"
 if sccache --start-server; then
-  echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV"
+  echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
 else
   echo "::warning::sccache server unavailable; compiling with plain rustc"
 fi
@@ -636,8 +654,9 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = CORE_RUNNER.read_text()
     # Bundles may drop only the cargo target dir, between tasks and when disk is low.
-    prune = '    pruned=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Bundle tasks never share build outputs (the planner packs them freely), so\n      # a task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        rm -rf -- "${CARGO_TARGET_DIR:-$PWD/target}"\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1\n'
-    require(runner.count(prune) == 1 and runner.count("rm -rf") == 2,
+    prune = '    pruned=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Bundle tasks never share build outputs (the planner packs them freely), so\n      # a task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1\n'
+    contained = 'prune_target() {\n  local root target\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  rm -rf -- "$target"\n}\n'
+    require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
             "bundle may prune only the cargo target dir, between tasks and when disk is low")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,

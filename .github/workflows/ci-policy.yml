@@ -90,9 +90,27 @@ jobs:
           [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
           export SCCACHE_GHA_ENABLED=$gha
           echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
-          # A cache outage must never fail a build: without a running server, compile with plain rustc.
+          # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+          # sccache itself fails (it reports `sccache: ...`, e.g. a dead server that cannot
+          # restart), compile again with plain rustc; a compiler failure keeps its exit status.
+          wrapper="$RUNNER_TEMP/sccache-rustc"
+          cat > "$wrapper" <<'WRAPPER'
+          #!/usr/bin/env bash
+          log=$(mktemp)
+          sccache "$@" 2> "$log"
+          status=$?
+          if [ "$status" -ne 0 ] && grep -q '^sccache: ' "$log"; then
+            echo "::warning::sccache failed ($(grep -m1 '^sccache: ' "$log")); compiling with plain rustc" >&2
+            rm -f "$log"
+            exec "$@"
+          fi
+          cat "$log" >&2
+          rm -f "$log"
+          exit "$status"
+          WRAPPER
+          chmod +x "$wrapper"
           if sccache --start-server; then
-            echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV"
+            echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
           else
             echo "::warning::sccache server unavailable; compiling with plain rustc"
           fi
@@ -204,9 +222,27 @@ jobs:
           [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
           export SCCACHE_GHA_ENABLED=$gha
           echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
-          # A cache outage must never fail a build: without a running server, compile with plain rustc.
+          # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+          # sccache itself fails (it reports `sccache: ...`, e.g. a dead server that cannot
+          # restart), compile again with plain rustc; a compiler failure keeps its exit status.
+          wrapper="$RUNNER_TEMP/sccache-rustc"
+          cat > "$wrapper" <<'WRAPPER'
+          #!/usr/bin/env bash
+          log=$(mktemp)
+          sccache "$@" 2> "$log"
+          status=$?
+          if [ "$status" -ne 0 ] && grep -q '^sccache: ' "$log"; then
+            echo "::warning::sccache failed ($(grep -m1 '^sccache: ' "$log")); compiling with plain rustc" >&2
+            rm -f "$log"
+            exec "$@"
+          fi
+          cat "$log" >&2
+          rm -f "$log"
+          exit "$status"
+          WRAPPER
+          chmod +x "$wrapper"
           if sccache --start-server; then
-            echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV"
+            echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
           else
             echo "::warning::sccache server unavailable; compiling with plain rustc"
           fi
