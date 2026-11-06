@@ -56,19 +56,13 @@ fn answer_path() -> String {
     format!("/v1/questions/{QUESTION}/answer")
 }
 
-fn trace_query(answer: &Value) -> String {
-    let bucket = answer["rows"]
-        .as_object()
-        .unwrap()
-        .keys()
-        .next()
-        .unwrap()
-        .clone();
+fn trace_query(answer: &Value, bucket: &str) -> String {
     let lineage = answer["lineageRef"].as_str().unwrap();
-    form_urlencoded::Serializer::new(SCOPE.to_owned())
+    let pins = form_urlencoded::Serializer::new(String::new())
         .append_pair("lineageRef", lineage)
-        .append_pair("bucket", &bucket)
-        .finish()
+        .append_pair("bucket", bucket)
+        .finish();
+    format!("{SCOPE}&{pins}")
 }
 
 #[test]
@@ -111,35 +105,38 @@ fn traces_disclose_values_only_under_their_own_grant() {
     let cell = cell(NativeEngine::open_in_memory().unwrap());
     let answer = json(&get(&cell, &answer_path(), SCOPE, VIEWER));
     let path = format!("/v1/questions/{QUESTION}/trace");
-    let viewer = get(&cell, &path, &trace_query(&answer), VIEWER);
-    assert_eq!(viewer.status, 200, "{}", viewer.body);
-    let viewer = json(&viewer);
-    let contributions = viewer["contributions"].as_array().unwrap();
-    assert!(!contributions.is_empty());
-    assert!(
-        contributions
-            .iter()
-            .all(|c| c["restricted"] == false && c["values"].is_object())
-    );
-    let guest = get(&cell, &path, &trace_query(&answer), GUEST);
-    assert_eq!(guest.status, 200, "{}", guest.body);
-    let guest = json(&guest);
-    let restricted = guest["contributions"].as_array().unwrap();
-    assert_eq!(
-        restricted.len(),
-        contributions.len(),
-        "membership is the same population"
-    );
-    assert!(
-        restricted
-            .iter()
-            .all(|c| c["restricted"] == true && c["values"].is_null())
-    );
-    assert!(
-        restricted
-            .iter()
-            .all(|c| c["source"]["status"] != "resolved")
-    );
+    for bucket in answer["rows"].as_object().unwrap().keys() {
+        let query = trace_query(&answer, bucket);
+        let viewer = get(&cell, &path, &query, VIEWER);
+        assert_eq!(viewer.status, 200, "{bucket}: {}", viewer.body);
+        let viewer = json(&viewer);
+        let contributions = viewer["contributions"].as_array().unwrap();
+        assert!(!contributions.is_empty(), "{bucket}");
+        assert!(
+            contributions
+                .iter()
+                .all(|c| c["restricted"] == false && c["values"].is_object())
+        );
+        let guest = get(&cell, &path, &query, GUEST);
+        assert_eq!(guest.status, 200, "{bucket}: {}", guest.body);
+        let guest = json(&guest);
+        let restricted = guest["contributions"].as_array().unwrap();
+        assert_eq!(
+            restricted.len(),
+            contributions.len(),
+            "membership is the same population"
+        );
+        assert!(
+            restricted
+                .iter()
+                .all(|c| c["restricted"] == true && c["values"].is_null())
+        );
+        assert!(
+            restricted
+                .iter()
+                .all(|c| c["source"]["status"] != "resolved")
+        );
+    }
 }
 
 #[test]

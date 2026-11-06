@@ -112,7 +112,7 @@ fn conversions() -> Result<Vec<FactWriteRow>, SeedError> {
         .skip(1)
         .map(|line| {
             let fields: Vec<&str> = line.split(',').collect();
-            let [_, _, key, metal, input, recovered, loss, _, at, _] = fields[..] else {
+            let [_, _, key, metal, input, recovered, loss, _, at, _] = fields.as_slice() else {
                 return Err(SeedError(format!("malformed conversion row: {line}")));
             };
             Ok(FactWriteRow::Put {
@@ -139,11 +139,24 @@ fn plan(object: ObjectTypeDef) -> Result<QuestionPlan, SeedError> {
     .into_iter()
     .next()
     .ok_or_else(|| SeedError("empty ontology".into()))?;
-    artifact["artifactId"] = json!("demo.Conversion.entity.v2");
-    artifact["name"] = json!(TYPE);
-    artifact["namespace"] = json!("demo");
-    artifact["provenance"] = json!({"source":"import","sourcePath":"synthetic:scrap-yield-k1.csv"});
-    artifact["payload"] = json!({"entityVersion":"2.0","objectType":object});
+    let fields = artifact
+        .as_object_mut()
+        .ok_or_else(|| SeedError("ontology entry is not an object".into()))?;
+    for (key, value) in [
+        ("artifactId", json!("demo.Conversion.entity.v2")),
+        ("name", json!(TYPE)),
+        ("namespace", json!("demo")),
+        (
+            "provenance",
+            json!({"source":"import","sourcePath":"synthetic:scrap-yield-k1.csv"}),
+        ),
+        (
+            "payload",
+            json!({"entityVersion":"2.0","objectType":object}),
+        ),
+    ] {
+        fields.insert(key.into(), value);
+    }
     let artifact: ArtifactEnvelope =
         serde_json::from_value(artifact).map_err(|e| fail("entity", e))?;
     let catalog = EffectiveCatalog::from_artifacts(&[artifact]);
