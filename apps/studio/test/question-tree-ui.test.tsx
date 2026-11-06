@@ -46,8 +46,9 @@ test("an edit beyond the offered options reads as that column's own choice", () 
 
 test("columns number their options and mark the server's top pick and the agent's; the path reads by number", () => {
   const html = renderToStaticMarkup(<ChoiceColumn title="Measure" selected="b" onSelect={() => {}} options={[{ id: "a", label: "Input", marks: ["recommended"] }, { id: "b", label: "Yield", marks: ["agent"] }]} />)
-  expect(html).toMatch(/>1<\/span><span[^>]*>Input<\/span><span[^>]*>Recommended</)
-  expect(html).toMatch(/>2<\/span><span[^>]*>Yield<\/span><span[^>]*>Agent&#x27;s pick</)
+  // The number sits beside the label; the marks follow the label.
+  expect(html).toMatch(/>1<\/span><span[^>]*><span[^>]*>Input<\/span><span[^>]*>Recommended</)
+  expect(html).toMatch(/>2<\/span><span[^>]*><span[^>]*>Yield<\/span><span[^>]*>Agent&#x27;s pick</)
   expect(html).toMatch(/aria-pressed="true"[^>]*>.*Yield/)
   expect(pathNumbers([{ options: [{ id: "a" }, { id: "b" }], selected: "b" }, { options: [{ id: "x" }], selected: undefined }])).toEqual([2, undefined])
   expect(renderToStaticMarkup(<PathSummary numbers={[3, 2, 1, 1]} />).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()).toBe("Then 3 – 2 – 1 – 1")
