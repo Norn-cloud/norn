@@ -58,6 +58,10 @@ test("agent: create, view, edit, wire tools and laws, undo/redo, validate (law n
   await page.getByLabel("Prompt").blur()
   await page.getByLabel("A person decides").selectOption("laws")
   await expect(node(page, "agent")).toContainText("asks when a law applies")
+  // "When a marked law applies" with no law marked is the checker's decision-policy finding, and Save waits for it.
+  await expect(page.getByText("agent.validation.invalid_decision_policy").first()).toBeVisible()
+  await expect(page.getByRole("button", { name: /Save to server/ })).toHaveAccessibleName(/Fix \d+ problems? first/)
+  await page.getByLabel("A person decides").selectOption("always")
   // wire a tool (create edge), then undo/redo it
   await page.getByRole("button", { name: "Tool", exact: true }).click()
   await expect(node(page, "tool:bind_tickets")).toContainText("Read tickets")
