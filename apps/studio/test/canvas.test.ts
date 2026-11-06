@@ -59,6 +59,12 @@ test("a renamed step's edge keeps its id, and a new edge takes a free one", () =
   expect(g.freshName(renamed.edges.map(({ id }) => id), "submit:draft")).toBe("submit:draft_2")
 })
 
+test("steps renamed onto one id keep their own rules, and compile apart for the checker to name", () => {
+  const graph = g.configureEdges(g.configureEdges(decompile(orderEnvelope, order), ["hold:submitted"], { guards: "self.total > 0" }), ["hold:approved"], { guards: "self.total > 1" })
+  const lifecycle = (compile(orderEnvelope, order, graph).envelope.payload as { objectType: { lifecycles: { transitions: { id: string; guards?: string[] }[] }[] } }).objectType.lifecycles[0]
+  expect(lifecycle?.transitions.filter(({ id }) => id === "hold").map(({ guards }) => guards)).toEqual([["self.total > 0"], ["self.total > 1"]])
+})
+
 test("renaming a state carries its steps; removing a state removes its steps", () => {
   const graph = g.renameNode(decompile(orderEnvelope, order), "on_hold", "paused")
   expect(graph.edges.filter(({ source, target }) => source === "paused" || target === "paused").map(({ config }) => config.transition).sort()).toEqual(["amend", "approve", "cancel", "hold", "hold"])

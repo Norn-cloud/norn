@@ -99,9 +99,9 @@ export function compile(envelope: Envelope, ref: LifecycleRef, graph: Graph): { 
   const flagged = (flag: string) => states.filter(({ config }) => config[flag] === "yes").map(({ id }) => id)
 
   const groups = new Map<string, CanvasEdge[]>()
-  // Edges sharing an id but not a target stay apart, so the checker names the clash.
+  // Edges sharing an id but not a target, guards or description stay apart, so the checker names the clash instead of one silently winning.
   for (const edge of graph.edges) {
-    const key = `${edge.config.transition || edge.id}->${edge.target}`
+    const key = JSON.stringify([edge.config.transition || edge.id, edge.target, edge.config.guards ?? "", edge.config.description ?? ""])
     groups.set(key, [...(groups.get(key) ?? []), edge])
   }
   const transitions: Transition[] = [...groups.values()].map((edges, position) => {
