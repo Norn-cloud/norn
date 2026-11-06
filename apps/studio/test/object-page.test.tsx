@@ -1,15 +1,23 @@
-import { expect, test } from "bun:test"
+import { expect, mock, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } from "@tanstack/react-router"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
-import { ObjectPage } from "../src/objects.tsx"
-import { recordedTransport } from "../src/lib/transport.ts"
+import { readDocument } from "../src/lib/exact.ts"
+
+// The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
+mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
+const { ObjectPage } = await import("../src/objects.tsx")
+
+const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
 /** The record page at its route, with the recorded reads already answered. */
 async function page(concept: string, id: string) {
   const client = new QueryClient()
-  client.setQueryData(["catalog"], await recordedTransport.catalog())
-  client.setQueryData(["object", concept, id], await recordedTransport.object(concept, id))
+  const file = (read: string) => fixture(`objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`)
+  client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
+  client.setQueryData(["object", concept, id], { object: file("object"), links: file("links"), source: file("source") })
   const root = createRootRoute()
   const router = createRouter({
     routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage })]),
