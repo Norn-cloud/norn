@@ -2,7 +2,7 @@ import { Chat, useChat } from "@ai-sdk/react"
 import { DefaultChatTransport, type UIMessage } from "ai"
 import { Bot, LoaderCircle, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useRef, useState, type FormEvent, type MutableRefObject } from "react"
+import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react"
 import { Streamdown } from "streamdown"
 import { StickToBottom } from "use-stick-to-bottom"
 import { Badge } from "@/components/ui/badge"
@@ -57,7 +57,12 @@ export interface AgentState {
   readonly examples: readonly ExampleRun[]
   readonly setExamples: (update: (list: readonly ExampleRun[]) => readonly ExampleRun[]) => void
   readonly nextExample: MutableRefObject<number>
+  /** Whether the Worker serves the example checker: unknown until the one probe answers. */
+  readonly examplesServed: boolean | undefined
 }
+
+/** The example route is missing (404) or has no agent service bound (503), or could not be reached: examples cannot run here. */
+export const examplesServedBy = (status: number | "unreachable"): boolean => status !== "unreachable" && status !== 404 && status !== 503
 
 export function useAgentState(): AgentState {
   const [chat] = useState(() => new Chat<UIMessage>({ transport: new DefaultChatTransport({ api: "/api/agent", headers: () => ({ "x-norn-session": sessionId(tabStorage()) }) }) }))
@@ -65,12 +70,21 @@ export function useAgentState(): AgentState {
   const [stopped, setStopped] = useState<ReadonlySet<string>>(new Set())
   const [examples, setExamples] = useState<readonly ExampleRun[]>([])
   const nextExample = useRef(0)
-  return { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample }
+  const [examplesServed, setExamplesServed] = useState<boolean>()
+  // Probe the example route once per page; it accepts only POST, so any answer but 404 or 503 means it is served.
+  useEffect(() => {
+    let current = true
+    fetch("/api/agent/example", { method: "GET", headers: { accept: "application/json" } })
+      .then((response) => response.status, () => "unreachable" as const)
+      .then((status) => { if (current) setExamplesServed(examplesServedBy(status)) })
+    return () => { current = false }
+  }, [])
+  return { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample, examplesServed }
 }
 
 /** The assistant (AI SDK chat; scrolling and markdown from use-stick-to-bottom and streamdown): ask for a change in plain words; the server's checker admits or refuses what it proposes. */
 export function AgentPanel({ state }: { readonly state: AgentState }) {
-  const { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample } = state
+  const { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample, examplesServed } = state
   const { messages, sendMessage, status, error, stop, regenerate, clearError } = useChat({ chat })
   const busy = status === "submitted" || status === "streaming"
   const send = (text: string) => { if (text.trim() === "" || busy) return; clearError(); void sendMessage({ text }); setInput("") }
@@ -131,8 +145,9 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
         <div className="flex flex-wrap gap-2">
           {/* The model's suggestions open a conversation; the example proposals stay offered throughout. */}
           {messages.length === 0 && SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}
+          {examplesServed === false && <p className="w-full text-meta text-muted-foreground">Examples need the agent service.</p>}
           {EXAMPLES.map((chip) => (
-            <Button key={chip} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => void runExample(chip)} title="Sends this recorded proposal straight to the checker, without the model.">
+            <Button key={chip} size="sm" variant="outline" disabled={examplesServed !== true} className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => void runExample(chip)} title="Sends this recorded proposal straight to the checker, without the model.">
               <span className="text-muted-foreground">Example proposal:</span> {chip}
             </Button>
           ))}
