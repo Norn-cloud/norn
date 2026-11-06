@@ -1,0 +1,15 @@
+{
+  "objectType": "canon.PartyRole",
+  "id": "demo/party/owner/role/owner",
+  "items": [
+    {
+      "sourceType": "canon.PartyRole",
+      "link": "agent",
+      "source": "demo/party/owner/role/owner",
+      "targetType": "canon.Party",
+      "target": "demo/party/owner",
+      "version": 1
+    }
+  ],
+  "hasMore": false
+}
