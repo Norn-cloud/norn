@@ -983,7 +983,11 @@ pub const QUESTION_FORMAT: &str = "norn-checker-abi/question@1";
 /// # Errors
 ///
 /// [`AbiError`] when an argument is not JSON of the expected shape.
-pub fn admit_question_json(artifacts_json: &str, metrics_json: &str, question_json: &str) -> Result<String, AbiError> {
+pub fn admit_question_json(
+    artifacts_json: &str,
+    metrics_json: &str,
+    question_json: &str,
+) -> Result<String, AbiError> {
     let artifacts = parse_array("artifacts", artifacts_json)?;
     let refused = |findings: &[Diagnostic]| {
         json!({ "format": QUESTION_FORMAT, "admitted": false, "diagnostics": diagnostics_to_json(findings), "plan": null }).to_string()
@@ -992,10 +996,10 @@ pub fn admit_question_json(artifacts_json: &str, metrics_json: &str, question_js
         Ok(envelopes) => envelopes,
         Err(findings) => return Ok(refused(&findings)),
     };
-    let metrics: Vec<norn_ir::MetricDefinition> =
-        serde_json::from_str(metrics_json).map_err(|error| invalid("metrics", error.to_string()))?;
-    let question: norn_ir::QuestionIR =
-        serde_json::from_str(question_json).map_err(|error| invalid("question", error.to_string()))?;
+    let metrics: Vec<norn_ir::MetricDefinition> = serde_json::from_str(metrics_json)
+        .map_err(|error| invalid("metrics", error.to_string()))?;
+    let question: norn_ir::QuestionIR = serde_json::from_str(question_json)
+        .map_err(|error| invalid("question", error.to_string()))?;
     let catalog = norn_checker::EffectiveCatalog::from_artifacts(&envelopes);
     // The cell's bound for one question's population (norn-cell-do analytics).
     match norn_checker::metric::compute::admit(&metrics, &question, &catalog, 100) {

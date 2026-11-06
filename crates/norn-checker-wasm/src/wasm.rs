@@ -22,7 +22,11 @@ pub fn check_artifact_set(artifacts_json: &str, context_json: &str) -> Result<St
 ///
 /// Throws on invalid input.
 #[wasm_bindgen(js_name = admitQuestion)]
-pub fn admit_question(artifacts_json: &str, metrics_json: &str, question_json: &str) -> Result<String, JsError> {
+pub fn admit_question(
+    artifacts_json: &str,
+    metrics_json: &str,
+    question_json: &str,
+) -> Result<String, JsError> {
     crate::admit_question_json(artifacts_json, metrics_json, question_json).map_err(JsError::from)
 }
 
