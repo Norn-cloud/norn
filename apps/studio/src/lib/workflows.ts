@@ -76,3 +76,19 @@ export function workflows(definitions: readonly Envelope[]): Workflow[] {
 /** The fields a declared guard reads, in words: `self.candidate_digest` → `candidate digest`. */
 export const guardedFields = (guards: readonly string[]): string[] =>
   [...new Set(guards.flatMap((guard) => [...guard.matchAll(/\bself\.([A-Za-z_][A-Za-z0-9_]*)/g)].map(([, field = ""]) => field.replaceAll("_", " "))))]
+
+/** What a focused step brings into view: its own states, and the steps that touch them. */
+export interface Focus {
+  readonly step: string
+  readonly states: ReadonlySet<string>
+  readonly adjacent: ReadonlySet<string>
+}
+
+export function focusOf(workflow: Workflow, step: string): Focus {
+  const transition = workflow.steps.find(({ transition }) => transition.id === step)?.transition
+  const states = new Set(transition ? [...transition.from, transition.to] : [])
+  const adjacent = new Set(workflow.steps
+    .filter(({ transition: other }) => other.id !== step && [...other.from, other.to].some((name) => states.has(name)))
+    .map(({ transition: other }) => other.id))
+  return { step, states, adjacent }
+}
