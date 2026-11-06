@@ -61,5 +61,3 @@ test("a cell finding lands on the title, one tile, or the dashboard as a whole",
   expect(dashboardField("/tiles")).toBe("tiles")
   expect(dashboardField(null)).toBeNull()
 })
-
-const render = (stored?: StoredDashboard) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><DashboardEditor store={cellDouble()} catalog={catalog} stored={stored} /></QueryClientProvider>)
