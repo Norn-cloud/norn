@@ -407,7 +407,10 @@ fn an_undeclared_metric_is_a_diagnostic_only_for_a_caller_who_reads_every_metric
         .filter(|d| d["code"] == "metric.validation.unknown_metric")
         .collect();
     assert_eq!(unknown.len(), 1, "{refused}");
-    assert_eq!(unknown[0]["span"]["pointer"], "/question/aggregate/0/metric");
+    assert_eq!(
+        unknown[0]["span"]["pointer"],
+        "/question/aggregate/0/metric"
+    );
     // Partial grant (no grant on demo.input, which this question does not read):
     // undeclared and ungranted are one denial, byte for byte.
     cell.runtime.ungranted = Some("demo.input");

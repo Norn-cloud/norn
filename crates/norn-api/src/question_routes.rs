@@ -389,7 +389,9 @@ fn read_metrics<'d>(
         if !seen.insert(name.to_owned()) {
             continue;
         }
-        let Some(definition) = definitions.iter().find(|definition| definition.name == name)
+        let Some(definition) = definitions
+            .iter()
+            .find(|definition| definition.name == name)
         else {
             undeclared = true;
             continue;
@@ -407,7 +409,10 @@ fn read_metrics<'d>(
 /// its first message.
 fn rebased(mut findings: Vec<norn_checker::Diagnostic>) -> Vec<norn_checker::Diagnostic> {
     const ENTRY: &str = "/questions/0";
-    for span in findings.iter_mut().filter_map(|finding| finding.span.as_mut()) {
+    for span in findings
+        .iter_mut()
+        .filter_map(|finding| finding.span.as_mut())
+    {
         if span.pointer == ENTRY || span.pointer.starts_with("/questions/0/") {
             span.pointer.replace_range(..ENTRY.len(), "");
         }
