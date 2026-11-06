@@ -6,7 +6,8 @@
  * Nothing here runs a flow or decides anything; the checker and then the
  * server judge what it lowers to.
  */
-import { X, lowerFlow, type BuildDiagnostic, type EnvelopeOptions, type Expr, type FlowDef, type FnRef, type Step } from "../../../../../tools/norn-ts/src/builder/index.ts"
+import type { Expr } from "../../../../../tools/norn-ts/src/builder/expr.ts"
+import { X, lowerFlow, type BuildDiagnostic, type EnvelopeOptions, type FlowDef, type FnRef, type Step } from "../../../../../tools/norn-ts/src/builder/index.ts"
 import type { CanvasEdge, CanvasNode, Graph, Kinds, Port } from "./graph.ts"
 
 /** Control flow: every step hands on to the next. What a step reads is typed by its tool's schemas, which lowering checks. */
