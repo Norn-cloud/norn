@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import { ChartLine, Clock, Rows3, Sigma } from "lucide-react"
@@ -42,7 +43,7 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace }: { read
   const trace = useQuery({ queryKey: ["live-trace", question, lineageRef, bucket.key], queryFn: () => fetchTrace ? fetchTrace(lineageRef, bucket.key) : liveTrace(question, lineageRef, bucket.key), retry: false })
   const data = trace.data
   if (trace.isPending) return <p className="text-sm text-muted-foreground">Reading the records…</p>
-  if (trace.isError || data === undefined || data.kind === "unavailable") return <p className="text-sm text-muted-foreground">The live records could not be read.</p>
+  if (trace.isError || data === undefined || data.kind === "unavailable") return <p className="text-sm text-muted-foreground">{data?.kind === "unavailable" && data.reason === "no-cell" ? NO_DATA_CELL : "The live records could not be read."}</p>
   if (data.kind === "refused") return <RefusedNote refusal={data.refusal} />
   const read = data.read
   return (

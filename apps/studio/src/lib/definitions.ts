@@ -85,8 +85,8 @@ export function useStudioScope() {
   return useQuery({ queryKey: ["studio-scope"], queryFn: () => readStudioScope(), retry: false })
 }
 
-/** Every definitions call uses a fresh server-reported scope. The host still authorizes the request. */
-export function scopedDefinitionsFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): Fetch {
+/** Every scoped host call uses a fresh server-reported scope. The host still authorizes the request. */
+export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): Fetch {
   return async (path, init) => {
     const active = await scope()
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)
@@ -104,7 +104,7 @@ const findingsOf = (body: unknown): readonly Finding[] => {
 
 /** Thrown when the cell answered with neither a decision nor a refusal it documents: nothing was saved. */
 export class CellUnavailable extends Error {
-  constructor(status: number, message?: string) {
+  constructor(readonly status: number, message?: string) {
     // A 404 is a cell without the definition route yet; anything else is a cell that did not answer. Neither saved nor read anything.
     super(message ?? (status === 401 ? "Sign in again." : status === 403 ? "Your role may not read or change these definitions." : status === 404 ? "The cell's definition route isn't connected yet; nothing was read or saved." : `The cell did not answer (${status || "network"}); nothing was read or saved.`))
   }
@@ -118,7 +118,7 @@ export class CellUnavailable extends Error {
  * back; reading needs Population, so viewers can open dashboards.
  */
 export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host", scope?: ScopeProvider): DefinitionStore {
-  const scoped = scopedDefinitionsFetch(fetcher, base, scope)
+  const scoped = scopedHostFetch(fetcher, base, scope)
   const post = async (path: string, body: unknown) => {
     let response: Response
     try {
