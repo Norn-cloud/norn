@@ -1,6 +1,6 @@
 import { useBlocker } from "@tanstack/react-router"
 import { ArrowDown, ArrowUp, CircleAlert, Copy, Redo2, Save, Trash2, Undo2 } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { history, modKey, type History, type Issue } from "@/lib/editor"
@@ -21,7 +21,8 @@ export function useEditor<T>({ initial, onSave, onRun }: { readonly initial: T; 
   const open = useCallback((next: T) => { setState(history.start(next)); setSaved(next) }, [])
   const markSaved = useCallback((at: T) => setSaved(at), [])
   const actions = useRef({ onSave, onRun, value })
-  actions.current = { onSave, onRun, value }
+  // Written after each commit, not during render; layout effects run before the browser can deliver the next keydown.
+  useLayoutEffect(() => { actions.current = { onSave, onRun, value } })
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return

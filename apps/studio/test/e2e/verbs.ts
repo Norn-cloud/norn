@@ -43,4 +43,7 @@ export interface VerbSuite { readonly kind: string; readonly matrix: VerbMatrix;
 export const defineVerbs = <const M extends VerbMatrix>(kind: string, matrix: M, specs: VerbSpecs<M>): VerbSuite => ({ kind, matrix, specs })
 
 /** The verbs a suite must run: every supported one, each with its test. */
+/** The runner's exit status: a run in which no verb ran proves nothing, so it fails like a failed verb. */
+export const exitStatus = (ran: number, failed: number): 0 | 1 => ran > 0 && failed === 0 ? 0 : 1
+
 export const supported = (suite: VerbSuite) => VERBS.filter((verb) => suite.matrix[verb] === "supported")

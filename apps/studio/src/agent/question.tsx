@@ -28,9 +28,17 @@ const isFinding = (finding: unknown): boolean => {
   return typeof code === "string" && typeof message === "string" && (pointer === undefined || pointer === null || typeof pointer === "string")
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+
+/** A plan with the fields the card reads. */
+const isPlan = (plan: unknown) =>
+  isRecord(plan) && typeof plan.grain === "string" && isRecord(plan.question) && Array.isArray(plan.sums) && Array.isArray(plan.metrics)
+
+/** A tool output is a question verdict only in the Worker's shape: an admitted one carries its plan, a refused one none. */
 export function questionVerdictOf(output: unknown): QuestionVerdict | undefined {
-  const value = output as Partial<QuestionVerdict> | null
-  return value?.kind === "question" && typeof value.admitted === "boolean" && Array.isArray(value.findings) && value.findings.every(isFinding) ? value as QuestionVerdict : undefined
+  if (!isRecord(output) || output.kind !== "question" || typeof output.admitted !== "boolean" || !Array.isArray(output.findings) || !output.findings.every(isFinding)) return undefined
+  if (output.admitted ? !isPlan(output.plan) : output.plan !== null) return undefined
+  return output as unknown as QuestionVerdict
 }
 
 const words = (property: string | undefined) => (property ?? "").replaceAll("_", " ")
@@ -47,7 +55,7 @@ export function planWords(plan: NonNullable<QuestionVerdict["plan"]>): readonly 
     ["Measures", numerator && denominator ? `${measure}: ${words(numerator.property)} ÷ ${words(denominator.property)}` : measure],
     ["Of", `${conceptTitle(plan.grain)} records`],
     ["By", (question.groupBy ?? []).map(({ path, grain }) => grain ? `${grain} of ${words(path?.property)}` : words(path?.property)).join(", ") || "—"],
-    ["Only where", (question.filter ?? []).map(({ path, operator, value }) => `${words(path?.property)} ${OPERATORS[operator ?? ""] ?? operator} ${String(value)}`).join(" and ") || "every record"],
+    ["Only where", (question.filter ?? []).map(({ path, operator, value }) => `${words(path?.property)} ${OPERATORS[operator ?? ""] ?? "matches"} ${String(value)}`).join(" and ") || "every record"],
     ["Over", question.window?.start && question.window.end ? `${day(question.window.start)} until ${day(question.window.end)}` : "—"],
   ]
 }
