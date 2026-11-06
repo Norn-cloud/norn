@@ -46,8 +46,15 @@ export function liveTransport(config: LiveConfig, fallback: Transport): Transpor
     const response = await (config.fetch ?? fetch)(`${config.baseUrl}${path}?${new URLSearchParams(query)}`, { headers })
     const source = await response.text()
     if (!response.ok) {
-      const refusal = JSON.parse(source) as { code?: string; message?: string }
-      throw new Refused(response.status, refusal.code ?? "host.error", refusal.message ?? `HTTP ${response.status}`)
+      // A gateway may answer with plain text or HTML; keep its status either way.
+      let refusal: { code?: unknown; message?: unknown } = {}
+      try {
+        const parsed: unknown = JSON.parse(source)
+        if (typeof parsed === "object" && parsed !== null) refusal = parsed as typeof refusal
+      } catch {}
+      const code = typeof refusal.code === "string" ? refusal.code : "host.error"
+      const message = typeof refusal.message === "string" ? refusal.message : `HTTP ${response.status}`
+      throw new Refused(response.status, code, message)
     }
     return readDocument<T>(source, "live")
   }

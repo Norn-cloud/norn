@@ -73,3 +73,13 @@ test("a refusal surfaces the host's code, never a fabricated document", async ()
   expect((refused as Refused).code).toBe("authz.denied")
   expect((refused as Refused).status).toBe(403)
 })
+
+test("a refusal that is not a JSON document keeps its HTTP status", async () => {
+  const transport = liveTransport(
+    { baseUrl: "https://cell.example", authorization: () => undefined, fetch: host(503, "<html>Service Unavailable</html>", []) },
+    recordedTransport,
+  )
+  const refused = await transport.catalog().catch((error: unknown) => error)
+  expect(refused).toBeInstanceOf(Refused)
+  expect([(refused as Refused).status, (refused as Refused).code, (refused as Refused).message]).toEqual([503, "host.error", "HTTP 503"])
+})
