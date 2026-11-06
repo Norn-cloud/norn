@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { EditorToolbar, RowActions, ValidationPanel } from "../src/components/editor.tsx"
-import { VERBS, history, list, modKey, verbTable } from "../src/lib/editor.ts"
+import { EditorToolbar, RowActions, ValidationPanel, shortcutOf } from "../src/components/editor.tsx"
+import { VERBS, history, list, modKey, sameValue, verbTable } from "../src/lib/editor.ts"
 import { SUITES } from "./e2e/suites.ts"
-import { defineVerbs, supported } from "./e2e/verbs.ts"
+import { defineVerbs, exitStatus, supported } from "./e2e/verbs.ts"
 
 test("history undoes and redoes whole states, forgets the redo branch on a new edit, and keeps at most 100 steps", () => {
   let h = history.start(0)
@@ -80,4 +80,39 @@ test("a refusal shows once: the validation panel, with the codes under Details; 
   const { Wrench } = await import("lucide-react")
   expect(renderToStaticMarkup(<EmptyState icon={Wrench} title="No tools bound yet">No tool can run from Norn until an admin binds it.</EmptyState>)).toContain(">No tools bound yet<")
   expect(renderToStaticMarkup(<EmptyState icon={Wrench}>Nothing.</EmptyState>)).toContain(">No data yet<")
+})
+
+test("the e2e runner fails when no verb ran, as well as when one failed", () => {
+  expect(exitStatus(0, 0)).toBe(1)
+  expect(exitStatus(3, 1)).toBe(1)
+  expect(exitStatus(3, 0)).toBe(0)
+})
+
+test("undo and redo shortcuts go to the editor that owns them; save and run only where offered", () => {
+  const key = (key: string, extra: Partial<KeyboardEvent> = {}) => ({ key, metaKey: false, ctrlKey: true, shiftKey: false, ...extra })
+  const owner = { shortcuts: true, save: true, run: false }
+  expect(shortcutOf(key("z"), owner)).toBe("undo")
+  expect(shortcutOf(key("Z", { shiftKey: true }), owner)).toBe("redo")
+  expect(shortcutOf(key("y"), owner)).toBe("redo")
+  expect(shortcutOf(key("s"), owner)).toBe("save")
+  expect(shortcutOf(key("Enter"), owner)).toBeUndefined()
+  expect(shortcutOf(key("z", { ctrlKey: false }), owner)).toBeUndefined()
+  const covered = { ...owner, shortcuts: false }
+  expect(shortcutOf(key("z"), covered)).toBeUndefined()
+  expect(shortcutOf(key("y"), covered)).toBeUndefined()
+  expect(shortcutOf(key("s"), covered)).toBeUndefined()
+})
+
+test("the dirty check compares maps, sets, dates and cycles, not their JSON", () => {
+  expect(sameValue({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] })).toBe(true)
+  expect(sameValue({ a: 1 }, { a: 1, b: undefined })).toBe(false)
+  expect(sameValue(new Map([["k", 1]]), new Map([["k", 2]]))).toBe(false)
+  expect(sameValue(new Map([["k", { v: 1 }]]), new Map([["k", { v: 1 }]]))).toBe(true)
+  expect(sameValue(new Set([1, 2]), new Set([1, 3]))).toBe(false)
+  expect(sameValue(new Date(1), new Date(2))).toBe(false)
+  const a: { self?: unknown; n: number } = { n: 1 }; a.self = a
+  const b: { self?: unknown; n: number } = { n: 1 }; b.self = b
+  const c: { self?: unknown; n: number } = { n: 2 }; c.self = c
+  expect(sameValue(a, b)).toBe(true)
+  expect(sameValue(a, c)).toBe(false)
 })
