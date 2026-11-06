@@ -77,7 +77,8 @@ export class CellUnavailable extends Error {
  * The cell's definition route, through the Studio Worker's /api/host
  * forwarding as the signed-in account (CELL-DO's contract, 2026-11-06):
  * POST /v1/definitions:admit, :install and /v1/definitions/{id}:retire.
- * GET /v1/definitions?kind= (paged) and /v1/definitions/{id} read them back.
+ * GET /v1/definitions:list?kind= (paged) and /v1/definitions/{id} read them
+ * back; reading needs Population, so viewers can open dashboards.
  */
 export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host"): DefinitionStore {
   const post = async (path: string, body: unknown) => {
@@ -108,8 +109,9 @@ export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host"): Def
   }
   return {
     list: async (cursor) => {
-      const query = new URLSearchParams({ kind: KIND, ...cursor ? { cursor } : {} })
-      const { status, body } = await read(`/v1/definitions?${query}`)
+      // A custom method: GET /v1/definitions is the catalog read. The cursor is bound to kind (and include).
+      const query = new URLSearchParams({ kind: KIND, limit: "50", ...cursor ? { cursor } : {} })
+      const { status, body } = await read(`/v1/definitions:list?${query}`)
       const b = body as { items?: unknown; definitions?: unknown; cursor?: unknown } | null
       const rows = Array.isArray(b?.items) ? b.items : Array.isArray(b?.definitions) ? b.definitions : undefined
       if (status !== 200 || rows === undefined) throw new CellUnavailable(status, status === 404 ? "Dashboards can't be listed yet: the cell has no route to read them back." : undefined)
