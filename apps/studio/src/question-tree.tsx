@@ -206,7 +206,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   return (
     <div className="space-y-5">
       {guard?.(editor.dirty)}
-      <EditorToolbar editor={editor} version={saved?.version} showSaveState />
+      <EditorToolbar editor={editor} version={saved?.version} />
       <div className="flex flex-wrap items-start gap-6 pb-2" data-testid="question-tree">
         <ChoiceColumn title="Measure" field="measures" invalid={invalid("measure") || invalid("measures")} options={measureOptions} selected={chosen.measure} onSelect={(id) => patch({ measures: [id] })} />
         <div className="flex flex-col gap-4">

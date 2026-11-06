@@ -159,7 +159,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
   return (
     <div className="space-y-4">
       {guard?.(editor.dirty)}
-      <EditorToolbar editor={editor} onSave={() => save.mutate({ dashboard })} saving={save.isPending || !cellAvailable} version={at?.version} showSaveState>
+      <EditorToolbar editor={editor} onSave={() => save.mutate({ dashboard })} saving={save.isPending || !cellAvailable} version={at?.version}>
       </EditorToolbar>
       {save.isError && <p role="alert" className="text-destructive">{failure(save.error).startsWith("Not saved") ? failure(save.error) : `Not saved. ${failure(save.error)}`}</p>}
       {conflict && (
