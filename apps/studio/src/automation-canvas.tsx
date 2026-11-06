@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback } from "react"
-import { Handle, MarkerType, Position, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { BaseEdge, EdgeLabelRenderer, Handle, MarkerType, Position, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -38,6 +38,29 @@ export function StepBox({ data, selected }: NodeProps<StepNode>) {
 }
 
 const NODE_TYPES = { step: StepBox }
+
+type ExitEdgeData = { readonly label?: string; readonly full?: string }
+
+/**
+ * A connection whose label sits at its exit, just past the step it leaves, so a long condition never lands on
+ * the next step; the full condition is on hover.
+ */
+export function ExitEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }: EdgeProps<Edge<ExitEdgeData, "exit">>) {
+  const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  return (
+    <>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute max-w-48 truncate rounded border bg-card px-1 text-[11px] leading-4 text-foreground"
+            style={{ transform: `translate(0, -50%) translate(${sourceX + 8}px, ${sourceY}px)` }}>{data.label}</div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  )
+}
+
+const EDGE_TYPES = { exit: ExitEdge }
 
 /** An edge label: the condition without its result prefix (`status == paid`), cut at 26 characters; the exit's hover has it in full. */
 const short = (text: string, length = 26) => {
@@ -155,7 +178,7 @@ const DEFAULTS: Record<string, Record<string, string>> = {
 /** The frame's props for an automation; the sheet renders the same props with fixed findings. */
 export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.Graph = EXAMPLE): CanvasFrameProps {
   return {
-    draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, issues,
+    draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
     saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
     fixed: (node) => node.kind === "start",
     toNode: (node, found, selected): StepNode => ({
@@ -166,12 +189,15 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
         outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id: port }) => ({ id: port, label: exitLabel(node, port) ?? "next (continue after this step)" })),
       },
     }),
-    toEdge: (edge, found, selected, graph): Edge => ({
-      id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
-      markerEnd: { type: MarkerType.ArrowClosed }, label: (() => { const text = exitLabel(graph.nodes.find(({ id: node }) => node === edge.source), edge.sourcePort); return text === undefined ? undefined : short(text) })(),
-      style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
-      labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: "var(--foreground)", fontSize: 11 },
-    }),
+    toEdge: (edge, found, selected, graph): Edge => {
+      const full = exitLabel(graph.nodes.find(({ id: node }) => node === edge.source), edge.sourcePort)
+      return {
+        id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected, type: "exit",
+        data: full === undefined ? {} : { label: short(full), full },
+        markerEnd: { type: MarkerType.ArrowClosed },
+        style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
+      }
+    },
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) =>
       ({ id: g.freshName(graph.edges.map(({ id }) => id), `${source}.${sourceHandle ?? "next"}`), source, target, sourcePort: sourceHandle ?? "next", targetPort: targetHandle ?? "in", config: {} }),
     palette: ({ graph, edit, select }) => Object.keys(DEFAULTS).map((kind) => (
