@@ -77,6 +77,8 @@ test("step: create, view, edit, delete, reconnect, undo/redo, validate, reopen",
   // reconnect: drag the step's target end onto another state, then undo.
   const updater = edge(page, "invoiced_to_completed:invoiced").locator(".react-flow__edgeupdater-target")
   await drag(page, updater, handle(page, "cancelled", "left"))
+  // Panning to reach both ends can clear the selection; select the step to read where it goes now.
+  await clickEdge(page, "invoiced_to_completed:invoiced")
   await expect(page.getByText(/Invoiced → Cancelled/)).toBeVisible()
   await press(page, "z")
   await expect(page.getByText(/Invoiced → Completed/)).toBeVisible()
