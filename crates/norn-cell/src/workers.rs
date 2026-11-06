@@ -104,11 +104,13 @@ impl Drop for Active<'_> {
 
 impl SqlEngine for WorkersEngine {
     /// Tables the runtime keeps in the DO's own database, visible in
-    /// `sqlite_master`: `_cf_*` (reserved by the Durable Objects storage API),
-    /// celld's Litestream replication tables, and Wrangler/Miniflare's local
-    /// `__miniflare_do_name`.
+    /// `sqlite_master`: `_cf_*` and `__cf_*` (reserved by the Durable Objects
+    /// storage API, `__cf_kv` among them), celld's Litestream replication
+    /// tables, and Wrangler/Miniflare's local `__miniflare_do_name`.
     fn platform_table_globs(&self) -> &'static [&'static str] {
-        &["_cf_*", "_litestream_*", "__miniflare_*"]
+        &["_cf_*", "__cf_*", "_litestream_*", "__miniflare_*"]
+    }
+
     /// A Durable Object's storage has one connection, this cell's, and the
     /// cell serves each request in one synchronous Wasm call with no await, so
     /// nothing writes between two reads of a call.

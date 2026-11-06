@@ -1243,7 +1243,7 @@ struct PlatformTables(NativeEngine);
 
 impl SqlEngine for PlatformTables {
     fn platform_table_globs(&self) -> &'static [&'static str] {
-        &["_cf_*"]
+        &["_cf_*", "__cf_*"]
     }
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.0.read_isolation()
@@ -1272,6 +1272,12 @@ fn platform_tables_leave_an_engine_fresh_but_foreign_tables_do_not() {
     engine
         .execute_batch("CREATE TABLE \"_cf_KV\" (key TEXT PRIMARY KEY, value BLOB)")
         .expect("platform table");
+    engine
+        .execute_batch("CREATE TABLE \"__cf_kv\" (key TEXT PRIMARY KEY, value BLOB)")
+        .expect("platform kv table");
+    engine
+        .execute_batch("CREATE INDEX \"kv_lookup\" ON \"__cf_kv\" (value)")
+        .expect("platform index with its own name");
     assert!(CellStore::engine_is_fresh(&engine).expect("fresh"));
     // The native engine names no platform tables, so the same table is state.
     assert!(!CellStore::engine_is_fresh(&engine.0).expect("native"));
