@@ -118,3 +118,28 @@ test("a network failure or a 200 that is not JSON is no live read, so the page k
   expect(await hostRead("/v1/x", async () => { throw new TypeError("network") })).toEqual({ kind: "unavailable", status: 0 })
   expect(await hostRead("/v1/x", respond(200, "<html>gateway</html>"))).toEqual({ kind: "unavailable", status: 200 })
 })
+
+test("a bucket the server suppressed (D53) reads 'Suppressed: fewer than 3 records' in the table, chart and totals, never a blank or a 0", async () => {
+  const { SUPPRESSED, buckets, shown } = answerLib
+  const { chartFrame } = await import("../src/lib/chart.ts")
+  // The cell's D53 shape: under k=3 for a reader lacking Values on any member; membership stays.
+  const suppressed = JSON.parse(answerText) as { rows: Record<string, { value: unknown; totals: unknown[]; suppressed?: boolean; members: Record<string, unknown> }> }
+  const [first = ""] = Object.keys(suppressed.rows)
+  const kept = Object.keys(suppressed.rows[first]?.members ?? {})
+  Object.assign(suppressed.rows[first] ?? {}, { suppressed: true, value: null, totals: [] })
+  const source = JSON.stringify(suppressed)
+  const recorded = (name: string) => readDocument(text(name), "recorded").document
+  const declared = { question: recorded("scrap-yield.question.json"), metrics: recorded("scrap-yield.metrics.json"), objectType: recorded("scrap-yield.object-type.json") } as Parameters<typeof buckets>[0]
+  const rows = buckets(declared, { answer: JSON.parse(source), numbers: readDocument(source, "live").numbers, at: "" })
+  expect(rows[0]).toMatchObject({ key: first, suppressed: true, value: SUPPRESSED, totals: [] })
+  expect(rows[0]?.members.map(({ id }) => id)).toEqual(kept)
+  expect(shown(rows[0] ?? { value: "", totals: [] })).toBe(SUPPRESSED)
+  expect(rows.slice(1).every(({ suppressed: s, value }) => !s && value !== SUPPRESSED)).toBe(true)
+  const frame = chartFrame(rows)
+  expect(frame?.unit).toBe("%")
+  expect(frame?.points[0] as unknown).toEqual({ label: rows[0]?.label, position: null, shown: SUPPRESSED, exact: SUPPRESSED })
+  expect(frame?.points.slice(1).every(({ position }) => typeof position === "number")).toBe(true)
+  const html = await page({ kind: "read", read: readDocument(source, "live") })
+  expect(html).toContain(SUPPRESSED)
+  expect(html).not.toContain(" = Suppressed")
+})
