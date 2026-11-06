@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { cycleSort, EMPTY_QUERY, nextCursor, opsFor, recordsPath, recordsQueryParams, servedQuery, rowWithheld, snapshotMoved, totalOf, totalText } from "../src/lib/records-query.ts"
+import { cycleSort, EMPTY_QUERY, nextCursor, opsFor, recordsPath, recordsQueryParams, servedQuery, propertyWithheld, rowWithheld, snapshotMoved, totalOf, totalText } from "../src/lib/records-query.ts"
 
 const recorded = (name: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects", name), "utf8")) as unknown
 
@@ -56,6 +56,12 @@ test("a row is withheld only when the server says so explicitly", () => {
   expect(rowWithheld({ withheld: false, values: {} })).toBe(false)
   expect(rowWithheld({ withheld: "true" })).toBe(false)
   expect(rowWithheld({})).toBe(false)
+})
+
+test("a property is withheld only when the record lists it", () => {
+  expect(propertyWithheld({ withheld: false, withheldProperties: ["stock_cost"] }, "stock_cost")).toBe(true)
+  expect(propertyWithheld({ withheld: false, withheldProperties: [] }, "stock_cost")).toBe(false)
+  expect(propertyWithheld({ withheld: false }, "stock_cost")).toBe(false)
 })
 
 test("the total reads as the server sent it, approximate ones as about", () => {
