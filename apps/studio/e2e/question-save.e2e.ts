@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto"
 import { expect, test } from "@playwright/test"
-import { press, session } from "./canvas.ts"
+import type { Page } from "@playwright/test"
+
+const press = (page: Page, combo: string) => page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+${combo}`)
+async function session(page: Page) {
+  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" } } }))
+}
 
 test("question row: create, validate, sign, save, reopen, edit, undo, redo, remove and undo removal", async ({ page }) => {
   test.skip(Boolean(process.env.E2E_BASE), "this row uses a deterministic definitions cell stand-in")

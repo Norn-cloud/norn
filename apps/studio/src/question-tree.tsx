@@ -200,7 +200,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   return (
     <div className="space-y-5">
       {guard?.(editor.dirty)}
-      <EditorToolbar editor={editor} version={saved?.version} />
+      <EditorToolbar editor={editor} version={saved?.version} showSaveState />
       <div className="flex flex-wrap items-end gap-3">
         <label className="grid gap-1.5 text-sm">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
         <Button type="button" onClick={save} disabled={!signed || !draft.title.trim() || saving}>{saving ? "Saving…" : "Save question"}</Button>
