@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.input_group_unknown_field",
+  "message": "ActionIR input group field {pointer} is not an input property",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

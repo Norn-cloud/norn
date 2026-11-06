@@ -365,3 +365,168 @@ fn fire_transition_names_its_lifecycle_and_transition_by_member_id() {
             && diagnostic.path.as_deref() == Some("payload.effectProgram.transition")
     }));
 }
+
+fn upsert() -> serde_json::Value {
+    serde_json::json!({
+        "kind": "upsert_input_object",
+        "objectIdField": "objectId",
+        "objectKind": "custom.Record",
+        "entityArtifactId": "custom.entity.record",
+        "entityArtifactVersion": "1.0.0"
+    })
+}
+
+/// `action_artifact` with its input schema edited by `edit`.
+fn with_input(edit: impl FnOnce(&mut serde_json::Value)) -> ArtifactEnvelope {
+    let mut artifact = action_artifact(upsert());
+    let mut payload = serde_json::to_value(&artifact.payload).expect("payload should encode");
+    edit(&mut payload["payload"]["inputSchema"]);
+    artifact.payload = serde_json::from_value(payload).expect("payload should decode");
+    artifact
+}
+
+fn codes_at(artifact: &ArtifactEnvelope) -> Vec<(String, String)> {
+    artifact
+        .validate()
+        .err()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.path.unwrap_or_default()))
+        .collect()
+}
+
+/// D66: display-only labels and groups on ActionIR inputs.
+#[test]
+fn input_labels_and_groups_are_admitted() {
+    let artifact = with_input(|schema| {
+        schema["title"] = serde_json::json!("Record");
+        schema["properties"]["value"]["title"] = serde_json::json!("Value");
+        schema["properties"]["value"]["description"] =
+            serde_json::json!("How many.\nAt least one.");
+        schema["x-norn"] = serde_json::json!({ "groups": [
+            { "id": "basics", "title": "Basics", "fields": ["/objectId"] },
+            { "id": "amounts", "title": "Amounts", "fields": ["/value"] }
+        ] });
+    });
+    assert_eq!(codes_at(&artifact), vec![]);
+}
+
+#[test]
+fn input_labels_and_groups_are_refused_with_typed_diagnostics() {
+    let long = "x".repeat(121);
+    for (edit, expected) in [
+        (
+            serde_json::json!({ "properties.value.title": "  " }),
+            (
+                "action.validation.input_label_invalid",
+                "payload.inputSchema.properties.value.title",
+            ),
+        ),
+        (
+            serde_json::json!({ "properties.value.title": "two\nlines" }),
+            (
+                "action.validation.input_label_invalid",
+                "payload.inputSchema.properties.value.title",
+            ),
+        ),
+        (
+            serde_json::json!({ "properties.value.title": long }),
+            (
+                "action.validation.input_label_invalid",
+                "payload.inputSchema.properties.value.title",
+            ),
+        ),
+        (
+            serde_json::json!({ "x-norn": { "groups": [
+                { "id": "a", "title": "A", "fields": ["/value"] },
+                { "id": "a", "title": "B", "fields": ["/objectId"] }] } }),
+            (
+                "action.validation.input_group_duplicate_id",
+                "payload.inputSchema.x-norn.groups[1].id",
+            ),
+        ),
+        (
+            serde_json::json!({ "x-norn": { "groups": [{ "id": "a", "title": "", "fields": [] }] } }),
+            (
+                "action.validation.input_group_title_invalid",
+                "payload.inputSchema.x-norn.groups[0].title",
+            ),
+        ),
+        (
+            serde_json::json!({ "x-norn": { "groups": [{ "id": "a", "title": "A", "fields": ["/missing"] }] } }),
+            (
+                "action.validation.input_group_unknown_field",
+                "payload.inputSchema.x-norn.groups[0].fields[0]",
+            ),
+        ),
+        (
+            serde_json::json!({ "x-norn": { "groups": [
+                { "id": "a", "title": "A", "fields": ["/value"] },
+                { "id": "b", "title": "B", "fields": ["/value"] }] } }),
+            (
+                "action.validation.input_group_field_regrouped",
+                "payload.inputSchema.x-norn.groups[1].fields[0]",
+            ),
+        ),
+        (
+            serde_json::json!({ "x-norn": { "groups": [{ "id": "a", "title": "A", "fields": ["/value"], "extra": 1 }] } }),
+            (
+                "action.validation.input_group_invalid_shape",
+                "payload.inputSchema.x-norn.groups[0].extra",
+            ),
+        ),
+        (
+            serde_json::json!({ "x-norn": { "order": [] } }),
+            (
+                "action.validation.input_group_invalid_shape",
+                "payload.inputSchema.x-norn.order",
+            ),
+        ),
+    ] {
+        let artifact = with_input(|schema| {
+            for (key, value) in edit.as_object().expect("edit") {
+                match key.strip_prefix("properties.value.") {
+                    Some(label) => schema["properties"]["value"][label] = value.clone(),
+                    None => schema[key.as_str()] = value.clone(),
+                }
+            }
+        });
+        let found = codes_at(&artifact);
+        assert!(
+            found.contains(&(expected.0.to_owned(), expected.1.to_owned())),
+            "{expected:?} in {found:?}"
+        );
+    }
+    // `x-norn` belongs to the input root only.
+    let nested = with_input(|schema| {
+        schema["properties"]["nested"] = serde_json::json!({
+            "type": "object", "properties": {}, "additionalProperties": false, "x-norn": {} });
+    });
+    assert!(
+        codes_at(&nested)
+            .iter()
+            .any(|(code, at)| code == "action.validation.invalid_schema"
+                && at == "payload.inputSchema.properties.nested.x-norn")
+    );
+}
+
+/// D66: labels are display-only. The parsed input type, which every
+/// behaviour-defining check and identity derives from, is the same with or
+/// without them.
+#[test]
+fn a_relabelled_input_parses_to_the_same_type() {
+    let plain: norn_ir::JsonValue = serde_json::from_value(serde_json::json!({
+        "type": "object", "required": ["kind"], "additionalProperties": false,
+        "properties": { "kind": { "type": "string", "enum": ["a", "b"] } } }))
+    .expect("schema");
+    let labelled: norn_ir::JsonValue = serde_json::from_value(serde_json::json!({
+        "type": "object", "required": ["kind"], "additionalProperties": false,
+        "title": "Choice", "x-norn": { "groups": [{ "id": "g", "title": "G", "fields": ["/kind"] }] },
+        "properties": { "kind": { "type": "string", "enum": ["a", "b"], "title": "Kind", "description": "Which one" } } }))
+    .expect("schema");
+    assert_eq!(
+        norn_expr::schema::Schema::parse_action(&plain, "input"),
+        norn_expr::schema::Schema::parse_action(&labelled, "input")
+    );
+    assert!(norn_expr::schema::Schema::parse_action(&labelled, "input").is_ok());
+}
