@@ -39,7 +39,7 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
   await page.route("**/api/questions/check", (route) => {
     const { question } = route.request().postDataJSON() as { question: { filter: unknown[] } }
     const filtered = question.filter.length > 0
-    return route.fulfill({ json: { kind: "question", admitted: true, findings: [], plan: null, restatement: { text: filtered ? "The filtered question." : "The checked question.", sha256: (filtered ? "b" : "a").repeat(64) } } })
+    return route.fulfill({ json: { kind: "question", admitted: true, findings: [], plan: { grain: "week", question: {}, sums: [], metrics: [] }, restatement: { text: filtered ? "The filtered question." : "The checked question.", sha256: (filtered ? "b" : "a").repeat(64) } } })
   })
   await page.route("**/api/host/v1/definitions**", async (route) => {
     const url = new URL(route.request().url())
@@ -146,7 +146,7 @@ test("a workspace without a data cell cannot call definitions", async ({ page })
   await page.route("**/api/host/v1/definitions**", (route) => { requests += 1; return route.abort() })
   await page.route("**/api/questions/catalog", (route) => route.fulfill({ json: catalog }))
   await page.route("**/api/questions/recommendations", (route) => route.fulfill({ json: tree }))
-  await page.route("**/api/questions/check", (route) => route.fulfill({ json: { kind: "question", admitted: true, findings: [], plan: null, restatement: { text: "The checked question.", sha256: "a".repeat(64) } } }))
+  await page.route("**/api/questions/check", (route) => route.fulfill({ json: { kind: "question", admitted: true, findings: [], plan: { grain: "week", question: {}, sums: [], metrics: [] }, restatement: { text: "The checked question.", sha256: "a".repeat(64) } } }))
   await page.goto("/questions/build")
   await expect(page.getByText("This workspace has no data cell yet.")).toBeVisible()
   await expect(page.getByRole("button", { name: "This is what I asked for" })).toHaveCount(0)
