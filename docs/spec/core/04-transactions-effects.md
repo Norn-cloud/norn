@@ -147,6 +147,21 @@ scenarios (`crates/norn-cell/tests/parked.rs`): **PARKED-HEAD**, **PARKED-FIFO**
 **PARKED-ONCE** (concurrent decide and expire, replay), **PARKED-CRASH** (restart
 before and after the consuming commit), **PARKED-INTERLEAVING** (property).
 
+### FLOW-DRIVER-1 — result turns
+
+A run advances only through result turns. When a perform's result is a pending
+delivery (an ordinary perform the cell's performer executed in FIFO order, or a
+parked command the cell resolved, PARKED-1), the driver loads the run object and
+evaluates the flow's `decide` rule on `{kind: "result", runId, step, attempt,
+results: {<step>: result}}` (FLOW-TURN-1). It commits the turn's writes and next
+dispatches in one commit that consumes the delivery (`Consumed::Result`), so each
+result advances its run exactly once; a refused turn leaves the delivery
+pending, and a second delivery refuses `run.result_not_pending`. The driver only
+performs flow perform commands (payload `kind: "perform"` with a `runId`);
+another command at the FIFO head waits for its own performer. Named scenarios
+(`crates/norn-api/tests/flow_driver.rs`): **DRIVE-TO-TERMINAL**,
+**DRIVE-INDEPENDENT**.
+
 ### Durable flow scheduling and identity (#515)
 
 Flows remain compiled lifecycle/rule declarations. The pure kernel helpers in

@@ -147,12 +147,12 @@ fn readable<E: SqlEngine>(host: &DevHost<E>, access: ReadAccess<'_>, row: &RunRo
 }
 
 /// The installed flow: its rule, Run type, lifecycle property and version.
-struct InstalledFlow {
-    rule: RuleRoot,
-    version: String,
-    object_type: String,
-    state_property: String,
-    environment_hash: String,
+pub(crate) struct InstalledFlow {
+    pub(crate) rule: RuleRoot,
+    pub(crate) version: String,
+    pub(crate) object_type: String,
+    pub(crate) state_property: String,
+    pub(crate) environment_hash: String,
 }
 
 fn text<'v>(value: &'v serde_json::Value, pointer: &str) -> Option<&'v str> {
@@ -168,7 +168,7 @@ fn flow_not_found() -> Refusal {
     )
 }
 
-fn installed_flow<E: SqlEngine>(
+pub(crate) fn installed_flow<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
     flow: &str,
 ) -> Result<InstalledFlow, Refusal> {
