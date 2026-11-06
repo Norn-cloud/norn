@@ -1,4 +1,5 @@
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
+import { passwordScrypt } from "./password.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -10,6 +11,8 @@ export interface Env {
   /** Cloudflare Email Service binding and sender; both absent until a sender is enabled. */
   readonly EMAIL?: { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> }
   readonly EMAIL_FROM?: string
+  /** "js" selects the pure-JS scrypt (set by the celld config); Cloudflare leaves it unset. */
+  readonly AUTH_SCRYPT?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -28,7 +31,7 @@ function auth(env: Env): Auth {
   const sendMagicLink = mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
     await mail.send({ to, from, subject: "Sign in to Norn Studio", text: `Sign in to Norn Studio: ${url}\n\nThe link expires in 10 minutes. If you did not ask for it, ignore this email.` })
   }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, ...sendMagicLink === undefined ? {} : { sendMagicLink } })
+  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...sendMagicLink === undefined ? {} : { sendMagicLink } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
