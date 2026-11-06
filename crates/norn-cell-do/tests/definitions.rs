@@ -643,3 +643,45 @@ fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_
     );
     assert_eq!(first["signoff"]["restatementSha256"], json!(right));
 }
+
+#[test]
+fn a_saved_question_is_a_bare_question_ir_admitted_as_a_tile_is() {
+    let cell = cell(DefinitionKinds::default());
+    let saved = |payload: &Value| {
+        let body = json!({ "kind": "question", "id": "studio.question.yield", "payload": payload });
+        post(&cell, "/v1/definitions:install", ADMIN, &body)
+    };
+    let mut bad = question();
+    bad["groupBy"] = json!([{"path": {"property": "no_such_property"}, "grain": "week"}]);
+    let (status, refused) = saved(&bad);
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(refused["code"], json!("definition.refused"));
+    // The same checker as a tile, its pointers straight into the question.
+    let tile = json!({ "kind": "dashboard", "id": "studio.dashboard.q", "payload": {
+        "title": "Q", "tiles": [{ "id": "t", "title": "T", "question": bad,
+        "view": { "kind": "table" }, "layout": { "x": 0, "y": 0, "w": 1, "h": 1 } }] } });
+    let (_, as_tile) = post(&cell, "/v1/definitions:admit", ADMIN, &tile);
+    let nested: Vec<(String, String)> = pointers(&as_tile)
+        .into_iter()
+        .map(|(code, pointer)| {
+            (
+                code,
+                pointer.trim_start_matches("/tiles/0/question").to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(pointers(&refused), nested);
+    let (status, undecodable) = saved(&json!({ "name": 7 }));
+    assert_eq!(status, 422, "{undecodable}");
+    assert_eq!(
+        pointers(&undecodable),
+        [("definition.question_invalid".to_owned(), String::new())]
+    );
+
+    let (status, installed) = saved(&question());
+    assert_eq!(status, 200, "{installed}");
+    let (_, page) = get(&cell, "/v1/definitions:list", "&kind=question", VIEWER);
+    assert_eq!(page["items"][0]["title"], json!("studio.tile.yield"));
+    let (_, document) = get(&cell, "/v1/definitions/studio.question.yield", "", VIEWER);
+    assert_eq!(document["payload"], question());
+}

@@ -217,7 +217,7 @@ impl DefinitionKinds {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdmitDefinitionRequest {
-    /// `dashboard` or `agent`.
+    /// `dashboard`, `question` or `agent`.
     pub kind: String,
     /// The definition id.
     pub id: String,
@@ -230,7 +230,7 @@ pub struct AdmitDefinitionRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstallDefinitionRequest {
-    /// `dashboard` or `agent`.
+    /// `dashboard`, `question` or `agent`.
     pub kind: String,
     /// The definition id.
     pub id: String,
@@ -515,6 +515,18 @@ fn validate<E: SqlEngine>(
     let mut findings = Vec::new();
     match kind {
         "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
+        // A saved question: a bare QuestionIR, admitted as a tile's is.
+        "question" => {
+            question_findings(
+                host,
+                scope,
+                actor,
+                questions,
+                Some(&value),
+                "",
+                &mut findings,
+            )?;
+        }
         "agent" => {
             let (check, context) = kinds.agent.as_ref().ok_or_else(|| kind_unknown(kind))?;
             findings.extend(RefusalDiagnostic::from_checker(
@@ -524,8 +536,10 @@ fn validate<E: SqlEngine>(
         }
         other => return Err(kind_unknown(other)),
     }
+    // A saved question's title is its QuestionIR name.
+    let title_member = if kind == "question" { "name" } else { "title" };
     let title = value
-        .get("title")
+        .get(title_member)
         .and_then(Value::as_str)
         .map(|title| title.trim().to_owned())
         .unwrap_or_default();
@@ -633,39 +647,61 @@ fn dashboard<E: SqlEngine>(
         title(tile.get("title"), &format!("{at}/title"), findings);
         view(tile.get("view"), &format!("{at}/view"), findings);
         layout(tile.get("layout"), &format!("{at}/layout"), findings);
-        let under = format!("{at}/question");
-        match tile
-            .get("question")
-            .map(|question| serde_json::from_value::<QuestionIR>(question.clone()))
-        {
-            None => findings.push(RefusalDiagnostic::error(
-                codes::QUESTION_INVALID,
-                "a tile has a question",
-                under,
-            )),
-            Some(Err(error)) => findings.push(RefusalDiagnostic::error(
-                codes::QUESTION_INVALID,
-                format!("the question is not a QuestionIR: {error}"),
-                under,
-            )),
-            Some(Ok(question)) => match questions {
-                None => findings.push(RefusalDiagnostic::error(
-                    codes::QUESTION_UNAVAILABLE,
-                    "this cell admits no ad-hoc questions",
+        question_findings(
+            host,
+            scope,
+            actor,
+            questions,
+            tile.get("question"),
+            &format!("{at}/question"),
+            findings,
+        )?;
+    }
+    Ok(())
+}
+
+/// Admit `value` as a `QuestionIR` exactly as `POST /v1/questions:evaluate`
+/// does (F2b), its findings' pointers nested under `under`. An ungranted or
+/// undeclared read is the one opaque 403.
+fn question_findings<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: &str,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    value: Option<&Value>,
+    under: &str,
+    findings: &mut Vec<RefusalDiagnostic>,
+) -> Result<(), Refusal> {
+    let question =
+        match value.map(|question| serde_json::from_value::<QuestionIR>(question.clone())) {
+            None => {
+                findings.push(RefusalDiagnostic::error(
+                    codes::QUESTION_INVALID,
+                    "a question is required",
                     under,
-                )),
-                Some(runtime) => {
-                    // The same admission as POST /v1/questions:evaluate (F2b):
-                    // an ungranted or undeclared read is the one opaque 403.
-                    if let Err(question_findings) =
-                        check_ad_hoc(host, scope, actor, &question, runtime)?
-                    {
-                        findings
-                            .extend(RefusalDiagnostic::from_checker(&question_findings, &under));
-                    }
-                }
-            },
-        }
+                ));
+                return Ok(());
+            }
+            Some(Err(error)) => {
+                findings.push(RefusalDiagnostic::error(
+                    codes::QUESTION_INVALID,
+                    format!("the question is not a QuestionIR: {error}"),
+                    under,
+                ));
+                return Ok(());
+            }
+            Some(Ok(question)) => question,
+        };
+    let Some(runtime) = questions else {
+        findings.push(RefusalDiagnostic::error(
+            codes::QUESTION_UNAVAILABLE,
+            "this cell admits no ad-hoc questions",
+            under,
+        ));
+        return Ok(());
+    };
+    if let Err(question_findings) = check_ad_hoc(host, scope, actor, &question, runtime)? {
+        findings.extend(RefusalDiagnostic::from_checker(&question_findings, under));
     }
     Ok(())
 }
