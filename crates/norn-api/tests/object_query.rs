@@ -574,5 +574,8 @@ fn rows_hidden_from_the_caller_never_count_toward_the_scan_bound() {
     let total = page.total.unwrap();
     assert_eq!((total.count, total.approximate), (8, false));
     let refused = query(&host, "full", &sorted).unwrap_err();
-    assert_eq!((refused.status, refused.code.as_str()), (413, "object.scan_bound_exceeded"));
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (413, "object.scan_bound_exceeded")
+    );
 }
