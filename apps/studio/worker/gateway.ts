@@ -184,8 +184,20 @@ export class Gateway {
     await this.request("PATCH", `/api/organizations/${segment(organization)}/accounts/${segment(account)}`, { label })
   }
 
-  async disconnect(organization: string, account: string): Promise<void> {
-    await this.request("DELETE", `/api/organizations/${segment(organization)}/accounts/${segment(account)}`)
+  /**
+   * Disconnect an account from one app: unlink it from the requirement, then delete it from the
+   * gateway unless another app still uses it (the gateway refuses deleting a linked account).
+   * Returns whether the account itself was deleted.
+   */
+  async disconnect(organization: string, app: string, requirement: string, account: string): Promise<boolean> {
+    await this.request("DELETE", `/api/organizations/${segment(organization)}/apps/${segment(app)}/accounts/user/${segment(requirement)}/${segment(account)}`)
+    try {
+      await this.request("DELETE", `/api/organizations/${segment(organization)}/accounts/${segment(account)}`)
+      return true
+    } catch (error) {
+      if (error instanceof GatewayError && ["AccountLinkedToApp", "AccountWebhooksActive", "AccountWorkflowsActive"].includes(error.tag)) return false
+      throw error
+    }
   }
 
   /** Call a tool as the grant's user; the gateway applies its own approval rules first. */

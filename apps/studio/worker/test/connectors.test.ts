@@ -131,14 +131,24 @@ test("app accounts: view, connect, reconnect, rename and disconnect, all in the 
   expect((await calls.at(-1)?.json()) as unknown).toEqual({ destination: { kind: "personal" }, account: "acc1" })
   expect((await send("/accounts/acc1", { ...body("PATCH", { label: "  Personal " }), cookie: owner })).body.label).toBe("Personal")
   expect((await send("/accounts/acc1", { ...body("PATCH", { label: "" }), cookie: owner })).body).toMatchObject({ code: "connectors.invalid_request", field: "label" })
-  expect((await send("/accounts/acc1", { method: "DELETE", cookie: owner })).body).toEqual({ disconnected: "acc1" })
+  expect((await send("/apps/github/accounts/github/acc1", { method: "DELETE", cookie: owner })).body).toEqual({ disconnected: "acc1", deleted: true })
   expect(gatewayCalls(calls, from)).toEqual([
     "POST /api/organizations/gw-org/apps/github/accounts/user/github/connections",
     "POST /api/organizations/gw-org/apps/github/accounts/user/github/connections",
     "PATCH /api/organizations/gw-org/accounts/acc1",
     "GET /api/organizations/gw-org/accounts/acc1",
+    "DELETE /api/organizations/gw-org/apps/github/accounts/user/github/acc1",
     "DELETE /api/organizations/gw-org/accounts/acc1",
   ])
+})
+
+test("disconnecting keeps an account another app still uses: unlinked here, not deleted", async () => {
+  const { send, signUp, answer } = stage()
+  const owner = await signUp("ada@example.com")
+  answer((request) => request.method === "DELETE" && new URL(request.url).pathname === "/api/organizations/gw-org/accounts/acc1"
+    ? Response.json({ _tag: "AccountLinkedToApp", message: "linked to another app" }, { status: 409 })
+    : Response.json({}))
+  expect((await send("/apps/github/accounts/github/acc1", { method: "DELETE", cookie: owner })).body).toEqual({ disconnected: "acc1", deleted: false })
 })
 
 test("tool bindings: an admin adds, edits and removes them; the mapping is checked against the tool's schema", async () => {
