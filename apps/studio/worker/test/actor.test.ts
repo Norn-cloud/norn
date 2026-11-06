@@ -175,13 +175,15 @@ test("example proposals have the assistant's gate: signed-in users only, from th
 test("the question builder's routes have the assistant's gate: signed-in users only, from the Studio's own origin", async () => {
   const { env, auth } = stage()
   const catalog = (headers: Record<string, string>) => call(env, "/api/questions/catalog", { headers })
+  const recommendations = (headers: Record<string, string>) => call(env, "/api/questions/recommendations", { headers })
   const check = (headers: Record<string, string>) => call(env, "/api/questions/check", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ question: { name: "x" } }) })
-  for (const route of [catalog, check]) expect((await route({ origin: ORIGIN })).status).toBe(401)
+  for (const route of [catalog, recommendations, check]) expect((await route({ origin: ORIGIN })).status).toBe(401)
+  expect((await call(env, "/api/questions/anything", { headers: { origin: ORIGIN } })).status).toBe(401)
   const cookie = await signUp(env, "qb@example.com")
   // Like /api/host: a cookie write (the POSTed check) must come from the Studio's origin; a read is a safe method.
   expect((await check({ cookie, origin: "https://elsewhere.example" })).status).toBe(403)
   const owner = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
   const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner?.orgId }, headers: new Headers({ cookie }) })
-  for (const route of [catalog, check]) expect((await route({ "x-api-key": key.key })).status).toBe(403)
+  for (const route of [catalog, recommendations, check]) expect((await route({ "x-api-key": key.key })).status).toBe(403)
   expect((await catalog({ cookie, origin: ORIGIN })).status).toBe(200)
 })
