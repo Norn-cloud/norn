@@ -161,9 +161,9 @@ fn installed_flow<E: SqlEngine>(
         .ok_or_else(flow_not_found)?;
     let artifacts: Vec<serde_json::Value> =
         serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
-    let text = |value: &serde_json::Value, pointer: &str| {
+    fn text<'v>(value: &'v serde_json::Value, pointer: &str) -> Option<&'v str> {
         value.pointer(pointer).and_then(serde_json::Value::as_str)
-    };
+    }
     let find = |id: &str, kind: &str| {
         artifacts.iter().find(|artifact| {
             text(artifact, "/artifactId") == Some(id) && text(artifact, "/kind") == Some(kind)
