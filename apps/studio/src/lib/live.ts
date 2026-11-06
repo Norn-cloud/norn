@@ -15,6 +15,9 @@ export type LiveRead<T> =
   | { readonly kind: "refused"; readonly refusal: Refusal }
   | { readonly kind: "unavailable"; readonly status: number }
 
+/** The one call this module makes to fetch; narrower than the global fetch type, so tests can pass a plain function. */
+export type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+
 /** One original record behind an answer bucket (the host's `NornNumericContribution`). */
 export interface Contribution {
   readonly fact: Schemas["NornIrFactRef"]
@@ -41,7 +44,7 @@ export interface Trace {
  * and its policy decide what comes back. 401 and 503 (no host bound to this
  * stage) mean live reads are not available, and the page keeps its recording.
  */
-export async function hostRead<T>(path: string, fetcher: typeof fetch = fetch): Promise<LiveRead<T>> {
+export async function hostRead<T>(path: string, fetcher: Fetch = fetch): Promise<LiveRead<T>> {
   const response = await fetcher(`/api/host${path}`, { headers: { accept: "application/json" } })
   const text = await response.text()
   if (response.ok) return { kind: "read", read: readDocument<T>(text, "live") }
@@ -56,11 +59,11 @@ export async function hostRead<T>(path: string, fetcher: typeof fetch = fetch): 
 
 const DEMO = "orgId=org_demo"
 
-export const liveAnswer = (question: string, fetcher?: typeof fetch) =>
+export const liveAnswer = (question: string, fetcher?: Fetch) =>
   hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer?${DEMO}&environmentId=analytics`, fetcher)
 
 /** One bucket of a live answer; `bucket` is the answer's row key exactly as the server wrote it. */
-export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: typeof fetch) =>
+export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) =>
   hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${DEMO}&environmentId=analytics&lineageRef=${encodeURIComponent(lineageRef)}&bucket=${encodeURIComponent(bucket)}`, fetcher)
 
 /** A contribution's amounts as the exact number texts the server sent. */
