@@ -48,7 +48,7 @@ test("an edit undoes and redoes; a drag undoes as one step", () => {
 
 test("renaming a state carries its steps; removing a state removes its steps", () => {
   const graph = g.renameNode(decompile(orderEnvelope, order), "on_hold", "paused")
-  expect(graph.edges.filter(({ source, target }) => source === "paused" || target === "paused").map(({ config }) => config.transition).sort()).toEqual(["approve", "cancel", "hold"])
+  expect(graph.edges.filter(({ source, target }) => source === "paused" || target === "paused").map(({ config }) => config.transition).sort()).toEqual(["amend", "approve", "cancel", "hold", "hold"])
   expect(g.remove(graph, ["paused"]).edges.some(({ source, target }) => source === "paused" || target === "paused")).toBe(false)
 })
 
