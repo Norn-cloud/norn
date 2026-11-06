@@ -141,3 +141,14 @@ test("a member removed from the organization, or switched to one they left, reac
   expect(setActive.status).toBe(403)
   expect(seen).toHaveLength(0)
 })
+
+test("the assistant answers only a signed-in actor, from the Studio's own origin, and never a client-named actor", async () => {
+  const { env } = stage()
+  const post = (headers: Record<string, string>) => call(env, "/api/agent", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ messages: [] }) })
+  expect((await post({ origin: ORIGIN })).status).toBe(401)
+  expect((await post({ origin: ORIGIN, "x-norn-actor": "admin" })).status).toBe(400)
+  const cookie = await signUp(env, "ed@example.com")
+  expect((await post({ cookie, origin: "https://elsewhere.example" })).status).toBe(403)
+  // Signed in and same-origin, it reaches the assistant, which this stage runs without.
+  expect((await post({ cookie, origin: ORIGIN })).status).toBe(503)
+})
