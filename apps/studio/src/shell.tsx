@@ -1,15 +1,17 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { ChevronsUpDown, LogOut, Search, type LucideIcon } from "lucide-react"
-import { useEffect, useState, type ReactNode } from "react"
+import { Bell, ChevronDown, Keyboard, LogOut, Search, type LucideIcon } from "lucide-react"
+import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Separator } from "@/components/ui/separator"
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInput, SidebarInset,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { Account } from "@/lib/session"
+import { cn } from "@/lib/utils"
 
 export interface Section {
   readonly path: string
@@ -20,6 +22,10 @@ export interface Section {
   readonly useMenu?: () => readonly MenuEntry[] | undefined
   /** A count that needs attention, shown on the rail. */
   readonly useBadge?: () => number | undefined
+  /** The rail group the section belongs to; a thin divider separates groups. */
+  readonly group?: string
+  /** Listed at the foot of the rail, above the avatar, instead of with the sections. */
+  readonly foot?: boolean
 }
 
 export interface MenuEntry {
@@ -28,9 +34,19 @@ export interface MenuEntry {
   readonly label: ReactNode
   /** The submenu group this entry is listed under. */
   readonly group?: string
+  /** The entry's leading icon; the section's icon when absent. */
+  readonly icon?: LucideIcon
+  /** The chart colour (1–5) that tints the icon, one per family of entries. */
+  readonly tint?: 1 | 2 | 3 | 4 | 5
 }
 
 const none = () => undefined
+
+/** Entries listed per group before "Show more". */
+const SHOWN = 6
+
+/** Icon tints, one chart colour per family of entries; untinted icons are muted. */
+const TINT = ["[&>svg]:text-muted-foreground", "[&>svg]:text-chart-1", "[&>svg]:text-chart-2", "[&>svg]:text-chart-3", "[&>svg]:text-chart-4", "[&>svg]:text-chart-5"] as const
 
 function RailItem({ section, active }: { readonly section: Section; readonly active: boolean }) {
   const badge = (section.useBadge ?? none)()
@@ -38,11 +54,15 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
   const { setOpenMobile } = useSidebar()
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={active} tooltip={{ children: section.label, hidden: false }} className="relative px-2.5 md:px-2">
+      <SidebarMenuButton asChild isActive={active} tooltip={{ children: section.label, hidden: false }}
+        className="relative mx-auto size-10! justify-center rounded-[11px]! p-0! text-muted-foreground hover:bg-sidebar-accent data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-sm [&>svg]:size-5!">
         <Link to={section.path} onClick={() => setOpenMobile(false)}>
           <Icon />
           <span className="sr-only">{section.label}</span>
-          {badge !== undefined && badge > 0 && <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[10px] font-medium text-white tabular-nums">{badge}</span>}
+          {/* Inside the tile: the button clips anything outside it. A count replaces the active dot. */}
+          {badge !== undefined && badge > 0
+            ? <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-destructive-foreground tabular-nums">{badge > 99 ? "99+" : badge}</span>
+            : active && <span aria-hidden className="absolute top-1 right-1 size-2 rounded-full bg-ring ring-2 ring-background" />}
         </Link>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -55,20 +75,24 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
  */
 export function Submenu({ section }: { readonly section: Section }) {
   // Navigating closes the phone sheet the submenu sits in.
-  const { setOpenMobile } = useSidebar()
+  const { setOpenMobile, state, isMobile } = useSidebar()
   const [search, setSearch] = useState("")
   const all = (section.useMenu ?? none)() ?? []
   const query = search.trim().toLowerCase()
   const entries = all.filter(({ label }) => typeof label !== "string" || label.toLowerCase().includes(query))
   const groups = [...new Set(entries.map(({ group }) => group ?? section.label))]
   const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set())
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const toggle = (set: ReadonlySet<string>, group: string) => { const next = new Set(set); if (!next.delete(group)) next.add(group); return next }
   return (
-    <Sidebar collapsible="none" className="flex-1">
-      <SidebarHeader className="gap-3 px-4 pt-5 pb-3">
-        <div className="text-title font-medium">{section.label}</div>
+    // Hidden with the collapsed desktop sidebar: inert, so none of its links or controls take focus. The phone sheet keeps it live.
+    <Sidebar collapsible="none" inert={submenuInert(state, isMobile)} className="min-w-0 flex-1 rounded-2xl bg-background shadow-sm">
+      <SidebarHeader className="gap-2 px-5 pt-6 pb-3">
+        <div className="text-[1.75rem] leading-tight font-semibold tracking-tight">{section.label}</div>
         <DropdownMenu>
-          <DropdownMenuTrigger className="flex w-fit items-center gap-1 rounded-md text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30">
-            Recorded · synthetic world <ChevronsUpDown className="size-3.5" />
+          <DropdownMenuTrigger className="flex w-fit max-w-full items-center gap-1 rounded-md text-start text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30">
+            <span className="truncate" title="Recorded · synthetic world">Recorded · synthetic world</span> <ChevronDown className="size-4 shrink-0" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuLabel>Data</DropdownMenuLabel>
@@ -77,31 +101,62 @@ export function Submenu({ section }: { readonly section: Section }) {
           </DropdownMenuContent>
         </DropdownMenu>
         {all.length > 0 && (
-          <label className="relative block">
+          <label className="relative mt-3 block">
             <span className="sr-only">Find in {section.label}</span>
-            <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <SidebarInput type="search" placeholder={`Find in ${section.label}`} value={search} onChange={(event) => setSearch(event.target.value)} className="ps-8" />
+            <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <SidebarInput type="search" placeholder={`Find in ${section.label}`} value={search} onChange={(event) => setSearch(event.target.value)} className="h-9 border-transparent bg-muted ps-9 shadow-none dark:bg-muted" />
           </label>
         )}
       </SidebarHeader>
-      <SidebarContent>
-        {all.length > 0 && entries.length === 0 && <p className="px-4 py-2 text-sm text-muted-foreground">Nothing matches “{search.trim()}”.</p>}
+      <SidebarContent className="px-2 pb-3">
+        {all.length > 0 && entries.length === 0 && <p className="px-3 py-2 text-sm text-muted-foreground">Nothing matches “{search.trim()}”.</p>}
         {groups.map((group) => (
           <SidebarGroup key={group}>
-            <SidebarGroupLabel>{group}</SidebarGroupLabel>
-            <SidebarGroupContent>
+            <SidebarGroupLabel asChild className="text-xs font-normal text-muted-foreground">
+              <button type="button" tabIndex={hiddenLabelTabIndex(state, isMobile)} aria-expanded={groupOpen(closed, group, query)} onClick={() => setClosed((set) => toggle(set, group))} className="w-full gap-1 hover:text-foreground">
+                {group}<ChevronDown className={cn("size-3.5! transition-transform", !groupOpen(closed, group, query) && "-rotate-90")} />
+              </button>
+            </SidebarGroupLabel>
+            {groupOpen(closed, group, query) && <SidebarGroupContent>
               <SidebarMenu>
-                {entries.filter((entry) => (entry.group ?? section.label) === group).map((entry) => (
-                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild isActive={entry.href === pathname || pathname.startsWith(`${entry.href}/`)}><Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}>{entry.label}</Link></SidebarMenuButton></SidebarMenuItem>
-                ))}
+                {entries.filter((entry) => (entry.group ?? section.label) === group).filter((entry, index, list) => {
+                  const active = entry.href === pathname || pathname.startsWith(`${entry.href}/`)
+                  return query !== "" || expanded.has(group) || index < SHOWN || active || list.length <= SHOWN + 1
+                }).map((entry) => {
+                  const Icon = entry.icon ?? section.icon
+                  return (
+                    <SidebarMenuItem key={entry.href}>
+                      <SidebarMenuButton asChild isActive={entry.href === pathname || pathname.startsWith(`${entry.href}/`)}
+                        className={cn("h-10 gap-3 rounded-lg px-3 text-[0.9375rem] hover:bg-muted data-[active=true]:bg-muted data-[active=true]:font-medium [&>svg]:size-[18px]", TINT[entry.tint ?? 0])}>
+                        <Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}><Icon /><span className="truncate">{entry.label}</span></Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  )
+                })}
+                {query === "" && entries.filter((entry) => (entry.group ?? section.label) === group).length > SHOWN + 1 && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={() => setExpanded((set) => toggle(set, group))} className="h-9 rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted">
+                      {expanded.has(group) ? "Show less" : "Show more"}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
               </SidebarMenu>
-            </SidebarGroupContent>
+            </SidebarGroupContent>}
           </SidebarGroup>
         ))}
       </SidebarContent>
     </Sidebar>
   )
 }
+
+/** A group shows its entries unless the user closed it; a search opens every group so its matches stay visible. */
+/** A collapsed desktop sidebar fades its group labels out; their buttons leave the tab order with them. The phone sheet always shows them. */
+/** The submenu card is out of view while the desktop sidebar is collapsed; on the phone it lives in the sheet. */
+export const submenuInert = (state: "expanded" | "collapsed", isMobile: boolean): boolean => state === "collapsed" && !isMobile
+
+export const hiddenLabelTabIndex = (state: "expanded" | "collapsed", isMobile: boolean): -1 | undefined => state === "collapsed" && !isMobile ? -1 : undefined
+
+export const groupOpen = (closed: ReadonlySet<string>, group: string, query: string) => query !== "" || !closed.has(group)
 
 /** "Search or add… ⌘K": every section and every entry the sections list. */
 function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
@@ -118,8 +173,8 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   const go = (to: { to: string; hash?: string }) => { setOpen(false); void navigate(to) }
   return (
     <>
-      <Button variant="outline" className="w-full max-w-md justify-start text-muted-foreground" onClick={() => setOpen(true)}>
-        <Search /> Search or add… <kbd className="ms-auto text-meta">⌘K</kbd>
+      <Button variant="outline" className="h-10 w-full min-w-0 justify-start rounded-full bg-background px-4 font-normal text-muted-foreground shadow-none dark:bg-background" onClick={() => setOpen(true)}>
+        <Search /> <span className="min-w-0 truncate">Search or add…</span> <kbd className="ms-auto hidden font-sans text-meta sm:inline">⌘K</kbd>
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen} title="Search Studio" description="Go to a section or an item">
         <Command>
@@ -157,8 +212,8 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <SidebarMenuButton tooltip={{ children: `${user.name} · ${organization?.name ?? "No organization"}`, hidden: false }} className="md:h-8 md:p-0">
-          <span className="flex aspect-square size-8 items-center justify-center rounded-full bg-muted text-xs font-medium">{initials(user.name || user.email)}</span>
+        <SidebarMenuButton tooltip={{ children: `${user.name} · ${organization?.name ?? "No organization"}`, hidden: false }} className="size-10! justify-center rounded-full p-0!">
+          <span className="flex size-9 items-center justify-center rounded-full bg-muted text-xs font-medium ring-1 ring-border">{initials(user.name || user.email)}</span>
           <span className="sr-only">Account</span>
         </SidebarMenuButton>
       </DropdownMenuTrigger>
@@ -179,42 +234,74 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
   )
 }
 
-/** A thin icon rail, the active section's submenu beside it, and the page card. */
+/** The page bar's right-hand buttons: notifications and keyboard shortcuts. */
+function BarButtons() {
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="rounded-full text-muted-foreground"><Keyboard className="size-5" /><span className="sr-only">Keyboard shortcuts</span></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuLabel>Keyboard shortcuts</DropdownMenuLabel>
+          <DropdownMenuItem disabled>Search or add<DropdownMenuShortcut>⌘K</DropdownMenuShortcut></DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="rounded-full text-muted-foreground"><Bell className="size-5" /><span className="sr-only">Notifications</span></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+          <p className="px-2 pb-2 text-sm text-muted-foreground">Nothing yet. A recorded demo has no one to notify.</p>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+}
+
+/**
+ * Two islands on a grey page: the active section's submenu card and the page
+ * card, with a thin rail of square tiles on the grey to their left.
+ */
 export function Shell({ sections, account, onSignOut }: { sections: readonly Section[]; account: Account; onSignOut: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
+  const main = sections.filter(({ foot }) => foot !== true)
+  const foot = sections.filter(({ foot }) => foot === true)
   return (
     <TooltipProvider>
-      <SidebarProvider style={{ "--sidebar-width": "21rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}>
-        <Sidebar variant="inset" collapsible="icon" className="overflow-hidden">
-          {/* One row on every screen: the phone sheet does not take the outer sidebar's classes. */}
+      <SidebarProvider style={{ "--sidebar-width": "23rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}>
+        <Sidebar variant="inset" collapsible="icon" className="overflow-hidden ps-0">
+          {/* One row on every screen: the mobile sheet does not take the outer sidebar's classes. */}
           <div className="flex size-full min-h-0 flex-row">
-          <Sidebar collapsible="none" className="w-[calc(4rem+1px)]! shrink-0">
-            <SidebarHeader>
-              <SidebarMenu><SidebarMenuItem>
-                <SidebarMenuButton size="lg" asChild className="md:h-8 md:p-0">
-                  <Link to="/questions"><span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">N</span><span className="sr-only">Norn Studio</span></Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem></SidebarMenu>
+          <Sidebar collapsible="none" className="w-16! shrink-0 bg-transparent">
+            <SidebarHeader className="items-center px-0 pt-1">
+              <Link to="/questions" className="flex size-10 items-center justify-center rounded-[11px] bg-primary text-base font-semibold text-primary-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+                N<span className="sr-only">Norn Studio</span>
+              </Link>
             </SidebarHeader>
-            <SidebarContent>
-              <SidebarGroup><SidebarGroupContent className="px-1.5 md:px-0">
-                <SidebarMenu>{sections.map((section) => <RailItem key={section.path} section={section} active={section === current} />)}</SidebarMenu>
-              </SidebarGroupContent></SidebarGroup>
+            <SidebarContent className="px-0 pt-3">
+              <SidebarMenu className="items-center gap-2">
+                {main.map((section, index) => (
+                  <Fragment key={section.path}>
+                    {index > 0 && section.group !== main[index - 1]?.group && <Separator className="my-1 w-6!" />}
+                    <RailItem section={section} active={section === current} />
+                  </Fragment>
+                ))}
+              </SidebarMenu>
             </SidebarContent>
-            <SidebarFooter>
-              <SidebarMenu><SidebarMenuItem><AccountMenu account={account} onSignOut={onSignOut} /></SidebarMenuItem></SidebarMenu>
+            <SidebarFooter className="items-center px-0 pb-1">
+              {foot.length > 0 && <SidebarMenu className="items-center gap-2">{foot.map((section) => <RailItem key={section.path} section={section} active={section === current} />)}</SidebarMenu>}
+              <SidebarMenu><SidebarMenuItem className="flex justify-center"><AccountMenu account={account} onSignOut={onSignOut} /></SidebarMenuItem></SidebarMenu>
             </SidebarFooter>
           </Sidebar>
           {current && <Submenu key={current.path} section={current} />}
           </div>
         </Sidebar>
         <SidebarInset>
-          <header className="flex h-14 items-center gap-3 border-b px-4">
-            <SidebarTrigger />
-            <div className="flex flex-1 justify-center"><CommandMenu sections={sections} /></div>
+          <header className="grid h-16 grid-cols-[1fr_minmax(0,28rem)_1fr] items-center gap-3 px-4">
+            <div><SidebarTrigger /></div>
+            <CommandMenu sections={sections} />
+            <BarButtons />
           </header>
-          <div className="mx-auto w-full max-w-6xl p-4 md:p-8"><Outlet /></div>
+          <div className="mx-auto w-full max-w-6xl px-4 pb-8 md:px-8"><Outlet /></div>
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider>
