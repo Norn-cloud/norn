@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 export type Mode = "sign-in" | "sign-up" | "email-link"
 
 /** Shown after sign-up whether or not the address already had an account. */
-export const SIGNED_UP = "Check your email, or sign in with your email and password."
+export const SIGNED_UP = "Account ready. Sign in with your email and password."
 
 const MODES: readonly { readonly mode: Mode; readonly label: string }[] = [
   { mode: "sign-in", label: "Sign in" },

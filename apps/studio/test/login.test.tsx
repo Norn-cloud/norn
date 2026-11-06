@@ -27,7 +27,7 @@ test("an email link needs only the address", () => {
   expect(html).toContain("Send link")
 })
 
-test("after sign-up the page says to check email or sign in, never whether the address was new", () => {
-  expect(SIGNED_UP).toBe("Check your email, or sign in with your email and password.")
+test("after sign-up the page asks the user to sign in, never saying whether the address was new", () => {
+  expect(SIGNED_UP).toBe("Account ready. Sign in with your email and password.")
   expect(SIGNED_UP).not.toMatch(/already|exists|registered|taken/i)
 })
