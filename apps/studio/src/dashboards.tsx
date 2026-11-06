@@ -200,18 +200,20 @@ export function DashboardEditorPage() {
   const store = useDefinitions()
   const navigate = useNavigate()
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
-  const stored = useQuery({ queryKey: ["dashboard", id], queryFn: () => id === undefined ? Promise.resolve(undefined) : store.get(id), retry: false })
+  // A query may not resolve to undefined: a missing dashboard is null, and a new one reads nothing.
+  const stored = useQuery({ queryKey: ["dashboard", id], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined, retry: false })
+  const fresh = id === undefined
   const [title, setTitle] = useState(id === undefined ? "New dashboard" : "Dashboard")
   useEffect(() => { if (stored.data) setTitle(stored.data.dashboard.title || "Untitled dashboard") }, [stored.data])
   return (
     <section className="space-y-6">
       <h1 className="text-title font-medium">{title}</h1>
-      {(catalog.isPending || stored.isPending) && <p className="text-muted-foreground">Reading the dashboard…</p>}
+      {(catalog.isPending || (!fresh && stored.isPending)) && <p className="text-muted-foreground">Reading the dashboard…</p>}
       {catalog.isError && <EmptyState icon={LayoutDashboard}>{catalog.error.message}</EmptyState>}
       {stored.isError && <EmptyState icon={LayoutDashboard}>{failure(stored.error)}</EmptyState>}
-      {id !== undefined && stored.isSuccess && stored.data === undefined && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
-      {catalog.data && stored.isSuccess && (id === undefined || stored.data) && (
-        <DashboardEditor key={`${stored.data?.id ?? "new"}:${stored.data?.version ?? 0}`} store={store} catalog={catalog.data} stored={stored.data} guard={(dirty) => <DirtyGuard dirty={dirty} />}
+      {!fresh && stored.isSuccess && stored.data === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
+      {catalog.data && (fresh || stored.data) && (
+        <DashboardEditor key={`${stored.data?.id ?? "new"}:${stored.data?.version ?? 0}`} store={store} catalog={catalog.data} stored={stored.data ?? undefined} guard={(dirty) => <DirtyGuard dirty={dirty} />}
           onReload={() => void stored.refetch()}
           onSaved={(saved) => { if (id === undefined) setTimeout(() => void navigate({ to: "/dashboards/$id", params: { id: saved.id }, replace: true })) }} />
       )}

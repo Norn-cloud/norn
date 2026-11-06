@@ -28,3 +28,18 @@ test("the editor shows its empty state, and a reopened dashboard shows every til
   for (const text of ['value="Refinery weekly"', "Version 3", "Gold Yield, weekly", "Loss table", 'aria-label="Move tile 2 up"', 'aria-label="Duplicate tile 1"', 'aria-label="Remove tile 2"', "Edit question", "Not run yet: the evaluate route isn&#x27;t connected."]) expect(html).toContain(text)
   expect(html).toMatch(/aria-label="Tile 2 view"[^]*?<option value="table" selected/)
 })
+
+test("the new-dashboard page opens the empty editor, not a query error (a query may not resolve to undefined)", async () => {
+  const { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } = await import("@tanstack/react-router")
+  const { DashboardEditorPage } = await import("../src/dashboards.tsx")
+  const client = new QueryClient()
+  client.setQueryData(["question-catalog"], catalog)
+  const root = createRootRoute()
+  const router = createRouter({ routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/dashboards/new", component: DashboardEditorPage })]), history: createMemoryHistory({ initialEntries: ["/dashboards/new"] }) })
+  await router.load()
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(html).toContain("New dashboard")
+  expect(html).toContain("Add question")
+  expect(html).not.toContain("data is undefined")
+  expect(html).not.toContain("Reading the dashboard")
+})
