@@ -1,5 +1,6 @@
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
+import { liveTransport } from "./live.ts"
 import { readsOf } from "./objects.ts"
 
 export type { Schemas }
@@ -39,7 +40,7 @@ export interface Restatement extends QuestionAnswer {
   readonly asOf: Read<HistoricalAnswer>
 }
 
-/** The app's only way to read server documents. Live HTTP joins once the host's read API lands. */
+/** The app's only way to read server documents. */
 export interface Transport {
   readonly questionBoard: () => Promise<readonly QuestionAnswer[]>
   /** The admitted core definitions: object types, actions, laws and the rest, as artifact envelopes. */
@@ -99,3 +100,18 @@ export const recordedTransport: Transport = {
     return object && links && readsOf(objectType, id, object.document, links.document) ? { object, links, source } : null
   },
 }
+
+/**
+ * The transport the app reads through: the live cell host when
+ * `VITE_NORN_CELL_URL` is set at build time, otherwise the recordings.
+ * `VITE_NORN_FIXTURE_PRINCIPAL` names the public demo principal until sign-in (#817).
+ */
+export const transport: Transport = import.meta.env.VITE_NORN_CELL_URL
+  ? liveTransport(
+      {
+        baseUrl: String(import.meta.env.VITE_NORN_CELL_URL).replace(/\/$/, ""),
+        authorization: () => `Bearer fixture:${import.meta.env.VITE_NORN_FIXTURE_PRINCIPAL ?? "viewer@demo"}`,
+      },
+      recordedTransport,
+    )
+  : recordedTransport
