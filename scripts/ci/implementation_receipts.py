@@ -558,93 +558,46 @@ def git_object(root: Path, path: str) -> str | None:
     return done.stdout.strip() if done.returncode == 0 else None
 
 
-def workspace_closure(root: Path, package: str) -> list[str]:
-    """The directories of a workspace package and of every local package it builds with."""
-    workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]
-    members = {tomllib.loads((root / m / "Cargo.toml").read_text())["package"]["name"]: m
-               for m in workspace["members"]}
-    shared = workspace.get("dependencies", {})
-    require(package in members, f"extraction package {package} is not a workspace member")
-    todo, seen = [members[package]], set()
-    while todo:
-        directory = os.path.normpath(todo.pop())
-        if directory in seen:
-            continue
-        seen.add(directory)
-        manifest = tomllib.loads((root / directory / "Cargo.toml").read_text())
-        require_contained_sources(root, directory, manifest)
-        tables = [manifest.get(k, {}) for k in ("dependencies", "build-dependencies")]
-        tables += [t.get(k, {}) for t in manifest.get("target", {}).values() for k in ("dependencies", "build-dependencies")]
-        for table in tables:
-            for key, spec in table.items():
-                spec = spec if isinstance(spec, dict) else {}
-                name = spec.get("package", key)
-                if "path" in spec:
-                    todo.append(os.path.join(directory, spec["path"]))
-                elif spec.get("workspace") and "path" in shared.get(key, {}):
-                    todo.append(shared[key]["path"])
-                elif name in members:
-                    todo.append(members[name])
-    return sorted(seen)
-
-
-def inside(directory: str, path: str) -> bool:
-    """Whether `path`, relative to the repository root, lies in package `directory`."""
-    normal = os.path.normpath(path)
-    return not os.path.isabs(path) and (normal == directory or normal.startswith(directory.rstrip("/") + "/"))
-
-
-# Source constructs that can read a file chosen by a value scope does not
-# parse: any `path` attribute (raw strings and cfg_attr included) or include*!.
-UNSCOPABLE = re.compile(r"#\s*!?\s*\[\s*(?:r#)?(?:path\b|cfg_attr\s*\([^;{}]*?\bpath\b)|\binclude(?:_str|_bytes)?\s*!")
-
-
-def require_contained_sources(root: Path, directory: str, manifest: dict) -> None:
-    """Refuse a package layout whose library inputs scope cannot bound (Sol S3).
-
-    Scope compares the package directory. `[lib]`, `[[bin]]` and `build` paths
-    must lie inside it, and the package's Rust sources may hold no `path`
-    attribute and no include*!: their values are never parsed, the layout is
-    refused. Test, bench and example directories are not read.
-    """
-    package = manifest.get("package", {})
-    targets = [("lib.path", manifest.get("lib", {}).get("path")), ("package.build", package.get("build")),
-               *(("bin.path", b.get("path")) for b in manifest.get("bin", []))]
-    for key, value in targets:
-        require(not isinstance(value, str) or inside(directory, os.path.join(directory, value)),
-                f"{directory}: {key} {value!r} is outside the package, so it cannot be scoped")
-    skipped = {os.path.join(directory, name) for name in ("tests", "benches", "examples", "target")}
-    for source in sorted((root / directory).rglob("*.rs")):
-        path = os.path.relpath(source, root)
-        require(any(inside(skip, path) for skip in skipped)
-                or UNSCOPABLE.search(source.read_text(encoding="utf-8", errors="replace")) is None,
-                f"{path}: a path attribute or include macro cannot be scoped; the layout is refused")
-
-
 def scope_inputs(root: Path, claims: dict[str, dict]) -> list[str]:
-    """Every committed path whose change can change an implementation claim's verdict."""
-    paths = {"verification/coverage-v1/manifest", "Cargo.toml", "Cargo.lock", *CARGO_CONFIG}
+    """Claim manifests and declared proof inputs, without reading Rust sources."""
+    paths = {"verification/coverage-v1/manifest"}
     for claim in claims.values():
         if kind_of(claim) == "kani":
             plan = kani_plan(claim)
             paths |= {plan["harness"], plan["source"]}
         else:
             plan = extraction_plan(claim, "")
-            paths |= {*plan["inputs"], *workspace_closure(root, plan["package"])}
+            paths |= {plan["proofRoot"], *plan["inputs"]}
     return sorted(paths)
 
 
 def in_scope(root: Path, base: Path) -> bool:
-    """Whether the candidate changes an implementation claim or any input of one.
+    """Run receipts on any Rust, Cargo, toolchain, config or proof-input change.
 
-    Compared by committed git object ids, so no tool and no candidate code runs.
+    Compare committed inventories only. Rust syntax and package membership do
+    not bound the inputs: over-running is safe, under-running is not.
     """
     claims = implementation_claims(root)
-    if not claims:
-        return False
-    if claims != implementation_claims(base):
+    base_claims = implementation_claims(base)
+    if claims != base_claims:
         return True
-    return any(git_object(root, path) != git_object(base, path) for path in scope_inputs(root, claims))
+    inputs = scope_inputs(root, claims)
+    trees = []
+    for checkout in (root, base):
+        entries = git(checkout, "ls-tree", "-r", "-z", "HEAD").split("\0")
+        trees.append({path: metadata for entry in entries if entry
+                      for metadata, path in [entry.split("\t", 1)]})
+    candidate, previous = trees
+    for path in candidate.keys() | previous.keys():
+        if candidate.get(path) == previous.get(path):
+            continue
+        parts = Path(path).parts
+        name = parts[-1]
+        if (name.endswith(".rs") or name in {"Cargo.toml", "Cargo.lock", "build.rs"}
+                or name.startswith("rust-toolchain") or ".cargo" in parts
+                or any(path == source or path.startswith(source + "/") for source in inputs)):
+            return True
+    return False
 
 
 def verify(root: Path, receipts: Path, expected: dict, fstar: Path | None,
