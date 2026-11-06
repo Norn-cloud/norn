@@ -1,6 +1,6 @@
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
-import { gatewayModel, respond, type AgentRequest } from "./agent.ts"
+import type { AgentRequest } from "./agent.ts"
 import type { AgentBudget } from "./budget.ts"
 import type { Scope } from "./limits.ts"
 
@@ -100,6 +100,8 @@ async function agent(request: Request, env: Env, ctx: ExecutionContext): Promise
     const admission = await ledger.admit(scope)
     if (!admission.ok) return refuse(429, admission.reason, { "retry-after": String(admission.retryAfterSeconds) })
   }
+  // Loaded on first use: the assistant brings the model SDK and the checker's WebAssembly, which sign-in never needs.
+  const { gatewayModel, respond } = await import("./agent.ts")
   const model = gatewayModel(url, token, env.AGENT_MODEL ?? "claude-opus-5-5")
   return respond(model, body, (tokens) => ctx.waitUntil(Promise.all(ledgers.map(([, ledger]) => ledger.spend(tokens)))), request.signal)
 }
