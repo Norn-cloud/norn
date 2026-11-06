@@ -117,7 +117,10 @@ fn traces_disclose_values_only_under_their_own_grant() {
                 .iter()
                 .all(|c| c["restricted"] == false && c["values"].is_object())
         );
-        let guest = get(&cell, &path, &query, GUEST);
+        // The lineage pin covers the principal's population, so each principal
+        // traces its own answer.
+        let own = json(&get(&cell, &answer_path(), SCOPE, GUEST));
+        let guest = get(&cell, &path, &trace_query(&own, bucket), GUEST);
         assert_eq!(guest.status, 200, "{bucket}: {}", guest.body);
         let guest = json(&guest);
         let restricted = guest["contributions"].as_array().unwrap();

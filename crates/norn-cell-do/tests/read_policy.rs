@@ -7,7 +7,7 @@
 )]
 use std::collections::BTreeMap;
 
-use norn_api::authz::{Authorizer, ReadCapability, ReadRequest};
+use norn_api::authz::{Authorizer, Operation, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
@@ -166,7 +166,6 @@ fn definition_reads_follow_the_grants_and_nothing_else() {
         actor,
         operation,
     };
-    use norn_api::authz::Operation;
     assert!(
         policy
             .authorize(&request(Some("guest@demo"), Operation::ReadDefinitions))
