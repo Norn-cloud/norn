@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
 import { ChoiceColumn, PathSummary, pathNumbers } from "../src/components/decision/choice-columns.tsx"
 import { buildQuestion } from "../src/builder.tsx"
-import { QuestionTree, recommendedDraft, selection, type Recommendations } from "../src/question-tree.tsx"
+import { QuestionTree, checkState, checkView, recommendedDraft, selection, type CheckState, type CheckedQuestion, type Recommendations } from "../src/question-tree.tsx"
 import { catalog, cell } from "./support/definitions.ts"
 
 // GET /api/questions/recommendations for the demo world, as the Worker serves it (worker/question-tree.ts).
@@ -59,4 +59,36 @@ test("the tree shows the four columns, the recommended path and keeps Run closed
   expect(html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("Then 3 – 2 – 1 – 1 – 1")
   expect(html).toContain("Run opens once you have signed off on the question in plain words.")
   expect(html).not.toContain(">Run<")
+})
+
+const checkedAs = (sha256: string, admitted = true): CheckedQuestion => ({ verdict: { kind: "question", question: {}, admitted, plan: null, findings: [] }, restatement: { text: `words ${sha256}`, sha256 } })
+
+test("a sign-off holds only for the question signed: an edit clears it and undo does not bring it back", () => {
+  let state: CheckState = { key: "A" }
+  state = checkState(state, { type: "checked", key: "A", result: checkedAs("a") })
+  state = checkState(state, { type: "sign", atMs: 1 })
+  expect(checkView(state).signed).toBe(true)
+  state = checkState(state, { type: "question", key: "B" })
+  expect(checkView(state)).toMatchObject({ checked: undefined, signed: false })
+  state = checkState(state, { type: "question", key: "A" })
+  expect(checkView(state)).toMatchObject({ checked: { restatement: { sha256: "a" } }, signed: false })
+})
+
+test("before the new question's check starts, the old result and sign-off are not shown against it", () => {
+  let state: CheckState = { key: "A" }
+  state = checkState(checkState(state, { type: "checked", key: "A", result: checkedAs("a") }), { type: "sign", atMs: 1 })
+  expect(checkView(state, "B")).toMatchObject({ checked: undefined, failure: undefined, signed: false })
+})
+
+test("a response or failure for a superseded question is ignored, and only an admitted check can be signed", () => {
+  let state: CheckState = checkState({ key: "A" }, { type: "question", key: "B" })
+  state = checkState(state, { type: "checked", key: "A", result: checkedAs("a") })
+  state = checkState(state, { type: "failed", key: "A", message: "late failure" })
+  expect(checkView(state)).toMatchObject({ checked: undefined, failure: undefined })
+  state = checkState(state, { type: "failed", key: "B", message: "The checker could not be reached." })
+  expect(checkView(state).failure).toBe("The checker could not be reached.")
+  expect(checkState(state, { type: "sign", atMs: 1 }).signOff).toBeUndefined()
+  state = checkState(state, { type: "checked", key: "B", result: checkedAs("b", false) })
+  expect(checkView(state)).toMatchObject({ failure: undefined, admitted: false })
+  expect(checkState(state, { type: "sign", atMs: 1 }).signOff).toBeUndefined()
 })

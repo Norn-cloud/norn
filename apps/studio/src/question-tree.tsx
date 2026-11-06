@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { BadgeCheck, ChartLine, ShieldCheck } from "lucide-react"
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useReducer, type ReactNode } from "react"
 import { ChoiceColumn, PathSummary, pathNumbers, type ColumnOption } from "@/components/decision/choice-columns"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
@@ -47,6 +47,45 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const options = (choices: readonly Choice[], extra: readonly ColumnOption[] = []): readonly ColumnOption[] =>
   [...choices.map(({ id, label, detail, recommended }) => ({ id, label, detail, marks: recommended ? ["recommended" as const] : [] })), ...extra]
 
+/**
+ * The check of one built question and the sign-off on its words. Every result
+ * and failure carries the question it was for, so a response for a superseded
+ * question is ignored; any change of question clears the sign-off, and undoing
+ * back to an earlier question does not bring its old sign-off back.
+ */
+export interface CheckState {
+  readonly key: string
+  readonly checked?: { readonly key: string; readonly result: CheckedQuestion }
+  readonly failure?: { readonly key: string; readonly message: string }
+  readonly signOff?: SignOff & { readonly key: string }
+}
+export type CheckEvent =
+  | { readonly type: "question"; readonly key: string }
+  | { readonly type: "checked"; readonly key: string; readonly result: CheckedQuestion }
+  | { readonly type: "failed"; readonly key: string; readonly message: string }
+  | { readonly type: "sign"; readonly atMs: number }
+
+export function checkState(state: CheckState, event: CheckEvent): CheckState {
+  switch (event.type) {
+    case "question": return event.key === state.key ? state : { ...state, key: event.key, signOff: undefined }
+    case "checked": return event.key === state.key ? { ...state, checked: { key: event.key, result: event.result }, failure: undefined } : state
+    case "failed": return event.key === state.key ? { ...state, failure: { key: event.key, message: event.message } } : state
+    case "sign": {
+      const result = state.checked?.key === state.key ? state.checked.result : undefined
+      return result?.verdict.admitted ? { ...state, signOff: { sha256: result.restatement.sha256, atMs: event.atMs, key: state.key } } : state
+    }
+  }
+}
+
+/** What the page shows for the current question: only its own check, failure and sign-off. */
+export function checkView(state: CheckState, key: string = state.key) {
+  const checked = state.checked?.key === key ? state.checked.result : undefined
+  const failure = state.failure?.key === key ? state.failure.message : undefined
+  const admitted = checked?.verdict.admitted === true
+  const signed = admitted && state.key === key && state.signOff?.key === key && state.signOff.sha256 === checked?.restatement.sha256
+  return { checked, failure, admitted, signed }
+}
+
 /** The draft the tree opens on: the top pick of every column. */
 export function recommendedDraft(tree: Recommendations): Draft {
   const pick = (choices: readonly Choice[]) => choices.find(({ recommended }) => recommended) ?? choices[0]
@@ -80,22 +119,20 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const editor = useEditor<Draft>({ initial: recommendedDraft(tree) })
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
-  const [checked, setChecked] = useState<CheckedQuestion>()
-  const [failure, setFailure] = useState<string>()
-  const [signOff, setSignOff] = useState<SignOff>()
   const question = buildQuestion(draft, catalog)
+  const key = JSON.stringify(question)
+  const [state, dispatch] = useReducer(checkState, { key })
   // The server checks every change (after a pause) and states the question back in plain words.
   useEffect(() => {
+    dispatch({ type: "question", key })
     const timer = setTimeout(() => {
-      checkQuestion(question).then((result) => { setChecked(result); setFailure(undefined) }, (error: unknown) => setFailure(error instanceof Error ? error.message : String(error)))
+      checkQuestion(question).then((result) => dispatch({ type: "checked", key, result }), (error: unknown) => dispatch({ type: "failed", key, message: error instanceof Error ? error.message : String(error) }))
     }, 300)
     return () => clearTimeout(timer)
-  }, [JSON.stringify(question)])
+  }, [key])
+  // A sign-off holds only for the exact question and words signed; any edit, or undo, clears it.
+  const { checked, failure, admitted, signed } = checkView(state, key)
   const restated = checked?.restatement
-  const admitted = checked?.verdict.admitted === true
-  // A sign-off holds only for the exact words signed; any edit changes them and clears it.
-  const signed = signOff !== undefined && restated !== undefined && signOff.sha256 === restated.sha256 && admitted
-  useEffect(() => { if (signOff && restated && signOff.sha256 !== restated.sha256) setSignOff(undefined) }, [restated?.sha256])
   const chosen = selection(tree, draft)
   const issues = issuesOf(checked?.verdict)
   const invalid = (field: string) => issues.some((issue) => issue.field === field || issue.field?.startsWith(`${field}.`))
@@ -174,7 +211,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
             <div className="flex flex-wrap items-center gap-3">
               {signed
                 ? <span className="flex items-center gap-2 text-sm font-medium"><BadgeCheck className="size-4 text-success" />Signed off: this is what you asked for</span>
-                : <Button type="button" size="sm" disabled={!admitted} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => restated && setSignOff({ sha256: restated.sha256, atMs: Date.now() })}>This is what I asked for</Button>}
+                : <Button type="button" size="sm" disabled={!admitted} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => dispatch({ type: "sign", atMs: Date.now() })}>This is what I asked for</Button>}
               {!admitted && <span className="text-meta text-muted-foreground">Sign-off opens once the checker admits the question.</span>}
             </div>
           </div>
