@@ -80,6 +80,8 @@ export function authOptions(config: AuthConfig) {
       // Explicit: Better Auth otherwise turns its origin (CSRF) check off whenever NODE_ENV is "test".
       disableOriginCheck: false,
       useSecureCookies: true,
+      // The same cookie prefix as Norn's other Better Auth apps; host-only, never shared across subdomains.
+      cookiePrefix: "norn",
       defaultCookieAttributes: { httpOnly: true, secure: true, sameSite: "lax" },
       // Cloudflare sets this header itself; X-Forwarded-For is client-controlled.
       ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
