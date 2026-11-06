@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
@@ -18,7 +19,7 @@ const META = { id: "studio.automation", version: "0.1.0" }
 export const STEP_KINDS = { start: "Start", perform: "Tool", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
 export const RUN_BLOCKED = "Running happens in the cell with receipts; the run route is not live yet."
 
-type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly string[] }, "step">
+type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly { readonly id: string; readonly label: string }[] }, "step">
 
 export function StepBox({ data, selected }: NodeProps<StepNode>) {
   const failing = data.issues.length > 0
@@ -30,13 +31,23 @@ export function StepBox({ data, selected }: NodeProps<StepNode>) {
       {data.detail && <div className="truncate text-meta text-muted-foreground">{data.detail}</div>}
       {failing && <div className="text-meta text-destructive">{data.issues.length} {data.issues.length === 1 ? "problem" : "problems"}</div>}
       {data.outs.map((port, index) => (
-        <Handle key={port} type="source" position={Position.Right} id={port} title={port} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
+        <Handle key={port.id} type="source" position={Position.Right} id={port.id} title={port.label} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
       ))}
     </div>
   )
 }
 
 const NODE_TYPES = { step: StepBox }
+
+const short = (text: string, length = 30) => text.length > length ? `${text.slice(0, length - 1)}…` : text
+
+/** What an exit means in words: a route branch's own condition, or otherwise. */
+export function exitLabel(node: g.CanvasNode | undefined, port: string): string | undefined {
+  if (!node || port === "next") return undefined
+  const branch = /^b(\d+)$/.exec(port)
+  if (branch && node.kind === "route") return formatCondition(branchesOf(node)[Number(branch[1])] ?? []) || "no condition yet"
+  return port
+}
 
 const formatCondition = (all: readonly Condition[]) => all.map(({ left, op, right }) => `${left} ${op} ${right}`).join(" and ")
 const parseCondition = (line: string): Condition[] => line.split(/\s+and\s+/).map((part) => part.trim()).filter(Boolean).map((part) => {
@@ -52,15 +63,21 @@ function Branches({ editing, id, branches }: { readonly editing: Editing; readon
   const swap = (a: number, b: number) => { const order = [...indices]; order[a] = b; order[b] = a; set(order) }
   return (
     <div className="space-y-2">
-      <div className="text-meta text-muted-foreground">Branches, first match wins. Exits b0, b1, … then otherwise, then next (continue after the route).</div>
+      <div className="text-meta text-muted-foreground">Branches, first match wins. Each branch leaves by its own exit; then otherwise, then next (continue after the route).</div>
       {branches.map((all, index) => (
-        <div key={`${id}:${index}:${formatCondition(all)}`} className="flex items-center gap-1">
-          <span className="w-6 font-mono text-xs text-muted-foreground">b{index}</span>
-          <Input aria-label={`Branch b${index}`} className="font-mono text-xs" defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
+        <div key={`${id}:${index}:${formatCondition(all)}`} className="space-y-1 rounded-md border p-2">
+          <div className="flex items-center gap-1">
+            <span className="text-meta font-medium">{index === 0 ? "When" : "Else when"}</span>
+            <span className="font-mono text-[10px] text-muted-foreground" title="This branch's exit on the route">exit b{index}</span>
+            <span className="ms-auto flex">
+              <Button size="icon" variant="ghost" aria-label={`Move b${index} up`} disabled={index === 0} onClick={() => swap(index - 1, index)}><ArrowUp /></Button>
+              <Button size="icon" variant="ghost" aria-label={`Move b${index} down`} disabled={index === branches.length - 1} onClick={() => swap(index, index + 1)}><ArrowDown /></Button>
+              <Button size="icon" variant="ghost" aria-label={`Delete b${index}`} onClick={() => set(indices.filter((at) => at !== index))}><Trash2 /></Button>
+            </span>
+          </div>
+          {/* The whole condition stays readable: it wraps instead of clipping, and hovering shows it in full. */}
+          <Textarea aria-label={`Branch b${index}`} rows={2} className="min-h-0 resize-y font-mono text-xs break-all" title={formatCondition(all) || "No condition yet"} defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
             onBlur={(event) => { const next = branches.map((one, at) => at === index ? parseCondition(event.target.value) : one); if (formatCondition(next[index] ?? []) !== formatCondition(all)) set(indices, next) }} />
-          <Button size="icon" variant="ghost" aria-label={`Move b${index} up`} disabled={index === 0} onClick={() => swap(index - 1, index)}><ArrowUp /></Button>
-          <Button size="icon" variant="ghost" aria-label={`Move b${index} down`} disabled={index === branches.length - 1} onClick={() => swap(index, index + 1)}><ArrowDown /></Button>
-          <Button size="icon" variant="ghost" aria-label={`Delete b${index}`} onClick={() => set(indices.filter((at) => at !== index))}><Trash2 /></Button>
         </div>
       ))}
       <Button size="sm" variant="outline" onClick={() => set([...indices, -1], [...branches, []])}><Plus />Branch</Button>
@@ -142,10 +159,10 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
       data: {
         kind: node.kind, title: words(node.id), issues: found,
         detail: node.kind === "perform" ? node.config.tool ?? "" : node.kind === "sleep" ? `${node.config.millis ?? 0} ms` : node.kind === "succeed" ? node.config.outcome ?? "" : node.kind === "route" ? `${branchesOf(node).length} ${branchesOf(node).length === 1 ? "branch" : "branches"}` : "",
-        outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id }) => id),
+        outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id: port }) => ({ id: port, label: exitLabel(node, port) ?? "next (continue after this step)" })),
       },
     }),
-    toEdge: (edge, found, selected): Edge => ({
+    toEdge: (edge, found, selected, graph): Edge => ({
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
       markerEnd: { type: MarkerType.ArrowClosed }, label: edge.sourcePort === "next" ? undefined : edge.sourcePort,
       style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
