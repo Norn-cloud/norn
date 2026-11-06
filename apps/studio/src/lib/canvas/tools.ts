@@ -1,6 +1,7 @@
 import type { FnRef } from "../../../../../tools/norn-ts/src/builder/index.ts"
 import { loadInvoice, notify } from "../../../../../tools/norn-ts/fixtures/flows/support/billing.builder.ts"
 import type { CanvasEdge, CanvasNode, Graph } from "./graph.ts"
+import { spaceForLabels } from "./exits.ts"
 
 /**
  * The tools an automation may call, each a typed handle whose input and
@@ -16,7 +17,7 @@ const node = (id: string, kind: string, x: number, y: number, config: Record<str
 const edge = (source: string, sourcePort: string, target: string): CanvasEdge => ({ id: `${source}.${sourcePort}`, source, sourcePort, target, targetPort: "in", config: {} })
 
 /** A first automation to edit: load an invoice, stop if it is settled, remind when it is overdue. */
-export const EXAMPLE: Graph = {
+export const EXAMPLE: Graph = spaceForLabels({
   nodes: [
     node("start", "start", 0, 140),
     node("load", "perform", 230, 140, { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
@@ -32,10 +33,10 @@ export const EXAMPLE: Graph = {
     edge("settled", "b0", "paid"), edge("settled", "b1", "draft"), edge("settled", "next", "overdue"),
     edge("overdue", "b0", "remind"), edge("overdue", "next", "open"),
   ],
-}
+})
 
 /** An automation that asks a person, with a follow-up decision after one option (the decision preview's sheet state). */
-export const DECISION_EXAMPLE: Graph = {
+export const DECISION_EXAMPLE: Graph = spaceForLabels({
   nodes: [
     node("start", "start", 0, 140),
     node("load", "perform", 230, 140, { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
@@ -52,4 +53,4 @@ export const DECISION_EXAMPLE: Graph = {
     edge("escalate", "opt:o1", "escalated"), edge("escalate", "opt:o2", "reminded"),
     edge("chase", "opt:o2", "left"),
   ],
-}
+})

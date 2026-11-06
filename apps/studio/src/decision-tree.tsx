@@ -1,6 +1,7 @@
 import { useState } from "react"
-import { GitBranch, Wrench } from "lucide-react"
+import { Clock, GitBranch, Sparkles, UserRound, Wrench } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { KindChip } from "@/components/canvas/node-card"
 import { cn } from "@/lib/utils"
 import { Unavailable } from "./canvas-frame.tsx"
 import type { DecisionView } from "./lib/canvas/decision.ts"
@@ -24,35 +25,51 @@ const RISK_TONE: Record<DecisionView["risk"], string> = {
   low: "bg-muted text-muted-foreground",
 }
 
-/** One decision level: numbered options, the agent's pick marked, the chosen one opening its follow-up. */
+/** An option's number: a small round chip, filled when it is on the chosen path. */
+const OptionNumber = ({ n, on }: { readonly n: number; readonly on: boolean }) => (
+  <span className={cn("inline-flex size-6 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold ring-1 ring-inset",
+    on ? "bg-[var(--edge-active)] text-primary-foreground ring-transparent" : "bg-muted text-muted-foreground ring-node-border")}>{n}</span>
+)
+
+/** One decision level: numbered option cards on a spine, the agent's pick marked, the chosen one opening its follow-up. */
 function Level({ view, path, depth, choose }: { readonly view: DecisionView; readonly path: readonly string[]; readonly depth: number; readonly choose: (depth: number, option: string) => void }) {
   const chosen = view.options.find(({ option }) => option.id === path[depth])
   return (
-    <div className="flex items-start gap-6">
-      <ol className="flex min-w-60 flex-col gap-2" aria-label={depth === 0 ? "Options" : `Options for: ${view.question}`}>
-        {depth > 0 && <li className="w-fit rounded-md border bg-card px-3 py-1.5 text-sm font-medium shadow-xs">{view.question}</li>}
-        {view.options.map(({ option, agentPick, tools }, index) => {
-          const active = option.id === path[depth]
-          return (
-            <li key={option.id}>
-              <button type="button" aria-pressed={active} onClick={() => choose(depth, option.id)}
-                className={cn("w-full rounded-lg border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted", active ? "border-primary ring-2 ring-primary/20" : chosen ? "opacity-60" : "")}>
-                <span className="flex items-center gap-2">
-                  <span className="rounded border px-1.5 font-mono text-xs text-muted-foreground">{index + 1}</span>
-                  <span className="font-medium">{option.label}</span>
-                  {agentPick && <span className="text-xs text-primary">Agent's pick</span>}
-                </span>
-                <span className="mt-1 flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-                  <span>{option.scope || "No scope stated"}</span>
-                  {option.effect && <span className="font-mono text-xs">{"action" in option.effect ? `action ${option.effect.action}` : `binding ${option.effect.binding}`}</span>}
-                  {/* The tools the option leads to, without repeating the binding its effect already names. */}
-                  {tools.filter((tool) => !(option.effect && "binding" in option.effect && option.effect.binding === tool)).map((tool) => <span key={tool} className="inline-flex items-center gap-1 font-mono text-xs"><Wrench className="size-3" />{tool}</span>)}
-                </span>
-              </button>
-            </li>
-          )
-        })}
-      </ol>
+    <div className="flex items-start gap-8">
+      <div className="space-y-3">
+        {depth > 0 && <div className="canvas-node w-fit max-w-72 rounded-node border border-node-border bg-card px-3 py-2 text-sm font-semibold">{view.question}</div>}
+        <ol className="relative flex w-72 flex-col gap-2.5 ps-4 before:absolute before:inset-y-5 before:start-0 before:w-px before:bg-node-border" aria-label={depth === 0 ? "Options" : `Options for: ${view.question}`}>
+          {view.options.map(({ option, agentPick, tools }, index) => {
+            const active = option.id === path[depth]
+            const extra = tools.filter((tool) => !(option.effect && "binding" in option.effect && option.effect.binding === tool))
+            return (
+              <li key={option.id} className="relative before:absolute before:top-1/2 before:-start-4 before:h-px before:w-4 before:bg-node-border">
+                <button type="button" aria-pressed={active} onClick={() => choose(depth, option.id)}
+                  className={cn("canvas-node w-full rounded-node border border-node-border bg-card px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--node-ring)]",
+                    active && "canvas-node-selected", chosen && !active && "opacity-70")}>
+                  <span className="flex items-start gap-2.5">
+                    <OptionNumber n={index + 1} on={active} />
+                    <span className="min-w-0 flex-1 space-y-1">
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-semibold tracking-[-0.01em]">{option.label}</span>
+                        {agentPick && <span className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--edge-active)_12%,transparent)] px-2 text-[11px] leading-5 font-medium text-[var(--edge-active)]"><Sparkles className="size-3" />Agent's pick</span>}
+                      </span>
+                      <span className="block text-meta text-muted-foreground">{option.scope || "No scope stated"}</span>
+                      {(option.effect || extra.length > 0) && (
+                        <span className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                          {option.effect && <span className="rounded-md bg-muted px-1.5 font-mono text-[11px] leading-5 text-muted-foreground">{"action" in option.effect ? `action ${option.effect.action}` : `binding ${option.effect.binding}`}</span>}
+                          {/* The tools the option leads to, without repeating the binding its effect already names. */}
+                          {extra.map((tool) => <span key={tool} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 font-mono text-[11px] leading-5 text-muted-foreground"><Wrench className="size-3" />{tool}</span>)}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ol>
+      </div>
       {chosen?.followUp && <Level view={chosen.followUp} path={path} depth={depth + 1} choose={choose} />}
     </div>
   )
@@ -74,25 +91,29 @@ export function DecisionTree({ view, agent, initialPath = [] }: { readonly view:
     level = level.options[index]?.followUp
   }
   return (
-    <div className="space-y-4" data-testid="decision-tree">
-      <div className="flex items-center gap-2 text-sm"><GitBranch className="size-4 text-primary" /><span className="font-medium">Decision preview</span><span className="text-muted-foreground">as the decider will see it</span></div>
-      <div className="flex items-center gap-6 overflow-x-auto pb-2">
-        <div className="w-64 shrink-0 space-y-2">
-          <Badge className={cn("border-transparent", RISK_TONE[view.risk])}>{`${view.risk.charAt(0).toUpperCase()}${view.risk.slice(1)} risk`}</Badge>
-          <div className="space-y-2 rounded-xl border bg-card p-4 shadow-xs">
-            <div className="text-meta text-muted-foreground">{agent ? `${agent.title} · ${agent.model}` : "Asked by this automation"}</div>
-            <p className="font-medium">{view.question || "No question yet"}</p>
+    <div className="space-y-4 rounded-node border border-node-border bg-canvas-surface p-4" data-testid="decision-tree">
+      <div className="flex items-baseline gap-2 text-sm"><GitBranch className="size-4 self-center text-[var(--edge-active)]" /><span className="font-semibold">Decision preview</span><span className="text-muted-foreground">as the decider will see it</span></div>
+      <div className="flex items-center gap-8 overflow-x-auto p-1 pb-3">
+        <div className="canvas-node w-72 shrink-0 rounded-node border border-node-border bg-card">
+          <div className="space-y-3 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-2"><KindChip kind={agent ? "agent" : "decide"} /><span className="text-meta leading-4 text-muted-foreground">{agent ? `${agent.title} · ${agent.model}` : "Asked by this automation"}</span></span>
+              <Badge className={cn("shrink-0 border-transparent", RISK_TONE[view.risk])}>{`${view.risk.charAt(0).toUpperCase()}${view.risk.slice(1)} risk`}</Badge>
+            </div>
+            <p className="text-[15px] leading-6 font-semibold tracking-[-0.01em] text-balance">{view.question || "No question yet"}</p>
             <p className="text-meta text-muted-foreground">Context numbers and money at risk come from the cell's admitted questions when it asks.</p>
-            <p className="text-meta text-muted-foreground">Decided by: {view.deciderRoles.join(", ") || "no role named"}{view.law ? ` · under ${view.law}` : ""}</p>
-            {view.expiresInMs !== undefined && <p className="text-meta text-muted-foreground">Expires {formatDuration(view.expiresInMs)} after it is asked; then it is withdrawn, not decided.</p>}
+          </div>
+          <div className="space-y-1 border-t border-node-border px-4 py-2.5 text-meta text-muted-foreground">
+            <p className="flex items-start gap-1.5"><UserRound className="mt-0.5 size-3.5 shrink-0" /><span className="min-w-0 break-words">Decided by <span className="font-medium text-foreground">{view.deciderRoles.join(", ") || "no role named"}</span>{view.law ? <> under <span className="font-mono text-[11px]">{view.law}</span></> : null}</span></p>
+            {view.expiresInMs !== undefined && <p className="flex items-start gap-1.5"><Clock className="mt-0.5 size-3.5 shrink-0" /><span>Expires {formatDuration(view.expiresInMs)} after it is asked; then it is withdrawn, not decided.</span></p>}
           </div>
         </div>
         {view.options.length > 0 ? <Level view={view} path={path} depth={0} choose={choose} /> : <p className="text-sm text-muted-foreground">No options yet.</p>}
       </div>
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span className="text-muted-foreground">Then</span>
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-node-border bg-card px-3 py-2 text-sm shadow-node">
+        <span className="font-medium text-muted-foreground">Then</span>
         {numbers.length === 0 ? <span className="text-muted-foreground">choose an option</span> : numbers.map((number, index) => (
-          <span key={index} className="flex items-center gap-1">{index > 0 && <span className="text-muted-foreground">–</span>}<span className="rounded border px-1.5 font-mono text-xs">{number}</span></span>
+          <span key={index} className="flex items-center gap-1.5">{index > 0 && <span className="text-muted-foreground">–</span>}<OptionNumber n={number} on /></span>
         ))}
         {numbers.length > 1 && <span className="text-meta text-muted-foreground" data-testid="pre-answered">Steps after the first are pre-answered: the cell checks them again when the run reaches them, and they have not run.</span>}
         <Unavailable className="ms-auto" reason={DECIDE_BLOCKED}>Approve this path</Unavailable>
