@@ -99,6 +99,7 @@ SELECTOR = re.compile(r"^(test|theorem|invariant|predicate|harness|fixture|check
 FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
+CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 GATE_PROFILES = {"fast", "full"}
 QUINT_APALACHE_HARNESS = ROOT / "scripts/quint_apalache.py"
 NEGATIVE_CANARIES = ROOT / "verification/coverage-v1/negative_canaries.py"
@@ -617,7 +618,7 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 and not has_execution_override(full, step)
                 and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
-    runner = (ROOT / "scripts/ci/core.sh").read_text()
+    runner = CORE_RUNNER.read_text()
     # Bundles may drop only the cargo target dir, between tasks and when disk is low.
     prune = ("      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then\n"
              '        rm -rf -- "${CARGO_TARGET_DIR:-$PWD/target}"\n')
@@ -752,7 +753,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
         require(f"contains(github.event.comment.body, '{command}')" in condition
                 and f"contains(github.event.changes.body.from, '{command}')" in condition,
                 "trusted rights: edits/deletions must re-evaluate rights evidence")
-    runner = (ROOT / "scripts/ci/core.sh").read_text()
+    runner = CORE_RUNNER.read_text()
     require('cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn' in runner,
             "provenance must bind the event candidate")
     require('--distribution --base-root "$PWD" --source-root "$PWD" --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn' in runner,

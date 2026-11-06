@@ -1001,6 +1001,46 @@ def workflow_context_canaries(source: str) -> None:
             'if [ "$(available)" -lt "$minimum" ]; then', "if true; then")
         rejected("unconditional core cleanup", document)
         for name in ("core", "test"):
+            # The Boat reclaim runs only on self-hosted VMs, frees only named image content,
+            # and fails fast below 40 GiB: each weakening is rejected.
+            boat = next(i for i, step in enumerate(workflow["jobs"][name]["steps"])
+                        if step.get("name") == "Reclaim Boat runner disk space")
+            for label, key, before, after in (
+                    ("hosted", "if", "'self-hosted'", "'github-hosted'"),
+                    ("always", "if", "${{ runner.environment == 'self-hosted' }}", "${{ always() }}"),
+                    ("threshold", "run", "40 * 1024 * 1024", "1 * 1024 * 1024"),
+                    ("check", "run", '[ "$(available)" -ge "$minimum" ]', "true"),
+                    ("tolerated", "run", "docker system prune --all --force", "docker system prune --all --force || true"),
+                    ("broad", "run", "rustup toolchain uninstall stable nightly-2025-03-01", "sudo rm -rf /usr/local/rustup /var/lib")):
+                document = copy.deepcopy(workflow)
+                step = document["jobs"][name]["steps"][boat]
+                if before not in step[key]:
+                    raise AssertionError(f"Boat reclaim canary target drifted: {label}")
+                step[key] = step[key].replace(before, after)
+                rejected(f"{name} Boat reclaim {label}", document)
+            document = copy.deepcopy(workflow)
+            del document["jobs"][name]["steps"][boat]
+            rejected(f"{name} without Boat reclaim", document)
+        # The bundle may drop only the cargo target dir, between tasks, when disk is low.
+        source_runner = validator.CORE_RUNNER
+        core = source_runner.read_text(encoding="utf-8")
+        try:
+            for label, before, after in (
+                    ("broad", 'rm -rf -- "${CARGO_TARGET_DIR:-$PWD/target}"', 'rm -rf -- "$PWD"'),
+                    ("unconditional", "if [[ -n $pruned ]] && ((", "if true || [[ -n $pruned ]] && (("),
+                    ("first task", "      pruned=1\n", ""),
+                    ("extra deletion", "        rm -rf -- \"${CARGO_TARGET_DIR:-$PWD/target}\"\n",
+                     "        rm -rf -- \"${CARGO_TARGET_DIR:-$PWD/target}\" \"$HOME/.cargo\"\n")):
+                if core.count(before) != 1:
+                    raise AssertionError(f"bundle prune canary target drifted: {label}")
+                mutated = Path(directory) / "core.sh"
+                mutated.write_text(core.replace(before, after), encoding="utf-8")
+                validator.CORE_RUNNER = mutated
+                document = copy.deepcopy(workflow)
+                rejected(f"{label} bundle prune", document)
+        finally:
+            validator.CORE_RUNNER = source_runner
+        for name in ("core", "test"):
             # A Boat pull-request VM is self-hosted: cleanup keys on the hosted image alone.
             for condition in ("${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
                               "${{ runner.environment != 'self-hosted' }}",
