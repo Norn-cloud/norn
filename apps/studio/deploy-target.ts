@@ -14,10 +14,16 @@ const PRODUCTION_DOMAINS = "studio.norn.cloud,studio-demo.norn.cloud"
 const hostname = (domain: string): boolean =>
   domain.length <= 253 && domain.split(".").length >= 2 && domain.split(".").every((label) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
 
+/**
+ * The stage is always named: an unset ALCHEMY_STAGE refuses instead of meaning
+ * production, and production also needs NORN_DEPLOY_PROD=1 to confirm it.
+ */
 export function deployTarget(env: Readonly<Record<string, string | undefined>>): DeployTarget {
-  const stage = env.ALCHEMY_STAGE ?? "prod"
+  const stage = env.ALCHEMY_STAGE
+  if (stage === undefined || stage === "") throw new Error("ALCHEMY_STAGE is required: name the stage to deploy (prod also needs NORN_DEPLOY_PROD=1)")
   if (!/^[a-z0-9-]+$/.test(stage)) throw new Error(`ALCHEMY_STAGE must be lowercase letters, digits or dashes, got ${JSON.stringify(stage)}`)
   const production = stage === "prod"
+  if (production && env.NORN_DEPLOY_PROD !== "1") throw new Error("Deploying prod needs NORN_DEPLOY_PROD=1 to confirm it")
   const listed = env.STUDIO_DOMAINS ?? (production ? PRODUCTION_DOMAINS : undefined)
   if (listed === undefined) throw new Error(`STUDIO_DOMAINS is required for stage ${stage}`)
   const domains = listed.split(",").map((domain) => domain.trim())
