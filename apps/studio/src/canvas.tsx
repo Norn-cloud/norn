@@ -126,7 +126,12 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
             {!node && !edge && <p className="text-muted-foreground">Select a state or a step. Drag from a state's right edge to another state to add a step; press Backspace to delete.</p>}
             {node && <>
               <label className="block space-y-1"><span className="text-meta text-muted-foreground">Name</span>
-                <Input defaultValue={node.id} key={`name:${node.id}`} onBlur={(event) => { const to = event.target.value.trim(); if (to && to !== node.id) { edit(g.renameNode(graph, node.id, to)); setSelected({ node: to }) } }} /></label>
+                <Input defaultValue={node.id} key={`name:${node.id}`} onBlur={(event) => {
+                  const to = event.target.value.trim()
+                  if (!to || to === node.id) return
+                  if (graph.nodes.some(({ id }) => id === to)) { setRefusal({ code: "canvas.node.duplicate", message: `There is already a state named ${to}` }); event.target.value = node.id; return }
+                  edit(g.renameNode(graph, node.id, to)); setSelected({ node: to })
+                }} /></label>
               {FLAGS.map((flag) => (
                 <label key={flag} className="flex items-center gap-2"><input type="checkbox" checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
               ))}

@@ -39,7 +39,7 @@ export type Kinds = Readonly<Record<string, (node: CanvasNode) => readonly Port[
 
 /** Why the canvas would not draw an edge. */
 export interface Refusal {
-  readonly code: "canvas.port.unknown" | "canvas.port.type_mismatch" | "canvas.edge.duplicate"
+  readonly code: "canvas.port.unknown" | "canvas.port.type_mismatch" | "canvas.edge.duplicate" | "canvas.node.duplicate"
   readonly message: string
 }
 
