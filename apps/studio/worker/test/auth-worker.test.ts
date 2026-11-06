@@ -95,6 +95,8 @@ test("magic links stay on the trusted origin that requested them", async () => {
     }
     const tampered = new URL(link); tampered.searchParams.set("callbackURL", `${other}/`)
     expect((await worker.fetch(new Request(tampered, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)).status).toBe(403)
+    const relative = new URL(link); relative.searchParams.set("callbackURL", "/")
+    expect((await worker.fetch(new Request(relative, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)).status).toBe(403)
     const verified = await worker.fetch(new Request(link, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)
     expect(verified.status).toBe(302)
     expect(new URL(verified.headers.get("location") ?? "", source).origin).toBe(source)

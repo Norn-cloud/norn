@@ -70,7 +70,9 @@ export async function verifyMagicLinkOrigin(request: Request, secret: string, tr
   if (!url.searchParams.has("callbackURL")) return false
   for (const name of ["callbackURL", "newUserCallbackURL", "errorCallbackURL"]) {
     const values = url.searchParams.getAll(name)
-    if (values.length > 1 || (values[0] !== undefined && callbackOnOrigin(values[0], url.origin) === null)) return false
+    // Issued links contain absolute callbacks. A modified relative callback would be
+    // resolved by Better Auth against its primary baseURL, not the requesting host.
+    if (values.length > 1 || (values[0] !== undefined && callbackOnOrigin(values[0], url.origin) !== values[0])) return false
   }
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"])
