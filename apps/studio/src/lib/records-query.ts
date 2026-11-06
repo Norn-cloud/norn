@@ -39,14 +39,15 @@ import type { Field, Scalar } from "./catalog.ts"
  *
  * Values grants are per row. A withheld row (`withheld: true`, `values: null`) never matches a
  * clause and sorts last; a reader who may see only the population gets zero matches and
- * `total: 0` from any filter, not a refusal.
+ * `total: 0` from any filter, not a refusal. Every record also carries `withheldProperties`
+ * (always present, `[]` until field-level policy lands): each listed property reads Withheld.
  *
  * Refusals are the host's `Refusal` with `diagnostics: [{ code, message, pointer }]`, where each
  * pointer is into the request: `/sort/1`, `/filter/all/0/value`, `/after`.
  *
  * The page is `NornObjectPage` plus `query` (the normalized sort and filter the server applied),
  * `next` (the cursor, or null at the end), `total` (`{ count, approximate }` or null) and per
- * record `withheld` (a boolean). A page without `query` was not sorted or filtered
+ * record `withheld` (a boolean) and `withheldProperties` (property ids). A page without `query` was not sorted or filtered
  * on the server, so Studio shows server ordering and filtering as unavailable.
  */
 
@@ -123,6 +124,12 @@ export function servedQuery(page: unknown): Served | null {
 
 /** Whether the server withheld this whole row from the reader. Only an explicit `true` is withheld; Studio never infers it. */
 export const rowWithheld = (record: unknown): boolean => (record as { withheld?: unknown } | null)?.withheld === true
+
+/** Whether the server withheld this one property of a readable row. Only a listed id is withheld; "—" always means missing. */
+export function propertyWithheld(record: unknown, property: string): boolean {
+  const listed = (record as { withheldProperties?: unknown } | null)?.withheldProperties
+  return Array.isArray(listed) && listed.includes(property)
+}
 
 /** The server's count of matching records, or null when it sent none. */
 export interface Total { readonly count: number; readonly approximate: boolean }
