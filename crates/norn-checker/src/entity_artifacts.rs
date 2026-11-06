@@ -220,7 +220,7 @@ pub(crate) fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) ->
                     && diagnostic.message.starts_with("UI law:"))
                     || diagnostic.code.as_str() == "consistency.normative.conflict"
                     || STATE_FINDINGS.contains(&diagnostic.code.as_str()))
-                    .then(|| diagnostic.message.clone()),
+                .then(|| diagnostic.message.clone()),
             ))
         })
         .collect()

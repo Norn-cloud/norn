@@ -507,9 +507,13 @@ fn inherited_path_property_survives_redeclaration_and_target_narrowing() {
 /// not fold the second into the first.
 #[test]
 fn every_unreachable_state_of_one_lifecycle_is_reported() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../registry/core/artifacts/commerce.SalesOrder.entity.json");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../registry/core/artifacts/commerce.SalesOrder.entity.json"
+    );
     let mut value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(path).expect("sales order is readable")).expect("sales order is JSON");
+        serde_json::from_str(&std::fs::read_to_string(path).expect("sales order is readable"))
+            .expect("sales order is JSON");
     // Without `invoice`, neither `invoiced` nor `completed` is reachable.
     value["payload"]["objectType"]["lifecycles"][0]["transitions"]
         .as_array_mut()
@@ -518,7 +522,11 @@ fn every_unreachable_state_of_one_lifecycle_is_reported() {
     let artifact = norn_checker::decode_artifact_json(&value).expect("sales order decodes");
     let findings = norn_checker::check_artifact_set(
         &[artifact],
-        &norn_checker::EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[], tenant: None },
+        &norn_checker::EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
     );
     let unreachable: Vec<&str> = findings
         .iter()
