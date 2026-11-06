@@ -16,6 +16,9 @@ import type { ConnectorRef, InputMapping, RunRole } from "./bindings.ts"
 
 export const BINDING_KIND = "binding"
 
+/** The cell environment Studio's definitions use unless the stage names another (STUDIO's own calls use it too). */
+export const DEFAULT_ENVIRONMENT = "analytics"
+
 /** The definition payload DEFS admits for a binding. */
 export interface BindingPayload {
   readonly connector: ConnectorRef
@@ -51,6 +54,8 @@ export type Install =
   | { readonly kind: "installed"; readonly id: string; readonly version: number }
   | { readonly kind: "refused"; readonly findings: readonly Finding[] }
   | { readonly kind: "conflict" }
+  /** The cell's authority refused this actor (403): a decision, never a fallback. */
+  | { readonly kind: "denied"; readonly code: string; readonly message: string }
   /** The cell has no definition route (or no host is bound): keep the local record. */
   | { readonly kind: "local" }
 
@@ -69,7 +74,13 @@ export class CellUnavailable extends Error {}
 
 /** The cell's definition writes, as one actor, over the NORN_HOST service binding. */
 export class BindingDefinitions {
-  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor) {}
+  /** `environmentId` names the cell environment the definitions live in (DEFS's routes take it with orgId). */
+  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string = DEFAULT_ENVIRONMENT) {}
+
+  /** DEFS's scope query: the actor's server-resolved organization and the environment. */
+  private scoped(path: string): string {
+    return `${path}?${new URLSearchParams({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
+  }
 
   private async post(path: string, body: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {
     const { host } = this
@@ -77,7 +88,7 @@ export class BindingDefinitions {
     const headers = new Headers({ authorization: `Bearer ${await hostToken(this.auth, this.actor)}`, "content-type": "application/json", accept: "application/json" })
     let response: Response
     try {
-      response = await host.fetch(new Request(`https://norn-host${path}`, { method: "POST", headers, body: JSON.stringify(body) }))
+      response = await host.fetch(new Request(`https://norn-host${this.scoped(path)}`, { method: "POST", headers, body: JSON.stringify(body) }))
     } catch {
       throw new CellUnavailable("The cell could not be reached; the binding was not saved.")
     }
@@ -95,6 +106,7 @@ export class BindingDefinitions {
       return refusedOnlyForNewerFields(findings) ? { kind: "local" } : { kind: "refused", findings }
     }
     if (status === 409 && b?.code === "definition.version_conflict") return { kind: "conflict" }
+    if (status === 403) return { kind: "denied", code: typeof b?.code === "string" ? b.code : "authz.denied", message: typeof (b as { message?: unknown } | null)?.message === "string" ? String((b as { message: string }).message) : "not authorized" }
     // No definition route on this stage yet, or the binding kind is not served: the local record stands.
     if (status === 404 && (b?.code === "route.not_found" || b?.code === "definition.kind_unknown")) return { kind: "local" }
     throw new CellUnavailable(`The cell answered ${status} (${typeof b?.code === "string" ? b.code : "no code"}); the binding was not saved.`)

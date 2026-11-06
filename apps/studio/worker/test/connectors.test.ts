@@ -301,11 +301,12 @@ test("a fixed value for a property without a declared type is left to the gatewa
 
 /** A cell host that answers DEFS's definition writes from `answer`, recording each request. */
 function cellHost(answer: (path: string, body: Record<string, unknown>) => Response) {
-  const seen: { path: string; body: Record<string, unknown>; bearer: boolean }[] = []
+  const seen: { path: string; query: string; body: Record<string, unknown>; bearer: boolean }[] = []
   const host = { fetch: async (request: Request) => {
     const body = (await request.json()) as Record<string, unknown>
-    const path = new URL(request.url).pathname
-    seen.push({ path, body, bearer: (request.headers.get("authorization") ?? "").startsWith("Bearer ") })
+    const url = new URL(request.url)
+    const path = url.pathname
+    seen.push({ path, query: url.search, body, bearer: (request.headers.get("authorization") ?? "").startsWith("Bearer ") })
     return answer(path, body)
   } } as unknown as Fetcher
   return { host, seen }
@@ -322,6 +323,10 @@ test("a binding is installed in the cell as a definition, which the record and i
     label: "Issues", inputMapping: {}, runRole: "member",
   } } })
   expect(seen[0]?.body).not.toHaveProperty("expectedVersion")
+  // DEFS's scope: the actor's own organization, resolved on the server, and the environment.
+  const orgId = new URLSearchParams(seen[0]?.query).get("orgId")
+  expect(orgId).toBeString()
+  expect(new URLSearchParams(seen[0]?.query).get("environmentId")).toBe("analytics")
   expect(added).toMatchObject({ definition: { id: `studio.binding.${added.id}`, version: 1 }, connectorRef: "executor:github/list_issues@dpl_1" })
   // An edit installs the next version of the same definition.
   const edited = (await send(`/bindings/${added.id}`, { ...body("PATCH", { label: "Open issues" }), cookie: owner }, { host })).body.binding
@@ -330,6 +335,9 @@ test("a binding is installed in the cell as a definition, which the record and i
   // Removing retires the definition at its current version first.
   expect((await send(`/bindings/${added.id}`, { method: "DELETE", cookie: owner }, { host })).body).toEqual({ removed: added.id, retired: `studio.binding.${added.id}` })
   expect(seen[2]).toMatchObject({ path: `/v1/definitions/studio.binding.${added.id}:retire`, body: { expectedVersion: 2 } })
+  // Every definition write carries the same scope.
+  const scope = seen[0]?.query ?? ""
+  expect(seen.map((r) => r.query)).toEqual([scope, scope, scope])
 })
 
 test("a refused or conflicting definition saves nothing; a stage without the route keeps the local record", async () => {
@@ -347,6 +355,9 @@ test("a refused or conflicting definition saves nothing; a stage without the rou
   // An unknown-field refusal that also names something else is still a refusal.
   const mixed = cellHost(() => Response.json({ code: "definition.refused", diagnostics: [{ code: "definition.unknown_field", message: "unknown field `label`", span: { pointer: "/payload/label" } }, { code: "binding.role_undeclared", message: "runRole names no declared role", span: { pointer: "/payload/runRole" } }] }, { status: 422 }))
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: mixed.host })).body.code).toBe("connectors.binding_refused")
+  // The cell's authority says no: a typed denial with the admin fix, never a fallback and never "unavailable".
+  const denying = cellHost(() => Response.json({ format: "norn/refusal@2", code: "authz.denied", message: "the read request is not authorized" }, { status: 403 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: denying.host })).body).toMatchObject({ code: "connectors.binding_denied", action: { kind: "ask_admin" } })
   const noRoute = cellHost(() => Response.json({ code: "route.not_found" }, { status: 404 }))
   const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: noRoute.host })).body.binding
   expect(local).toMatchObject({ definition: null, connectorRef: "executor:github/list_issues@dpl_1" })
