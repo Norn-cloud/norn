@@ -70,7 +70,7 @@ export class Gateway {
       const upstream = record(error.upstream)
       const detail = Object.fromEntries(Object.entries({
         reason: text(error.reason), account: text(error.accountId) ?? text(error.account), app: text(error.app),
-        requirement: text(error.requirement), upstreamCode: text(upstream.code),
+        requirement: text(error.requirement) ?? text(error.slot), upstreamCode: text(upstream.code),
       }).filter(([, value]) => value !== null)) as GatewayError["detail"]
       throw new GatewayError(response.status, text(error._tag) ?? text(error.tag) ?? "GatewayError", text(error.message) ?? `The gateway answered ${response.status}.`, detail)
     }

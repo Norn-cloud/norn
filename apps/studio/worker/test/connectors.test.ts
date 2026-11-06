@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { createAuth } from "../auth.ts"
+import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, type ConnectorDeps } from "../connectors.ts"
 import worker, { type Env } from "../index.ts"
 
@@ -55,7 +55,7 @@ function stage(gatewayClient = false) {
     const headers = new Headers(init.headers)
     if (init.cookie !== undefined) headers.set("cookie", init.cookie)
     if (init.method !== undefined && init.method !== "GET") headers.set("origin", ORIGIN)
-    const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides })
+    const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { TOOL_GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides })
     const text = await response.text()
     expect(text).not.toContain(TOKEN)
     return { status: response.status, body: JSON.parse(text) as Record<string, unknown> }
@@ -95,7 +95,7 @@ test("gateway sign-in: status, connect, reconnect and disconnect", async () => {
     const url = new URL(String((await send("/link", { method: "POST", cookie: owner })).body.url))
     expect(`${url.origin}${url.pathname}`).toBe(`${GATEWAY}/api/auth/oauth2/authorize`)
     expect([url.searchParams.get("client_id"), url.searchParams.get("code_challenge_method")]).toEqual(["studio", "S256"])
-    expect(url.searchParams.get("scope")?.split(" ")).toContain("executor")
+    expect(url.searchParams.get("scope")?.split(" ").sort()).toEqual(["executor", "offline_access"])
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/callback/executor`)
   }
   expect((await send("/unlink", { method: "POST", cookie: owner }, { grant: undefined })).body).toEqual({ linked: false })
@@ -193,6 +193,8 @@ test("expired sign-ins and missing scopes come back typed, with the fix", async 
     [Response.json({ _tag: "AppProviderFailed", accountId: "acc1", upstream: { code: "insufficient_scope" } }, { status: 403 }), { code: "connectors.account_missing_scope", action: { kind: "reconnect_account", app: "github", account: "acc1" } }],
     [Response.json({ _tag: "OAuthReconnectRequired", account: "acc1" }, { status: 409 }), { code: "connectors.account_reconnect", action: { kind: "reconnect_account", app: "github", account: "acc1" } }],
     [Response.json({ _tag: "AccountRequired", requirement: "github" }, { status: 409 }), { code: "connectors.account_required", action: { kind: "connect_account", app: "github", requirement: "github" } }],
+    // The gateway's own shape (Executor 2.0.0-beta.37): the requirement is its `slot`.
+    [Response.json({ _tag: "AccountRequired", app: "github", slot: "echoKey", scope: "user" }, { status: 409 }), { code: "connectors.account_required", action: { kind: "connect_account", app: "github", requirement: "echoKey" } }],
     [Response.json({ _tag: "ToolApprovalRequired", message: "approve" }, { status: 409 }), { code: "connectors.approval_required" }],
     [Response.json({ _tag: "InputInvalid", message: "repo is required" }, { status: 400 }), { code: "connectors.input_invalid", error: "repo is required" }],
   ]
@@ -205,7 +207,19 @@ test("expired sign-ins and missing scopes come back typed, with the fix", async 
 test("the Worker routes /api/connectors/ through the server-side actor", async () => {
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
-  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, GATEWAY_URL: GATEWAY }
+  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY }
   const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
   expect([response.status, ((await response.json()) as { code: string }).code]).toEqual([401, "connectors.sign_in"])
+})
+
+test("the gateway subject comes from introspection with Studio's client credentials", async () => {
+  const seen: Request[] = []
+  const answer = (body: unknown) => (async (input: RequestInfo | URL, init?: RequestInit) => { seen.push(new Request(input, init)); return Response.json(body) }) as typeof fetch
+  const client = { url: GATEWAY, clientId: "studio", clientSecret: "s".repeat(32) }
+  expect(await gatewaySubject(client, "tok", answer({ active: true, sub: "user_1" }))).toEqual({ id: "user_1", name: "Tool gateway", email: "user_1@gateway.invalid", emailVerified: false })
+  expect(seen[0]?.url).toBe(`${GATEWAY}/api/auth/oauth2/introspect`)
+  expect(seen[0]?.headers.get("authorization")).toBe(`Basic ${btoa(`studio:${"s".repeat(32)}`)}`)
+  expect(await seen[0]?.text()).toBe("token=tok&token_type_hint=access_token")
+  expect(await gatewaySubject(client, "tok", answer({ active: false }))).toBeNull()
+  expect(await gatewaySubject(client, undefined, answer({}))).toBeNull()
 })

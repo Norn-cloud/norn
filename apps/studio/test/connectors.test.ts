@@ -11,6 +11,8 @@ test("a refusal becomes a typed error carrying the server's fix", async () => {
   expect(fixLabel((error as ConnectorError).action ?? { kind: "ask_admin" })).toBe("Reconnect the account")
   const unreadable = await api("/status", undefined, (async () => new Response("<html>", { status: 502 })) as unknown as typeof fetch).catch((e: unknown) => e)
   expect(unreadable).toMatchObject({ code: "connectors.unreadable", action: null })
+  const fallback = await api("/status", undefined, (async () => new Response("<!doctype html>", { status: 200 })) as unknown as typeof fetch).catch((e: unknown) => e)
+  expect(fallback).toMatchObject({ status: 200, code: "connectors.unreadable" })
 })
 
 test("every kind's verbs are ✓ or N/A with a reason, and the table says so", () => {

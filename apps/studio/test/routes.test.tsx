@@ -6,6 +6,8 @@ import { PAGES, SERVED_BY, type PagePath } from "../src/lib/pages.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
+// The canvas finds its checker package through import.meta.glob too; here it behaves as a build without the package.
+mock.module("../src/lib/canvas/checker.ts", () => ({ loadChecker: async () => { throw new Error("The checker is not part of this build") } }))
 const { routeTree } = await import("../src/routes.tsx")
 
 test("every page in PAGES renders through the router at its example URL, matched to its own route, without an error screen", async () => {
