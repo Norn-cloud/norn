@@ -31,6 +31,42 @@ pub const HOST_AUDIENCE: &str = "norn-host";
 pub trait PrincipalResolver {
     /// The verified subject, or `None`; every read then denies by default.
     fn resolve(&self, authorization: Option<&str>, now: u64) -> Option<String>;
+
+    /// Forget the request's principal. Required: the dispatch calls it when
+    /// a request ends, on every exit path ([`RequestScope`]).
+    fn end_request(&self);
+}
+
+/// The lifetime of one request's verified principal: it ends when this
+/// guard drops, on every return path and during unwinding.
+pub struct RequestScope<'a>(&'a dyn PrincipalResolver);
+
+impl<'a> RequestScope<'a> {
+    /// Begin a request on `principals`.
+    #[must_use]
+    pub const fn new(principals: &'a dyn PrincipalResolver) -> Self {
+        Self(principals)
+    }
+}
+
+impl Drop for RequestScope<'_> {
+    fn drop(&mut self) {
+        self.0.end_request();
+    }
+}
+
+/// A deployable cell without a configured resolver: nobody is verified.
+pub struct NoPrincipals(pub Arc<CallerSlot>);
+
+impl PrincipalResolver for NoPrincipals {
+    fn resolve(&self, _authorization: Option<&str>, _now: u64) -> Option<String> {
+        self.0.record(None);
+        None
+    }
+
+    fn end_request(&self) {
+        self.0.record(None);
+    }
 }
 
 /// Verifies signed host tokens for one cell.
@@ -120,6 +156,8 @@ impl TokenPrincipals {
         Some(Caller {
             subject_id: principal.subject_id,
             roles: principal.roles,
+            actor_kind: principal.actor_kind.as_str(),
+            role_table: principal.role_table,
         })
     }
 }
@@ -133,6 +171,9 @@ impl PrincipalResolver for TokenPrincipals {
         self.slot.record(caller);
         subject
     }
+    fn end_request(&self) {
+        self.slot.record(None);
+    }
 }
 
 /// Synthetic principals for tests and local smoke builds, named as
@@ -141,6 +182,9 @@ pub struct FixturePrincipals {
     names: &'static [(&'static str, &'static [&'static str])],
     slot: Arc<CallerSlot>,
 }
+
+/// The role table fixture principals report.
+pub const FIXTURE_ROLES: &str = "fixtures/1";
 
 /// The fixture principals: `viewer@demo` holds `admin`, `guest@demo` `viewer`.
 pub const DEMO_FIXTURES: &[(&str, &[&str])] =
@@ -165,9 +209,14 @@ impl PrincipalResolver for FixturePrincipals {
             .map(|(name, roles)| Caller {
                 subject_id: (*name).to_owned(),
                 roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+                actor_kind: "user",
+                role_table: FIXTURE_ROLES,
             });
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);
         subject
+    }
+    fn end_request(&self) {
+        self.slot.record(None);
     }
 }

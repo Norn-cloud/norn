@@ -22,6 +22,9 @@ use norn_kernel::authz::{self, ActorKind, AuthzSchema, CapabilityGrant, Pdp, Sco
 
 use crate::seed::SeedError;
 
+/// The id of the compiled `AccessIR` read policy.
+pub const READ_POLICY_ID: &str = "demo.host.read";
+
 /// The `AccessIR` action every data read is decided under.
 pub const READ_ACTION: &str = "norn.read";
 
@@ -101,6 +104,10 @@ pub struct Caller {
     pub subject_id: String,
     /// Norn roles from the declared role table.
     pub roles: Vec<String>,
+    /// `user` or `service`.
+    pub actor_kind: &'static str,
+    /// The declared role table the roles came from.
+    pub role_table: &'static str,
 }
 
 /// Where the resolver records the current request's verified principal for
@@ -117,7 +124,9 @@ impl CallerSlot {
         }
     }
 
-    fn current(&self) -> Option<Caller> {
+    /// The current request's verified principal, if any.
+    #[must_use]
+    pub fn current(&self) -> Option<Caller> {
         self.0.lock().ok().and_then(|slot| slot.clone())
     }
 }
@@ -161,7 +170,7 @@ impl ReadPolicy {
                 .map_err(|e| SeedError(format!("read schema: {e}")))?;
         let policy = AccessIr {
             access_version: IrVersion01::V0_1,
-            policy_id: "demo.host.read".into(),
+            policy_id: READ_POLICY_ID.into(),
             rules: types
                 .iter()
                 .map(|object_type| AccessRule {
@@ -249,5 +258,38 @@ impl Authorizer for ReadPolicy {
         } else {
             DenyAll.read(request)
         }
+    }
+}
+
+/// The PDP request the cell's mappings build for `capability` on the
+/// collection `object_type` (resource id and type are the type).
+#[must_use]
+pub fn collection_access(
+    scope: &CellScope,
+    subject: &str,
+    capability: ReadCapability,
+    object_type: &str,
+) -> norn_kernel::authz::AccessRequest {
+    let key = scope_key(scope);
+    norn_kernel::authz::AccessRequest {
+        principal: norn_kernel::authz::PrincipalInput {
+            subject_id: subject.into(),
+            actor_kind: ActorKind::User,
+            agent_session_id: None,
+            roles: vec![],
+            attributes: std::collections::BTreeMap::new(),
+        },
+        scope: Some(key.clone()),
+        capability: capability_name(capability).into(),
+        action_id: READ_ACTION.into(),
+        resource: norn_kernel::authz::ResourceInput {
+            object_type: object_type.into(),
+            id: object_type.into(),
+            scope: key,
+            attributes: std::collections::BTreeMap::new(),
+        },
+        context: std::collections::BTreeMap::new(),
+        binding: None,
+        delegation: norn_kernel::authz::Delegation::Direct,
     }
 }
