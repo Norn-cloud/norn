@@ -159,7 +159,8 @@ function Frame(props: CanvasFrameProps) {
       else if ((key === "z" && event.shiftKey) || key === "y") act(() => setState(g.redo))
       // Copy, paste, duplicate and select-all belong to the canvas only while it is in use, and never take over
       // copying text the reader has selected elsewhere (a finding's message in Problems).
-      else if (["c", "v", "d", "a"].includes(key) && (!canvasActive.current || (key === "c" && (window.getSelection()?.toString() ?? "") !== ""))) return
+      else if (["c", "v", "d", "a"].includes(key) && (!canvasActive.current || event.shiftKey || event.altKey
+        || (["c", "a"].includes(key) && (window.getSelection()?.toString() ?? "") !== ""))) return
       else if (key === "d") act(() => duplicate(g.subgraph(graph, copyable(selection.nodes))))
       else if (key === "c" && copyable(selection.nodes).length === 0) return
       else if (key === "c") act(() => { clipboard = g.subgraph(graph, copyable(selection.nodes)); setNotice({ tone: "info", text: `Copied ${clipboard.nodes.length} ${clipboard.nodes.length === 1 ? "item" : "items"}.` }) })
