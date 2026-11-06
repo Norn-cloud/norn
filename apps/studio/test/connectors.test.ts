@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { api, ConnectorError, CONNECTION_VERBS, ERROR_VERBS, fixLabel, MATRIX, matrixTable } from "../src/lib/connectors.ts"
+import { api, fixAction, ConnectorError, CONNECTION_VERBS, ERROR_VERBS, fixLabel, MATRIX, matrixTable } from "../src/lib/connectors.ts"
 
 const answering = (status: number, body: unknown) => (async () => Response.json(body, { status })) as unknown as typeof fetch
 
@@ -23,4 +23,13 @@ test("every kind's verbs are ✓ or N/A with a reason, and the table says so", (
   }
   for (const verb of ERROR_VERBS) expect(MATRIX["Connector error"][verb]).toBe("supported")
   expect(matrixTable(MATRIX)).toContain("N/A: one grant per gateway; it has no name of its own")
+})
+
+test("only a fix action the page knows reaches it", () => {
+  expect(fixAction({ kind: "reconnect_account", app: "github", account: "acc1" })).toEqual({ kind: "reconnect_account", app: "github", account: "acc1" })
+  expect(fixAction({ kind: "reconnect_account", app: null, account: "acc1" })).toEqual({ kind: "reconnect_account", app: null, account: "acc1" })
+  expect(fixAction({ kind: "connect_account", app: "github" })).toBeNull()
+  expect(fixAction({ kind: "delete_everything" })).toBeNull()
+  expect(fixAction("sign_in_gateway")).toBeNull()
+  expect(fixAction(null)).toBeNull()
 })

@@ -71,7 +71,15 @@ export async function ensureAccount(page: Page) {
 }
 
 const open = async (page: Page) => { await page.goto(`${base}/connections`); await page.getByRole("heading", { name: "Connections" }).waitFor() }
-const app = () => env("E2E_APP")
+/**
+ * The app whose account the suite connects, renames and disconnects. It must be the disposable
+ * fixture app (Executor app `norn-e2e`, an API-key account no other app uses), never a real one.
+ */
+const app = () => {
+  const name = env("E2E_APP")
+  if (!/^norn-e2e(-|$)/.test(name)) throw new Error(`E2E_APP must be the disposable norn-e2e fixture app, got ${JSON.stringify(name)}`)
+  return name
+}
 
 type Spec = (page: Page, did: (verb: string) => void) => Promise<void>
 const SPECS: Record<keyof typeof MATRIX, Spec> = {
