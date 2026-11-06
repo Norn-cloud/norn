@@ -1956,8 +1956,9 @@ impl<E: SqlEngine> CellStore<E> {
     pub fn engine_is_fresh(engine: &E) -> Result<bool, CellError> {
         let platform = engine.platform_table_globs();
         let filter = " AND name NOT GLOB ?".repeat(platform.len());
-        let sql =
-            format!("SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'{filter} LIMIT 1");
+        let sql = format!(
+            "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'{filter} LIMIT 1"
+        );
         let globs: Vec<SqlValue> = platform.iter().map(|glob| SqlValue::from(*glob)).collect();
         engine.query(&sql, &globs).map(|schema| schema.is_empty())
     }
