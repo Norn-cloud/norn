@@ -47,7 +47,10 @@ export interface AuthConfig {
 
 const MINUTE = 60
 
-export function authOptions(config: AuthConfig) {
+/** The running instance, for hooks that need its database outside an endpoint context. */
+interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
+
+export function authOptions(config: AuthConfig, self: Self = {}) {
   return {
     appName: "Norn Studio",
     database: config.database,
@@ -58,7 +61,22 @@ export function authOptions(config: AuthConfig) {
     trustedOrigins: [config.baseURL],
     // No sign-in on sign-up: Better Auth then answers a registered address exactly as a new one
     // (no session either way), so sign-up does not reveal which emails have accounts.
-    emailAndPassword: { enabled: true, autoSignIn: false, minPasswordLength: 12, maxPasswordLength: 128 },
+    emailAndPassword: {
+      enabled: true,
+      autoSignIn: false,
+      minPasswordLength: 12,
+      maxPasswordLength: 128,
+      // A registered address skips the four writes a new account makes (user, credential,
+      // organization, member); make the same number of database writes so latency does not tell them apart.
+      onExistingUserSignUp: async () => {
+        const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
+        for (let pair = 0; pair < 2; pair++) {
+          const now = new Date()
+          const row = await adapter.create<{ id: string }>({ model: "verification", data: { identifier: `signup-pad:${crypto.randomUUID()}`, value: "", expiresAt: now, createdAt: now, updatedAt: now } })
+          await adapter.delete({ model: "verification", where: [{ field: "id", value: row.id }] })
+        }
+      },
+    },
     session: {
       expiresIn: 7 * 24 * 60 * MINUTE,
       updateAge: 24 * 60 * MINUTE,
@@ -160,5 +178,10 @@ export async function activeMembership(auth: Auth, userId: string, activeOrganiz
   return org === null ? null : { organizationId: member.organizationId, organizationName: org.name, role: member.role }
 }
 
-export const createAuth = (config: AuthConfig) => betterAuth(authOptions(config))
+export function createAuth(config: AuthConfig) {
+  const self: Self = {}
+  const auth = betterAuth(authOptions(config, self))
+  self.auth = auth
+  return auth
+}
 export type Auth = ReturnType<typeof createAuth>
