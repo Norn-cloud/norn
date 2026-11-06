@@ -108,7 +108,7 @@ function Inspector({ editing, issues, bindings, laws }: { readonly editing: Edit
 const bindingsQuery = () => api<{ bindings: readonly Binding[] }>("/bindings").then(({ bindings }) => bindings)
 
 /** One agent on the canvas: wire tools and laws, set its policy; the checker runs on every edit, the cell decides on save. */
-function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly id: string; readonly stored: { readonly version: number; readonly payload: AgentDefinition } | null; readonly store: KindStore<AgentDefinition>; readonly onSaved: () => void; readonly bindings: readonly Binding[]; readonly laws: readonly string[] }) {
+function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly id: string; readonly stored: { readonly version: number; readonly payload: AgentDefinition } | null; readonly store: KindStore<AgentDefinition>; readonly onSaved: (message: string) => void; readonly bindings: readonly Binding[]; readonly laws: readonly string[] }) {
   const checker = useQuery({ queryKey: ["checker", "agent"], queryFn: () => loadAgentChecker(), staleTime: Infinity, retry: false })
   const [cellIssues, setCellIssues] = useState<readonly Issue[]>([])
   const initial = useMemo(() => agentGraph(stored?.payload ?? emptyAgent(id)), [stored, id])
@@ -127,7 +127,13 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly 
     if (!agent) return { tone: "refusal" as const, text: "The agent node is missing." }
     // A new agent or a copy has no version yet: installing it must not claim one.
     const result = await store.install(id, agent, stored && stored.version > 0 ? stored.version : undefined)
-    if (result.installed) { setCellIssues([]); onSaved(); return { tone: "info" as const, text: `Saved as version ${result.version}; the cell checked and installed it (receipt ${result.receipt.receiptHash.slice(0, 12)}…).` } }
+    if (result.installed) {
+      const text = `Saved as version ${result.version} of ${id}; the cell checked and installed it (receipt ${result.receipt.receiptHash.slice(0, 12)}…).`
+      setCellIssues([])
+      // The editor reopens on the new version, so the confirmation lives with the list.
+      onSaved(text)
+      return { tone: "info" as const, text }
+    }
     if ("conflict" in result) return { tone: "refusal" as const, text: "Someone saved a newer version first. Reopen the agent to see it; your draft is kept." }
     setCellIssues(result.findings.map(({ code, message, pointer, law }) => issueOf(graph, agent, code, law ? `${message} (law ${law})` : message, pointer)))
     return { tone: "refusal" as const, text: `The cell refused to install it: ${result.findings.map(({ law, code }) => law ?? code).join(", ")}.` }
@@ -215,7 +221,7 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
       </Panel>
       {open && (stored.isPending ? <p role="status" className="text-muted-foreground">Opening {open.id}…</p>
         : stored.isError ? <p role="alert" className="text-destructive">{stored.error.message}</p>
-          : <AgentEditor key={`${open.id}:${payload?.version ?? "new"}`} id={open.id} stored={payload} store={store} onSaved={() => { setOpen({ id: open.id }); refresh(); void client.invalidateQueries({ queryKey: ["definitions", "agent", open.id] }) }} bindings={bindings.data ?? []} laws={laws.data ?? []} />)}
+          : <AgentEditor key={`${open.id}:${payload?.version ?? "new"}`} id={open.id} stored={payload} store={store} onSaved={(message) => { setNotice(message); setOpen({ id: open.id }); refresh(); void client.invalidateQueries({ queryKey: ["definitions", "agent", open.id] }) }} bindings={bindings.data ?? []} laws={laws.data ?? []} />)}
     </div>
   )
 }

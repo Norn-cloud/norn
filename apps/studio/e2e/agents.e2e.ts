@@ -57,7 +57,7 @@ test("agent: create, view, edit, wire tools and laws, undo/redo, validate (law n
   await expect(node(page, "tool:bind_tickets")).toContainText("helpdesk/list_tickets")
   // save: the cell installs it
   await page.getByRole("button", { name: "Save to server" }).click()
-  await expect(page.getByText(/Saved as version 1/)).toBeVisible()
+  await expect(page.getByText(/Saved as version 1/).first()).toBeVisible()
   await expect(page.getByRole("button", { name: "Run the agent" })).toBeDisabled()
   // reopen
   await page.reload()
@@ -70,7 +70,7 @@ test("agent: create, view, edit, wire tools and laws, undo/redo, validate (law n
   await page.getByRole("button", { name: "Duplicate studio.agent.support_triage" }).click()
   await expect(page.getByText("Agent: studio.agent.support_triage_copy")).toBeVisible()
   await page.getByRole("button", { name: "Save to server" }).click()
-  await expect(page.getByText(/Saved as version 1/)).toBeVisible()
+  await expect(page.getByText(/Saved as version 1/).first()).toBeVisible()
   await page.getByRole("button", { name: "Retire studio.agent.support_triage_copy" }).click()
   await expect(page.getByText("Retired studio.agent.support_triage_copy.")).toBeVisible()
 })
@@ -83,10 +83,10 @@ test("agent refusal: the cell's refusal names the law and lands on the law node"
   await page.getByRole("button", { name: "New agent" }).click()
   await page.getByRole("button", { name: "Law", exact: true }).click()
   // The admitted laws come from the definitions; point the new law node at the one the stand-in refuses.
-  await page.getByLabel("Law").evaluate((select: HTMLSelectElement) => {
+  await page.getByRole("combobox", { name: "Law" }).evaluate((select: HTMLSelectElement) => {
     const option = document.createElement("option"); option.value = "demo.refuse_me"; option.text = "demo.refuse_me"; select.add(option)
   })
-  await page.getByLabel("Law").selectOption("demo.refuse_me")
+  await page.getByRole("combobox", { name: "Law" }).selectOption("demo.refuse_me")
   await page.getByRole("button", { name: "Save to server" }).click()
   await expect(page.getByText(/refused to install it: demo.refuse_me/)).toBeVisible()
   await expect(page.getByText(/agents may not run under this law \(law demo.refuse_me\)/).first()).toBeVisible()
