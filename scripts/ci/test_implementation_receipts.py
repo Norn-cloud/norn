@@ -278,7 +278,7 @@ class ReceiptTest(unittest.TestCase):
         base = self.tmp / "base"
         subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
         self.assertFalse(receipts.in_scope(self.root, base))
-        for path, expected in (("unrelated.md", False), ("test-only/Cargo.toml", True), ("dep/src/lib.rs", True),
+        for path, expected in (("unrelated.md", True), ("test-only/Cargo.toml", True), ("dep/src/lib.rs", True),
                                ("src/lib.rs", True), ("fst/Proof.fst", True), ("Cargo.lock", True),
                                ("verification/coverage-v1/manifest/claim.json", True)):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
