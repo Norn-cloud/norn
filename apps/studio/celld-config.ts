@@ -49,7 +49,8 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
 
 /** The wrangler.json for one stage, binding for binding the Cloudflare deploy's. */
 export function celldConfig(studio: CelldStudio): Record<string, unknown> {
-  const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl }
+  // celld has no node:crypto.scrypt; AUTH_SCRYPT=js runs Better Auth's own hash in pure JS.
+  const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js" }
   if (studio.defaultOrg !== undefined) vars.STUDIO_DEFAULT_ORG = studio.defaultOrg
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   return {
