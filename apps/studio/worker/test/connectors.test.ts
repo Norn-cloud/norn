@@ -397,17 +397,20 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   await call("/api/auth/sign-in/email", json({ email: "ada@example.com", password: "correct horse battery" }))
   // The gateway's token and introspection endpoints, as Executor answers them.
   const real = globalThis.fetch
-  const seen: { url: string; auth: string | null; body: string }[] = []
+  const seen: { path: string; auth: string | null; body: string }[] = []
+  const gatewayOrigin = new URL(GATEWAY).origin
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
-    if (!request.url.startsWith(GATEWAY)) return real(input, init)
+    // Only the gateway's own origin is faked, compared parsed, never as a URL prefix.
+    const url = new URL(request.url)
+    if (url.origin !== gatewayOrigin) return real(input, init)
     const body = await request.text()
-    seen.push({ url: request.url, auth: request.headers.get("authorization"), body })
-    if (request.url.endsWith("/oauth2/token")) {
+    seen.push({ path: url.pathname, auth: request.headers.get("authorization"), body })
+    if (url.pathname === "/api/auth/oauth2/token") {
       if (body.includes("client_secret=")) return Response.json({ error: "invalid_client", error_description: "client registered for client_secret_basic cannot use client_secret_post" }, { status: 400 })
       return Response.json({ access_token: TOKEN, refresh_token: "r", token_type: "Bearer", expires_in: 3600, scope: "executor offline_access" })
     }
-    if (request.url.endsWith("/oauth2/introspect")) return Response.json({ active: true, sub: "gw_user_1" })
+    if (url.pathname === "/api/auth/oauth2/introspect") return Response.json({ active: true, sub: "gw_user_1" })
     return new Response("not found", { status: 404 })
   }) as typeof fetch
   try {
@@ -416,11 +419,11 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
     const back = await call(`/api/auth/callback/executor?code=abc&state=${encodeURIComponent(state)}`)
     expect(back.status).toBe(302)
     expect(back.headers.get("location") ?? "").not.toContain("error")
-    const token = seen.find((r) => r.url.endsWith("/oauth2/token"))
+    const token = seen.find((r) => r.path === "/api/auth/oauth2/token")
     expect(token?.auth).toBe(`Basic ${btoa(`studio:${"s".repeat(32)}`)}`)
     expect(token?.body).toContain(`resource=${encodeURIComponent(`${GATEWAY}/api`)}`)
     expect(token?.body).not.toContain("client_secret=")
-    expect(seen.some((r) => r.url.endsWith("/oauth2/introspect"))).toBe(true)
+    expect(seen.some((r) => r.path === "/api/auth/oauth2/introspect")).toBe(true)
     // The grant is now linked to this person, and never leaves the server.
     const status = await call("/api/connectors/status")
     const text = await status.text()
