@@ -109,6 +109,11 @@ impl SqlEngine for WorkersEngine {
     /// `__miniflare_do_name`.
     fn platform_table_globs(&self) -> &'static [&'static str] {
         &["_cf_*", "_litestream_*", "__miniflare_*"]
+    /// A Durable Object's storage has one connection, this cell's, and the
+    /// cell serves each request in one synchronous Wasm call with no await, so
+    /// nothing writes between two reads of a call.
+    fn read_isolation(&self) -> crate::engine::ReadIsolation {
+        crate::engine::ReadIsolation::ExclusiveSynchronous
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {

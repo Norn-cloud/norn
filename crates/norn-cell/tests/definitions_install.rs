@@ -2964,6 +2964,9 @@ impl CountedEngine {
 }
 
 impl SqlEngine for CountedEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         let Some((writes, remote)) = self.inner.read_cache_revision()? else {
             return Ok(None);
@@ -3048,6 +3051,9 @@ struct ExplainEngine {
 }
 
 impl SqlEngine for ExplainEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -6491,6 +6497,9 @@ impl ProvisionFault {
 }
 
 impl SqlEngine for ProvisionFault {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)?;
         self.boundary()
