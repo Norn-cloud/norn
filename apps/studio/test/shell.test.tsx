@@ -3,14 +3,14 @@ import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } fr
 import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { SidebarProvider } from "@/components/ui/sidebar"
-import { Shell, Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, sectionOf, target, type Section } from "../src/shell.tsx"
+import { WORKSPACES } from "../src/lib/workspaces.ts"
 
 const sources: Section = {
-  path: "/sources", label: "Sources", icon: Database, summary: "",
-  useMenu: () => [{ href: "/sources/canon.Holding", label: "Holding", group: "Object types" }],
+  path: "/sources", label: "Sources", icon: Database, summary: "", kind: "source", group: "Model",
+  useMenu: () => [{ href: "/sources/canon.Holding", label: "Holding", group: "Object types", kind: "objectType" }],
 }
-const questions: Section = { path: "/questions", label: "Questions", icon: ChartLine, summary: "" }
+const questions: Section = { path: "/questions", label: "Questions", icon: ChartLine, summary: "", group: "Model" }
 
 /** Renders a node at a route, the way the app's router would. */
 async function at(pathname: string, node: () => ReactNode) {
@@ -19,13 +19,12 @@ async function at(pathname: string, node: () => ReactNode) {
   return renderToStaticMarkup(<RouterProvider router={router} />)
 }
 
-test("a submenu shows its title, data context and entries, and no action the server has not declared", async () => {
-  const html = await at("/sources/canon.Holding", () => <SidebarProvider><Submenu section={sources} /></SidebarProvider>)
-  expect(html).toContain("Sources")
-  expect(html).toContain("Recorded · synthetic world")
+test("the open section lists its entries under their heading, the open entry marked", async () => {
+  const html = await at("/sources/canon.Holding", () => <Shell sections={[sources, questions]} />)
+  expect(html).toContain("Object types")
   expect(html).toContain('href="/sources/canon.Holding"')
-  expect(html).toContain('data-active="true"')
-  expect(html).not.toContain('data-slot="button"')
+  expect(html).toMatch(/data-sidebar="menu-sub-button"[^>]*data-active="true"/)
+  expect(html).toContain("[&amp;&gt;svg]:text-blue-600")
 })
 
 test("a record page belongs to the section above it", () => {
@@ -39,35 +38,44 @@ test("an entry is a route, or an anchor on its section's page", () => {
   expect(target(questions, "#corrections")).toEqual({ to: "/questions", hash: "corrections" })
 })
 
-test("a submenu offers a search over its entries", async () => {
-  const html = await at("/sources", () => <SidebarProvider><Submenu section={sources} /></SidebarProvider>)
-  expect(html).toContain('placeholder="Find in Sources"')
+test("the breadcrumbs name the section, the item and the record id", async () => {
+  const html = await at("/sources/canon.Holding/demo%2Fitem%2Fgold", () => <Shell sections={[sources, questions]} />)
+  const crumbs = html.match(/<nav aria-label="breadcrumb"[\s\S]*?<\/nav>/)?.[0] ?? ""
+  expect(crumbs).toContain('href="/sources"')
+  expect(crumbs).toContain('href="/sources/canon.Holding"')
+  expect(crumbs).toContain("demo/item/gold")
 })
 
-test("the rail divides its groups once, and the page bar holds search, shortcuts and notifications", async () => {
-  const rules: Section = { path: "/workflows", label: "Workflows", icon: Database, summary: "", group: "rules" }
-  const html = await at("/sources", () => <Shell sections={[{ ...sources, group: "model" }, { ...questions, group: "model" }, rules]} />)
-  expect(html.match(/data-slot="separator"/g)?.length).toBe(1)
-  expect(html).toContain("Search or add…")
+test("the page bar holds search, the view toggle, shortcuts and notifications; the sidebar names the workspace and the viewer", async () => {
+  const html = await at("/sources", () => <Shell sections={[sources, questions]} />)
+  expect(html).toContain("Search…")
+  expect(html).toContain('aria-label="Business or technical view"')
+  expect(html).toMatch(/aria-checked="true"[^>]*>Business</)
   expect(html).toContain("Keyboard shortcuts")
   expect(html).toContain("Notifications")
-  expect(html).not.toContain(">RD<")
+  expect(html).toContain("Synthetic world")
+  expect(html).toContain("Viewing as Recorded demo")
 })
 
-test("a long group shows six entries and offers the rest, keeping the open one in view", async () => {
+test("only workspaces with recorded documents open; the rest say they have none", () => {
+  expect(new Set(WORKSPACES.map(({ group }) => group))).toEqual(new Set(["Class demos", "Industry benchmarks", "First-party"]))
+  expect(WORKSPACES.filter(({ recorded }) => recorded).map(({ id }) => id)).toEqual(["synthetic"])
+  for (const workspace of WORKSPACES.filter(({ recorded }) => !recorded)) expect(workspace.detail).toBe("No recorded run in Studio yet")
+})
+
+test("a long section shows six entries and offers the rest, keeping the open one in view", async () => {
   const many: Section = { ...sources, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
-  const html = await at("/sources/t8", () => <SidebarProvider><Submenu section={many} /></SidebarProvider>)
+  const html = await at("/sources/t8", () => <Shell sections={[many]} />)
   expect(html).toContain("Type 5")
-  expect(html).not.toContain("Type 6")
+  expect(html).not.toContain(">Type 6<")
   expect(html).toContain("Type 8")
-  expect(html).toContain("Show more")
+  expect(html).toContain("Show 2 more")
 })
 
-test("a rail count sits inside its tile in the theme's destructive pair", async () => {
+test("a section's count sits in the theme's destructive pair", async () => {
   const counted: Section = { ...questions, useBadge: () => 3 }
   const html = await at("/sources", () => <Shell sections={[sources, counted]} />)
   const badge = html.match(/<span class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
   expect(badge).toContain("text-destructive-foreground")
-  expect(badge).toContain("top-0.5 right-0.5")
   expect(badge).not.toContain("text-white")
 })

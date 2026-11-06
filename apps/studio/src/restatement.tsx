@@ -5,7 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { day, headline } from "./lib/format.ts"
 import { restated, sameAnswer } from "./lib/restatement.ts"
-import { recordedTransport, type Answer } from "./lib/transport.ts"
+import { transport, type Answer } from "./lib/transport.ts"
 import { CorrectionsStatus } from "./restatement-status.tsx"
 
 const changes = (count: number) => `${count} committed ${count === 1 ? "change" : "changes"}`
@@ -29,7 +29,7 @@ function Reading({ title, when, bucket, note }: { readonly title: string; readon
 const read = (answer: Answer) => `Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`
 
 export function RestatementCard() {
-  const restatement = useQuery({ queryKey: ["restatement"], queryFn: recordedTransport.restatement })
+  const restatement = useQuery({ queryKey: ["restatement"], queryFn: transport.restatement })
   if (restatement.isPending) return <CorrectionsStatus />
   if (restatement.isError) return <CorrectionsStatus error={restatement.error} />
   const { answer, corrected, asOf } = restatement.data

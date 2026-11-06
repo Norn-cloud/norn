@@ -6,7 +6,7 @@ import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { field, levelWords, scalar, verdictWords } from "./lib/guarantees.ts"
-import { recordedTransport, type Guarantees } from "./lib/transport.ts"
+import { transport, type Guarantees } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
 
 const TITLE: Readonly<Record<string, string>> = {
@@ -101,12 +101,12 @@ function Document({ name, document }: { readonly name: string; readonly document
 
 /** The recorded guarantee documents, for the submenu island. */
 export function useGuaranteesMenu(): readonly MenuEntry[] | undefined {
-  const read = useQuery({ queryKey: ["guarantees"], queryFn: recordedTransport.guarantees })
+  const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees })
   return read.data?.map(({ name }) => ({ href: `#guarantee-${name}`, label: TITLE[name] ?? name }))
 }
 
 export function GuaranteesPage() {
-  const read = useQuery({ queryKey: ["guarantees"], queryFn: recordedTransport.guarantees })
+  const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees })
   return (
     <section className="space-y-8">
       <div className="space-y-2">

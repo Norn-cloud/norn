@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
-import { recordedTransport } from "./lib/transport.ts"
+import { transport } from "./lib/transport.ts"
 import { ObjectRecords } from "./objects.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
@@ -193,15 +193,15 @@ const OVERVIEW_GROUPS: readonly { readonly label: string; readonly has: (concept
 
 /** The object types and shared interfaces, for the submenu island. */
 export function useSourcesMenu(): readonly MenuEntry[] | undefined {
-  const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
+  const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
-    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, tint: definition === "object type" ? (1 as const) : (3 as const) })))
+    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, kind: "objectType" as const })))
 }
 
 /** The admitted catalog, indexed once per read. */
 export function useCatalog() {
-  const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
+  const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return { read, catalog }
 }
