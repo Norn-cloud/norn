@@ -93,12 +93,15 @@ test("stored links show on the overview in both directions; a link that is not s
       { sourceType: "canon.Holding", link: "item", source: "demo/holding/vault-2", targetType: "canon.Item", target: "demo/item/gold", version: 1 },
       // Not this object: never shown against it.
       { sourceType: "canon.Holding", link: "item", source: "demo/holding/other", targetType: "canon.Item", target: "demo/item/silver", version: 1 },
+      // The same id under another type is another record: never shown against this one.
+      { sourceType: "canon.Holding", link: "item", source: "demo/holding/elsewhere", targetType: "canon.Party", target: "demo/item/gold", version: 1 },
     ],
   }
   const html = await page("canon.Item", "demo/item/gold", "business", links)
   expect(html).toContain('href="/sources/canon.Holding/demo/holding/vault-1"')
   expect(html).toContain('href="/sources/canon.Holding/demo/holding/vault-2"')
   expect(html).not.toContain("demo/holding/other")
+  expect(html).not.toContain("demo/holding/elsewhere")
   expect(html).toContain("2 stored links connect it to other records.")
 })
 
