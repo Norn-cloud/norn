@@ -1,0 +1,87 @@
+{
+  "bundleDigest": "0e987a46ec9eb31ba7d3461732379688957df76d226271851ab6734e0bea3c25",
+  "sourceRecordRef": {
+    "system": "synthetic-erpnext",
+    "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
+  },
+  "documentRef": {
+    "system": "synthetic-erpnext",
+    "record": "SYN-ERPNEXT-order"
+  },
+  "documentDigest": "e8b16fcde65bf995830edf0c25889b6c78e8ced54a6720685d01e72afac142ac",
+  "mappingPin": {
+    "artifactId": "erpnext.three.mapping",
+    "version": "0.1.0",
+    "sha256": "ddbf31d0eb71c45a8f9be84583b3c1ea4b2151f4e289245425f88fafc024780a"
+  },
+  "fieldProvenance": {
+    "currency": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "order.currency",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref"
+      ]
+    },
+    "due_at": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "order.due_at",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "due_at"
+      ]
+    },
+    "quantity": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "order.quantity",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "quantity"
+      ]
+    },
+    "status": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "order.status",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref"
+      ]
+    },
+    "unit": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "order.unit",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "unit"
+      ]
+    }
+  }
+}
