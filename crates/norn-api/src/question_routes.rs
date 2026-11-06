@@ -402,7 +402,9 @@ fn read_metrics<'d>(
 }
 
 /// The checker reports question findings within a list (`/questions/0/…`);
-/// one submitted question is that list's only entry.
+/// one submitted question is that list's only entry. Two checker passes can
+/// report one finding twice; each code at each place is reported once, with
+/// its first message.
 fn rebased(mut findings: Vec<norn_checker::Diagnostic>) -> Vec<norn_checker::Diagnostic> {
     const ENTRY: &str = "/questions/0";
     for span in findings.iter_mut().filter_map(|finding| finding.span.as_mut()) {
@@ -410,6 +412,11 @@ fn rebased(mut findings: Vec<norn_checker::Diagnostic>) -> Vec<norn_checker::Dia
             span.pointer.replace_range(..ENTRY.len(), "");
         }
     }
+    let mut seen = BTreeSet::new();
+    findings.retain(|finding| {
+        let place = finding.span.as_ref().map(|span| span.pointer.clone());
+        seen.insert((finding.code.as_str().to_owned(), place))
+    });
     findings
 }
 
