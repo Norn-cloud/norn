@@ -307,8 +307,9 @@ function Steps({ sections, step, reached, counts, onGo }: {
               <li key={name + index} className="flex-1">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button type="button" disabled={index > reached} aria-current={current ? "step" : undefined} aria-label={label(index)} onClick={() => onGo(index)}
-                      className="group block w-full py-1.5 outline-none disabled:cursor-default">
+                    <button type="button" aria-disabled={index > reached || undefined} aria-current={current ? "step" : undefined} aria-label={label(index)}
+                      onClick={() => { if (index <= reached) onGo(index) }}
+                      className="group block w-full py-1.5 outline-none aria-disabled:cursor-default">
                       <span className={cn("block h-1.5 rounded-full transition-colors group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-1",
                         problems > 0 ? "bg-destructive/70" : current ? "bg-primary" : index <= reached ? "bg-primary/35 group-hover:bg-primary/55" : "bg-muted")} />
                     </button>

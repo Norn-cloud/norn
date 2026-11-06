@@ -43,9 +43,11 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
   const names = ["What is held", "Where it is", "More", "Review"]
   for (const [i, name] of names.entries()) await expect(steps(page).nth(i)).toHaveAccessibleName(name)
   await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step")
-  await expect(steps(page).nth(2)).toBeDisabled()
+  await expect(steps(page).nth(2)).toHaveAttribute("aria-disabled", "true")
+  await steps(page).nth(2).click()
+  await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step") // a step not reached stays closed
   // Hover (or focus) names a step; one not reached yet says so.
-  await steps(page).nth(3).hover({ force: true })
+  await steps(page).nth(3).hover()
   await expect(page.getByRole("tooltip")).toHaveText("Review (not reached yet)")
   await expect(form.getByLabel("Location › Site")).toHaveCount(0) // one step at a time
   await form.getByLabel("Holding id").fill("demo/holding/7001")
