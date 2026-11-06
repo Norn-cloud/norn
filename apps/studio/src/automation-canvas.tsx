@@ -15,6 +15,7 @@ import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
 import { RISKS, decisionView, effectOf, nextOptionId, optionPort, optionsOf, setOptions, type DecisionOption } from "./lib/canvas/decision.ts"
 import { DecisionTree } from "./decision-tree.tsx"
+import { LABEL_ROOM_MAX, exitLabel, exitLabels, formatCondition } from "./lib/canvas/exits.ts"
 import { words } from "./lib/format.ts"
 
 const META = { id: "studio.automation", version: "0.1.0" }
@@ -44,7 +45,7 @@ type ExitEdgeData = { readonly label?: string; readonly full?: string }
  * A connection whose label sits at its exit, just past the step it leaves, so a long condition never lands on
  * the next step; the full condition is on hover.
  */
-export function ExitEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }: EdgeProps<Edge<ExitEdgeData, "exit">>) {
+export function ExitEdge({ id, source, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }: EdgeProps<Edge<ExitEdgeData, "exit">>) {
   const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
   // The label never runs under a card: going forward it is clamped to the gap before the target card and ends at
   // its edge (cut with an ellipsis, in full on hover); a gap too small for a word shows none, the exit's handle names it.
@@ -55,7 +56,7 @@ export function ExitEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {data?.label && room >= LABEL_MIN && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-px text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
+          <div data-exit-label={id} data-exit-source={source} title={data.full} className="nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-px text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
             style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
@@ -64,28 +65,14 @@ export function ExitEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
 }
 
 /** Exit labels: at most this wide, this far from either card, and none narrower than a short word. */
-const LABEL_MAX = 128
+const LABEL_MAX = LABEL_ROOM_MAX
 const LABEL_GAP = 8
 const LABEL_MIN = 32
 
 const EDGE_TYPES = { exit: ExitEdge }
 
-/** An edge label: the condition without its result prefix (`status == paid`), cut at 26 characters; the exit's hover has it in full. */
-const short = (text: string, length = 26) => {
-  const bare = text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\.(?=[A-Za-z_])/g, "")
-  return bare.length > length ? `${bare.slice(0, length - 1)}…` : bare
-}
+export { exitLabel }
 
-/** What an exit means in words: a route branch's own condition, a decision option's label, or otherwise. */
-export function exitLabel(node: g.CanvasNode | undefined, port: string): string | undefined {
-  if (!node || port === "next") return undefined
-  const branch = /^b(\d+)$/.exec(port)
-  if (branch && node.kind === "route") return formatCondition(branchesOf(node)[Number(branch[1])] ?? []) || "no condition yet"
-  if (port.startsWith("opt:") && node.kind === "decide") return optionsOf(node).find((option) => optionPort(option) === port)?.label ?? port.slice(4)
-  return port
-}
-
-const formatCondition = (all: readonly Condition[]) => all.map(({ left, op, right }) => `${left} ${op} ${right}`).join(" and ")
 const parseCondition = (line: string): Condition[] => line.split(/\s+and\s+/).map((part) => part.trim()).filter(Boolean).map((part) => {
   const [, left = part, op = "==", right = ""] = /^(\S+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/.exec(part) ?? []
   return { left, op: op as Condition["op"], right }
@@ -258,10 +245,11 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
       },
     }),
     toEdge: (edge, found, selected, graph): Edge => {
-      const full = exitLabel(graph.nodes.find(({ id: node }) => node === edge.source), edge.sourcePort)
+      const source = graph.nodes.find(({ id: node }) => node === edge.source)
+      const drawn = source ? exitLabels(source).get(edge.sourcePort) : undefined
       return {
         id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected, type: "exit",
-        data: full === undefined ? {} : { label: short(full), full },
+        data: drawn ? { label: drawn.label, full: drawn.full } : {},
       }
     },
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) =>

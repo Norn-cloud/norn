@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react"
 import { Bot, Circle, Flag, GitFork, Hourglass, Play, Scale, UserRound, Wrench, type LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { CARD } from "@/lib/canvas/viewport"
 
 /** Each kind of thing on a canvas: its icon, its name and its tint token (`--tint-*` in the theme). */
 export const NODE_KINDS: Readonly<Record<string, { readonly icon: LucideIcon; readonly label: string; readonly tint: string }>> = {
@@ -17,7 +18,7 @@ export const NODE_KINDS: Readonly<Record<string, { readonly icon: LucideIcon; re
 }
 
 /** Card geometry, so a canvas knows each node's size before it renders: fixed widths, and a height from its lines. */
-export const CARD = { state: 144, step: 208 } as const
+export { CARD }
 export const cardHeight = ({ kindLine = true, subtitle = false }: { readonly kindLine?: boolean; readonly subtitle?: boolean }) =>
   22 + (kindLine ? 16 : 0) + 20 + (subtitle ? 16 : 0)
 

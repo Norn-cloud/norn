@@ -2,6 +2,9 @@
  * Where a canvas opens, computed before render from the layout (positions are known, card sizes are fixed), so the
  * canvas never waits on measurement and never shows a frame at the wrong zoom.
  */
+/** Card widths on the canvas: a lifecycle state and an automation step. */
+export const CARD = { state: 144, step: 208 } as const
+
 export interface Box { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 export interface Viewport { readonly x: number; readonly y: number; readonly zoom: number }
 
