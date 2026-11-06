@@ -12,10 +12,12 @@ test("sibling branch exits drop the words they share, so each reads by what diff
   expect(labels.get("b0")?.full).toBe("invoice.status == paid")
 })
 
-test("nothing is elided when siblings share no whole word, or when eliding would leave one empty", () => {
+test("nothing is elided when siblings share no whole word, or would read the same; a longer sibling keeps its own words", () => {
   expect([...exitLabels(route("r", [[["a", "==", "1"]], [["b", "==", "1"]]])).values()].map(({ label }) => label)).toEqual(["a == 1", "b == 1"])
+  const same = exitLabels(route("r", [[["x", "==", "1"]], [["x", "==", "1"]]]))
+  expect([...same.values()].map(({ label }) => label)).toEqual(["x == 1", "x == 1"])
   const nested = exitLabels(route("r", [[["x", "==", "1"]], [["x", "==", "1"], ["y", ">", "0"]]]))
-  expect([...nested.values()].map(({ label }) => label)).toEqual(["x == 1", "x == 1 and y > 0"])
+  expect([...nested.values()].map(({ label }) => label)).toEqual(["1", "1 and y > 0"])
   // A single branch has no siblings to differ from.
   expect([...exitLabels(route("r", [[["invoice.overdue", "==", "true"]]])).values()][0]?.label).toBe("overdue == true")
 })
