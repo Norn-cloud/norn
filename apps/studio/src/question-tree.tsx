@@ -153,10 +153,14 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const admitted = currentCheck?.verdict.admitted === true
   const signed = signOff !== undefined && restated != null && signOff.sha256 === restated.sha256 && admitted
   useEffect(() => { if (signOff && restated && signOff.sha256 !== restated.sha256) setSignOff(undefined) }, [signOff, restated?.sha256])
+  // Only the newest Open may change the editor: a slower earlier read is dropped when it lands.
+  const opening = useRef(0)
   const openSaved = async (id: string) => {
     if (editor.dirty && !globalThis.confirm("Discard your unsaved changes and open this question?")) return
+    const request = ++opening.current
     try {
       const stored = await definitions.get(id)
+      if (request !== opening.current) return
       const parsed = savedQuestion.safeParse(stored.payload)
       if (!parsed.success) throw new QuestionDefinitionError("definition.shape", "This question uses fields this builder cannot edit.")
       const next = draftOf(parsed.data)
@@ -166,7 +170,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       editor.open(next); setCustomCondition(false); setSaved({ id: stored.id, version: stored.version }); setVerified(Boolean(signoff)); setRemoved(undefined)
       setSignOff(signoff && signoff.restatementSha256 === stored.words.sha256 ? { sha256: signoff.restatementSha256, atMs: signoff.signedAtMs, signer: signoff.signer } : undefined)
       setChecked(undefined); setCheckedKey(undefined); setServerWords({ key: JSON.stringify(storedQuestion), value: stored.words }); setRestatementFailure(undefined); setSaveError(undefined)
-    } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
+    } catch (error) { if (request === opening.current) setSaveError(error instanceof Error ? error.message : String(error)) }
   }
   const save = async () => {
     if (!cellAvailable || !signed || !restated || !draft.title.trim() || saving) return
