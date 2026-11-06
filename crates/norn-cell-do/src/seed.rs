@@ -59,10 +59,14 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<CellStore
     };
     // The packs are checked over the core layer as a trusted base, which the
     // cell retains in the same set (`baseArtifactIds` on the definitions read).
-    let (base, candidates): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(|a| {
-        a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
-    });
-    let candidate_values = candidates.iter().map(value).collect::<Result<Vec<_>, _>>()?;
+    let (base, candidates): (Vec<_>, Vec<_>) = artifacts
+        .iter()
+        .cloned()
+        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+    let candidate_values = candidates
+        .iter()
+        .map(value)
+        .collect::<Result<Vec<_>, _>>()?;
     let base_values = base.iter().map(value).collect::<Result<Vec<_>, _>>()?;
     let checked = check_artifact_set_with_receipt(
         &ReceiptSources::new(&candidate_values, &base_values)
@@ -109,7 +113,10 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<CellStore
 /// The normalized model of the set's entity roots and their governing laws.
 fn model(artifacts: &[ArtifactEnvelope]) -> Result<Model, SeedError> {
     let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
-    for artifact in artifacts.iter().filter(|a| a.kind() == ArtifactKind::Entity) {
+    for artifact in artifacts
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Entity)
+    {
         let root: EntityRoot = serde_json::to_value(artifact.payload.to_json_value())
             .and_then(serde_json::from_value)
             .map_err(|e| fail(&artifact.artifact_id)(&e))?;
