@@ -51,6 +51,8 @@ export interface CanvasFrameProps {
   readonly empty: ReactNode
   /** Why the server save is not available, until the admission route is live. */
   readonly saveBlocked: string
+  /** Shown under the canvas for the current selection (a decision's preview). */
+  readonly below?: (editing: Editing) => ReactNode
   /** Open with these selected (a link to a finding, or a contact-sheet state). */
   readonly initialSelection?: Selection
   /** Open with this notice (a contact-sheet state). */
@@ -203,6 +205,7 @@ function Frame(props: CanvasFrameProps) {
             </ReactFlow>
           </div>
         </Well>
+        {props.below && <div className="px-1.5 pt-3">{props.below(editing)}</div>}
       </Panel>
       <div className="space-y-3">
         <Panel label="Inspector">

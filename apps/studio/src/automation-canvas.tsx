@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback } from "react"
 import { Handle, MarkerType, Position, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,10 +12,12 @@ import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Conditi
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
+import { RISKS, decisionView, nextOptionId, optionsOf, setOptions, type DecisionOption } from "./lib/canvas/decision.ts"
+import { DecisionTree } from "./decision-tree.tsx"
 import { words } from "./lib/format.ts"
 
 const META = { id: "studio.automation", version: "0.1.0" }
-export const STEP_KINDS = { start: "Start", perform: "Tool", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
+export const STEP_KINDS = { start: "Start", perform: "Tool", decide: "Ask a person", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
 export const RUN_BLOCKED = "Running happens in the cell with receipts; the run route is not live yet."
 
 type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly string[] }, "step">
@@ -68,6 +70,33 @@ function Branches({ editing, id, branches }: { readonly editing: Editing; readon
   )
 }
 
+/** An ask step's options: label, scope, the agent's pick; add, duplicate, reorder, delete. Exits follow their option. */
+function Options({ editing, id, options, pick }: { readonly editing: Editing; readonly id: string; readonly options: readonly DecisionOption[]; readonly pick: string }) {
+  const { graph, edit } = editing
+  const set = (next: readonly DecisionOption[]) => edit(setOptions(graph, id, next))
+  const move = (from: number, to: number) => { const next = [...options]; const [one] = next.splice(from, 1); if (one) next.splice(to, 0, one); set(next) }
+  return (
+    <div className="space-y-2">
+      <div className="text-meta text-muted-foreground">Options, in the order the decider sees them</div>
+      {options.map((option, index) => (
+        <div key={`${option.id}:${option.label}:${option.scope}`} className="space-y-1 rounded-md border p-2">
+          <div className="flex items-center gap-1">
+            <span className="w-6 font-mono text-xs text-muted-foreground">{index + 1}</span>
+            <Input aria-label={`Option ${index + 1} label`} defaultValue={option.label} onBlur={(event) => { const label = event.target.value.trim(); if (label && label !== option.label) set(options.map((one) => one.id === option.id ? { ...one, label } : one)) }} />
+            <Button size="icon" variant="ghost" aria-label={`Move option ${index + 1} up`} disabled={index === 0} onClick={() => move(index, index - 1)}><ArrowUp /></Button>
+            <Button size="icon" variant="ghost" aria-label={`Move option ${index + 1} down`} disabled={index === options.length - 1} onClick={() => move(index, index + 1)}><ArrowDown /></Button>
+            <Button size="icon" variant="ghost" aria-label={`Duplicate option ${index + 1}`} onClick={() => set([...options.slice(0, index + 1), { ...option, id: nextOptionId(options), label: `${option.label} (copy)` }, ...options.slice(index + 1)])}><Copy /></Button>
+            <Button size="icon" variant="ghost" aria-label={`Delete option ${index + 1}`} onClick={() => set(options.filter((one) => one.id !== option.id))}><Trash2 /></Button>
+          </div>
+          <Input aria-label={`Option ${index + 1} scope`} className="text-xs" placeholder="Who it reaches, e.g. #incidents only" defaultValue={option.scope} onBlur={(event) => { const scope = event.target.value.trim(); if (scope !== option.scope) set(options.map((one) => one.id === option.id ? { ...one, scope } : one)) }} />
+          <label className="flex items-center gap-2 text-meta"><input type="radio" name={`${id}:pick`} aria-label={`Agent's pick: option ${index + 1}`} checked={pick === option.id} onChange={() => edit(g.configureNode(graph, id, { agentPick: option.id }))} />Agent's pick</label>
+        </div>
+      ))}
+      <Button size="sm" variant="outline" onClick={() => set([...options, { id: nextOptionId(options), label: "New option", scope: "" }])}><Plus />Option</Button>
+    </div>
+  )
+}
+
 function Inspector({ editing, issues }: { readonly editing: Editing; readonly issues: readonly Issue[] }) {
   const { graph, selection, edit, select } = editing
   const count = selection.nodes.length + selection.edges.length
@@ -116,6 +145,15 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
         ))}
       </>}
       {node.kind === "route" && <Branches editing={editing} id={node.id} branches={branchesOf(node)} />}
+      {node.kind === "decide" && <>
+        {field("Question", "question", node.config.question, (text) => edit(g.configureNode(graph, node.id, { question: text.trim() })), { placeholder: "What should I do?" })}
+        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Risk</span>
+          <select aria-label="Risk" className="w-full rounded-md border bg-background px-2 py-1" value={node.config.risk ?? "medium"} onChange={(event) => edit(g.configureNode(graph, node.id, { risk: event.target.value }))}>
+            {RISKS.map((risk) => <option key={risk} value={risk}>{words(risk)}</option>)}
+          </select></label>
+        {field("Who decides (roles, comma separated)", "roles", node.config.deciderRoles, (text) => edit(g.configureNode(graph, node.id, { deciderRoles: text.split(",").map((role) => role.trim()).filter(Boolean).join(",") })))}
+        <Options editing={editing} id={node.id} options={optionsOf(node)} pick={node.config.agentPick ?? ""} />
+      </>}
       {node.kind === "sleep" && field("Wait (milliseconds)", "millis", node.config.millis, (text) => edit(g.configureNode(graph, node.id, { millis: text })), { type: "number" })}
       {node.kind === "succeed" && field("Outcome", "outcome", node.config.outcome, (text) => edit(g.configureNode(graph, node.id, { outcome: text })))}
       {node.kind !== "start" && <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete</Button>}
@@ -126,6 +164,7 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
 
 const DEFAULTS: Record<string, Record<string, string>> = {
   perform: { tool: RECORDED_TOOLS[0]?.id ?? "", input: "{}" },
+  decide: { question: "", risk: "medium", deciderRoles: "admin", agentPick: "", options: JSON.stringify([{ id: "o1", label: "Approve", scope: "" }, { id: "o2", label: "Decline", scope: "" }]) },
   route: { branches: "[[]]" },
   sleep: { millis: "60000" },
   succeed: { outcome: "done" },
@@ -141,13 +180,13 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
       id: node.id, type: "step", position: node.position, selected,
       data: {
         kind: node.kind, title: words(node.id), issues: found,
-        detail: node.kind === "perform" ? node.config.tool ?? "" : node.kind === "sleep" ? `${node.config.millis ?? 0} ms` : node.kind === "succeed" ? node.config.outcome ?? "" : node.kind === "route" ? `${branchesOf(node).length} ${branchesOf(node).length === 1 ? "branch" : "branches"}` : "",
+        detail: node.kind === "perform" ? node.config.tool ?? "" : node.kind === "sleep" ? `${node.config.millis ?? 0} ms` : node.kind === "succeed" ? node.config.outcome ?? "" : node.kind === "decide" ? `${optionsOf(node).length} ${optionsOf(node).length === 1 ? "option" : "options"}` : node.kind === "route" ? `${branchesOf(node).length} ${branchesOf(node).length === 1 ? "branch" : "branches"}` : "",
         outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id }) => id),
       },
     }),
     toEdge: (edge, found, selected): Edge => ({
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
-      markerEnd: { type: MarkerType.ArrowClosed }, label: edge.sourcePort === "next" ? undefined : edge.sourcePort,
+      markerEnd: { type: MarkerType.ArrowClosed }, label: edge.sourcePort === "next" ? undefined : edge.sourcePort.replace(/^opt:/, ""),
       style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
       labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: "var(--foreground)", fontSize: 11 },
     }),
@@ -162,6 +201,10 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
       }}><Plus />{STEP_KINDS[kind as keyof typeof STEP_KINDS]}</Button>
     )),
     inspector: (editing, found) => <Inspector editing={editing} issues={found} />,
+    below: ({ graph, selection }) => {
+      const view = selection.nodes.length === 1 && selection.edges.length === 0 ? decisionView(graph, selection.nodes[0] ?? "") : null
+      return view ? <DecisionTree key={JSON.stringify(view)} view={view} /> : null
+    },
   }
 }
 
