@@ -121,9 +121,13 @@ class ReceiptTest(unittest.TestCase):
     def test_wrapper_receipts_are_labelled_and_match_the_schema(self) -> None:
         self.produce()
         errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
-        self.assertEqual([e.split(":")[0] for e in errors], ["INV-KANI"])
-        self.assertEqual({v["claim"]: v["verdict"] for v in verdicts},
-                         {"INV-EXTRACT": "rechecked", "INV-KANI": "candidate-reported"})
+        # D47(c): no verdict admits a claim until the producer is isolated (#969).
+        self.assertEqual(errors, [f"INV-EXTRACT: {receipts.LABELS['extraction']}; {receipts.NOT_ADMITTED}",
+                                  f"INV-KANI: {receipts.LABELS['kani']}; {receipts.NOT_ADMITTED}"])
+        self.assertEqual({v["claim"]: (v["verdict"], v["label"]) for v in verdicts},
+                         {"INV-EXTRACT": ("candidate-reported", "F* re-checked theorem about the uploaded model, "
+                                                                "correspondence candidate-reported"),
+                          "INV-KANI": ("candidate-reported", "candidate-reported Kani result")})
         try:
             import jsonschema
         except ImportError:
@@ -141,6 +145,39 @@ class ReceiptTest(unittest.TestCase):
         self.rejected("INV-KANI", "candidate-reported")
         shutil.rmtree(self.out / "INV-KANI")
         self.rejected("INV-KANI", "candidate-reported")
+
+    def test_forged_well_typed_model_is_never_admitted(self) -> None:
+        # Sol S2: a compromised producer uploads a different well-typed function
+        # and makes every digest agree. F* accepts it, so the correspondence is
+        # only candidate-reported and the claim is never graded rechecked.
+        self.produce()
+        self.forge("INV-EXTRACT", "module Lib\nlet f (x: bool) : bool = not x\n")
+        errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
+        verdict = next(v for v in verdicts if v["claim"] == "INV-EXTRACT")
+        self.assertEqual((verdict["verdict"], verdict["candidateReported"]), ("candidate-reported", ["hax-extraction"]))
+        self.assertIn(f"INV-EXTRACT: {receipts.LABELS['extraction']}; {receipts.NOT_ADMITTED}", errors)
+        self.assertIn("#969", receipts.NOT_ADMITTED)
+
+    def test_theorem_evidence_must_be_a_rechecked_proof(self) -> None:
+        # Sol S4: a theorem cited outside proofRoot/proofs is never re-checked.
+        for artifact in ("unchecked/NeverChecked.fst", "fst/Other.fst"):
+            claim = copy.deepcopy(EXTRACTION)
+            claim["evidence"]["proof"][0]["artifact"] = artifact
+            with self.subTest(artifact=artifact), self.assertRaisesRegex(
+                    receipts.Refused, "theorem evidence must cite a declared proof under fst"):
+                receipts.extraction_plan(claim, "")
+        receipts.extraction_plan(EXTRACTION, "")
+
+    def test_oversized_receipt_artifact_is_refused(self) -> None:
+        self.produce()
+        self.addCleanup(setattr, receipts, "MAX_RECEIPT_FILES", receipts.MAX_RECEIPT_FILES)
+        receipts.MAX_RECEIPT_FILES = 2
+        errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
+        self.assertEqual((verdicts, len(errors)), ([], 1))
+        self.assertRegex(errors[0], "^receipts: receipt artifact exceeds 2 files")
+        receipts.MAX_RECEIPT_FILES = 1024
+        self.receipt("INV-EXTRACT").write_text(" " * (receipts.MAX_RECEIPT_JSON_BYTES + 1))
+        self.rejected("INV-EXTRACT", "receipt.json is too large")
 
     def test_malicious_build_script_cannot_forge_an_extraction_receipt(self) -> None:
         # A build.rs that cargo-hax runs owns the receipts runner: it swaps the
@@ -215,7 +252,8 @@ class ReceiptTest(unittest.TestCase):
         self.forge("INV-EXTRACT", 'module Lib\n#set-options "--fuel 0 --ifuel 1 --z3rlimit 15"\n'
                                   '#push-options "--z3rlimit 80"\nlet f (x: bool) : bool = x\n#pop-options\n')
         errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
-        self.assertFalse([e for e in errors if e.startswith("INV-EXTRACT")], errors)
+        self.assertIn(f"INV-EXTRACT: {receipts.LABELS['extraction']}; {receipts.NOT_ADMITTED}", errors)
+        self.assertEqual(len([e for e in errors if e.startswith("INV-EXTRACT")]), 1, errors)
 
     def test_extraction_needs_an_independent_fstar(self) -> None:
         self.produce()
@@ -254,11 +292,37 @@ class ReceiptTest(unittest.TestCase):
         self.claims = {}
         self.assertFalse(receipts.in_scope(self.root, base))
 
-    def test_unchanged_claims_carry_over_but_kani_never_does(self) -> None:
+    def test_scope_refuses_sources_outside_the_package(self) -> None:
+        # Sol S3: scope compares package directories, so a library source outside
+        # the package would change the extraction without putting it in scope.
+        base_files = {"Cargo.toml": '[workspace]\nmembers = ["lib"]\n', "lib/Cargo.toml": '[package]\nname = "lib"\n',
+                      "lib/src/lib.rs": '#![doc = include_str!("../README.md")]\n', "lib/README.md": "",
+                      "lib/tests/t.rs": 'const X: &str = include_str!("../../outside.rs");\n', "outside.rs": ""}
+        for name, text in base_files.items():
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(text)
+        claims = {"INV-EXTRACT": self.claims["INV-EXTRACT"]}
+        # In-package includes and test-only targets are scoped as they are.
+        self.assertIn("lib", receipts.scope_inputs(self.root, claims))
+        for name, text, fragment in (
+                ("lib/Cargo.toml", '[package]\nname = "lib"\n[lib]\npath = "../outside.rs"\n', "lib.path"),
+                ("lib/Cargo.toml", '[package]\nname = "lib"\nbuild = "../outside.rs"\n', "package.build"),
+                ("lib/src/lib.rs", '#[path = "../../outside.rs"] mod outside;\n', "outside the package"),
+                ("lib/src/lib.rs", 'const X: &str = include_str!("../../outside.rs");\n', "outside the package"),
+                ("lib/src/lib.rs", 'include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../outside.rs"));\n',
+                 "non-literal include")):
+            original = (self.root / name).read_text()
+            (self.root / name).write_text(text)
+            with self.subTest(text=text), self.assertRaisesRegex(receipts.Refused, fragment):
+                receipts.scope_inputs(self.root, claims)
+            (self.root / name).write_text(original)
+
+    def test_unchanged_claims_are_labelled_but_never_admitted(self) -> None:
         errors, verdicts = receipts.verify(self.root, self.out, self.expected, None, scoped=False)
         self.assertEqual({v["claim"]: v["verdict"] for v in verdicts},
                          {"INV-EXTRACT": "unchanged", "INV-KANI": "candidate-reported"})
-        self.assertEqual([e.split(":")[0] for e in errors], ["INV-KANI"])
+        self.assertEqual([e.split(":")[0] for e in errors], ["INV-EXTRACT", "INV-KANI"])
+        self.assertTrue(all(e.endswith(receipts.NOT_ADMITTED) for e in errors), errors)
 
     def test_fake_extraction_script_without_a_receipt_is_rejected(self) -> None:
         self.produce()

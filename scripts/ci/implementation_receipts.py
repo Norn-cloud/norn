@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Base-owned implementation-proof wrappers and their receipt verifier (D43, D47).
 
-`implementation_proved` claims are admitted only through receipts. Kani and
+No `implementation_proved` claim is admitted until #969 isolates the candidate
+builds (D47(c): receipts must not claim more than they prove). Kani and
 hax/F* run only through this file, which the trusted workflow checks out from
 the pull request's base commit. The candidate checkout is data: claims, the
 harness, production source and proof files. It never supplies a command; each
@@ -9,19 +10,26 @@ wrapper builds its own argv from typed claim fields. A claim's kind is the
 wrapper that ran it, never a reading of script text.
 
 `run` writes one receipt per claim on the receipts runner. Kani and hax compile
-candidate code there, so that runner is candidate-influenced and every receipt
-it writes is `candidate-reported`: consistency of its logs and digests proves
-nothing on its own. `verify` runs on a fresh runner that executes no candidate
-code and labels each claim by what it re-checks itself (D47):
+candidate code there, under the same UID as this wrapper, so that runner is
+candidate-influenced and every receipt it writes is `candidate-reported`:
+consistency of its logs and digests proves nothing on its own. `verify` runs on
+a fresh runner that executes no candidate code and labels each claim by what it
+re-checks itself (D47):
 
 - extraction: F* re-typechecks the uploaded module beside the declared,
   head-committed proof inputs with a freshly downloaded, digest-pinned F*, after
-  an option and tactic allowlist and the proof-hole scan. Label `rechecked`.
-  The hax step (Rust to F*) stays candidate-reported; the cargo guard limits it.
-- Kani: nothing is re-run, so the claim is `candidate-reported` and refused as
-  implementation_proved until Kani runs isolated.
+  an option and tactic allowlist and the proof-hole scan. That checks a theorem
+  about the uploaded model only: a compromised producer can upload any
+  well-typed module and make every digest agree, so the Rust-to-F*
+  correspondence (hax) stays candidate-reported and the claim is labelled
+  "F* re-checked theorem about the uploaded model, correspondence
+  candidate-reported", verdict `candidate-reported`.
+- Kani: nothing is re-run: "candidate-reported Kani result".
 - a pull request that changes no implementation claim and no input of one runs
-  no tool: label `unchanged`, the base's state carries over.
+  no tool: verdict `unchanged`.
+
+Every verdict is refused as implementation_proved until an isolated producer
+exists (#969).
 
 The formats are implementation-receipt.schema.json.
 """
@@ -50,7 +58,16 @@ import coverage_manifest  # noqa: E402
 
 SCHEMA = "norn.implementation-receipt.v1"
 JOB = "implementation-receipts"
-CANDIDATE_REPORTED, RECHECKED, UNCHANGED = "candidate-reported", "rechecked", "unchanged"
+CANDIDATE_REPORTED, UNCHANGED = "candidate-reported", "unchanged"
+# What each kind's verdict establishes, printed with it (D47 amendment).
+LABELS = {"kani": "candidate-reported Kani result",
+          "extraction": "F* re-checked theorem about the uploaded model, correspondence candidate-reported"}
+NOT_ADMITTED = ("not admitted as implementation_proved: the producer that compiles candidate code is not "
+                "isolated, so no receipt can establish implementation correspondence (#969)")
+# Bounds on the downloaded receipt artifact, checked before any file is parsed.
+MAX_RECEIPT_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_RECEIPT_FILES = 1024
+MAX_RECEIPT_JSON_BYTES = 1024 * 1024
 # The F* the verifier downloads itself; bootstrap-rust-extraction-tools.sh pins the same release.
 FSTAR_VERSION = "2026.08.16"
 FSTAR_URL = (f"https://github.com/FStarLang/FStar/releases/download/v{FSTAR_VERSION}/"
@@ -164,6 +181,10 @@ def extraction_plan(claim: dict, output: str) -> dict:
             and all(isinstance(binding[k], list) and all(re.fullmatch(fst, str(f)) for f in binding[k])
                     for k in ("models", "proofs")) and binding["proofs"], "invalid extractionBinding")
     root = relative(binding["proofRoot"])
+    # Cited theorems must be ones this runner re-checks: the declared proofs under proofRoot.
+    theorems = {e["artifact"] for e in claim["evidence"]["proof"] if any(s.startswith("theorem:") for s in e["selectors"])}
+    require(theorems <= {f"{root}/{p}" for p in binding["proofs"]},
+            f"theorem evidence must cite a declared proof under {root}: {sorted(theorems)}")
     include = " ".join(["-**", *(f"+{i}" for i in binding["items"])])
     argv = [["cargo-hax", "--no-custom-target-directory", "-C", "--locked", "-p", binding["package"],
              ";", "into", "-i", include, "--output-dir", output, "fstar"]]
@@ -358,6 +379,7 @@ def check(root: Path, claim: dict, directory: Path, expected: dict, fstar: Path 
     broken receipt: a compromised receipts runner can forge all of it. The
     verdict comes from what this runner re-checks itself.
     """
+    require((directory / "receipt.json").stat().st_size <= MAX_RECEIPT_JSON_BYTES, "receipt.json is too large")
     receipt = json.loads((directory / "receipt.json").read_text())
     require(isinstance(receipt, dict) and receipt.get("schema") == SCHEMA
             and receipt.get("trust") == CANDIDATE_REPORTED, "not an implementation receipt")
@@ -397,8 +419,7 @@ def check(root: Path, claim: dict, directory: Path, expected: dict, fstar: Path 
             proved = mutation is None
             require(kani_verdict(log, plan["name"]) is proved and (entry.get("exitCode") == 0) == proved,
                     f"{entry.get('mutation') or 'baseline'}: Kani verdict does not prove the claim")
-        return {"claim": claim["id"], "kind": "kani", "verdict": CANDIDATE_REPORTED, "rechecked": [],
-                "candidateReported": ["kani-baseline", "kani-mutations"]}
+        return verdict_line(claim["id"], "kani", CANDIDATE_REPORTED)
     else:
         output = f"target/implementation-receipts/{claim['id']}"
         plan = extraction_plan(claim, output)
@@ -411,9 +432,31 @@ def check(root: Path, claim: dict, directory: Path, expected: dict, fstar: Path 
                 "receipt output digest mismatch")
         require(fstar is not None, "no independent F* to re-check the extraction")
         recheck_fstar(root, plan, generated, fstar)
-        return {"claim": claim["id"], "kind": "extraction", "verdict": RECHECKED,
-                "rechecked": ["fstar-typecheck", "fstar-option-allowlist", "proof-hole-scan"],
-                "candidateReported": ["hax-extraction"]}
+        # The theorem is re-checked about the uploaded model only; whether that
+        # model is the candidate's Rust stays candidate-reported, and so does the claim.
+        return verdict_line(claim["id"], "extraction", CANDIDATE_REPORTED)
+
+
+def verdict_line(name: str, kind: str, verdict: str) -> dict:
+    """One verifier line: what was re-checked here and what stays candidate-reported."""
+    rechecked = ["fstar-typecheck", "fstar-option-allowlist", "proof-hole-scan"] \
+        if kind == "extraction" and verdict == CANDIDATE_REPORTED else []
+    reported = ["hax-extraction"] if kind == "extraction" else ["kani-baseline", "kani-mutations"]
+    return {"claim": name, "kind": kind, "verdict": verdict, "label": LABELS[kind], "rechecked": rechecked,
+            "candidateReported": reported}
+
+
+def receipts_bounded(receipts: Path) -> str | None:
+    """Why the downloaded receipt artifact is too large to read, or None."""
+    files = total = 0
+    for directory, _, names in os.walk(receipts):
+        for name in names:
+            files += 1
+            total += os.lstat(os.path.join(directory, name)).st_size
+            if files > MAX_RECEIPT_FILES or total > MAX_RECEIPT_TOTAL_BYTES:
+                return (f"receipt artifact exceeds {MAX_RECEIPT_FILES} files or "
+                        f"{MAX_RECEIPT_TOTAL_BYTES} bytes")
+    return None
 
 
 def fstar_inputs_safe(path: Path) -> None:
@@ -525,6 +568,7 @@ def workspace_closure(root: Path, package: str) -> list[str]:
             continue
         seen.add(directory)
         manifest = tomllib.loads((root / directory / "Cargo.toml").read_text())
+        require_contained_sources(root, directory, manifest)
         tables = [manifest.get(k, {}) for k in ("dependencies", "build-dependencies")]
         tables += [t.get(k, {}) for t in manifest.get("target", {}).values() for k in ("dependencies", "build-dependencies")]
         for table in tables:
@@ -538,6 +582,41 @@ def workspace_closure(root: Path, package: str) -> list[str]:
                 elif name in members:
                     todo.append(members[name])
     return sorted(seen)
+
+
+def inside(directory: str, path: str) -> bool:
+    """Whether `path`, relative to the repository root, lies in package `directory`."""
+    normal = os.path.normpath(path)
+    return not os.path.isabs(path) and (normal == directory or normal.startswith(directory.rstrip("/") + "/"))
+
+
+SOURCE_REFERENCE = re.compile(r'#\s*!?\s*\[\s*path\s*=\s*"([^"]*)"|\binclude(?:_str|_bytes)?\s*!\s*\(\s*(?:"([^"]*)"|(.))')
+
+
+def require_contained_sources(root: Path, directory: str, manifest: dict) -> None:
+    """Refuse a package whose library build can read files outside its directory.
+
+    Scope compares the package directory, so a source outside it would change
+    the extraction without putting the claim in scope. `[lib] path`, `build`,
+    and `#[path]` or `include*!` in the package's Rust sources must stay inside;
+    a non-literal include cannot be scoped and is refused. Test, bench and
+    example targets never reach the library build and are not read.
+    """
+    package, lib = manifest.get("package", {}), manifest.get("lib", {})
+    for key, value in (("lib.path", lib.get("path")), ("package.build", package.get("build"))):
+        require(not isinstance(value, str) or inside(directory, os.path.join(directory, value)),
+                f"{directory}: {key} {value!r} is outside the package, so it cannot be scoped")
+    skipped = {os.path.join(directory, name) for name in ("tests", "benches", "examples", "target")}
+    for source in sorted((root / directory).rglob("*.rs")):
+        path = os.path.relpath(source, root)
+        if any(inside(skip, path) for skip in skipped):
+            continue
+        for match in SOURCE_REFERENCE.finditer(source.read_text(encoding="utf-8", errors="replace")):
+            reference = match.group(1) if match.group(1) is not None else match.group(2)
+            require(reference is not None, f"{path}: a non-literal include cannot be scoped")
+            # Resolved from the file's directory: never shallower than rustc's own base.
+            require(inside(directory, os.path.join(os.path.dirname(path), reference)),
+                    f"{path}: {reference!r} is outside the package, so it cannot be scoped")
 
 
 def scope_inputs(root: Path, claims: dict[str, dict]) -> list[str]:
@@ -568,30 +647,33 @@ def in_scope(root: Path, base: Path) -> bool:
 
 def verify(root: Path, receipts: Path, expected: dict, fstar: Path | None,
            scoped: bool = True) -> tuple[list[str], list[dict]]:
-    """Label every implementation_proved claim; only `rechecked` or `unchanged` ones are admitted.
+    """Label every implementation_proved claim and refuse it (D47(c), #969).
 
-    Kani claims are refused even when unchanged: no Kani verdict is re-checked
-    anywhere, so none may stand as implementation_proved.
+    Receipts are still checked, and extraction re-checked, so a broken or
+    forged receipt is named; but no verdict admits a claim until the producer
+    is isolated.
     """
+    if receipts.is_dir():
+        oversized = receipts_bounded(receipts)
+        if oversized:
+            return [f"receipts: {oversized}"], []
     claims = implementation_claims(root)
     present = {p.name for p in receipts.iterdir()} if receipts.is_dir() else set()
     errors = [f"{name}: receipt for no implementation_proved claim" for name in sorted(present - set(claims))]
     verdicts = []
     for name, claim in sorted(claims.items()):
         try:
-            if kind_of(claim) == "kani":
-                verdicts.append({"claim": name, "kind": "kani", "verdict": CANDIDATE_REPORTED, "rechecked": [],
-                                 "candidateReported": ["kani-baseline", "kani-mutations"]})
+            kind = kind_of(claim)
+            if kind == "kani":
+                verdicts.append(verdict_line(name, kind, CANDIDATE_REPORTED))
                 if name in present:
                     check(root, claim, receipts / name, expected, fstar)
-                raise Refused("Kani runs on the candidate-influenced receipts runner, so its verdict is "
-                              "candidate-reported; implementation_proved needs an independent re-check")
-            if not scoped:
-                verdicts.append({"claim": name, "kind": "extraction", "verdict": UNCHANGED, "rechecked": [],
-                                 "candidateReported": []})
-                continue
-            require(name in present, "no receipt from the base-owned wrapper")
-            verdicts.append(check(root, claim, receipts / name, expected, fstar))
+            elif not scoped:
+                verdicts.append(verdict_line(name, kind, UNCHANGED))
+            else:
+                require(name in present, "no receipt from the base-owned wrapper")
+                verdicts.append(check(root, claim, receipts / name, expected, fstar))
+            raise Refused(f"{verdicts[-1]['label']}; {NOT_ADMITTED}")
         except (Refused, OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
             errors.append(f"{name}: {error}")
     return errors, verdicts

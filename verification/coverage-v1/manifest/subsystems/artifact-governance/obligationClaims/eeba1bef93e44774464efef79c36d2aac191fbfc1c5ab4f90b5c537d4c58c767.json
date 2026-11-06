@@ -4,8 +4,8 @@
     "id": "INV-ART-DIRECT-WRITE-PREDICATE",
     "runtime": "exhaustive_bounded",
     "model": "missing",
-    "proof": "implementation_proved",
-    "residual": "The F* theorem is total over all 105 combinations of the current 15 ArtifactKind by 7 ArtifactLifecycle hax-extracted closed production representations; the promoted Rust table checks 101 of them (SourceSchema only with Deprecated, Superseded and Rejected). This proves only the pure predicate. API/store callsite completeness, faithful kind/lifecycle derivation, BAC review, trusted-checker receipts, active-pointer publication, persistence, authentication, authorization, concurrency, and any future enum variant before re-extraction remain outside the claim.",
+    "proof": "partial",
+    "residual": "F* re-checked theorem about the uploaded model, correspondence candidate-reported. The F* theorem is total over all 105 combinations of the current 15 ArtifactKind by 7 ArtifactLifecycle hax-extracted closed production representations; the promoted Rust table checks 101 of them (SourceSchema only with Deprecated, Superseded and Rejected). This proves only the pure predicate. API/store callsite completeness, faithful kind/lifecycle derivation, BAC review, trusted-checker receipts, active-pointer publication, persistence, authentication, authorization, concurrency, and any future enum variant before re-extraction remain outside the claim. Proof is partial, not implementation_proved (D47(c)): the fresh verifier re-typechecks the uploaded F* module and theorem, but hax runs on the candidate-influenced producer, so the Rust-to-F* correspondence is only candidate-reported. implementation_proved returns, with its extractionBinding, only via #969, which provides the isolated producer.",
     "evidence": {
       "runtime": {
         "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.evidence.runtime"
@@ -15,20 +15,6 @@
       },
       "proof": {
         "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.evidence.proof"
-      }
-    },
-    "extractionBinding": {
-      "package": "norn-ir",
-      "items": {
-        "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.extractionBinding.items"
-      },
-      "module": "Norn_ir.fst",
-      "proofRoot": "verification/stripmine-2026-08-22/proofs/fstar",
-      "models": {
-        "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.extractionBinding.models"
-      },
-      "proofs": {
-        "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.extractionBinding.proofs"
       }
     }
   }
