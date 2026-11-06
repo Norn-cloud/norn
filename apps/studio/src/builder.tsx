@@ -5,7 +5,7 @@ import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } fro
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { list, modKey, type Issue } from "@/lib/editor"
+import { list, modKey, sameValue, type Issue } from "@/lib/editor"
 import { QuestionCard, questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
 
 /** What a question can be built from, as the Worker serves it (`GET /api/questions/catalog`). */
@@ -132,6 +132,18 @@ type QuestionIR = ReturnType<typeof buildQuestion>
 /** Whether a stored question's window is whole UTC days, the only windows a draft can hold without changing them. */
 export const windowFitsDraft = (question: Partial<QuestionIR>): boolean =>
   [question.window?.start, question.window?.end].every((iso) => iso === undefined || (typeof iso === "string" && iso === `${iso.slice(0, 10)}T00:00:00Z`))
+
+/**
+ * Whether a stored question survives a trip through the form unchanged: its
+ * window is whole days and the question the draft rebuilds is the same one,
+ * grouping, freshness and all (its name aside, which follows the title).
+ */
+export function questionFitsDraft(question: Partial<QuestionIR> & { readonly name?: string }, catalog: QuestionCatalog): boolean {
+  if (!windowFitsDraft(question)) return false
+  const { name: _built, ...rebuilt } = buildQuestion(draftOf(question), catalog)
+  const { name: _stored, ...stored } = question
+  return sameValue(JSON.parse(JSON.stringify(rebuilt)), JSON.parse(JSON.stringify(stored)))
+}
 
 export const UNEDITABLE = "This question cannot be edited without changing it."
 

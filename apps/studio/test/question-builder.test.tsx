@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
 import { planWords, questionVerdictOf } from "../src/agent/question.tsx"
-import { QuestionBuilder, UNEDITABLE, buildQuestion, windowFitsDraft, catalogOf, checkedFor, fieldOf, initialDraft, issuesOf, type Draft, type QuestionCatalog } from "../src/builder.tsx"
+import { QuestionBuilder, UNEDITABLE, buildQuestion, draftOf, questionFitsDraft, windowFitsDraft, catalogOf, checkedFor, fieldOf, initialDraft, issuesOf, type Draft, type QuestionCatalog } from "../src/builder.tsx"
 
 const fixture = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo", path), "utf8"))
 // The catalogue as GET /api/questions/catalog serves it for the demo analytics world.
@@ -114,4 +114,12 @@ test("a stored window finer than whole days cannot be edited here: the form says
   expect(windowFitsDraft({ window: { start: "2026-07-06T00:00:00.000Z", end: "2026-10-26T00:00:00Z" } } as never)).toBe(false)
   const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={catalog} unsupported={UNEDITABLE} onUse={() => {}} /></QueryClientProvider>)
   expect(html).toContain("This question cannot be edited without changing it.")
+})
+
+test("a stored question the form would rebuild differently cannot be edited here; one it built round-trips", () => {
+  const built = buildQuestion({ ...initialDraft(catalog), title: "Yield", start: "2026-07-06", end: "2026-10-26" }, catalog)
+  expect(questionFitsDraft(built, catalog)).toBe(true)
+  expect(questionFitsDraft({ ...built, freshness: { maxLagMs: 1 } }, catalog)).toBe(false)
+  expect(questionFitsDraft({ ...built, groupBy: [{ path: { property: "occurred_at" } }, { path: { property: "metal" } }] } as never, catalog)).toBe(false)
+  expect(draftOf(built).title).toBe("yield")
 })

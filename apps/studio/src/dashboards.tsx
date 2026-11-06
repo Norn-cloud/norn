@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { list, type Issue } from "@/lib/editor"
 import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
-import { QuestionBuilder, UNEDITABLE, draftOf, readCatalog, windowFitsDraft, type QuestionCatalog } from "./builder.tsx"
+import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
 
 const EMPTY: Dashboard = { title: "", tiles: [] }
 const VIEWS = [["chart:line", "Line chart"], ["chart:area", "Area chart"], ["chart:bar", "Bar chart"], ["table", "Table"]] as const
@@ -58,7 +58,7 @@ export function DashboardsPage() {
     },
     onSuccess: refresh,
   })
-  const remove = useMutation({ mutationFn: async (summary: DashboardSummary) => settled(await store.retire(summary.id, summary.version)), onSuccess: refresh })
+  const remove = useMutation({ mutationFn: async (summary: DashboardSummary) => settled(await store.retire(summary.id, summary.version)), onSettled: refresh })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
@@ -200,7 +200,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
             <SheetTitle>{open ? `Edit "${questionTitle(open)}"` : "Add a question"}</SheetTitle>
             <SheetDescription>The server's checker must admit the question before it joins the dashboard.</SheetDescription>
           </SheetHeader>
-          <div className="p-4">{editing !== undefined && <QuestionBuilder key={String(editing)} catalog={catalog} initial={open ? draftOf(open.question, open.title) : undefined} unsupported={open && !windowFitsDraft(open.question) ? UNEDITABLE : undefined} onUse={use} />}</div>
+          <div className="p-4">{editing !== undefined && <QuestionBuilder key={String(editing)} catalog={catalog} initial={open ? draftOf(open.question, open.title) : undefined} unsupported={open && !questionFitsDraft(open.question, catalog) ? UNEDITABLE : undefined} onUse={use} />}</div>
         </SheetContent>
       </Sheet>
     </div>
@@ -230,7 +230,8 @@ export function DashboardEditorPage() {
       {!fresh && stored.isSuccess && stored.data === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
       {catalog.data && (fresh || (stored.data && stored.isFetchedAfterMount)) && (
         <DashboardEditor key={`${stored.data?.id ?? "new"}:${opened}`} store={store} catalog={catalog.data} stored={stored.data ?? undefined} guard={(dirty) => <DirtyGuard dirty={dirty} />}
-          onReload={() => void stored.refetch().then(() => setOpened((n) => n + 1))}
+          // Start again from theirs only once it has been read; a failed or empty read keeps this draft and its conflict banner.
+          onReload={() => void stored.refetch().then((read) => { if (read.isSuccess && read.data) setOpened((n) => n + 1) })}
           onSaved={(saved) => { if (id === undefined) setTimeout(() => void navigate({ to: "/dashboards/$id", params: { id: saved.id }, replace: true })) }} />
       )}
     </section>
