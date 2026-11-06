@@ -107,16 +107,15 @@ export function AgentPanel() {
         </StickToBottom.Content>
       </StickToBottom>
       <div className="space-y-2 border-t p-3">
-        {messages.length === 0 && (
-          <div className="flex flex-wrap gap-2">
-            {SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}
-            {EXAMPLES.map((chip) => (
-              <Button key={chip} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => void runExample(chip)} title="Sends this recorded proposal straight to the checker, without the model.">
-                <span className="text-muted-foreground">Example proposal:</span> {chip}
-              </Button>
-            ))}
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {/* The model's suggestions open a conversation; the example proposals stay offered throughout. */}
+          {messages.length === 0 && SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}
+          {EXAMPLES.map((chip) => (
+            <Button key={chip} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => void runExample(chip)} title="Sends this recorded proposal straight to the checker, without the model.">
+              <span className="text-muted-foreground">Example proposal:</span> {chip}
+            </Button>
+          ))}
+        </div>
         <form onSubmit={submit} className="flex items-end gap-2">
           <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. record each melt's purity" rows={2} className="min-h-0 resize-none"
             onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(input) } }} />
