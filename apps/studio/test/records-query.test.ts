@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { cycleSort, EMPTY_QUERY, nextCursor, opsFor, recordsPath, recordsQueryParams, servedQuery, withheldOf } from "../src/lib/records-query.ts"
+import { cycleSort, EMPTY_QUERY, nextCursor, opsFor, recordsPath, recordsQueryParams, servedQuery, rowWithheld, snapshotMoved, totalOf, totalText } from "../src/lib/records-query.ts"
 
 const recorded = (name: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects", name), "utf8")) as unknown
 
@@ -51,9 +51,26 @@ test("a page that echoes its query is the only source of what the server applied
   expect(servedQuery({ query: { sort: [{ property: "code", direction: "sideways" }] } })).toBeNull()
 })
 
-test("withheld properties come only from the record's own list", () => {
-  expect([...withheldOf({ withheld: ["stock_cost", 3] })]).toEqual(["stock_cost"])
-  expect(withheldOf({}).size).toBe(0)
+test("a row is withheld only when the server says so explicitly", () => {
+  expect(rowWithheld({ withheld: true, values: null })).toBe(true)
+  expect(rowWithheld({ withheld: false, values: {} })).toBe(false)
+  expect(rowWithheld({ withheld: "true" })).toBe(false)
+  expect(rowWithheld({})).toBe(false)
+})
+
+test("the total reads as the server sent it, approximate ones as about", () => {
+  expect(totalOf({ total: { count: 1200, approximate: true } })).toEqual({ count: 1200, approximate: true })
+  expect(totalText({ count: 1200, approximate: true })).toBe("About 1,200 records")
+  expect(totalText({ count: 1, approximate: false })).toBe("1 record")
+  expect(totalOf({ total: { count: 0, approximate: false } })).toEqual({ count: 0, approximate: false })
+  expect(totalOf({ total: { count: -1, approximate: false } })).toBeNull()
+  expect(totalOf({})).toBeNull()
+})
+
+test("only a 409 snapshot_moved restarts the query; a bad cursor is an error", () => {
+  expect(snapshotMoved(409, "object.snapshot_moved")).toBe(true)
+  expect(snapshotMoved(400, "query.cursor_invalid")).toBe(false)
+  expect(snapshotMoved(409, "other")).toBe(false)
 })
 
 test("sort cycles asc, desc, off; adding keeps earlier keys and stops at three", () => {

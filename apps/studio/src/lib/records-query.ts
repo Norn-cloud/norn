@@ -14,8 +14,9 @@ import type { Field, Scalar } from "./catalog.ts"
  *   sort   = key *("," key)                  at most 3 keys; the object id breaks ties, ascending
  *   key    = property ":" ("asc" | "desc")   missing values sort last in both directions
  *   filter = JSON Predicate (below)          every clause must hold (conjunction)
- *   after  = opaque cursor from the previous page's `next`; it binds sort, filter and snapshot,
- *            and the server refuses it when they differ
+ *   after  = opaque cursor from the previous page's `next`; it binds sort, filter, scope and
+ *            snapshot. Malformed or mismatched: 400 `query.cursor_invalid` at `/after`. Replayed
+ *            after any commit: 409 `object.snapshot_moved`, and Studio restarts from page one.
  *
  *   Predicate = { "all": Clause[] }          1..8 clauses
  *   Clause    = { "property": id, "op": Op, "value"?: Value }
@@ -36,15 +37,16 @@ import type { Field, Scalar } from "./catalog.ts"
  * are RFC 3339 with an offset; durations are ISO 8601. `in` takes a 1..50 array; `between` takes
  * `[low, high]`, both inclusive.
  *
- * A property withheld from the reader cannot be sorted or filtered: the server refuses with
- * `query.property_withheld` rather than order by a value the reader may not see.
+ * Values grants are per row. A withheld row (`withheld: true`, `values: null`) never matches a
+ * clause and sorts last; a reader who may see only the population gets zero matches and
+ * `total: 0` from any filter, not a refusal.
  *
  * Refusals are the host's `Refusal` with `diagnostics: [{ code, message, pointer }]`, where each
  * pointer is into the request: `/sort/1`, `/filter/all/0/value`, `/after`.
  *
- * The page is `NornObjectPage` plus three members: `query` (the normalized sort and filter the
- * server applied), `next` (the cursor, or null at the end) and per record `withheld` (property
- * ids the server withheld from this reader). A page without `query` was not sorted or filtered
+ * The page is `NornObjectPage` plus `query` (the normalized sort and filter the server applied),
+ * `next` (the cursor, or null at the end), `total` (`{ count, approximate }` or null) and per
+ * record `withheld` (a boolean). A page without `query` was not sorted or filtered
  * on the server, so Studio shows server ordering and filtering as unavailable.
  */
 
@@ -119,11 +121,27 @@ export function servedQuery(page: unknown): Served | null {
   return { sort: keys, filter: Array.isArray(all) ? { all: all as Clause[] } : null }
 }
 
-/** Property ids the server withheld from this reader on one record; empty when it sent none. */
-export function withheldOf(record: unknown): ReadonlySet<string> {
-  const withheld = (record as { withheld?: unknown } | null)?.withheld
-  return new Set(Array.isArray(withheld) ? withheld.filter((id): id is string => typeof id === "string") : [])
+/** Whether the server withheld this whole row from the reader. Only an explicit `true` is withheld; Studio never infers it. */
+export const rowWithheld = (record: unknown): boolean => (record as { withheld?: unknown } | null)?.withheld === true
+
+/** The server's count of matching records, or null when it sent none. */
+export interface Total { readonly count: number; readonly approximate: boolean }
+
+export function totalOf(page: unknown): Total | null {
+  const total = (page as { total?: unknown } | null)?.total as { count?: unknown; approximate?: unknown } | null | undefined
+  return typeof total?.count === "number" && Number.isSafeInteger(total.count) && total.count >= 0 && typeof total.approximate === "boolean"
+    ? { count: total.count, approximate: total.approximate }
+    : null
 }
+
+export const totalText = (total: Total): string =>
+  `${total.approximate ? "About " : ""}${total.count.toLocaleString("en-US")} record${total.count === 1 ? "" : "s"}`
+
+/** The refusal that means the data moved under a cursor: restart from page one and say so. */
+export const SNAPSHOT_MOVED = "object.snapshot_moved"
+export const DATA_CHANGED = "Data changed, reloaded."
+
+export const snapshotMoved = (status: number, code: string | undefined): boolean => status === 409 && code === SNAPSHOT_MOVED
 
 /** The cursor for the next page in this query, or undefined at the end. Falls back to the unsorted scan cursor. */
 export function nextCursor(page: unknown): string | undefined {
