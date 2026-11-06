@@ -441,11 +441,11 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             "(github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))",
             "trusted-policy: approval and rights creation, editing and deletion must re-evaluate")
     # Complete reporter byte/execution pins are enforced by validate_rights_contract above.
-    merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+    boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        expected_runner = merge_runner if name in {"core", "test"} else "ubuntu-24.04"
+        expected_runner = boat_runner if name in {"core", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
-                f"{name}: runner must preserve merge-only Boat opt-in and hosted fallback")
+                f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop",
                  "NORN_CI_HEAD": "${{ github.event.merge_group.head_sha || github.sha }}"}
@@ -491,7 +491,7 @@ echo "$plan"''',
                   "key": "norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}"}},
     ]
     cleanup = {"name": "Reclaim runner disk space",
-               "if": "${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
+               "if": "${{ runner.environment == 'github-hosted' }}",
                "run": """set -euo pipefail
 minimum=$((12 * 1024 * 1024))
 available() { df -Pk / | awk 'NR == 2 {print $4}'; }
@@ -524,7 +524,6 @@ df -h /
         if name != "plan":
             reclaim = copy.deepcopy(cleanup)
             if name == "test":
-                reclaim["if"] = "${{ runner.environment == 'github-hosted' }}"
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
             preparation.insert(0, reclaim)
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
