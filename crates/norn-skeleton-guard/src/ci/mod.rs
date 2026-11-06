@@ -565,7 +565,8 @@ mod tests {
                 assert!(!super::runner_is_admitted(path, job, Some(&changed)));
                 let changed = super::BOAT_RUNNER.replace("'pull_request'", &format!("'{event}'"));
                 assert!(
-                    event == "pull_request" || !super::runner_is_admitted(path, job, Some(&changed))
+                    event == "pull_request"
+                        || !super::runner_is_admitted(path, job, Some(&changed))
                 );
             }
             let merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}";
@@ -583,7 +584,12 @@ mod tests {
                 assert!(!super::runner_is_admitted(path, job, Some(&changed)));
             }
         }
-        for job in ["trusted-policy", "rights-capture", "rights-revocation", "unknown"] {
+        for job in [
+            "trusted-policy",
+            "rights-capture",
+            "rights-revocation",
+            "unknown",
+        ] {
             assert!(!super::runner_is_admitted(
                 path,
                 job,
