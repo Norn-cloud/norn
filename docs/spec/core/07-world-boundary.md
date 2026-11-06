@@ -185,11 +185,14 @@ BUILTIN-PIN-1: the engine's compiled-in registry is the crate `norn-builtins`.
 Each built-in's manifest pins `runtime.id`/`runtime.version` to that crate and
 `implementation.digest` and `runtime.digest` to its HOST-TREE-1 digest, recorded
 in `registry/builtins/norn-builtins.json` outside the digested tree. The locator
-is `norn-builtins/<version>@<digest>`. A drift test recomputes the digest from the
-crate's sources and fails until a reviewed change re-pins it. Only this table
-registers built-ins: `resolve(id, version)` answers nothing for any other id or
-version, and authored or pack `host` manifests keep refusing
-`function.manifest.authored_host`.
+is `norn-builtins/<version>@<digest>`. The crate's build script recomputes the
+digest from its sources and fails the build until a reviewed change re-pins it,
+and the registry refuses `builtin.pin_mismatch` unless the pin equals the digest
+it was built from. Only this table registers built-ins: `resolve(id, version)`
+answers nothing for any other id or version, and authored or pack `host`
+manifests keep refusing `function.manifest.authored_host`. The decision functions
+accept only a manifest the registry handed out (`Registered`), and bind only a
+dispatch pinned to its exact digest.
 
 DECISION-1 (`norn.decision@1`, D58): a flow asks a person by `perform` of this
 built-in, then `route` on `choice` with `otherwise` failing; the run waits in
@@ -197,11 +200,13 @@ built-in, then `route` on `choice` with `otherwise` failing; the run waits in
 a closed record `{question, risk: low|medium|high, options: [{id, label,
 effect: {action}|{binding}, scope}], agentPick?, decider: {roles, law?},
 expiresInMs?}`. The cell enforces the bounds the closed schema cannot carry:
-question and note at most 500 characters, one to nine options, option ids
-`[a-z][a-z0-9_]*` and unique, exactly one effect member, `agentPick` naming an
+question, note, option label and option scope at most 500 characters, one to
+nine options, option ids `[a-z][a-z0-9_]*`, at most 64 characters and unique, exactly one effect member, `agentPick` naming an
 option (a recommendation, never a decision), at least one decider role, and
 `expiresInMs` at most seven days, which the cell turns into the command's
-deadline. The output is `{choice, note?}`, where `choice` must name an option.
+deadline. The output is `{choice, note?}`, where `choice` must name an option;
+these bounds keep every accepted answer within the receipt summary bound, and the
+cell refuses `decision.summary_too_large` if one ever would not.
 The errors are `{_tag: "Expired" | "Withdrawn"}`.
 
 Only the cell resolves the command, by issuing the Function receipt itself and
@@ -226,7 +231,9 @@ RECEIPT-CONSUME-1. Named scenarios (`crates/norn-builtins/tests/`):
 **DECISION-RESOLVE**, **DECISION-FORGED**, **DECISION-NON-DECIDER**,
 **DECISION-BOUNDS**, **DECISION-EXPIRE**, **DECISION-WITHDRAW**,
 **DECISION-TERMINAL** (any interleaving accepts exactly one terminal receipt),
-**BUILTIN-PIN-DRIFT**.
+**DECISION-REGISTERED** (a recomputed manifest digest binds nothing),
+**DECISION-SUMMARY-BOUND**, **BUILTIN-PIN-DRIFT** (an edit without a new pin
+fails the build check).
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 
