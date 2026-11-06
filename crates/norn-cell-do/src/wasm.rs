@@ -5,6 +5,7 @@
 //! loop make this cell the only writer; `transactionSync` is the commit.
 
 use norn_api::host::DevHost;
+use norn_api::question_routes::QuestionRuntime;
 use norn_api::scope::CellScope;
 use norn_cell::workers::WorkersEngine;
 use wasm_bindgen::prelude::*;
@@ -79,9 +80,10 @@ impl NornCell {
         query: &str,
         authorization: Option<String>,
     ) -> Reply {
-        let questions = self.questions.as_ref().map(|questions| {
-            questions as &dyn norn_api::question_routes::QuestionRuntime<WorkersEngine>
-        });
+        let questions = self
+            .questions
+            .as_ref()
+            .map(|questions| -> &dyn QuestionRuntime<WorkersEngine> { questions });
         let response = server::handle_with(
             &self.host,
             &DEMO_PRINCIPALS,
