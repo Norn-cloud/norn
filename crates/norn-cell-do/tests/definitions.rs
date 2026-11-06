@@ -736,7 +736,7 @@ fn admit_and_get_return_the_recomputed_restatement() {
         (Value::Null, Value::Null)
     );
 
-    let mut signed = body.clone();
+    let mut signed = body;
     signed["signoff"] = json!({ "restatementSha256": sha256(words) });
     assert_eq!(
         post(&cell, "/v1/definitions:install", ADMIN, &signed).0,
