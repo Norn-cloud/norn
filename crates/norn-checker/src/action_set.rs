@@ -172,13 +172,20 @@ fn collect_input_enums(
             "{at}/properties/{}",
             field.replace('~', "~0").replace('/', "~1")
         );
-        if let Some(nested) = schema.get("properties").and_then(JsonValue::as_object) {
+        let fields = schema.as_object();
+        if let Some(nested) = fields
+            .and_then(|fields| fields.get("properties"))
+            .and_then(JsonValue::as_object)
+        {
             collect_input_enums(nested, &here, false, out);
         }
         if norn_expr::schema::fixed_currency_schema(schema) {
             continue;
         }
-        if let Some(values) = schema.get("enum").and_then(JsonValue::as_array) {
+        if let Some(values) = fields
+            .and_then(|fields| fields.get("enum"))
+            .and_then(JsonValue::as_array)
+        {
             let values = values
                 .iter()
                 .filter_map(JsonValue::as_string)
@@ -1168,7 +1175,6 @@ impl Defined<'_> {
         clippy::too_many_lines,
         reason = "generated key, write mode, and required scope are checked as one action contract"
     )]
-
     fn naming_series_findings(
         &self,
         action: &ArtifactEnvelope,
