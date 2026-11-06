@@ -16,7 +16,7 @@ pub(crate) fn files(root: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
 
 fn walk(root: &Path, dir: &Path, files: &mut Vec<(String, Vec<u8>)>) -> Result<(), String> {
     let mut entries = std::fs::read_dir(dir)
-        .and_then(|entries| entries.collect::<Result<Vec<_>, _>>())
+        .and_then(Iterator::collect::<Result<Vec<_>, _>>)
         .map_err(|error| format!("{}: {error}", dir.display()))?;
     entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
