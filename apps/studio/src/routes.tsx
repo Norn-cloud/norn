@@ -1,5 +1,4 @@
-import { createRoute, redirect, type AnyRootRoute } from "@tanstack/react-router"
-import type { ComponentType } from "react"
+import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
 import { QuestionBuilderPage } from "./builder.tsx"
 import { DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
 import { GuaranteesPage } from "./guarantees.tsx"
@@ -11,7 +10,7 @@ import { StatusPage } from "./status.tsx"
 import { WorkflowsPage } from "./workflows.tsx"
 
 /** Every page's component: one for each entry of PAGES, and no other (checked by the type). */
-export const COMPONENTS: { readonly [P in PagePath]: ComponentType } = {
+export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/sources": SourcesPage,
   "/sources/$concept": ObjectTypePage,
   "/sources/$concept/$": SourcesItemPage,
