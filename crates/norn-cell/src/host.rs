@@ -832,9 +832,7 @@ where
             command,
             generation,
         }) = &commit.consumes
-            && let Some(pending) = self.store.read().head_command()?
-            && pending.command.command_id == command.0
-            && pending.command.generation == generation.0
+            && let Some(pending) = self.store.read().pending_result(&command.0, generation.0)?
             && pending
                 .command
                 .command
@@ -1274,6 +1272,35 @@ where
         Ok(Some(Performed {
             command: command.id.clone(),
             generation: command.generation,
+            input,
+        }))
+    }
+
+    /// PARKED-1: record the result the cell itself produced for a parked
+    /// command (for `norn.decision@1`, the receipt it issued), out of FIFO
+    /// order. Returns `None` without writing when the command is not a
+    /// pending parked command at `generation`, or already has a result, so a
+    /// parked command completes at most once. A commit consuming the returned
+    /// delivery applies it, exactly once, under the ordinary delivery fence.
+    ///
+    /// # Errors
+    ///
+    /// Serialization or SQLite errors.
+    pub fn complete_parked(
+        &mut self,
+        command: &CommandId,
+        generation: Generation,
+        input: I,
+    ) -> Result<Option<Performed<I>>, CellError> {
+        if !self
+            .store
+            .record_parked(&command.0, generation.0, &to_runtime(&input)?)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(Performed {
+            command: command.clone(),
+            generation,
             input,
         }))
     }

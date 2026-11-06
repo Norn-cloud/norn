@@ -139,6 +139,19 @@ pub fn decision_manifest() -> Result<FunctionManifest, RegistryError> {
     })
 }
 
+/// PARKED-1: whether a perform command waits outside the FIFO perform queue
+/// until the cell resolves it: a `norn.decision@1` perform, which a person
+/// answers. `payload` is the kernel command's payload (the flow's perform
+/// record `{kind: "perform", function, functionVersion, ...}`). Compiled in, so
+/// every host and every replay classifies a command the same way.
+#[must_use]
+pub fn parks(payload: &norn_ir::RuntimeValue) -> bool {
+    let text = |name: &str| payload.get(name).and_then(norn_ir::RuntimeValue::as_str);
+    text("kind") == Some("perform")
+        && text("function") == Some(decision::FUNCTION_ID)
+        && text("functionVersion") == Some("1")
+}
+
 /// The registered built-in `function_id@version`, if any. Only this
 /// compiled-in table registers built-ins; a namespace or authored manifest
 /// never does.

@@ -93,6 +93,25 @@ inherited ownership; **TXN-CELL-LOCAL** retains ordinary local admission.
 **TXN-CELL-DELIVERY** refuses foreign/unknown timer, result and observation
 consumption before pending lookup, leaving facts, ledger, outbox and timers unchanged.
 
+### PARKED-1 — parked perform commands
+
+A perform of a built-in that a person resolves (`norn.decision@1`,
+`norn_builtins::parks`) is a parked command. It is enqueued in the outbox like
+any command, in the same commit, but it never occupies the FIFO perform head:
+`perform`, the head lookup and perform claims skip it, so a waiting decision
+never blocks other work. The cell completes it out of order with the result it
+produced itself (`record_parked`, `SqliteCell::complete_parked`), at most once
+per generation; a second or concurrent resolution, another generation, or a
+command that is not parked writes nothing. Its delivery is then pending like
+any result (`Consumed::Result`), and the ordinary delivery fence consumes it
+exactly once. Every other command keeps strict FIFO order. Parking is derived
+only from the command's own payload with the compiled-in registry, so every host
+and every export replay classifies a command identically; replay checks a parked
+consumption at its own outbox position and every other at the FIFO head. Named
+scenarios (`crates/norn-cell/tests/parked.rs`): **PARKED-HEAD**, **PARKED-FIFO**,
+**PARKED-ONCE** (concurrent decide and expire, replay), **PARKED-CRASH** (restart
+before and after the consuming commit), **PARKED-INTERLEAVING** (property).
+
 ### Durable flow scheduling and identity (#515)
 
 Flows remain compiled lifecycle/rule declarations. The pure kernel helpers in

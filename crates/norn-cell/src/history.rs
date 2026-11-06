@@ -2103,7 +2103,20 @@ pub(crate) fn restore_input<E: SqlEngine>(
             result,
             runs,
         } => {
-            let head = store.read().head_command()?.ok_or_else(mismatch)?;
+            // A parked command is replayed at its own position; any other
+            // result is replayed only as the FIFO head (PARKED-1).
+            let head = {
+                let reader = store.read();
+                let fifo_head = reader.head_command()?.map(|head| head.position);
+                reader
+                    .pending_commands()?
+                    .into_iter()
+                    .find(|row| row.position == position)
+                    .filter(|row| {
+                        crate::read::is_parked(&row.command) || fifo_head == Some(row.position)
+                    })
+                    .ok_or_else(mismatch)?
+            };
             if head.position != position
                 || head.commit_seq != commit_seq
                 || head.command != command
