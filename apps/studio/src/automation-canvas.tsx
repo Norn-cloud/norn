@@ -50,6 +50,7 @@ const parseBranches = (text: string): Condition[][] => text.split("\n").map((lin
 export function AutomationEditor() {
   const [state, setState] = useState(() => g.history(EXAMPLE))
   const [selected, setSelected] = useState<string>()
+  const [selectedEdge, setSelectedEdge] = useState<string>()
   const [refusal, setRefusal] = useState<g.Refusal | null>(null)
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const graph = state.present
@@ -72,8 +73,8 @@ export function AutomationEditor() {
     },
   }))
   const edges: Edge[] = graph.edges.map((edge) => ({
-    id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort,
-    markerEnd: { type: MarkerType.ArrowClosed }, label: edge.sourcePort === "next" ? undefined : edge.sourcePort,
+    id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected: selectedEdge === edge.id,
+    markerEnd: { type: MarkerType.ArrowClosed }, style: selectedEdge === edge.id ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined, label: edge.sourcePort === "next" ? undefined : edge.sourcePort,
     labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: "var(--foreground)", fontSize: 11 },
   }))
   const node = graph.nodes.find(({ id }) => id === selected)
@@ -107,7 +108,8 @@ export function AutomationEditor() {
                 const next = g.connect(graph, automationKinds, { id: `${source}.${sourceHandle ?? "next"}`, source, target, sourcePort: sourceHandle ?? "next", targetPort: targetHandle ?? "in", config: {} })
                 if (g.isRefusal(next)) setRefusal(next); else edit(next)
               }}
-              onNodeClick={(_, { id }) => setSelected(id)} onPaneClick={() => setSelected(undefined)}
+              onNodeClick={(_, { id }) => { setSelected(id); setSelectedEdge(undefined) }} onEdgeClick={(_, { id }) => { setSelectedEdge(id); setSelected(undefined) }}
+              onPaneClick={() => { setSelected(undefined); setSelectedEdge(undefined) }}
               onNodeDragStart={() => setState(g.checkpoint)}
               onNodesChange={(changes) => changes.forEach((change) => { if (change.type === "position" && change.position) setState((current) => g.replace(current, g.moveNode(current.present, change.id, change.position as g.CanvasNode["position"]))) })}
               onDelete={({ nodes: gone, edges: cut }) => edit(g.remove(graph, gone.map(({ id }) => id).filter((id) => id !== "start"), cut.map(({ id }) => id)))}>
