@@ -17,6 +17,7 @@ import { ProvenanceChain, ProvenanceValue } from "@/components/provenance"
 import { useInspector } from "@/lib/inspector"
 import { KINDS, STATUS } from "@/lib/kinds"
 import { ViewToggle, useCardView, useView } from "@/lib/view"
+import { useViewer } from "@/lib/viewer"
 import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
@@ -355,9 +356,11 @@ const Id = ({ label, value, short }: { readonly label: string; readonly value: s
   <div className="flex min-w-0 flex-col gap-x-3 sm:flex-row sm:items-baseline"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">{label}</dt><dd className="min-w-0 flex-1"><CopyId value={value} short={short} /></dd></div>
 )
 
-/** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what this read lacks. */
+/** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what a recorded snapshot cannot hold. */
 function Technical({ name, lineage }: { readonly name: string; readonly lineage: SourceLineage | undefined }) {
   const { read } = useCatalog()
+  // Who is reading, for display; the server decides what they may see.
+  const viewer = useViewer()
   const artifacts = read.data?.document ?? []
   const index = artifacts.findIndex((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name)
   const entity = artifacts[index]
@@ -388,10 +391,12 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
         </DenseTable>
       </Well></Panel>
     )}
-    <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="p-3">
+    <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="space-y-3 p-3">
+      <p className="text-sm">This page shows a recorded snapshot. Live reads return the access decision and receipt for your account.</p>
       <dl className="space-y-1 text-sm">
-        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None recorded: the demo read has no signed-in principal</dd></div>
-        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Receipt</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None in this recording</dd></div>
+        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Viewing as</dt><dd>{viewer.name}{viewer.role !== null && <span className="text-muted-foreground"> · {viewer.role}</span>}</dd></div>
+        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />Not in the recorded snapshot</dd></div>
+        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Receipt</dt><dd className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />Not in the recorded snapshot</dd></div>
       </dl>
     </Well></Panel>
   </>
