@@ -3,6 +3,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
 import { ChartLine, Database, Gauge, LayoutDashboard, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
+import { Button } from "@/components/ui/button"
+import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
+import { LoginPage } from "./login.tsx"
 import { createRoot } from "react-dom/client"
 import { useGuaranteesMenu } from "./guarantees.tsx"
 import { useQuestionsMenu } from "./questions.tsx"
@@ -21,7 +24,38 @@ const SECTIONS: readonly Section[] = [
   { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", foot: true },
 ]
 
-const root = createRootRoute({ component: () => <Shell sections={SECTIONS} tools={<AgentButton />} /> })
+/**
+ * Signed out (an explicit 401), a visitor sees only the sign-in page; signed in, the Studio.
+ * A failed check keeps the last known account; with none, it offers a retry, never the sign-in page.
+ */
+function Root() {
+  const account = useAccount()
+  const refresh = useRefreshAccount()
+  if (account.data != null) return <Shell sections={SECTIONS} tools={<AgentButton />} account={account.data} onSignOut={() => void signOut(refresh)} />
+  if (account.isPending) return null
+  if (account.isError) {
+    return (
+      <main className="flex min-h-svh flex-col items-center justify-center gap-3 p-8 text-muted-foreground">
+        <p>Studio could not reach its server.</p>
+        <Button variant="outline" onClick={() => void account.refetch()}>Try again</Button>
+      </main>
+    )
+  }
+  return <LoginPage />
+}
+
+/** Sign out, and forget the account only once the server has ended the session. */
+async function signOut(refresh: () => Promise<void>) {
+  try {
+    await authApi.signOut()
+  } catch {
+    window.alert("Sign-out did not complete; you are still signed in. Try again.")
+    return
+  }
+  await refresh()
+}
+
+const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 
 // Dark and light are peers: follow the reader's system setting.

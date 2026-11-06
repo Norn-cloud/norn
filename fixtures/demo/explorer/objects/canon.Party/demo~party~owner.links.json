@@ -1,0 +1,39 @@
+{
+  "objectType": "canon.Party",
+  "id": "demo/party/owner",
+  "items": [
+    {
+      "sourceType": "canon.Holding",
+      "link": "owner",
+      "source": "demo/holding/owner/north/gold",
+      "targetType": "canon.Party",
+      "target": "demo/party/owner",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.Holding",
+      "link": "owner",
+      "source": "demo/holding/owner/south/gold",
+      "targetType": "canon.Party",
+      "target": "demo/party/owner",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.OrderLine",
+      "link": "provider",
+      "source": "demo/order/1/line/1",
+      "targetType": "canon.Party",
+      "target": "demo/party/owner",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.PartyRole",
+      "link": "agent",
+      "source": "demo/party/owner/role/owner",
+      "targetType": "canon.Party",
+      "target": "demo/party/owner",
+      "version": 1
+    }
+  ],
+  "hasMore": false
+}
