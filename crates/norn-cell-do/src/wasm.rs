@@ -53,6 +53,10 @@ pub struct NornCell {
     questions: Option<DemoQuestions>,
     principals: Principals,
     last_refresh_ms: Cell<f64>,
+    /// The verified caller the policy reads, for `GET /v1/access`.
+    caller: std::sync::Arc<crate::policy::CallerSlot>,
+    /// The cell's collections, for `GET /v1/access`.
+    object_types: Vec<String>,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -107,6 +111,12 @@ impl NornCell {
         let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS)
             .map_err(rejected)?;
         let slot = policy.caller();
+        let caller = policy.caller();
+        let object_types = store
+            .model()
+            .object_types()
+            .map(|object_type| object_type.name.as_str().to_owned())
+            .collect();
         let principals = match (issuer, jwks) {
             (Some(issuer), Some(jwks)) => Principals::Tokens(
                 TokenPrincipals::new(&issuer, &jwks, scope.clone(), slot)
@@ -131,6 +141,8 @@ impl NornCell {
             questions,
             principals,
             last_refresh_ms: Cell::new(f64::NEG_INFINITY),
+            caller,
+            object_types,
         })
     }
 
@@ -176,7 +188,17 @@ impl NornCell {
             authorization: authorization.as_deref(),
             now: seconds(now_ms),
         };
-        let response = server::handle_with(&self.host, resolver, questions, &request);
+        let response = if path == "/v1/access" {
+            server::access(
+                &self.host,
+                resolver,
+                &self.caller,
+                &self.object_types,
+                &request,
+            )
+        } else {
+            server::handle_with(&self.host, resolver, questions, &request)
+        };
         let unknown_kid = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(),
             #[cfg(feature = "fixtures")]
