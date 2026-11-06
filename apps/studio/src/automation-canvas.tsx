@@ -52,7 +52,7 @@ export function ExitEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {data?.label && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute max-w-48 truncate rounded border bg-card px-1 text-[11px] leading-4 text-foreground"
+          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute max-w-28 truncate rounded border bg-card px-1 text-[11px] leading-4 text-foreground"
             style={{ transform: `translate(0, -50%) translate(${sourceX + 8}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
