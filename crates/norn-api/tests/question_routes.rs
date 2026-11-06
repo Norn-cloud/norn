@@ -262,24 +262,24 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
 /// WEEK's members but SYN-MELT-15-1, moved a week earlier.
 fn singleton_moves() -> Vec<FactWriteRow> {
     include_str!("../../../fixtures/demo/scrap-yield-k1.csv")
-                .lines()
-                .skip(1)
-                .map(|line| line.split(',').collect::<Vec<_>>())
-                .filter(|fields| {
-                    fields[8].starts_with("2026-10-23")
-                        && fields[3] == "gold"
-                        && fields[2] != "SYN-MELT-15-1"
-                })
-                .map(|fields| {
-                    put(
-                        fields[2],
-                        fields[4].parse().expect("input"),
-                        fields[5].parse().expect("recovered"),
-                        "2026-10-14T12:00:00Z",
-                        fields[3],
-                    )
-                })
-                .collect()
+        .lines()
+        .skip(1)
+        .map(|line| line.split(',').collect::<Vec<_>>())
+        .filter(|fields| {
+            fields[8].starts_with("2026-10-23")
+                && fields[3] == "gold"
+                && fields[2] != "SYN-MELT-15-1"
+        })
+        .map(|fields| {
+            put(
+                fields[2],
+                fields[4].parse().expect("input"),
+                fields[5].parse().expect("recovered"),
+                "2026-10-14T12:00:00Z",
+                fields[3],
+            )
+        })
+        .collect()
 }
 
 fn trace_query(lineage: &str) -> TraceQuery {

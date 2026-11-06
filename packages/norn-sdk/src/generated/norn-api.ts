@@ -103,13 +103,13 @@ export interface components {
             bucket: string;
             /** @description The `lineageRef` handle that answer returned. */
             lineageRef: string;
-            /** @description The same QuestionIR the answer was evaluated from. */
+            /** @description The same `QuestionIR` the answer was evaluated from. */
             question: Record<string, never>;
         };
         /** @description `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer. */
         EvaluateRequest: {
             /**
-             * @description The QuestionIR to admit against the cell's declared metrics. It is
+             * @description The `QuestionIR` to admit against the cell's declared metrics. It is
              *     evaluated once and never installed.
              */
             question: Record<string, never>;

@@ -117,13 +117,7 @@ pub fn handle_with<E: SqlEngine>(
                         org_id: fields.get("orgId").cloned(),
                         environment_id: fields.get("environmentId").cloned(),
                     };
-                    get_answer(
-                        host,
-                        &scope,
-                        actor,
-                        name,
-                        named(runtime),
-                    )
+                    get_answer(host, &scope, actor, name, named(runtime))
                 })
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => {
@@ -135,13 +129,7 @@ pub fn handle_with<E: SqlEngine>(
                             lineage_ref: fields.remove("lineageRef"),
                             bucket: fields.remove("bucket"),
                         };
-                        get_numeric_trace(
-                            host,
-                            &query,
-                            actor,
-                            name,
-                            named(runtime),
-                        )
+                        get_numeric_trace(host, &query, actor, name, named(runtime))
                     })
                     .and_then(|document| document_json(&document))
             }

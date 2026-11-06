@@ -470,7 +470,7 @@
           },
           "question": {
             "type": "object",
-            "description": "The same QuestionIR the answer was evaluated from."
+            "description": "The same `QuestionIR` the answer was evaluated from."
           }
         },
         "additionalProperties": false
@@ -484,7 +484,7 @@
         "properties": {
           "question": {
             "type": "object",
-            "description": "The QuestionIR to admit against the cell's declared metrics. It is\nevaluated once and never installed."
+            "description": "The `QuestionIR` to admit against the cell's declared metrics. It is\nevaluated once and never installed."
           }
         },
         "additionalProperties": false
