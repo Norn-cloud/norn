@@ -392,7 +392,7 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
       </Well></Panel>
     )}
     <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="space-y-3 p-3">
-      <p className="text-sm">This page shows a recorded snapshot. Live reads return the access decision and receipt for your account.</p>
+      <p className="text-sm">This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.</p>
       <dl className="space-y-1 text-sm">
         <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Viewing as</dt><dd>{viewer.name}{viewer.role !== null && <span className="text-muted-foreground"> · {viewer.role}</span>}</dd></div>
         <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />Not in the recorded snapshot</dd></div>
