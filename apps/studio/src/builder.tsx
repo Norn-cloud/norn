@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { ChartLine, Plus } from "lucide-react"
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -131,12 +131,40 @@ export function initialDraft(catalog: QuestionCatalog): Draft {
   return { title: "", measures: catalog.metrics[0] ? [catalog.metrics[0].name] : [], by: time, grain: catalog.grains.includes("week") ? "week" : catalog.grains[0] ?? "", filters: [], start: "", end: "" }
 }
 
-export function QuestionBuilder({ catalog, guard }: { readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode }) {
+/** The checker route is missing (404), has no host bound (503), or cannot be reached: nothing can be checked here. */
+export const checkerServedBy = (status: number | "unreachable"): boolean => status !== "unreachable" && status !== 404 && status !== 503
+
+export const CHECKER_UNSERVED = "The question checker isn't served here."
+
+// One probe per page: every builder (the page, each dashboard tile sheet) shares its answer.
+let checkerProbe: Promise<boolean> | undefined
+const probeChecker = () => checkerProbe ??= fetch("/api/questions/check", { method: "GET", headers: { accept: "application/json" } })
+  .then((response) => checkerServedBy(response.status), () => checkerServedBy("unreachable"))
+
+/** Whether this deployment serves the question checker: unknown until the one probe answers. */
+function useCheckerServed(): boolean | undefined {
+  const [served, setServed] = useState<boolean>()
+  useEffect(() => {
+    let current = true
+    void probeChecker().then((answer) => { if (current) setServed(answer) })
+    return () => { current = false }
+  }, [])
+  return served
+}
+
+export function QuestionBuilder({ catalog, guard, checkerServed }: {
+  readonly catalog: QuestionCatalog
+  readonly guard?: (dirty: boolean) => ReactNode
+  /** Overrides the probe (tests, or a caller that already knows). */
+  readonly checkerServed?: boolean
+}) {
+  const probed = useCheckerServed()
+  const served = checkerServed ?? probed
   const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog)) })
   // The editor revision each check ran at: a check shows only while the editor is still at that revision.
   const [ranAt, setRanAt] = useState<object>()
   const editor = useEditor<Draft>({ initial: initialDraft(catalog), onRun: (draft) => run(draft) })
-  const run = (next: Draft) => { setRanAt(editor.revision); check.mutate(next) }
+  const run = (next: Draft) => { if (served === false) return; setRanAt(editor.revision); check.mutate(next) }
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const setFilter = (index: number, next: Partial<Condition>) => patch({ filters: draft.filters.map((filter, at) => at === index ? { ...filter, ...next } : filter) })
@@ -153,6 +181,8 @@ export function QuestionBuilder({ catalog, guard }: { readonly catalog: Question
       {guard?.(editor.dirty)}
       <Panel icon={ChartLine} label="Question" action={<EditorToolbar editor={editor} />}>
         <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); run(draft) }}>
+          {served === false && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{CHECKER_UNSERVED}</p>}
+          <fieldset disabled={served === false} className="contents">
           <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
           <div className="grid gap-2" data-field="measures">
             <span className={invalid("measures") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Measures</span>
@@ -186,7 +216,8 @@ export function QuestionBuilder({ catalog, guard }: { readonly catalog: Question
             <Field label="From" invalid={invalid("window")}><Input type="date" value={draft.start} aria-invalid={invalid("window") || undefined} onChange={(event) => patch({ start: event.target.value })} /></Field>
             <Field label="Until" invalid={invalid("window")}><Input type="date" value={draft.end} aria-invalid={invalid("window") || undefined} onChange={(event) => patch({ end: event.target.value })} /></Field>
           </div>
-          <Button type="submit" className="justify-self-start" title={`Check (${modKey()}Enter)`} disabled={check.isPending}>{check.isPending ? "Checking…" : "Check with the server"}</Button>
+          <Button type="submit" className="justify-self-start" title={`Check (${modKey()}Enter)`} disabled={check.isPending || served === false}>{check.isPending ? "Checking…" : "Check with the server"}</Button>
+          </fieldset>
         </form>
       </Panel>
       <div className="space-y-3">
