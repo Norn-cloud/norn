@@ -178,7 +178,8 @@ test("the question builder's routes have the assistant's gate: signed-in users o
   const check = (headers: Record<string, string>) => call(env, "/api/questions/check", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ question: { name: "x" } }) })
   for (const route of [catalog, check]) expect((await route({ origin: ORIGIN })).status).toBe(401)
   const cookie = await signUp(env, "qb@example.com")
-  for (const route of [catalog, check]) expect((await route({ cookie, origin: "https://elsewhere.example" })).status).toBe(403)
+  // Like /api/host: a cookie write (the POSTed check) must come from the Studio's origin; a read is a safe method.
+  expect((await check({ cookie, origin: "https://elsewhere.example" })).status).toBe(403)
   const owner = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
   const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner?.orgId }, headers: new Headers({ cookie }) })
   for (const route of [catalog, check]) expect((await route({ "x-api-key": key.key })).status).toBe(403)
