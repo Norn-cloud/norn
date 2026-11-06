@@ -17,7 +17,7 @@ import * as g from "./lib/canvas/graph.ts"
 import { kindStore, type KindStore } from "./lib/canvas/store.ts"
 import { words } from "./lib/format.ts"
 
-export const AGENT_SAVE_BLOCKED = "Saving agents needs the cell's definition routes, which aren't live yet (queued after F2b). Your agent is kept as a draft in this browser until then."
+export const AGENT_SAVE_BLOCKED = "Saving agents needs the cell's definition routes, which aren't live yet. Your agent is kept as a draft in this browser until then."
 export const AGENT_RUN_BLOCKED = "An agent's runs are flow runs in the cell, with a receipt for every tool call; the run route is not live yet."
 
 type AgentPartNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[] }, "part">
@@ -193,12 +193,18 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws, saveLive }: {
 const agentId = (name: string) => `studio.agent.${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "untitled"}`
 
 /** The org's agents: open one, start one, duplicate or retire it. */
-export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { readonly store?: KindStore<AgentDefinition> }) {
+export function AgentsView({ store = kindStore<AgentDefinition>("agent"), bindingsSource = bindingsQuery, initialOpen }: {
+  readonly store?: KindStore<AgentDefinition>
+  /** Where the org's tool bindings come from (CONNECT's /api/connectors/bindings). */
+  readonly bindingsSource?: () => Promise<readonly Binding[]>
+  /** An agent to open straight away (a link to it, or a contact-sheet state). */
+  readonly initialOpen?: string
+}) {
   const client = useQueryClient()
   const list = useQuery({ queryKey: ["definitions", "agent"], queryFn: () => store.list(), retry: false })
-  const bindings = useQuery({ queryKey: ["connectors", "bindings", "agent"], queryFn: bindingsQuery, retry: false })
+  const bindings = useQuery({ queryKey: ["connectors", "bindings", "agent"], queryFn: bindingsSource, retry: false })
   const laws = useQuery({ queryKey: ["definitions"], queryFn: recordedDefinitions, select: (reads) => reads.map(({ document }) => document).filter(({ kind }) => kind === "law").map(({ payload }) => (payload as { id: string }).id) })
-  const [open, setOpen] = useState<{ readonly id: string; readonly copyOf?: string } | null>(null)
+  const [open, setOpen] = useState<{ readonly id: string; readonly copyOf?: string } | null>(initialOpen ? { id: initialOpen } : null)
   const stored = useQuery({ queryKey: ["definitions", "agent", open?.copyOf ?? open?.id], // A query may not resolve to undefined: a definition the cell does not have yet is null (a new agent).
     queryFn: async () => (await store.get(open?.copyOf ?? open?.id ?? "")) ?? null, enabled: open !== null, retry: false })
   const [newName, setNewName] = useState("")

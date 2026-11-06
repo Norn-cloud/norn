@@ -6,8 +6,17 @@ import { node, open, press } from "./canvas.ts"
  * CONNECT's bindings, refusing any agent under the law `demo.refuse_me` the way the cell names a law.
  * Against a deployment (E2E_BASE) the real routes answer.
  */
+/** Whether this deployment's definition routes answer; the stand-in tests skip, with the reason, where they do not. */
+async function routesLive(page: Page): Promise<boolean> {
+  const response = await page.request.get("/api/host/v1/definitions:list?kind=agent&limit=1")
+  return response.status() !== 404
+}
+
 async function cell(page: Page) {
-  if (process.env.E2E_BASE) return
+  if (process.env.E2E_BASE) {
+    test.skip(!(await routesLive(page)), "this deployment's definition routes are not live yet (lane DEFS); the routes-down test covers it")
+    return
+  }
   const saved = new Map<string, { version: number; payload: unknown; retired: boolean }>()
   await page.route("**/api/connectors/bindings", (route) => route.fulfill({ json: { manage: true, bindings: [
     { id: "bind_tickets", app: "helpdesk", tool: "list_tickets", label: "Read tickets", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"a".repeat(64)}`, connector: { gateway: "executor", origin: "https://gateway.example", app: "helpdesk", tool: "list_tickets", version: "v1" } },
@@ -95,9 +104,11 @@ test("agent refusal: the cell's refusal names the law and lands on the law node"
 })
 
 test("agent, before the cell's definition routes are live: the panel says so, saving to the cell is unavailable, the draft stays", async ({ page }) => {
-  test.skip(Boolean(process.env.E2E_BASE), "only meaningful where the routes are absent")
-  await page.route("**/api/connectors/bindings", (route) => route.fulfill({ json: { manage: true, bindings: [] } }))
-  await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ status: 404, json: {} }))
+  if (process.env.E2E_BASE) test.skip(await routesLive(page), "this deployment's definition routes are live")
+  else {
+    await page.route("**/api/connectors/bindings", (route) => route.fulfill({ json: { manage: true, bindings: [] } }))
+    await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ status: 404, json: {} }))
+  }
   await open(page)
   await page.getByRole("button", { name: "Agents", exact: true }).click()
   await expect(page.getByText(/Saving agents needs the cell's definition routes/).first()).toBeVisible()
