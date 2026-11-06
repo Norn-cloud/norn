@@ -8,6 +8,7 @@ import { canonicalJson, connectorVersion, manifestDigest, readDraft, toolManifes
 import { Gateway } from "../gateway.ts"
 import worker, { type Env } from "../index.ts"
 
+const CONTEXT = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
 const ORIGIN = "https://studio-next.norn.cloud"
 const GATEWAY = "https://gateway.example"
 const TOKEN = "gateway-grant-never-in-a-response"
@@ -64,7 +65,7 @@ function stage(gatewayClient = false) {
   /** A new person; with `colleagueOf`, a member of that person's organization instead of their own. */
   const signUp = async (email: string, role = "owner", colleagueOf?: string, environment = true) => {
     const init = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": `198.51.100.${++address % 250}` }, body: JSON.stringify(body) })
-    const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env)
+    const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
     await call("/api/auth/sign-up/email", { email, password: "correct horse battery", name: "Ada" })
     const member = "(SELECT id FROM user WHERE email = ?)"
     if (colleagueOf !== undefined) db.query(`UPDATE member SET organizationId = (SELECT organizationId FROM member WHERE userId = ${member}) WHERE userId = ${member}`).run(colleagueOf, email)
@@ -232,7 +233,7 @@ test("the Worker routes /api/connectors/ through the server-side actor", async (
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY }
-  const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env)
+  const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
   expect([response.status, ((await response.json()) as { code: string }).code]).toEqual([401, "connectors.sign_in"])
 })
 
@@ -287,7 +288,7 @@ test("an unreachable gateway, a malformed path and a third-party sign-in are typ
   db.exec(migration("0001_better_auth.sql"))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
   for (const path of ["/api/auth/sign-in/social", "/api/auth/sign-in/oauth2"]) {
-    const response = await worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ provider: "executor", providerId: "executor" }) }) as Parameters<typeof worker.fetch>[0], env)
+    const response = await worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ provider: "executor", providerId: "executor" }) }) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
     expect(response.status).toBe(403)
   }
 })
@@ -382,7 +383,7 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ")
   const call = async (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers); headers.set("cookie", cookie()); headers.set("origin", ORIGIN); headers.set("cf-connecting-ip", "198.51.100.77")
-    return keep(await worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers, redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env))
+    return keep(await worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers, redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env, CONTEXT))
   }
   const json = (value: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
   await call("/api/auth/sign-up/email", json({ email: "ada@example.com", password: "correct horse battery", name: "Ada" }))
