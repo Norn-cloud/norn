@@ -42,8 +42,8 @@ test("the agent store speaks the cell's definition routes and reads a refusal's 
 })
 
 test("a binding pinned by the gateway becomes the agent check's binding entry; an unpinned one does not", () => {
-  const base = { id: "bind_x", app: "chat", tool: "post", label: "Post", inputMapping: {}, runRole: "member" as const, updatedBy: "u", updatedAt: 0 }
-  expect(pinOf({ ...base, manifestDigest: "sha256:ab", connector: { gateway: "executor", origin: "https://g", app: "chat", tool: "post", version: "v3" } } as never))
+  const base = { id: "bind_x", app: "chat", tool: "post", label: "Post", inputMapping: {}, runRole: "member" as const, updatedBy: "u", updatedAt: 0, manifestDigest: "", connectorRef: "", definition: null }
+  expect(pinOf({ ...base, manifestDigest: "sha256:ab", connectorRef: "executor:chat/post@v3" }))
     .toEqual({ id: "bind_x", connector: "executor:chat/post@v3", manifestDigest: "sha256:ab" })
   expect(pinOf(base)).toBeNull()
 })

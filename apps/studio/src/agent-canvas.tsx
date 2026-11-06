@@ -45,12 +45,9 @@ const NODE_TYPES = { part: AgentPart }
 
 /** Where a finding about the payload lands: the i-th wired tool or law its pointer names, else the agent. */
 /** The binding as CONNECT pins it: the connector it runs on and the digest of its tool manifest. */
-type PinnedBinding = Binding & { readonly manifestDigest?: string; readonly connector?: { readonly gateway: string; readonly origin: string; readonly app: string; readonly tool: string; readonly version: string } }
-
-/** The agent check's binding entry, or null for a binding not pinned yet. The connector is named gateway:app/tool@version. */
+/** The agent check's binding entry, or null for a binding without a pin. */
 export function pinOf(binding: Binding): { readonly id: string; readonly connector: string; readonly manifestDigest: string } | null {
-  const { manifestDigest, connector } = binding as PinnedBinding
-  return manifestDigest && connector ? { id: binding.id, connector: `${connector.gateway}:${connector.app}/${connector.tool}@${connector.version}`, manifestDigest } : null
+  return binding.manifestDigest && binding.connectorRef ? { id: binding.id, connector: binding.connectorRef, manifestDigest: binding.manifestDigest } : null
 }
 
 function issueOf(graph: g.Graph, agent: AgentDefinition, code: string, message: string, pointer: string | null): Issue {

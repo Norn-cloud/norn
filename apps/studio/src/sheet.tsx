@@ -54,7 +54,7 @@ const SAMPLE: AgentDefinition = {
   name: "support.triage", title: "Support triage", model: "claude-sonnet-5-5", prompt: "Triage new tickets and draft replies.", tools: ["bind_tickets", "bind_gone"],
   budgets: { maxRuns: 50, maxToolCalls: 400, maxCostUsd: "25.00" }, laws: ["core.analytics.restatement_policy"], decisionPolicy: { approve: "laws", laws: ["core.analytics.restatement_policy"], deciderRoles: ["admin"] },
 }
-const PINNED = { id: "bind_tickets", app: "helpdesk", tool: "list_tickets", label: "Read tickets", inputMapping: {}, runRole: "member" as const, updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"a".repeat(64)}`, connector: { gateway: "executor", origin: "https://gateway.example", app: "helpdesk", tool: "list_tickets", version: "v1" } }
+const PINNED = { id: "bind_tickets", app: "helpdesk", tool: "list_tickets", label: "Read tickets", inputMapping: {}, runRole: "member" as const, updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"a".repeat(64)}`, connectorRef: "executor:helpdesk/list_tickets@v1", definition: null }
 const oneAgent: KindStore<AgentDefinition> = {
   list: async () => ({ items: [{ id: "studio.agent.support_triage", title: "Support triage", version: 3, lifecycle: "active", updatedAtMs: 0 }], cursor: null }),
   get: async () => ({ id: "studio.agent.support_triage", version: 3, payload: SAMPLE }),
