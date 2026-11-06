@@ -45,3 +45,23 @@ describe("action input labels and groups", () => {
     expect(lowered({})).toEqual(input)
   })
 })
+
+describe("flow display data", () => {
+  test("lowerFlow reports the flow title and each labelled step, and names its artifacts by the title", async () => {
+    const { X, flow, fn, lowerFlow, perform, route, sleep, succeed, seconds } = await import("../src/builder/index.ts")
+    const notify = fn({ id: "norn.decision", version: "1", input: record({ text: text() }), output: record({ ok: text() }) })
+    const def = flow({ id: "studio.flow.approve", version: "1.0.0", title: "Approve purchase" }, [
+      perform("ask", notify, X.record({ text: X.lit("approve?") }), { label: "Ask the approver" }),
+      route([{ when: X.lit(true), then: [sleep("wait", seconds(5), { label: "Wait a moment" })] }]),
+      perform("unlabelled", notify, X.record({ text: X.lit("x") })),
+      succeed(X.record({ done: X.lit(true) })),
+    ])
+    const built = lowerFlow(def, { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "test" })
+    if (!built.ok) throw new Error(JSON.stringify(built.diagnostics))
+    expect(built.flow).toEqual({
+      id: "studio.flow.approve", version: "1.0.0", title: "Approve purchase",
+      steps: [{ id: "ask", label: "Ask the approver" }, { id: "wait", label: "Wait a moment" }],
+    })
+    expect((built.artifacts as Array<{ name: string }>).map((artifact) => artifact.name)).toEqual(["Approve purchase run", "Approve purchase"])
+  })
+})

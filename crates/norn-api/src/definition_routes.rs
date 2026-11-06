@@ -637,9 +637,12 @@ fn validate<E: SqlEngine>(
         .and_then(Value::as_str)
         .map(|title| title.trim().to_owned())
         .unwrap_or_default();
-    let title = flow
-        .as_ref()
-        .map_or(title, |flow| flow.summary.flow_id.clone());
+    let title = flow.as_ref().map_or(title, |flow| {
+        flow.summary
+            .title
+            .clone()
+            .unwrap_or_else(|| flow.summary.flow_id.clone())
+    });
     Ok((
         Admitted {
             title,
@@ -661,6 +664,10 @@ fn flow_summary(definition: &RetainedDefinition) -> Option<crate::flow_definitio
     Some(crate::flow_definitions::FlowSummary {
         flow_id: flow_id.to_owned(),
         version: value.pointer("/flow/version")?.as_str()?.to_owned(),
+        title: value
+            .pointer("/flow/title")
+            .and_then(Value::as_str)
+            .map(|title| title.trim().to_owned()),
         rule_artifact_id,
         run_type: crate::flow_definitions::run_type(flow_id),
     })

@@ -1436,3 +1436,61 @@ fn a_cell_with_an_installed_flow_reopens_unchanged() {
     );
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+/// A flow carries `lowerFlow`'s display data in `payload.flow`: its title
+/// names it in listings and in the flow summary, its step labels travel with
+/// the payload, and bad labels are typed refusals.
+#[test]
+fn a_flow_carries_its_title_and_step_labels() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let mut body = flow_body(FLOW_ID, &lowered(), None);
+    body["payload"]["flow"]["title"] = json!("Route a WhatsApp message");
+    body["payload"]["flow"]["steps"] =
+        json!([{ "id": "classify", "label": "Classify the intent" }]);
+    let (status, installed) = install_flow(&cell, &body);
+    assert_eq!(status, 200, "{installed}");
+    assert_eq!(
+        installed["flow"]["title"],
+        json!("Route a WhatsApp message")
+    );
+    let (_, document) = get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER);
+    assert_eq!(document["flow"]["title"], json!("Route a WhatsApp message"));
+    assert_eq!(
+        document["payload"]["flow"]["steps"][0]["label"],
+        json!("Classify the intent")
+    );
+    let (_, page) = get(&cell, "/v1/definitions:list", "&kind=flow", VIEWER);
+    assert_eq!(page["items"][0]["title"], json!("Route a WhatsApp message"));
+    for (flow_edit, expected) in [
+        (
+            json!({ "title": "" }),
+            ("definition.flow_label_invalid", "/flow/title"),
+        ),
+        (
+            json!({ "steps": [{ "id": "classify", "label": "two\nlines" }] }),
+            ("definition.flow_label_invalid", "/flow/steps/0/label"),
+        ),
+        (
+            json!({ "steps": [{ "id": "a", "label": "A" }, { "id": "a", "label": "B" }] }),
+            ("definition.flow_shape_invalid", "/flow/steps/1"),
+        ),
+        (
+            json!({ "owner": "x" }),
+            ("definition.flow_shape_invalid", "/flow/owner"),
+        ),
+    ] {
+        let mut body = flow_body(FLOW_ID, &lowered(), Some(1));
+        for (key, value) in flow_edit.as_object().unwrap() {
+            body["payload"]["flow"][key.as_str()] = value.clone();
+        }
+        let (_, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+        assert!(
+            pointers(&refused).contains(&(expected.0.to_owned(), expected.1.to_owned())),
+            "{expected:?} in {refused}"
+        );
+    }
+}
