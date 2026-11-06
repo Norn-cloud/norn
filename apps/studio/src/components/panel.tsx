@@ -15,7 +15,7 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
   id?: string
 }) {
   return (
-    <section id={id} data-slot="panel" className={cn("min-w-0 rounded-xl border bg-card p-1.5", className)}>
+    <section id={id} data-slot="panel" className={cn("min-w-0 rounded-lg border bg-card p-1.5", className)}>
       <header className="flex h-9 items-center gap-2 px-2.5 text-sm">
         {Icon && <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
         <h2 className="min-w-0 truncate font-medium">{label}</h2>
@@ -28,7 +28,7 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
 
 /** The inset well inside a panel: a slightly grey fill with its own hairline and smaller radius. */
 export function Well({ children, className }: { children: ReactNode; className?: string }) {
-  return <div data-slot="well" className={cn("rounded-lg border bg-surface-subtle", className)}>{children}</div>
+  return <div data-slot="well" className={cn("rounded-md border bg-surface-subtle", className)}>{children}</div>
 }
 
 /** What a well shows when the server has nothing for it: an icon, "No data yet" and one plain sentence. */
