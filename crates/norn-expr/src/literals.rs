@@ -67,14 +67,53 @@ fn literal(entries: &[(&Node<'_>, &Node<'_>)]) -> ObjectLiteral {
     for (key, value) in entries {
         let name = match key {
             Node::String(name) | Node::Identifier(name) => (*name).to_owned(),
-            _ => {
+            Node::Null
+            | Node::Bool(_)
+            | Node::Number(_)
+            | Node::TemplateString(_)
+            | Node::Pointer
+            | Node::Array(_)
+            | Node::Object(_)
+            | Node::Assignments { .. }
+            | Node::Closure { .. }
+            | Node::Root
+            | Node::Parenthesized(_)
+            | Node::Member { .. }
+            | Node::Slice { .. }
+            | Node::Interval { .. }
+            | Node::Conditional { .. }
+            | Node::Unary { .. }
+            | Node::Binary { .. }
+            | Node::FunctionCall { .. }
+            | Node::MethodCall { .. }
+            | Node::Error { .. } => {
                 object.computed_keys = true;
                 continue;
             }
         };
         let value = match value {
             Node::String(text) => FieldValue::String((*text).to_owned()),
-            _ => FieldValue::Other,
+            Node::Identifier(_)
+            | Node::Null
+            | Node::Bool(_)
+            | Node::Number(_)
+            | Node::TemplateString(_)
+            | Node::Pointer
+            | Node::Array(_)
+            | Node::Object(_)
+            | Node::Assignments { .. }
+            | Node::Closure { .. }
+            | Node::Root
+            | Node::Parenthesized(_)
+            | Node::Member { .. }
+            | Node::Slice { .. }
+            | Node::Interval { .. }
+            | Node::Conditional { .. }
+            | Node::Unary { .. }
+            | Node::Binary { .. }
+            | Node::FunctionCall { .. }
+            | Node::MethodCall { .. }
+            | Node::Error { .. } => FieldValue::Other,
         };
         object.fields.insert(name, value);
     }
@@ -82,7 +121,11 @@ fn literal(entries: &[(&Node<'_>, &Node<'_>)]) -> ObjectLiteral {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "fixed expressions")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "fixed expressions"
+)]
 mod tests {
     use super::*;
 

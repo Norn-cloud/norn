@@ -63,7 +63,7 @@ pub fn perform_refs(payload: &Value) -> Result<Vec<PerformRef>, (String, String)
                     }
                 }
             }
-            _ => {}
+            Some(_) | None => {}
         }
     }
     Ok(found)
