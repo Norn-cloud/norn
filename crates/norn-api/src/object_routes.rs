@@ -26,6 +26,9 @@ use norn_cell::{MAIN_WORLD, ObjectRecord, engine::SqlEngine};
 
 /// Largest page a caller may ask for.
 pub const MAX_PAGE: usize = 100;
+/// Rows read per store call, whatever the page size: a small page over many
+/// unreadable rows costs batches, not one store read per row.
+pub const SCAN_BATCH: usize = 256;
 
 /// Server-owned mapping from principal and resource to the kernel PDP input.
 /// No client role, grant or scope enters here.
@@ -154,9 +157,9 @@ pub fn get_object_page<E: SqlEngine>(
     let mut cursor = after.map(str::to_owned);
     loop {
         let batch = reader
-            .list_after(MAIN_WORLD, object_type, cursor.as_deref(), limit)
+            .list_after(MAIN_WORLD, object_type, cursor.as_deref(), SCAN_BATCH)
             .map_err(Refusal::host)?;
-        let exhausted = batch.len() < limit;
+        let exhausted = batch.len() < SCAN_BATCH;
         for row in batch {
             cursor = Some(row.id.clone());
             if !row_visible(host, access, &actor, &row) {
