@@ -102,7 +102,7 @@ test("validate: the cell's refusal lands on each field it names; fixing them com
   await expect(form.getByLabel("Quantity")).toHaveAttribute("aria-invalid", "true")
   await expect(form.locator('[data-pointer="/quantity"]')).toContainText("must be an exact number")
   await expect(form.locator('[data-pointer="/resource_code"]')).toContainText("Resource code is required.")
-  await expect(form.getByRole("button", { name: /Where it is, 1 problem/ })).toBeVisible()
+  await expect(form.getByRole("button", { name: /Where it is\s*, 1 problem/ })).toBeVisible()
   await shoot(page, "refused")
   await fillHolding(page, "demo/holding/9002", "12.500")
   await form.getByRole("button", { name: "Open a holding" }).click()
