@@ -147,7 +147,7 @@ const EDGE_TYPES = { step: StepEdge, bundle: BundleEdge }
 const FLAGS = ["initial", "terminal", "immutable"] as const
 
 /** Selected states and steps: rename, flags, rules, or delete. */
-function Inspector({ editing, issues, standing }: { readonly editing: Editing; readonly issues: readonly Issue[]; readonly standing: readonly Finding[] }) {
+function Inspector({ editing, issues, standing, kinds }: { readonly editing: Editing; readonly issues: readonly Issue[]; readonly standing: readonly Finding[]; readonly kinds: g.Kinds }) {
   const { graph, selection, edit, select } = editing
   const count = selection.nodes.length + selection.edges.length
   const remove = () => { edit(g.remove(graph, selection.nodes, selection.edges)); select({ nodes: [], edges: [] }) }
@@ -201,7 +201,20 @@ function Inspector({ editing, issues, standing }: { readonly editing: Editing; r
             {siblings.map((id) => { const one = graph.edges.find((other) => other.id === id)!; return (
               <li key={id} className="flex items-center justify-between gap-2 rounded-lg border border-node-border bg-card px-2.5 py-1.5 text-sm">
                 <span>{words(one.source)} → {words(one.target)}</span>
-                <Button size="sm" variant="ghost" aria-label={`Remove the step from ${words(one.source)}`} onClick={() => { edit(g.remove(graph, [], [id])); select({ nodes: [], edges: siblings.filter((other) => other !== id) }) }}><Trash2 /></Button>
+                <span className="flex items-center gap-1">
+                  {/* Reconnect, for a step drawn inside a bundle: point this one step at another state (undoable). */}
+                  <select aria-label={`Change target of the step from ${words(one.source)}`} className="h-8 rounded-3xl bg-input/50 px-2 text-xs" value=""
+                    onChange={(event) => {
+                      const target = event.target.value
+                      if (!target) return
+                      edit(g.reconnect(graph, kinds, id, { source: one.source, sourcePort: one.sourcePort, target, targetPort: one.targetPort }))
+                      select({ nodes: [], edges: [id] })
+                    }}>
+                    <option value="">Change target…</option>
+                    {graph.nodes.filter(({ id: state }) => state !== one.target && state !== one.source).map(({ id: state }) => <option key={state} value={state}>{words(state)}</option>)}
+                  </select>
+                  <Button size="sm" variant="ghost" aria-label={`Remove the step from ${words(one.source)}`} onClick={() => { edit(g.remove(graph, [], [id])); select({ nodes: [], edges: siblings.filter((other) => other !== id) }) }}><Trash2 /></Button>
+                </span>
               </li>
             ) })}
           </ul>
@@ -262,7 +275,7 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     palette: ({ graph, edit, select }) => (
       <Button size="sm" variant="ghost" className="gap-1.5 pl-1.5" onClick={() => { const id = g.freshId(graph, "new_state"); edit(g.addNode(graph, { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} })); select({ nodes: [id], edges: [] }) }}><KindChip kind="state" className="size-5 rounded-md" />State</Button>
     ),
-    inspector: (editing, found) => <Inspector editing={editing} issues={found} standing={standing} />,
+    inspector: (editing, found) => <Inspector editing={editing} issues={found} standing={standing} kinds={lifecycleKinds(lifecycle)} />,
   }
 }
 

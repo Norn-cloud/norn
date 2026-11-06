@@ -231,3 +231,18 @@ test("bundle: steps of one step into one state draw as one; hover lights its sou
   await press(page, "z")
   await expect(bundle).toHaveText(`Cancel · from ${count} states`)
 })
+
+test("bundle reconnect: re-point one step of a bundle to another state; the bundle shrinks, the step draws on its own; undo", async ({ page }) => {
+  await open(page)
+  const bundle = page.locator('[data-edge-label^="bundle:cancel:"]')
+  await reveal(page, bundle)
+  const count = Number((await bundle.textContent())?.match(/from (\d+)/)?.[1])
+  await bundle.click()
+  await page.getByLabel("Change target of the step from Approved").selectOption("on_hold")
+  await expect(bundle).toHaveText(`Cancel · from ${count - 1} states`)
+  await expect(page.locator('.react-flow__edge[data-id="cancel:approved"]')).toHaveCount(1)
+  await expect(page.getByText(/Approved → On hold/).first()).toBeVisible()
+  await press(page, "z")
+  await expect(bundle).toHaveText(`Cancel · from ${count} states`)
+  await expect(page.locator('.react-flow__edge[data-id="cancel:approved"]')).toHaveCount(0)
+})
