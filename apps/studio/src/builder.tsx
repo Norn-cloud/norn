@@ -134,6 +134,12 @@ function Choice({ label, field, invalid, value, onChange, options }: { readonly 
 type QuestionIR = ReturnType<typeof buildQuestion>
 
 /** The draft a stored QuestionIR reopens as, so editing it loses nothing the builder can write. */
+/** Whether a stored question's window is whole UTC days, the only windows a draft can hold without changing them. */
+export const windowFitsDraft = (question: Partial<QuestionIR>): boolean =>
+  [question.window?.start, question.window?.end].every((iso) => iso === undefined || (typeof iso === "string" && iso === `${iso.slice(0, 10)}T00:00:00Z`))
+
+export const UNEDITABLE = "This question cannot be edited without changing it."
+
 export function draftOf(question: Partial<QuestionIR> & { readonly name?: string }, title?: string): Draft {
   const day = (iso: unknown) => typeof iso === "string" ? iso.slice(0, 10) : ""
   const [by] = question.groupBy ?? []
@@ -153,13 +159,15 @@ export function initialDraft(catalog: QuestionCatalog): Draft {
   return { title: "", measures: catalog.metrics[0] ? [catalog.metrics[0].name] : [], by: time, grain: catalog.grains.includes("week") ? "week" : catalog.grains[0] ?? "", filters: [], start: "", end: "" }
 }
 
-export function QuestionBuilder({ catalog, guard, initial, onUse }: {
+export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported }: {
   readonly catalog: QuestionCatalog
   readonly guard?: (dirty: boolean) => ReactNode
   /** The draft to open; a new question otherwise. */
   readonly initial?: Draft
   /** Offered once the checker admits the question: hands the admitted QuestionIR to the caller (e.g. a dashboard tile). */
   readonly onUse?: (question: QuestionIR, title: string) => void
+  /** Why the opened question cannot be used again from this form (its window is finer than days): "Use this question" stays off. */
+  readonly unsupported?: string
 }) {
   const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog)) })
   // The editor revision each check ran at: a check shows only while the editor is still at that revision.
@@ -219,6 +227,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
         </form>
       </Panel>
       <div className="space-y-3">
+        {unsupported && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{unsupported}</p>}
         {checked.data === undefined && checked.error === null && !(check.isPending && check.variables === draft) && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
         {checked.error && <p role="alert" className="text-destructive">{checked.error.message}</p>}
         {/* One place for a refusal: the panel links each finding to its field; its codes are under Details. */}
@@ -227,7 +236,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
         {/* Only the question the checker admitted, and only while the form still shows it. */}
         {/* Run: the question exactly as the checker admitted it, while the form still shows it. */}
         {checked.data?.admitted && check.variables && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
-        {onUse && checked.data?.admitted && check.variables && <Button type="button" onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
+        {onUse && checked.data?.admitted && check.variables && <Button type="button" disabled={unsupported !== undefined} onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
         {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
       </div>
     </div>

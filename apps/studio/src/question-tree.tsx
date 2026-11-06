@@ -75,9 +75,13 @@ export function recommendedDraft(tree: Recommendations): Draft {
 const conditionsOf = (choice: Choice): readonly Condition[] =>
   ((choice.value.filter ?? []) as { path: { property: string }; operator: string; value: unknown }[]).map(({ path, operator, value }) => ({ property: path.property, operator, value: String(value) }))
 
-/** Which option of each column the draft is on; "custom" when it was edited beyond the offered options. */
-export function selection(tree: Recommendations, draft: Draft) {
-  const condition = tree.conditions.find((choice) => same(conditionsOf(choice), draft.filters))?.id ?? (draft.filters.length > 0 ? "custom" : "every")
+/**
+ * Which option of each column the draft is on; "custom" when it was edited
+ * beyond the offered options, or when the reader chose "Another condition"
+ * (`customCondition`), even if its filter happens to equal a recommendation.
+ */
+export function selection(tree: Recommendations, draft: Draft, customCondition = false) {
+  const condition = customCondition ? "custom" : tree.conditions.find((choice) => same(conditionsOf(choice), draft.filters))?.id ?? (draft.filters.length > 0 ? "custom" : "every")
   const window = tree.windows.find(({ value }) => {
     const w = value.window as { start?: string; end?: string }
     return w.start?.slice(0, 10) === draft.start && w.end?.slice(0, 10) === draft.end
@@ -159,7 +163,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       if (stable(buildQuestion(next, catalog)) !== stable(parsed.data)) throw new QuestionDefinitionError("definition.unsupported", "This question cannot be reopened without changing it.")
       const { name: _storedName, ...storedQuestion } = buildQuestion(next, catalog)
       const signoff = stored.signoff
-      editor.open(next); setSaved({ id: stored.id, version: stored.version }); setVerified(Boolean(signoff)); setRemoved(undefined)
+      editor.open(next); setCustomCondition(false); setSaved({ id: stored.id, version: stored.version }); setVerified(Boolean(signoff)); setRemoved(undefined)
       setSignOff(signoff && signoff.restatementSha256 === stored.words.sha256 ? { sha256: signoff.restatementSha256, atMs: signoff.signedAtMs, signer: signoff.signer } : undefined)
       setChecked(undefined); setCheckedKey(undefined); setServerWords({ key: JSON.stringify(storedQuestion), value: stored.words }); setRestatementFailure(undefined); setSaveError(undefined)
     } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
@@ -208,7 +212,9 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
     finally { setSaving(false) }
   }
-  const chosen = selection(tree, draft)
+  // Set by choosing "Another condition", cleared by choosing an offered one or opening a saved question.
+  const [customCondition, setCustomCondition] = useState(false)
+  const chosen = selection(tree, draft, customCondition)
   const issues = issuesOf(currentCheck?.verdict)
   const invalid = (field: string) => issues.some((issue) => issue.field === field || issue.field?.startsWith(`${field}.`))
   const grains = tree.grains[draft.by] ?? []
@@ -239,9 +245,9 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
         </div>
         <ChoiceColumn title="Only where" field="filters" invalid={invalid("filter") || invalid("filters")} options={conditionOptions} selected={chosen.condition}
           onSelect={(id) => {
-            if (id === "custom") return patch({ filters: [custom] })
+            if (id === "custom") { setCustomCondition(true); return patch({ filters: [custom] }) }
             const choice = tree.conditions.find((entry) => entry.id === id)
-            if (choice) patch({ filters: conditionsOf(choice) })
+            if (choice) { setCustomCondition(false); patch({ filters: conditionsOf(choice) }) }
           }}>
           {chosen.condition === "custom" && (
             <div className="grid gap-2 rounded-lg border bg-card p-2 text-sm">
