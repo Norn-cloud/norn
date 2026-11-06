@@ -1465,7 +1465,7 @@ fn activation_identity_is_canonical_and_events_are_closed() {
     };
     let other_origin = ActivationKey {
         origin: "other.app".into(),
-        ..key.clone()
+        ..key
     };
     for other in [shifted, other_origin] {
         assert_ne!(other.id().expect("canonical"), id);
