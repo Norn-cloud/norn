@@ -240,7 +240,13 @@ pub fn keyed_lineage_handle(key: &[u8], lineage_ref: &str) -> String {
         .chain_update(lineage_ref.as_bytes())
         .finalize();
     let outer = Sha256::new().chain_update(pad(0x5c)).chain_update(inner).finalize();
-    outer.iter().map(|byte| format!("{byte:02x}")).collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut handle = String::with_capacity(64);
+    for byte in outer {
+        handle.push(char::from(HEX[usize::from(byte >> 4)]));
+        handle.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    handle
 }
 
 /// Whether `handle` is the keyed handle of `lineage_ref`, compared in constant time.
