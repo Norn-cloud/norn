@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -858,18 +859,20 @@ def workflow_context_canaries(source: str) -> None:
         for name in ("core", "plan", "full"):
             expression = workflow["jobs"][name]["if"]
             for event in ("pull_request", "push", "merge_group", "workflow_dispatch", "pull_request_target", "issue_comment"):
-                for draft in (False, True):
+                for draft, base_ref in itertools.product((False, True), ("main", "feature/base", "")):
                     for action in ("opened", "synchronize", "reopened", "ready_for_review"):
                         if event == "pull_request" and action not in workflow["on"]["pull_request"]["types"]:
                             raise AssertionError(f"missing PR activity: {action}")
                         candidate_expression = expression.replace("github.event_name", repr(event)).replace(
-                            "github.event.pull_request.draft", str(draft)).replace("always()", "True").replace(
+                            "github.event.pull_request.draft", str(draft)).replace(
+                            "github.event.pull_request.base.ref", repr(base_ref)).replace("always()", "True").replace(
                             "cancelled()", "False").replace("&&", " and ").replace("||", " or ")
                         candidate_expression = re.sub(r"!(?!=)", " not ", candidate_expression)
+                        # A stacked pull request plans nothing: core runs, full still runs and fails.
                         expected = event not in ("pull_request_target", "issue_comment") and not (
-                            name == "plan" and event == "pull_request" and draft)
+                            name == "plan" and event == "pull_request" and (draft or base_ref != "main"))
                         if bool(eval(candidate_expression, {"__builtins__": {}}, {})) != expected:
-                            raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
+                            raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}/{base_ref}")
         for event in ("pull_request", "merge_group", "push", "workflow_dispatch"):
             for draft in (False, True):
                 expression = workflow["jobs"]["full"]["if"].replace("github.event_name", repr(event)).replace(
@@ -878,6 +881,42 @@ def workflow_context_canaries(source: str) -> None:
                 expression = re.sub(r"!(?!=)", " not ", expression)
                 if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request" or draft):
                     raise AssertionError(f"cancelled verdict scheduling drift: {event}/{draft}")
+        stacked = " && !(github.event_name == 'pull_request' && github.event.pull_request.base.ref != 'main')"
+        # Stacked runs must never satisfy a required check: core keeps running,
+        # full keeps running and fails, and only plan (hence every bundle) is skipped.
+        for name in ("core", "full"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["if"] += stacked
+            rejected(f"stacked pull request skips required {name}", document)
+        for before, after in ((stacked, ""), ("!= 'main'", "== 'main'"), ("!= 'main'", "!= 'develop'"),
+                              ("github.event.pull_request.base.ref", "github.base_ref || 'main'")):
+            document = copy.deepcopy(workflow)
+            document["jobs"]["plan"]["if"] = document["jobs"]["plan"]["if"].replace(before, after)
+            if document["jobs"]["plan"]["if"] == workflow["jobs"]["plan"]["if"]:
+                raise AssertionError(f"stacked plan mutation is a no-op: {before}")
+            rejected(f"stacked plan admission mutation {before}", document)
+        verdict_step = workflow["jobs"]["full"]["steps"][0]
+        stacked_line = next(line for line in verdict_step["run"].splitlines() if '"$BASE_REF" = main' in line)
+        for label, change in (("dropped", lambda step: step.__setitem__("run", step["run"].replace(stacked_line + "\n", ""))),
+                              ("unbound", lambda step: step["env"].__setitem__("BASE_REF", "main"))):
+            document = copy.deepcopy(workflow)
+            change(document["jobs"]["full"]["steps"][0])
+            rejected(f"{label} stacked full verdict", document)
+        # Execute the pinned verdict: a stacked run fails even with a forged plan result,
+        # and a main-targeted run with a skipped plan fails too.
+        plan = json.dumps({"mode": "affected", "base_sha": "b" * 40, "head_sha": "h" * 40, "shard": [],
+                           "phase": ["guards"], "bundle": [{"id": "b1", "tasks": ["phase/guards"]}]})
+        for base_ref, planned, test, passes in (("feature/base", "success", "success", False),
+                                                ("feature/base", "skipped", "skipped", False),
+                                                ("main", "skipped", "skipped", False),
+                                                ("main", "success", "success", True)):
+            env = {"PATH": os.environ.get("PATH", ""), "EVENT": "pull_request", "DRAFT": "false",
+                   "BASE_REF": base_ref, "BASE": "b" * 40, "HEAD_SHA": "h" * 40,
+                   "PLAN": plan if planned == "success" else "", "CORE": "success",
+                   "PLANNED": planned, "TEST": test}
+            result = subprocess.run(["bash", "-c", verdict_step["run"]], env=env, capture_output=True, text=True)
+            if (result.returncode == 0) != passes:
+                raise AssertionError(f"stacked verdict drift: {base_ref}/{planned}: {result.stdout}{result.stderr}")
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
         rejected("forged READY attribution", document)
