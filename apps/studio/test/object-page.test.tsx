@@ -76,3 +76,10 @@ test("the object type's own URL still opens the type, not an empty record", asyn
   expect(html).not.toContain("This record is not available yet")
   expect(html).toContain("canon.Holding")
 })
+
+test("the overview says in one sentence what the record is and what its stored links show, and lists who points at it", async () => {
+  const html = await page("canon.Item", "demo/item/gold")
+  expect(html).toContain("Gold scrap is an item record, read from ERPNext by mapping erpnext.three.mapping. Its one declared relation has no stored link in this snapshot.")
+  expect(html).toContain("Holding records (item)")
+  expect(html).toContain("none in this snapshot")
+})
