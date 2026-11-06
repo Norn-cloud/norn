@@ -50,6 +50,8 @@ export async function reveal(page: Page, ...targets: Locator[]) {
     await page.mouse.down()
     await page.mouse.move(from.x + dx, from.y + dy, { steps: 8 })
     await page.mouse.up()
+    // A pan swallows the click that lands right after it (d3's drag suppression); a person pauses, so do the same.
+    await page.waitForTimeout(150)
   }
 }
 
@@ -87,6 +89,7 @@ export async function clickEdge(page: Page, id: string) {
   }, id)
   if (!at) throw new Error(`edge ${id} is covered along its whole length`)
   await page.mouse.click(at.x, at.y)
+  await expect(edge(page, id)).toHaveClass(/selected/)
 }
 
 /** Drag from one handle to another, as a user draws a connection. */
