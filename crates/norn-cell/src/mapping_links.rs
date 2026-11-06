@@ -1,18 +1,92 @@
-//! OBS-LINK-CONVERGE-1 / OBS-LINK-PENDING-1: retained bundles are the claim journal.
+//! OBS-LINK-CONVERGE-1 / OBS-LINK-CONTRIBUTION-1 / OBS-LINK-PENDING-1:
+//! retained bundles are the claim journal.
 use crate::{
     CellError, MAIN_WORLD, StoreReader,
     engine::{SqlEngine, params},
+    host::GuardView,
     mapping_bundle::MappingBundle,
     system::INBOX,
 };
 use norn_ir::{RuntimeObject, RuntimeValue, mapping::ObservedLinkClaim};
 use norn_kernel::{
-    CellCommit, CommitModel, CommitView, FactExpectation, FactKey, FactVersion, LinkKey,
-    LinkMutation, LinkWrite, ObservationAuthorization, ObservationEvent, Observed, TypeCatalog,
+    CellCommit, CommitModel, CommitView, FactExpectation, FactKey, FactMutation, FactVersion,
+    LinkKey, LinkMutation, LinkWrite, ObservationAuthorization, ObservationEvent, Observed,
+    TypeCatalog,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 type MappingCommit = CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>;
+const MAX_CLAIM_BUNDLES: usize = 1000;
+const MAX_CLAIM_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_CLAIMS: usize = 20_000;
+
+/// One journal claim with its recomputed recorded order.
+struct Entry {
+    claim: ObservedLinkClaim,
+    id: String,
+    contribution: String,
+    fresh: bool,
+    disputed: bool,
+}
+
+/// The kernel's per-contribution standing, recomputed over a journal group.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    Current,
+    Superseded,
+    Contested,
+}
+
+/// Edge changes for one bundle and the claims that must back them.
+pub(crate) struct LinkPlan {
+    pub(crate) links: Vec<LinkWrite>,
+    fresh: Vec<ObservedLinkClaim>,
+    sealed: Vec<ObservedLinkClaim>,
+}
+
+fn touches(claim: &ObservedLinkClaim, scope: &BTreeSet<String>) -> bool {
+    scope.contains(&claim.source_key)
+        || claim.target.as_ref().is_some_and(|t| scope.contains(&t.key))
+}
+
+fn source_version(bundle: &MappingBundle) -> Result<&str, CellError> {
+    bundle
+        .raw
+        .get("source_version")
+        .and_then(RuntimeValue::as_str)
+        .filter(|v| !v.trim().is_empty())
+        .ok_or(CellError::MappingBundleMismatch)
+}
+
+/// OBS-LINK-CONTRIBUTION-1, mirroring the kernel's final-set rule: only a
+/// recorded `supersedes` orders two claims of one contribution, retained
+/// evidence never supersedes a fresh claim, and unordered rivals are contested.
+fn standings(group: &[&Entry], target: impl Fn(&Entry) -> Option<FactKey>) -> Vec<Standing> {
+    let superseded: Vec<bool> = group
+        .iter()
+        .map(|k| {
+            group.iter().any(|o| {
+                o.contribution == k.contribution
+                    && o.claim.supersedes.contains(&k.id)
+                    && (o.fresh || !k.fresh)
+            })
+        })
+        .collect();
+    group
+        .iter()
+        .zip(&superseded)
+        .map(|(k, &gone)| {
+            let rival = group.iter().zip(&superseded).any(|(o, &o_gone)| {
+                o.contribution == k.contribution && target(o) != target(k) && !o_gone
+            });
+            match (gone, rival) {
+                (true, _) => Standing::Superseded,
+                (false, true) => Standing::Contested,
+                (false, false) => Standing::Current,
+            }
+        })
+        .collect()
+}
 
 impl<S: SqlEngine> StoreReader<'_, S> {
     /// Immutable, recomputed source claims published by consumed mapping bundles.
@@ -21,7 +95,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// # Errors
     /// Missing/corrupt pins or an exhausted bounded evidence scan.
     pub fn observed_link_claims(&self) -> Result<Vec<ObservedLinkClaim>, CellError> {
-        self.retained_link_claims(None, None, false)
+        let entries = self.claim_journal(None, None)?;
+        Ok(Self::distinct(entries.into_iter()))
+    }
+
+    fn distinct(entries: impl Iterator<Item = Entry>) -> Vec<ObservedLinkClaim> {
+        let claims: BTreeMap<_, _> = entries.map(|e| (e.id, e.claim)).collect();
+        claims.into_values().collect()
     }
 
     /// Consumed bundles in commit order, within the journal or naming a scoped key.
@@ -50,64 +130,110 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         if selected
             .values()
             .fold(0u64, |sum, length| sum.saturating_add(*length))
-            > 4 * 1024 * 1024
+            > MAX_CLAIM_BYTES
         {
             return Err(CellError::OutOfRange("link claim evidence bytes"));
         }
         Ok(selected.into_keys().map(|(_, id)| id).collect())
     }
 
-    fn retained_link_claims(
+    fn claim_bundle(&self, id: &str) -> Result<MappingBundle, CellError> {
+        let encoded: String = self
+            .conn
+            .query_optional(
+                &format!("SELECT observed FROM {INBOX} WHERE observation_id = ?1"),
+                params![id],
+                |row| row.get(0),
+            )?
+            .ok_or(CellError::MappingBundleMismatch)?;
+        let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
+        let bundle: MappingBundle =
+            norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+        if observed.id.0 != id || id != format!("mapping-bundle:{}", bundle.digest) {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        self.recheck_mapping_bundle(&bundle)?;
+        Ok(bundle)
+    }
+
+    /// Recomputed claims in consumption order, then `current` as fresh evidence.
+    /// A claim supersedes every earlier-consumed claim of its contribution with a
+    /// lower source version, so retained identities recompute exactly and a late
+    /// older occurrence records no order over a newer one. With a scope, the read
+    /// closes over touching claims' sources, and only their source/role groups return.
+    fn claim_journal(
         &self,
         current: Option<&MappingBundle>,
         scope: Option<&BTreeSet<String>>,
-        latest: bool,
-    ) -> Result<Vec<ObservedLinkClaim>, CellError> {
-        let ids = self.claim_bundles(scope, 1000)?;
-        let mut claims = BTreeMap::new();
-        let insert = |claims: &mut BTreeMap<String, ObservedLinkClaim>,
-                      claim: ObservedLinkClaim|
-         -> Result<(), CellError> {
-            let id = if latest {
-                claim.contribution_id()?
-            } else {
-                claim.id()?
-            };
-            claims.insert(id, claim);
-            Ok(())
+    ) -> Result<Vec<Entry>, CellError> {
+        let mut cache = BTreeMap::new();
+        let selection = match scope {
+            None => None,
+            Some(scope) => {
+                let mut closed = scope.clone();
+                for id in self.claim_bundles(Some(scope), MAX_CLAIM_BUNDLES)? {
+                    let bundle = self.claim_bundle(&id)?;
+                    for claim in bundle.link_claims()? {
+                        if touches(&claim, scope) {
+                            closed.insert(claim.source_key);
+                        }
+                    }
+                    cache.insert(id, bundle);
+                }
+                for claim in current.map(MappingBundle::link_claims).transpose()?.into_iter().flatten() {
+                    if touches(&claim, scope) {
+                        closed.insert(claim.source_key);
+                    }
+                }
+                Some(closed)
+            }
         };
-        for id in ids {
-            let encoded: String = self
-                .conn
-                .query_optional(
-                    &format!("SELECT observed FROM {INBOX} WHERE observation_id = ?1"),
-                    params![&id],
-                    |row| row.get(0),
-                )?
-                .ok_or(CellError::MappingBundleMismatch)?;
-            let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
-            let bundle: MappingBundle =
-                norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-            if observed.id.0 != id || id != format!("mapping-bundle:{}", bundle.digest) {
-                return Err(CellError::MappingBundleMismatch);
-            }
-            self.recheck_mapping_bundle(&bundle)?;
-            if latest && self.mapping_event_is_disputed(&bundle)? {
-                continue;
-            }
-            for claim in bundle.link_claims()? {
-                insert(&mut claims, claim)?;
-            }
+        let mut bundles = Vec::new();
+        for id in self.claim_bundles(selection.as_ref(), MAX_CLAIM_BUNDLES)? {
+            let bundle = match cache.remove(&id) {
+                Some(bundle) => bundle,
+                None => self.claim_bundle(&id)?,
+            };
+            let disputed = self.mapping_event_is_disputed(&bundle)?;
+            bundles.push((bundle, false, disputed));
         }
         if let Some(bundle) = current {
-            for claim in bundle.link_claims()? {
-                insert(&mut claims, claim)?;
+            bundles.push((bundle.clone(), true, false));
+        }
+        let mut history = BTreeMap::<String, Vec<(String, String)>>::new();
+        let mut entries = Vec::new();
+        for (bundle, fresh, disputed) in &bundles {
+            let version = source_version(bundle)?;
+            let mut recorded = Vec::new();
+            for mut claim in bundle.link_claims()? {
+                let contribution = claim.contribution_id()?;
+                claim.supersedes = history
+                    .get(&contribution)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(earlier, _)| earlier.as_str() < version)
+                    .map(|(_, id)| id.clone())
+                    .collect();
+                let id = claim.id()?;
+                recorded.push((contribution.clone(), id.clone()));
+                entries.push(Entry { claim, id, contribution, fresh: *fresh, disputed: *disputed });
+            }
+            for (contribution, id) in recorded {
+                history.entry(contribution).or_default().push((version.to_owned(), id));
             }
         }
-        if claims.len() > 20_000 {
+        if entries.len() > MAX_CLAIMS {
             return Err(CellError::OutOfRange("observed link claims"));
         }
-        Ok(claims.into_values().collect())
+        if let Some(scope) = scope {
+            let groups: BTreeSet<_> = entries
+                .iter()
+                .filter(|e| touches(&e.claim, scope))
+                .map(|e| (e.claim.source_key.clone(), e.claim.role.clone()))
+                .collect();
+            entries.retain(|e| groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone())));
+        }
+        Ok(entries)
     }
 
     /// Retained claims about one canonical link identity; membership is read separately.
@@ -123,128 +249,103 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let model = CommitModel::new(&catalog);
         let key = model.canonical_link(key);
         let scope = BTreeSet::from([key.source.key.clone(), key.target.key.clone()]);
-        Ok(self
-            .retained_link_claims(None, Some(&scope), false)?
-            .into_iter()
-            .filter(|claim| {
-                claim.target.as_ref().is_some_and(|target| {
-                    model.canonical_link(&LinkKey::new(
-                        FactKey::new(claim.source_type.as_str(), &claim.source_key),
-                        claim.role.as_str(),
-                        FactKey::new(target.object_type.as_str(), &target.key),
-                    )) == key
-                })
+        let entries = self.claim_journal(None, Some(&scope))?;
+        Ok(Self::distinct(entries.into_iter().filter(|e| {
+            e.claim.target.as_ref().is_some_and(|target| {
+                model.canonical_link(&LinkKey::new(
+                    FactKey::new(e.claim.source_type.as_str(), &e.claim.source_key),
+                    e.claim.role.as_str(),
+                    FactKey::new(target.object_type.as_str(), &target.key),
+                )) == key
             })
-            .collect())
+        })))
     }
 
+    /// The exact edge changes the kernel's final claim set will authorize.
     pub(crate) fn mapping_link_plan<E, C, T>(
         &self,
         bundle: &MappingBundle,
         commit: &CellCommit<E, C, T>,
-    ) -> Result<(Vec<LinkWrite>, Vec<ObservedLinkClaim>), CellError> {
+    ) -> Result<LinkPlan, CellError> {
         let catalog = TypeCatalog::new(self.model().object_types())
             .with_interfaces(self.model().interfaces())
             .with_property_types(self.model().property_types());
+        let model = CommitModel::new(&catalog);
         // A plan changes only links touching this commit's objects or this bundle's claims.
-        let current = bundle.link_claims()?;
         let scope: BTreeSet<String> = bundle
             .records
             .iter()
             .map(|record| record.key.clone())
-            .chain(current.iter().map(|claim| claim.source_key.clone()))
-            .chain(
-                current
-                    .iter()
-                    .filter_map(|c| c.target.as_ref().map(|t| t.key.clone())),
-            )
+            .chain(bundle.link_claims()?.into_iter().flat_map(|claim| {
+                std::iter::once(claim.source_key).chain(claim.target.map(|t| t.key))
+            }))
             .collect();
-        let mut claims = self.retained_link_claims(Some(bundle), Some(&scope), true)?;
-        let model = CommitModel::new(&catalog);
-        let mut intents = BTreeMap::<_, BTreeSet<_>>::new();
-        let mut latest = BTreeMap::new();
-        for claim in &claims {
-            let source = FactKey::new(claim.source_type.as_str(), &claim.source_key);
-            let target = claim
-                .target
-                .as_ref()
-                .map(|t| model.canonical(&FactKey::new(t.object_type.as_str(), &t.key)));
-            let targets = intents
-                .entry((model.canonical(&source), claim.role.clone()))
-                .or_default();
-            latest.insert(claim.contribution_id()?, target.clone());
-            targets.insert(target);
-            if targets.len() > 1
+        let entries = self.claim_journal(Some(bundle), Some(&scope))?;
+        let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
+            model.canonical(&FactKey::new(object_type.as_str(), key))
+        };
+        let target = |e: &Entry| e.claim.target.as_ref().map(|t| fact(&t.object_type, &t.key));
+        let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
+        for entry in entries.iter().filter(|e| !e.disputed) {
+            let source = fact(&entry.claim.source_type, &entry.claim.source_key);
+            groups.entry((source, entry.claim.role.clone())).or_default().push(entry);
+        }
+        let present = |key: &FactKey| -> Result<bool, CellError> {
+            let canonical = model.canonical(key);
+            let concrete = match commit.writes.iter().find(|w| model.canonical(&w.key) == canonical) {
+                Some(write) => matches!(write.mutation, FactMutation::Put { .. })
+                    .then(|| write.key.object_type.clone()),
+                None => GuardView(self).concrete(&canonical)?,
+            };
+            Ok(concrete.is_some_and(|concrete| model.is_a(&concrete, &key.object_type)))
+        };
+        let mut links = BTreeMap::new();
+        let mut sealed = Vec::new();
+        for ((source, role), group) in &groups {
+            let standing = standings(group, &target);
+            let current: BTreeSet<_> = group
+                .iter()
+                .zip(&standing)
+                .filter(|(_, s)| **s == Standing::Current)
+                .map(|(e, _)| target(e))
+                .collect();
+            if current.len() > 1
                 && model
-                    .link(&source.object_type, claim.role.as_str())
+                    .link(&source.object_type, role.as_str())
                     .is_some_and(|link| link.cardinality.to == norn_ir::Multiplicity::One)
             {
                 return Err(CellError::UnsupportedMappingProfile);
             }
-        }
-        let present = |key: &FactKey| {
-            model
-                .contains_after(commit, &crate::host::GuardView(self), key)
-                .map_err(|e| CellError::Encoding(e.to_string()))
-        };
-        let mut links = BTreeMap::new();
-        for claim in &claims {
-            let source = FactKey::new(claim.source_type.as_str(), &claim.source_key);
-            if !present(&source)? {
-                continue;
+            let before = links.len();
+            for (entry, standing) in group.iter().zip(&standing) {
+                let Some(to) = target(entry) else { continue };
+                let key = LinkKey::new(source.clone(), role.as_str(), to.clone());
+                let exists = self.mapping_link_exists(&key, model)?;
+                let supported = group
+                    .iter()
+                    .zip(&standing)
+                    .any(|(o, s)| *s != Standing::Superseded && target(o).as_ref() == Some(&to));
+                let mutation = match standing {
+                    Standing::Current if !exists && present(source)? && present(&to)? => {
+                        LinkMutation::Add {
+                            values: model
+                                .effective_link_values(commit, &GuardView(self), &key, &RuntimeObject::new())
+                                .map_err(|e| CellError::Encoding(e.to_string()))?,
+                        }
+                    }
+                    Standing::Superseded if exists && !supported => LinkMutation::Remove,
+                    _ => continue,
+                };
+                links.insert(model.canonical_link(&key), self.mapping_link_write(key, mutation)?);
             }
-            if let Some(target) = &claim.target {
-                let target = FactKey::new(target.object_type.as_str(), &target.key);
-                if !present(&target)? {
-                    continue;
-                }
-                let key = LinkKey::new(source, claim.role.as_str(), target);
-                if !self.mapping_link_exists(&key, model)? {
-                    let values = model
-                        .effective_link_values(
-                            commit,
-                            &crate::host::GuardView(self),
-                            &key,
-                            &RuntimeObject::new(),
-                        )
-                        .map_err(|e| CellError::Encoding(e.to_string()))?;
-                    links.insert(
-                        model.canonical_link(&key),
-                        self.mapping_link_write(key, LinkMutation::Add { values })?,
-                    );
-                }
+            if links.len() > before {
+                sealed.extend(group.iter().map(|e| e.claim.clone()));
             }
-        }
-        for claim in self.retained_link_claims(None, Some(&scope), false)? {
-            let Some(target) = &claim.target else {
-                continue;
-            };
-            let key = LinkKey::new(
-                FactKey::new(claim.source_type.as_str(), &claim.source_key),
-                claim.role.as_str(),
-                FactKey::new(target.object_type.as_str(), &target.key),
-            );
-            let canonical = model.canonical_link(&key);
-            let Some(next) = latest.get(&claim.contribution_id()?) else {
-                continue;
-            };
-            if next.as_ref() == Some(&canonical.target)
-                || intents
-                    .get(&(canonical.source.clone(), claim.role.clone()))
-                    .is_none_or(|targets| targets.contains(&Some(canonical.target.clone())))
-                || !self.mapping_link_exists(&key, model)?
-            {
-                continue;
-            }
-            links.insert(
-                canonical,
-                self.mapping_link_write(key, LinkMutation::Remove)?,
-            );
-            claims.push(claim);
         }
         let mut links: Vec<_> = links.into_values().collect();
         links.sort_by_key(|w| matches!(&w.mutation, LinkMutation::Add { .. }));
-        Ok((links, claims))
+        let fresh = entries.into_iter().filter(|e| e.fresh).map(|e| e.claim).collect();
+        Ok(LinkPlan { links, fresh, sealed })
     }
 
     fn mapping_link_exists(
@@ -252,7 +353,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         key: &LinkKey,
         model: CommitModel<'_, '_>,
     ) -> Result<bool, CellError> {
-        Ok(crate::host::GuardView(self)
+        Ok(GuardView(self)
             .links_of(&key.source)?
             .iter()
             .any(|live| model.canonical_link(live) == model.canonical_link(key)))
@@ -277,6 +378,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         })
     }
 
+    /// Writes this bundle's claims and prepares every claim of each changed
+    /// source/role group, so the kernel decides standing over the whole group.
     pub(crate) fn prepare_mapping_links(
         &self,
         bundle: &MappingBundle,
@@ -285,27 +388,22 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         commit: &mut MappingCommit,
         authority: &mut ObservationAuthorization,
     ) -> Result<(), CellError> {
-        for claim in bundle.link_claims()? {
-            self.prepare_claim_snapshot(catalog, turn, &claim, commit, authority)?;
+        let plan = self.mapping_link_plan(bundle, commit)?;
+        for claim in &plan.fresh {
+            self.prepare_claim_snapshot(catalog, turn, claim, commit, authority)?;
         }
-        let (links, claims) = self.mapping_link_plan(bundle, commit)?;
-        commit.links = links;
+        commit.links = plan.links;
         let model = CommitModel::new(catalog);
-        for claim in claims {
-            let source = FactKey::new(claim.source_type.as_str(), &claim.source_key);
-            if !commit.links.iter().any(|w| {
-                model.canonical(&w.key.source) == model.canonical(&source)
-                    && w.key.link == claim.role.as_str()
-            }) {
-                continue;
-            }
+        let expectation = |key: FactKey| -> Result<FactExpectation, CellError> {
+            Ok(FactExpectation {
+                expected: FactVersion(self.version(MAIN_WORLD, key.object_type.as_str(), &key.key)?),
+                key,
+            })
+        };
+        for claim in plan.sealed {
             self.prepare_claim_snapshot(catalog, turn, &claim, commit, authority)?;
-            let expected =
-                FactVersion(self.version(MAIN_WORLD, source.object_type.as_str(), &source.key)?);
-            let read = FactExpectation {
-                key: source.clone(),
-                expected,
-            };
+            let source = FactKey::new(claim.source_type.as_str(), &claim.source_key);
+            let read = expectation(source.clone())?;
             if !commit.writes.iter().any(|w| w.key == source) && !commit.reads.contains(&read) {
                 commit.reads.push(read.clone());
             }
@@ -316,16 +414,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .iter()
                     .any(|w| model.canonical(&w.key) == model.canonical(&key))
                 {
-                    let read = FactExpectation {
-                        expected: FactVersion(self.version(
-                            MAIN_WORLD,
-                            key.object_type.as_str(),
-                            &key.key,
-                        )?),
-                        key,
-                    };
-                    if !commit.reads.contains(&read) {
-                        commit.reads.push(read);
+                    let target = expectation(key)?;
+                    if !commit.reads.contains(&target) {
+                        commit.reads.push(target);
                     }
                 }
             }
@@ -338,6 +429,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         Ok(())
     }
+
     fn prepare_claim_snapshot(
         &self,
         catalog: &TypeCatalog<'_>,
@@ -393,11 +485,11 @@ mod tests {
         let reader = store.read();
         let scope = BTreeSet::from(["demo/\"quoted\"".to_owned()]);
         assert_eq!(
-            reader.claim_bundles(Some(&scope), 1000).expect("scoped"),
+            reader.claim_bundles(Some(&scope), MAX_CLAIM_BUNDLES).expect("scoped"),
             ["mapping-bundle:1", "mapping-bundle:1003"],
         );
         for refused in [
-            reader.claim_bundles(None, 1000),
+            reader.claim_bundles(None, MAX_CLAIM_BUNDLES),
             reader.claim_bundles(Some(&scope), 1),
         ] {
             assert!(matches!(

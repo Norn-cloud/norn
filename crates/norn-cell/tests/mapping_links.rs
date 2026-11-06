@@ -135,6 +135,7 @@ fn fixture(system: &str) -> Value {
     )
     .expect("json")
 }
+/// Source versions order lexicographically; the snapshot precedes numbered events.
 fn retain_in(cell: &mut Cell, system: &str, row: &Value, event: &str, partition: &str) -> String {
     let record = &row["record"];
     let alias = record
@@ -166,7 +167,7 @@ fn retain_in(cell: &mut Cell, system: &str, row: &Value, event: &str, partition:
         },
         input: norn_ir::runtime_object! {
             "contract"=>"norn.raw_observation/v1", "source"=>source, "source_id"=>alias,
-            "event_id"=>event, "source_version"=>event, "pipeline_version"=>"synthetic/1", "kind"=>"upsert", "extracted_at"=>1_793_702_400_000u64, "payload"=>payload, "payload_digest"=>digest,
+            "event_id"=>event, "source_version"=>if event == "snapshot" { "0" } else { event }, "pipeline_version"=>"synthetic/1", "kind"=>"upsert", "extracted_at"=>1_793_702_400_000u64, "payload"=>payload, "payload_digest"=>digest,
         },
     };
     let input = MappingInput {
@@ -737,4 +738,70 @@ fn obs_link_unrelated_item_labels_do_not_spend_the_claim_budget() {
     let id = retain_in(&mut cell, "erpnext", &probe, "snapshot", "snapshot");
     cell.process_mapping_bundle(&id)
         .expect("unrelated labels are not link claims");
+}
+
+fn provider(cell: &Cell) -> BTreeSet<String> {
+    cell.store()
+        .read()
+        .links(MAIN_WORLD, "canon.OrderLine", "provider", "demo/order/1/line/1")
+        .expect("provider")
+        .into_iter()
+        .map(|l| l.target)
+        .collect()
+}
+
+#[test]
+fn obs_link_late_older_occurrence_is_contested_until_a_newer_one_records_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("late.sqlite"));
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    for row in rows {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    let mut custodian = rows[6].clone();
+    custodian["record"]["provider_ref"] = json!("demo/party/custodian");
+    let mut customer = rows[6].clone();
+    customer["record"]["provider_ref"] = json!("demo/party/customer");
+    capture(&mut cell, "erpnext", &custodian, "3");
+    assert_eq!(provider(&cell), BTreeSet::from(["demo/party/custodian".into()]));
+    capture(&mut cell, "erpnext", &customer, "2");
+    assert_eq!(
+        provider(&cell),
+        BTreeSet::from(["demo/party/custodian".into()]),
+        "an older occurrence arriving late cannot supersede a newer stored claim"
+    );
+    let late = cell
+        .store()
+        .read()
+        .observed_link_claims()
+        .expect("claims")
+        .into_iter()
+        .find(|c| {
+            c.role.as_str() == "provider"
+                && c.target.as_ref().is_some_and(|t| t.key == "demo/party/customer")
+        })
+        .expect("late claim retained as evidence");
+    assert_eq!(late.supersedes.len(), 1, "it orders only over the snapshot");
+    capture(&mut cell, "erpnext", &customer, "4");
+    assert_eq!(provider(&cell), BTreeSet::from(["demo/party/customer".into()]));
+}
+
+#[test]
+fn obs_link_target_arrival_resolves_only_the_current_pending_claim() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("closure.sqlite"));
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    capture(&mut cell, "erpnext", &rows[6], "snapshot");
+    let mut custodian = rows[6].clone();
+    custodian["record"]["provider_ref"] = json!("demo/party/custodian");
+    capture(&mut cell, "erpnext", &custodian, "1");
+    capture(&mut cell, "erpnext", &rows[0], "snapshot");
+    assert!(
+        provider(&cell).is_empty(),
+        "owner arrival must read the superseding claim, though it names only the custodian"
+    );
+    capture(&mut cell, "erpnext", &rows[1], "snapshot");
+    assert_eq!(provider(&cell), BTreeSet::from(["demo/party/custodian".into()]));
 }

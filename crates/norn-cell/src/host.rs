@@ -1474,7 +1474,7 @@ where
                 if reader
                     .mapping_link_plan(bundle, &commit)
                     .map_err(CommitError::Host)?
-                    .0
+                    .links
                     != commit.links
                 {
                     return Err(CommitError::Host(CellError::SourceEvidenceChanged));
