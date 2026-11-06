@@ -17,6 +17,21 @@ export class ConnectorError extends Error {
   }
 }
 
+const text = (value: unknown): value is string => typeof value === "string" && value !== ""
+
+/** The server's fix action, only when it is one the page knows; anything else is no action. */
+export function fixAction(value: unknown): FixAction | null {
+  if (typeof value !== "object" || value === null) return null
+  const action = value as Record<string, unknown>
+  switch (action.kind) {
+    case "sign_in_gateway": return { kind: "sign_in_gateway" }
+    case "ask_admin": return { kind: "ask_admin" }
+    case "connect_account": return text(action.app) && text(action.requirement) ? { kind: "connect_account", app: action.app, requirement: action.requirement } : null
+    case "reconnect_account": return text(action.account) && (action.app === null || text(action.app)) ? { kind: "reconnect_account", app: action.app as string | null, account: action.account } : null
+    default: return null
+  }
+}
+
 export async function api<T>(path: string, init?: { readonly method: string; readonly body?: unknown }, fetcher: typeof fetch = fetch): Promise<T> {
   const response = await fetcher(`/api/connectors${path}`, {
     method: init?.method ?? "GET",
@@ -27,7 +42,7 @@ export async function api<T>(path: string, init?: { readonly method: string; rea
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
   if (!response.ok) {
     const error = typeof body?.error === "string" ? body.error : `The server answered ${response.status}.`
-    throw new ConnectorError(response.status, typeof body?.code === "string" ? body.code : "connectors.unreadable", error, (body?.action as FixAction | undefined) ?? null, typeof body?.field === "string" ? body.field : null)
+    throw new ConnectorError(response.status, typeof body?.code === "string" ? body.code : "connectors.unreadable", error, fixAction(body?.action), typeof body?.field === "string" ? body.field : null)
   }
   // A success that is not a JSON object (an HTML fallback, an empty body) is not the server's answer.
   if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ConnectorError(response.status, "connectors.unreadable", "The server's answer could not be read.")
