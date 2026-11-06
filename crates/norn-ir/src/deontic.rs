@@ -102,34 +102,62 @@ pub enum RequirementTiming {
     Within(WithinTiming),
 }
 
+/// Why a structured requirement's timing has no admitted shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimingShapeError {
+    /// Any temporal pairing other than the safety fragment or LAW-WITHIN-1.
+    Unsupported,
+    /// The normative grade contradicts its temporal wrapper.
+    GradeMismatch,
+    /// `law.timing.millis` is not positive canonical u64 decimal text.
+    InvalidDuration,
+}
+
+impl TimingShapeError {
+    /// Stable locale-independent diagnostic identity.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Unsupported => "law.validation.unsupported_temporal",
+            Self::GradeMismatch | Self::InvalidDuration => "law.validation.invalid_document",
+        }
+    }
+}
+
 impl StructuredRequirement {
     /// LAW-WITHIN-1 shape. `within` pairs only with an obligation to eventually
-    /// respond under `law.timing = within`; every other requirement timing is
-    /// the untimed always/never fragment whose grade matches its wrapper.
+    /// respond under `law.timing = within {millis}`, returning the window in
+    /// milliseconds; every other requirement timing is the untimed
+    /// always/never fragment whose grade matches its wrapper.
     ///
     /// # Errors
-    /// `law.validation.unsupported_temporal` for any other temporal pairing,
-    /// `law.validation.invalid_document` for a grade contradicting its wrapper.
-    pub fn within(&self) -> Result<Option<(&WithinTiming, &str)>, &'static str> {
+    /// Any other temporal pairing, a contradicting grade, or a zero,
+    /// non-canonical or overflowing duration.
+    pub fn within(&self) -> Result<Option<(&WithinTiming, u64)>, TimingShapeError> {
         use crate::{LawModality as M, LawTiming as T};
+        use TimingShapeError as E;
         let law = &self.norm.law;
-        let obligation = self.norm.modality == DeonticModality::Obligation;
         match (&self.timing, &law.modality, &law.timing) {
             (RequirementTiming::Within(within), M::Eventually {}, Some(T::Within { millis })) => {
-                if !obligation {
-                    return Err("law.validation.invalid_document");
+                if self.norm.modality != DeonticModality::Obligation {
+                    return Err(E::GradeMismatch);
                 }
-                Ok(Some((within, millis)))
+                // Same rule as ordinary LawIR admission: positive canonical u64.
+                let value = millis
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|v| *v > 0 && v.to_string() == *millis)
+                    .ok_or(E::InvalidDuration)?;
+                Ok(Some((within, value)))
             }
-            (RequirementTiming::Within(_), _, _) | (_, M::Eventually {} | M::Until { .. }, _) => {
-                Err("law.validation.unsupported_temporal")
-            }
-            (_, _, Some(_)) => Err("law.validation.unsupported_temporal"),
+            (RequirementTiming::Within(_), _, _)
+            | (_, M::Eventually {} | M::Until { .. }, _)
+            | (_, _, Some(_)) => Err(E::Unsupported),
             (_, modality, None) => {
                 if (self.norm.modality == DeonticModality::Prohibition)
                     != matches!(modality, M::Never {})
                 {
-                    return Err("law.validation.invalid_document");
+                    return Err(E::GradeMismatch);
                 }
                 Ok(None)
             }
@@ -159,7 +187,9 @@ pub struct WithinTiming {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CalendarPin {
+    /// Calendar artifact identity.
     pub id: String,
+    /// Exact calendar version.
     pub version: String,
 }
 
@@ -178,15 +208,21 @@ pub enum RetriggerPolicy {
 pub struct Activation {
     /// `law_id` + `subject_id` + `trigger_seq`; unique per cell ledger.
     pub id: String,
+    /// Governing law identity.
     pub law_id: String,
+    /// Subject record identity.
     pub subject_id: String,
+    /// Trigger transition identity.
     pub trigger: String,
     /// Ledger position of the commit that opened (or last restarted) it.
     pub trigger_seq: u64,
+    /// Committed clock of that commit.
     pub start_millis: u64,
     /// Exclusive: a commit at `deadline_millis` no longer discharges.
     pub deadline_millis: u64,
+    /// Declared retrigger policy.
     pub retrigger: RetriggerPolicy,
+    /// Accountable subject; grants no authority.
     pub accountable: String,
 }
 
@@ -198,30 +234,29 @@ pub struct Activation {
     rename_all_fields = "camelCase"
 )]
 pub enum ActivationEvent {
-    Activated {
-        activation: Activation,
-    },
+    /// A trigger opened an activation.
+    Activated { activation: Activation },
+    /// A `restart` trigger replaced the open activation.
     Restarted {
         activation: Activation,
         previous_id: String,
     },
-    RetriggerIgnored {
-        activation_id: String,
-        at_seq: u64,
-    },
+    /// A `keep_first` trigger left the open activation unchanged.
+    RetriggerIgnored { activation_id: String, at_seq: u64 },
+    /// A commit before the deadline satisfied the response.
     Discharged {
         activation_id: String,
         at_seq: u64,
         at_millis: u64,
     },
+    /// A commit before the deadline satisfied the cancel predicate only.
     Cancelled {
         activation_id: String,
         at_seq: u64,
         at_millis: u64,
     },
-    Violated {
-        activation: Activation,
-    },
+    /// The deadline passed undischarged; stamped at `deadline_millis`.
+    Violated { activation: Activation },
 }
 
 /// LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.

@@ -1,6 +1,7 @@
 //! Deterministic views of one structured requirement; display is never proof input.
 use crate::deontic::{
     DeonticModality, LocalizedRequirement, RequirementTiming, StructuredRequirement,
+    TimingShapeError,
 };
 use crate::{LawResponse, LawRoot};
 use schemars::JsonSchema;
@@ -69,7 +70,7 @@ impl RequirementView {
     pub fn slots(&self) -> Result<Vec<RequirementSlot>, &'static str> {
         let r = &self.requirement;
         let law = &r.norm.law;
-        let within = r.within()?;
+        let within = r.within().map_err(TimingShapeError::code)?;
         let w = self.wording()?;
         let root = match &law.scope.root {
             LawRoot::Company(id) => format!("{} {}", visible(&w.terms.company), isolate(id)),

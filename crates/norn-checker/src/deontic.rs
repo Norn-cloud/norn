@@ -119,6 +119,8 @@ fn valid_pointer(pointer: &str) -> bool {
 pub enum RequirementRefusal {
     /// A progress or deadline declaration is outside the closed fragment.
     UnsupportedTiming,
+    /// A `within` window is not positive canonical u64 milliseconds.
+    InvalidDuration,
     /// A `within` deadline names a business calendar; none is admitted.
     UnsupportedCalendar,
     /// A `within` activation is gated, scoped or defeasible; not yet admitted.
@@ -143,7 +145,9 @@ impl RequirementRefusal {
             Self::UnsupportedTiming | Self::UnsupportedCalendar | Self::UnsupportedActivation => {
                 "law.validation.unsupported_temporal"
             }
-            Self::UnsupportedResponse | Self::ModalityMismatch => "law.validation.invalid_document",
+            Self::UnsupportedResponse | Self::ModalityMismatch | Self::InvalidDuration => {
+                "law.validation.invalid_document"
+            }
             Self::Wording(code) => code,
             Self::InvalidBinding => "law.model.unknown_binding",
             Self::PredicateType => "law.model.predicate_type",
@@ -166,15 +170,17 @@ pub fn check_requirement(
 ) -> Result<(), RequirementRefusal> {
     use RequirementRefusal as R;
     use norn_expr::{Expression, Type, check_expression};
+    use norn_ir::deontic::TimingShapeError;
     let rule = &requirement.norm;
     let law = &rule.law;
     let root = match &law.scope.root {
         LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
         LawRoot::Pack(_) => return Err(R::InvalidBinding),
     };
-    let within = requirement.within().map_err(|code| match code {
-        "law.validation.invalid_document" => R::ModalityMismatch,
-        _ => R::UnsupportedTiming,
+    let within = requirement.within().map_err(|error| match error {
+        TimingShapeError::Unsupported => R::UnsupportedTiming,
+        TimingShapeError::GradeMismatch => R::ModalityMismatch,
+        TimingShapeError::InvalidDuration => R::InvalidDuration,
     })?;
     if let Some((within, _millis)) = within {
         if within.calendar.is_some() {

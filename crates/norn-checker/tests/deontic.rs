@@ -1237,6 +1237,12 @@ fn within_requirement() -> norn_ir::deontic::StructuredRequirement {
     r
 }
 
+fn set_millis(r: &mut norn_ir::deontic::StructuredRequirement, millis: &str) {
+    r.norm.law.timing = Some(norn_ir::LawTiming::Within {
+        millis: millis.into(),
+    });
+}
+
 #[test]
 fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
     use norn_checker::deontic::RequirementRefusal as R;
@@ -1255,7 +1261,13 @@ fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
     let rendered = view.slots().expect("rendered").remove(4).text;
     assert!(rendered.contains("2592000000 ms; post"), "{rendered}");
     type Case = (fn(&mut StructuredRequirement), R);
-    let cases: [Case; 11] = [
+    let cases: [Case; 14] = [
+        (|r| set_millis(r, "0"), R::InvalidDuration),
+        (|r| set_millis(r, "030"), R::InvalidDuration),
+        (
+            |r| set_millis(r, "18446744073709551616"),
+            R::InvalidDuration,
+        ),
         (
             |r| r.norm.modality = DeonticModality::Permission,
             R::ModalityMismatch,
