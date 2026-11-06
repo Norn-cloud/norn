@@ -4,7 +4,10 @@ import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import { Shell, Submenu, groupOpen, sectionOf, target, type Section } from "../src/shell.tsx"
+import type { Account } from "../src/lib/session.ts"
+import { Shell, Submenu, groupOpen, initials, sectionOf, target, type Section } from "../src/shell.tsx"
+
+const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
 
 const sources: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "",
@@ -46,7 +49,7 @@ test("a submenu offers a search over its entries", async () => {
 
 test("the rail divides its groups once, and the page bar holds search, shortcuts and notifications", async () => {
   const rules: Section = { path: "/workflows", label: "Workflows", icon: Database, summary: "", group: "rules" }
-  const html = await at("/sources", () => <Shell sections={[{ ...sources, group: "model" }, { ...questions, group: "model" }, rules]} />)
+  const html = await at("/sources", () => <Shell sections={[{ ...sources, group: "model" }, { ...questions, group: "model" }, rules]} account={account} onSignOut={() => {}} />)
   expect(html.match(/data-slot="separator"/g)?.length).toBe(1)
   expect(html).toContain("Search or add…")
   expect(html).toContain("Keyboard shortcuts")
@@ -65,7 +68,7 @@ test("a long group shows six entries and offers the rest, keeping the open one i
 
 test("a rail count sits inside its tile in the theme's destructive pair", async () => {
   const counted: Section = { ...questions, useBadge: () => 3 }
-  const html = await at("/sources", () => <Shell sections={[sources, counted]} />)
+  const html = await at("/sources", () => <Shell sections={[sources, counted]} account={account} onSignOut={() => {}} />)
   const badge = html.match(/<span class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
   expect(badge).toContain("text-destructive-foreground")
   expect(badge).toContain("top-0.5 right-0.5")
@@ -80,10 +83,19 @@ test("a search shows matches in a group the user closed", () => {
 })
 
 test("the page bar keeps a sidebar trigger on every screen and a search label that fits a narrow bar", async () => {
-  const html = await at("/sources", () => <Shell sections={[sources, questions]} />)
+  const html = await at("/sources", () => <Shell sections={[sources, questions]} account={account} onSignOut={() => {}} />)
   const trigger = html.match(/<button[^>]*data-sidebar="trigger"[^>]*>/)?.[0] ?? ""
   expect(trigger).not.toBe("")
   expect(trigger).not.toContain("md:hidden")
   expect(html).toMatch(/<span class="min-w-0 truncate">Search or add…<\/span>/)
   expect(html).toMatch(/<kbd class="[^"]*hidden[^"]*sm:inline[^"]*">⌘K<\/kbd>/)
+})
+
+test("the rail shows the signed-in user's initials and never the recorded-demo placeholder", async () => {
+  const html = await at("/sources", () => <Shell sections={[sources]} account={account} onSignOut={() => {}} />)
+  expect(html).toContain(">AL<")
+  expect(html).not.toContain("Recorded demo")
+  expect(html).not.toContain("Not signed in")
+  expect(initials("")).toBe("?")
+  expect(initials("ada@example.com")).toBe("A")
 })
