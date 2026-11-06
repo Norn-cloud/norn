@@ -29,6 +29,8 @@ export async function api<T>(path: string, init?: { readonly method: string; rea
     const error = typeof body?.error === "string" ? body.error : `The server answered ${response.status}.`
     throw new ConnectorError(response.status, typeof body?.code === "string" ? body.code : "connectors.unreadable", error, (body?.action as FixAction | undefined) ?? null, typeof body?.field === "string" ? body.field : null)
   }
+  // A success that is not a JSON object (an HTML fallback, an empty body) is not the server's answer.
+  if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ConnectorError(response.status, "connectors.unreadable", "The server's answer could not be read.")
   return body as T
 }
 

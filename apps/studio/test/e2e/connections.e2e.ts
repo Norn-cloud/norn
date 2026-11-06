@@ -14,7 +14,8 @@ type Page = {
   getByText(text: string | RegExp): Locator
   locator(selector: string): Locator
   on(event: "dialog", listener: (dialog: { accept(): Promise<void> }) => void): void
-  request: { get(url: string): Promise<{ status(): number; json(): Promise<{ code?: string; action?: { kind: string } }> }> }
+  route(url: string, handler: (route: { fulfill(response: { status: number; contentType: string; body: string }): Promise<void> }) => unknown): Promise<void>
+  unroute(url: string): Promise<void>
 }
 type Locator = { click(): Promise<void>; fill(value: string): Promise<void>; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
 
@@ -93,16 +94,18 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     await section.getByRole("button", { name: "Connect", exact: true }).waitFor(); did("disconnect")
   },
   "Connector error": async (page, did) => {
-    // A signed-out gateway is the reproducible refusal: the server names it and its fix.
+    // The page receives a typed refusal (an expired gateway grant on its inventory read), shows it
+    // with its code, and its fix button walks the gateway sign-in back to Connections.
+    const inventory = `${base}/api/connectors/inventory`
+    await page.route(inventory, (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: "connectors.reauth", error: "Your gateway sign-in has expired. Sign in to the gateway again.", action: { kind: "sign_in_gateway" } }) }))
     await open(page)
-    const disconnect = page.getByRole("button", { name: "Disconnect", exact: true }).first()
-    if (await disconnect.count() > 0) await disconnect.click()
-    const response = await page.request.get(`${base}/api/connectors/inventory`)
-    const body = await response.json()
-    if (response.status() !== 409 || body.code !== "connectors.not_linked" || body.action?.kind !== "sign_in_gateway") throw new Error(`expected a typed not_linked refusal, got ${response.status()} ${body.code}`)
-    did("show")
-    await page.getByRole("button", { name: "Sign in to the gateway" }).click()
-    await gatewaySignIn(page); await page.getByText("Signed in").waitFor(); did("fix")
+    const alert = page.locator('[role="alert"][data-code="connectors.reauth"]')
+    await alert.waitFor(); did("show")
+    await page.unroute(inventory)
+    await alert.getByRole("button", { name: "Sign in to the gateway again" }).click()
+    await gatewaySignIn(page)
+    await page.getByText("Signed in").waitFor()
+    await page.getByRole("region", { name: app() }).waitFor(); did("fix")
   },
 }
 
