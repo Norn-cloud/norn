@@ -55,7 +55,7 @@ test("columns number their options and mark the server's top pick and the agent'
 
 test("the tree shows the four columns, the recommended path and keeps Run closed until sign-off", () => {
   const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionTree tree={tree} catalog={catalog} /></QueryClientProvider>)
-  for (const title of [">Measure<", ">Group by<", "Every (grain of occurred at)", ">Only where<", ">Window<", "Recommended", tree.basis]) expect(html).toContain(title)
+  for (const title of [">Measure<", ">Group by<", "Every (grain of occurred at)", ">Only where<", ">Window<", "Recommended", "never from row values"]) expect(html).toContain(title)
   expect(html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("Then 3 – 2 – 1 – 1 – 1")
   expect(html).toContain("Run opens once you have signed off on the question in plain words.")
   expect(html).not.toContain(">Run<")
