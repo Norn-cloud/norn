@@ -187,8 +187,8 @@ export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host", scop
       const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: Dashboard; code?: unknown; signoff?: { restatementSha256?: unknown } | null } | null
       if (status === 404 && b?.code === "definition.not_found") return undefined
       if (status !== 200 || typeof b?.version !== "number" || b.payload === undefined) throw new CellUnavailable(status, status === 404 ? "Dashboards can't be reopened yet: the cell has no route to read them back." : undefined)
-      const signed = typeof b.signoff?.restatementSha256 === "string" ? { restatementSha256: b.signoff.restatementSha256 } : null
-      return { id: String(b.id ?? id), version: b.version, dashboard: b.payload, signoff: signed }
+      const signed = typeof b.signoff?.restatementSha256 === "string" ? { restatementSha256: b.signoff.restatementSha256 } : undefined
+      return { id: String(b.id ?? id), version: b.version, dashboard: b.payload, ...signed ? { signoff: signed } : {} }
     },
     admit: async (id, dashboard) => {
       const { status, body } = await post("/v1/definitions:admit", { kind: KIND, id, payload: dashboard })

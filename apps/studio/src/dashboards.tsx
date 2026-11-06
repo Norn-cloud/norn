@@ -315,7 +315,7 @@ export function DashboardEditor({ store, catalog, stored, initial, guard, onSave
         <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
           <span>Someone saved a newer version of this dashboard since you opened it.</span>
           <Button type="button" size="sm" variant="outline" onClick={() => onReload?.()}>Reload theirs</Button>
-          <Button type="button" size="sm" variant="destructive" disabled={!cellAvailable} onClick={() => save.mutate({ dashboard, overwrite: true })}>Overwrite with mine</Button>
+          <Button type="button" size="sm" variant="destructive" disabled={!cellAvailable || !signed} title={signed ? undefined : "Sign off on the dashboard in plain words first"} onClick={() => signed && signOff && save.mutate({ dashboard, overwrite: true, signed: signOff })}>Overwrite with mine</Button>
         </div>
       )}
       <ValidationPanel issues={issues} title="The cell refused this dashboard" />
