@@ -52,6 +52,24 @@ async function gatewaySignIn(page: Page) {
   await page.waitForURL(`${base}/connections`, { timeout: 30_000 })
 }
 
+/** The gateway's own connection form for the test app's API-key account, then back to Connections. */
+async function gatewayAccountForm(page: Page) {
+  await page.waitForURL(/gateway-next\.norn\.cloud\//, { timeout: 30_000 })
+  await page.getByLabel(/api key|token/i).first().fill(env("E2E_APP_KEY"))
+  await page.getByRole("button", { name: /^(connect|save|continue)$/i }).first().click()
+  await page.waitForURL(/gateway-next\.norn\.cloud\/.*(done|complete|success)|next\.norn\.cloud\/connections/, { timeout: 30_000 })
+}
+
+/** The test app's account is connected, connecting it through the gateway's form when it is not. */
+export async function ensureAccount(page: Page) {
+  await open(page)
+  const section = page.getByRole("region", { name: app() })
+  await section.waitFor()
+  const connect = section.getByRole("button", { name: "Connect", exact: true })
+  if (await connect.count() > 0) { await connect.first().click(); await gatewayAccountForm(page); await open(page) }
+  await section.getByRole("button", { name: "Reconnect", exact: true }).first().waitFor()
+}
+
 const open = async (page: Page) => { await page.goto(`${base}/connections`); await page.getByRole("heading", { name: "Connections" }).waitFor() }
 const app = () => env("E2E_APP")
 
@@ -77,12 +95,10 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     const section = page.getByRole("region", { name: app() })
     await section.waitFor()
     const connect = section.getByRole("button", { name: "Connect", exact: true })
-    if (await connect.count() === 0) { await section.getByRole("button", { name: "Disconnect" }).first().click(); await connect.first().waitFor() }
+    if (await connect.count() === 0) { await section.getByRole("button", { name: "Disconnect", exact: true }).first().click(); await connect.first().waitFor() }
     await connect.first().click()
-    // The gateway's own form for the test app's API key, then back.
-    await page.getByLabel(/api key|token/i).first().fill(env("E2E_APP_KEY"))
-    await page.getByRole("button", { name: /connect|save|continue/i }).first().click()
-    await open(page); await section.getByRole("button", { name: "Reconnect" }).first().waitFor(); did("connect")
+    await gatewayAccountForm(page)
+    await open(page); await section.getByRole("button", { name: "Reconnect", exact: true }).first().waitFor(); did("connect")
     await section.getByRole("button", { name: "View" }).first().click()
     await section.getByText("Provider").waitFor(); did("view")
     await section.getByRole("button", { name: "Rename" }).first().click()
@@ -90,11 +106,10 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     await page.getByLabel("Account name").fill(name)
     await section.getByRole("button", { name: "Save" }).click()
     await section.getByText(name).waitFor(); did("rename")
-    await section.getByRole("button", { name: "Reconnect" }).first().click()
-    await page.getByLabel(/api key|token/i).first().fill(env("E2E_APP_KEY"))
-    await page.getByRole("button", { name: /connect|save|continue/i }).first().click()
+    await section.getByRole("button", { name: "Reconnect", exact: true }).first().click()
+    await gatewayAccountForm(page)
     await open(page); await section.getByText(name).waitFor(); did("reconnect")
-    await section.getByRole("button", { name: "Disconnect" }).first().click()
+    await section.getByRole("button", { name: "Disconnect", exact: true }).first().click()
     await section.getByRole("button", { name: "Connect", exact: true }).waitFor(); did("disconnect")
   },
   "Connector error": async (page, did) => {
@@ -115,7 +130,8 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
   "Tool binding": async (page, did) => {
     // E2E_TOOL is a tool of E2E_APP with a string input E2E_TOOL_FIELD; the signed-in person is an admin.
     page.on("dialog", (dialog) => void dialog.accept())
-    await open(page)
+    // The gateway lists an app's tools only for a caller with its account connected.
+    await ensureAccount(page)
     const tool = env("E2E_TOOL"), field = env("E2E_TOOL_FIELD"), name = `e2e binding ${Date.now()}`
     await page.getByLabel("App").selectOption(app())
     await page.getByRole("button", { name: `Bind ${tool}` }).click()
