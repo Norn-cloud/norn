@@ -564,16 +564,28 @@ fn the_collection_gate_comes_first() {
 /// never turn its sorted query into a 413, which would reveal that they exist.
 #[test]
 fn rows_hidden_from_the_caller_never_count_toward_the_scan_bound() {
-    let hidden = norn_api::object_routes::MAX_QUERY_SCAN + 50;
+    const BOUND: usize = 100;
     let mut rows = writes([(Some("512"), Some("gold")), (Some("8"), None)]);
-    rows.extend((0..hidden).map(|index| row(&format!("H-{index:05}"), Some("1"), Some("gold"))));
+    rows.extend(
+        (0..BOUND + 50).map(|index| row(&format!("H-{index:05}"), Some("1"), Some("gold"))),
+    );
     let (host, _dir) = host_of(rows);
     let sorted = params(None, Some("input:desc"), None);
-    let page = query(&host, "few", &sorted).unwrap();
+    let within = |actor| {
+        norn_api::object_routes::get_object_query_within(
+            &host,
+            (&scope(), Some(actor)),
+            TYPE,
+            &sorted,
+            &Mapping,
+            BOUND,
+        )
+    };
+    let page = within("few").unwrap();
     assert_eq!(page.records.len(), 8);
     let total = page.total.unwrap();
     assert_eq!((total.count, total.approximate), (8, false));
-    let refused = query(&host, "full", &sorted).unwrap_err();
+    let refused = within("full").unwrap_err();
     assert_eq!(
         (refused.status, refused.code.as_str()),
         (413, "object.scan_bound_exceeded")
