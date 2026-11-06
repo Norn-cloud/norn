@@ -5700,8 +5700,8 @@ export interface components {
             retrigger: "keep_first" | "restart";
             /**
              * @description Lifecycle transition identity on the subject that opens an activation.
-             *     `check_requirement` checks only that it is nonblank; resolving it
-             *     against the subject's lifecycle is catalog admission (TARGET).
+             *     Admission (norn-checker) checks it is nonblank; resolving it against the
+             *     subject's lifecycle is catalog admission (TARGET).
              */
             trigger: string;
         };
