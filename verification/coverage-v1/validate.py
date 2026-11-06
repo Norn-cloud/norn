@@ -785,7 +785,7 @@ IMPLEMENTATION_FIELDS = ("correspondenceSource", "correspondenceMutations", "ext
 
 
 def validate_implementation_claim(subsystem_id: str, claim_id: str, claim: dict[str, Any]) -> None:
-    """Require the typed fields the claim's receipt wrapper will read."""
+    """Require the typed fields the claim's receipt wrapper will read, then refuse it until #969."""
     label = f"{subsystem_id}.{claim_id}"
     if claim.get("proof") != "implementation_proved":
         present = [field for field in IMPLEMENTATION_FIELDS if field in claim]
@@ -798,6 +798,11 @@ def validate_implementation_claim(subsystem_id: str, claim_id: str, claim: dict[
             implementation_receipts.extraction_plan(claim, "target/implementation-receipts")
     except implementation_receipts.Refused as error:
         raise InvalidCoverage(f"{label}: {error}") from error
+    # D47(c): admission must not depend on the optional receipt check. Until an
+    # isolated producer exists, no receipt can establish implementation
+    # correspondence, so the manifest itself refuses the status.
+    require(False, f"{label}: implementation_proved is refused until #969 provides an isolated producer; "
+                   "record the claim as partial")
 
 
 def validate_claim_evidence_shape(
