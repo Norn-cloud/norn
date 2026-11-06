@@ -144,8 +144,23 @@ class ReceiptTest(unittest.TestCase):
         self.produce()
         self.assertEqual(json.loads(self.receipt("INV-KANI").read_text())["exitCode"], 0)
         self.rejected("INV-KANI", "candidate-reported")
+
+    def test_scoped_kani_without_a_receipt_reports_no_result(self) -> None:
+        # CodeRabbit r4494109860: no receipt means no Kani result was reported.
+        self.produce()
         shutil.rmtree(self.out / "INV-KANI")
-        self.rejected("INV-KANI", "candidate-reported")
+        errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
+        self.assertIn("INV-KANI: no receipt from the base-owned wrapper", errors)
+        self.assertNotIn("INV-KANI", {v["claim"] for v in verdicts})
+
+    def test_colliding_model_and_proof_names_are_refused(self) -> None:
+        # CodeRabbit r4494109845: recheck_fstar flattens models and proofs into
+        # one directory, so a shared name would check one file's bytes as another's.
+        for models, module in ((["Proof.fst"], "Lib.fst"), (["Lib.fst"], "Lib.fst"), (["M.fst", "M.fst"], "Lib.fst")):
+            claim = copy.deepcopy(EXTRACTION)
+            claim["extractionBinding"] = BINDING | {"models": models, "module": module}
+            with self.subTest(models=models), self.assertRaisesRegex(receipts.Refused, "names collide"):
+                receipts.extraction_plan(claim, "")
 
     def test_forged_well_typed_model_is_never_admitted(self) -> None:
         # Sol S2: a compromised producer uploads a different well-typed function

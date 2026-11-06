@@ -182,6 +182,11 @@ def extraction_plan(claim: dict, output: str) -> dict:
             and re.fullmatch(r"[A-Z][A-Za-z0-9_]*\.fst", str(binding["module"])) is not None
             and all(isinstance(binding[k], list) and all(re.fullmatch(fst, str(f)) for f in binding[k])
                     for k in ("models", "proofs")) and binding["proofs"], "invalid extractionBinding")
+    # recheck_fstar flattens models and proofs into one directory beside the module;
+    # a shared name would let one file's bytes stand in for another's check.
+    names = [*binding["models"], *binding["proofs"], binding["module"]]
+    require(len(set(names)) == len(names),
+            f"extractionBinding names collide across models, proofs and module: {sorted(names)}")
     root = relative(binding["proofRoot"])
     # Cited theorems must be ones this runner re-checks: the declared proofs under proofRoot.
     theorems = {e["artifact"] for e in claim["evidence"]["proof"] if any(s.startswith("theorem:") for s in e["selectors"])}
@@ -583,12 +588,14 @@ def verify(root: Path, receipts: Path, expected: dict, fstar: Path | None,
     for name, claim in sorted(claims.items()):
         try:
             kind = kind_of(claim)
-            if kind == "kani":
+            if kind == "kani" and not scoped and name not in present:
                 # Without a receipt on an out-of-scope run, no Kani ran at all.
-                verdicts.append(verdict_line(name, kind, UNCHANGED if not scoped and name not in present
-                                             else CANDIDATE_REPORTED))
-                if name in present:
-                    check(root, claim, receipts / name, expected, fstar)
+                verdicts.append(verdict_line(name, kind, UNCHANGED))
+            elif kind == "kani":
+                # A scoped run with no receipt reports no Kani result at all.
+                require(name in present, "no receipt from the base-owned wrapper")
+                verdicts.append(verdict_line(name, kind, CANDIDATE_REPORTED))
+                check(root, claim, receipts / name, expected, fstar)
             elif not scoped:
                 verdicts.append(verdict_line(name, kind, UNCHANGED))
             else:
