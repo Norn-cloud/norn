@@ -5698,7 +5698,11 @@ export interface components {
              * @enum {string}
              */
             retrigger: "keep_first" | "restart";
-            /** @description Exact lifecycle transition identity on the subject that opens an activation. */
+            /**
+             * @description Lifecycle transition identity on the subject that opens an activation.
+             *     `check_requirement` checks only that it is nonblank; resolving it
+             *     against the subject's lifecycle is catalog admission (TARGET).
+             */
             trigger: string;
         };
         /**

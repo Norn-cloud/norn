@@ -914,7 +914,7 @@
           "$ref": "#/$defs/RetriggerPolicy"
         },
         "trigger": {
-          "description": "Exact lifecycle transition identity on the subject that opens an activation.",
+          "description": "Lifecycle transition identity on the subject that opens an activation.\n`check_requirement` checks only that it is nonblank; resolving it\nagainst the subject's lifecycle is catalog admission (TARGET).",
           "type": "string"
         }
       },
