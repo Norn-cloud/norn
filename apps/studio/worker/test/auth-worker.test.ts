@@ -10,6 +10,7 @@ const MIGRATION: string = readFileSync(join(import.meta.dir, "../migrations/0001
 function stage(): Env {
   const db = new Database(":memory:")
   db.exec(MIGRATION)
+  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
   return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN }
 }
@@ -145,10 +146,11 @@ test("a failed membership insert is retried safely on the next sign-in", async (
   expect((await enroll(env, "recover@example.com", "Recover")).status).toBe(200)
   db.run(`delete from "member"`)
   db.run(`delete from "organization"`)
+  db.run(`update "workspace_provisioning" set "status" = 'pending'`)
   db.exec(`create trigger fail_member before insert on "member" begin select raise(abort, 'injected membership failure'); end`)
   const failed = await post(env, "/api/auth/sign-in/email", { email: "recover@example.com", password: "correct horse battery" })
   expect(failed.status).not.toBe(200)
-  expect(db.query(`select count(*) as n from "organization"`).get()).toEqual({ n: 1 })
+  expect(db.query(`select count(*) as n from "organization"`).get()).toEqual({ n: 0 })
   expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 0 })
   db.exec(`drop trigger fail_member`)
   const recovered = await post(env, "/api/auth/sign-in/email", { email: "recover@example.com", password: "correct horse battery" })
@@ -163,6 +165,7 @@ test("recovery refuses a workspace whose server ownership proof is altered", asy
   const db = env.AUTH_DB as unknown as Database
   expect((await enroll(env, "proof@example.com", "Proof")).status).toBe(200)
   db.run(`delete from "member"`)
+  db.run(`update "workspace_provisioning" set "status" = 'pending'`)
   db.run(`update "organization" set "metadata" = ?`, ['{"norn.provisioningProof":"forged"}'])
   const response = await post(env, "/api/auth/sign-in/email", { email: "proof@example.com", password: "correct horse battery" })
   expect(response.status).not.toBe(200)
@@ -188,4 +191,29 @@ test("client organization metadata cannot assign or replace reserved cell bindin
   expect(stored()["norn.provisioningProof"]).not.toBe("forged")
   expect(stored()["norn.test"]).toBeUndefined()
   expect(stored().label).toBe("changed")
+})
+
+
+test("removing a completed workspace owner does not restore membership on sign-in", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  expect((await enroll(env, "removed@example.com", "Removed")).status).toBe(200)
+  db.run(`delete from "member"`)
+  const response = await post(env, "/api/auth/sign-in/email", { email: "removed@example.com", password: "correct horse battery" })
+  expect(response.status).toBe(200)
+  expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 0 })
+  expect(db.query(`select "status" from "workspace_provisioning"`).get()).toEqual({ status: "complete" })
+})
+
+test("concurrent recovery creates one owner membership", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  expect((await enroll(env, "race@example.com", "Race")).status).toBe(200)
+  db.run(`delete from "member"`)
+  db.run(`update "workspace_provisioning" set "status" = 'pending'`)
+  const signIn = () => post(env, "/api/auth/sign-in/email", { email: "race@example.com", password: "correct horse battery" })
+  const responses = await Promise.all([signIn(), signIn()])
+  expect(responses.map((response) => response.status)).toEqual([200, 200])
+  expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 1 })
+  expect(db.query(`select "status" from "workspace_provisioning"`).get()).toEqual({ status: "complete" })
 })

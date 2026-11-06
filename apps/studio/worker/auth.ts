@@ -55,25 +55,46 @@ const MINUTE = 60
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
 
-type AuthAdapter = Awaited<ReturnType<typeof getCurrentAdapter>>
+type SqlStatement = { readonly sql: string; readonly params: readonly string[] }
+type ProvisionDb = {
+  prepare(sql: string): { bind?: (...params: string[]) => { first<T>(): Promise<T | null> }; get?: (...params: string[]) => unknown; run?: (...params: string[]) => unknown }
+  batch?: (statements: unknown[]) => Promise<unknown>
+  transaction?: (fn: () => void) => () => void
+}
 
-async function provisionWorkspace(adapter: AuthAdapter, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string) {
+async function stateOf(db: ProvisionDb, userId: string): Promise<string | undefined> {
+  const statement = db.prepare(`select "status" from "workspace_provisioning" where "userId" = ?`)
+  const row = statement.bind ? await statement.bind(userId).first<{ status: string }>() : statement.get?.(userId) as { status: string } | undefined
+  return row?.status
+}
+
+/** Execute all workspace writes and completion in one database transaction. */
+async function provisionBatch(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<void> {
+  if (db.batch) {
+    const prepared = statements.map(({ sql, params }) => {
+      const statement = db.prepare(sql)
+      if (!statement.bind) throw new Error("D1 statement binding unavailable")
+      return statement.bind(...params)
+    })
+    await db.batch(prepared)
+  } else if (db.transaction) {
+    db.transaction(() => { for (const { sql, params } of statements) db.prepare(sql).run?.(...params) })()
+  } else throw new Error("Atomic provisioning is unavailable")
+}
+
+async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string, initialize = false) {
+  if (initialize) await provisionBatch(db, [{ sql: `insert into "workspace_provisioning" ("userId", "status") values (?, 'pending') on conflict ("userId") do nothing`, params: [user.id] }])
+  if (await stateOf(db, user.id) !== "pending") return
   const identity = await workspaceIdentity(secret, user.id)
-  const find = () => adapter.findOne<{ id: string; metadata?: string | null }>({ model: "organization", where: [{ field: "id", value: identity.id }] })
-  let org = await find()
-  if (org === null) {
-    try {
-      const data = { id: identity.id, name: `${user.name || user.email}'s workspace`, slug: `u-${identity.id.slice(10)}`, metadata: JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {} }), createdAt: new Date() }
-      org = await adapter.create<typeof data>({ model: "organization", forceAllowId: true, data })
-    } catch (error) {
-      org = await find()
-      if (org === null) throw error
-    }
-  }
-  const stored = metadataObject(org.metadata)
-  if (stored["norn.provisioningProof"] !== JSON.parse(identity.metadata)["norn.provisioningProof"]) throw new Error("Workspace ownership could not be verified")
-  const member = await adapter.findOne<{ id: string }>({ model: "member", where: [{ field: "organizationId", value: identity.id }, { field: "userId", value: user.id }] })
-  if (member === null) await adapter.create({ model: "member", data: { organizationId: identity.id, userId: user.id, role: "owner", createdAt: new Date() } })
+  const metadata = JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {} })
+  const at = new Date().toISOString()
+  const pending = `exists (select 1 from "workspace_provisioning" where "userId" = ? and "status" = 'pending')`
+  await provisionBatch(db, [
+    { sql: `insert into "organization" ("id", "name", "slug", "metadata", "createdAt") select ?, ?, ?, ?, ? where ${pending} on conflict ("id") do nothing`, params: [identity.id, `${user.name || user.email}'s workspace`, `u-${identity.id.slice(10)}`, metadata, at, user.id] },
+    { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, 'owner', ? where ${pending} and exists (select 1 from "organization" where "id" = ? and json_extract("metadata", '$."norn.provisioningProof"') = ?) on conflict ("organizationId", "userId") do nothing`, params: [crypto.randomUUID(), identity.id, user.id, at, user.id, identity.id, JSON.parse(identity.metadata)["norn.provisioningProof"]] },
+    { sql: `update "workspace_provisioning" set "status" = 'complete' where "userId" = ? and "status" = 'pending' and exists (select 1 from "member" where "organizationId" = ? and "userId" = ? and "role" = 'owner')`, params: [user.id, identity.id, user.id] },
+  ])
+  if (await stateOf(db, user.id) === "pending") throw new Error("Workspace ownership could not be verified")
 }
 
 /** A server-authenticated workspace identity, independent of user-editable slugs. */
@@ -183,7 +204,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         create: {
           // This hook runs after commit; session creation retries any incomplete provisioning.
           after: async (user, ctx) => {
-            if (ctx !== null) await provisionWorkspace(await getCurrentAdapter(ctx.context.adapter), config.secret, user, config.defaultEnvironmentId)
+            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, true)
           },
         },
       },
@@ -193,11 +214,10 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             const method = ctx === null ? undefined : AUTH_METHODS[ctx.path as keyof typeof AUTH_METHODS]
             if (ctx !== null) {
               const adapter = await getCurrentAdapter(ctx.context.adapter)
-              const existing = await adapter.findMany<{ organizationId: string }>({ model: "member", where: [{ field: "userId", value: session.userId }], limit: 1 })
-              if (existing.length === 0) {
+              if (await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
                 const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
                 if (user === null) throw new Error("Cannot provision a workspace for a missing user")
-                await provisionWorkspace(adapter, config.secret, user, config.defaultEnvironmentId)
+                await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
               }
             }
             // The earliest membership, the same rule activeMembership uses when a session has none.
