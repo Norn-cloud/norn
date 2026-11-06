@@ -326,7 +326,8 @@ fn allowed<E: SqlEngine>(
 /// A question submitted here has no resource of its own: it is authorized as
 /// the union of every catalog metric and object type it reads, all of which
 /// must be granted, decided before admission so that a refusal's diagnostics
-/// never describe an ungranted resource.
+/// never describe an ungranted resource. A question naming an undeclared
+/// metric reads, for this purpose, every declared metric (D61).
 pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
     /// The cell's declared metric definitions; a question may name only these.
     fn definitions(&self) -> &[MetricDefinition];
@@ -374,28 +375,42 @@ fn bucket_bound_exceeded() -> Refusal {
 }
 
 /// Every metric `question` reads: those it names and, transitively, a
-/// ratio's numerator and denominator. An undeclared metric is a denial,
-/// indistinguishable from an ungranted one.
+/// ratio's numerator and denominator; and whether it names any metric the
+/// cell does not declare.
 fn read_metrics<'d>(
     question: &QuestionIR,
     definitions: &'d [MetricDefinition],
-) -> Result<Vec<&'d MetricDefinition>, Refusal> {
+) -> (Vec<&'d MetricDefinition>, bool) {
     let mut seen = BTreeSet::new();
     let mut read = Vec::new();
+    let mut undeclared = false;
     let mut pending: Vec<&str> = question.metrics.iter().map(|m| m.metric.as_str()).collect();
     while let Some(name) = pending.pop() {
         if !seen.insert(name.to_owned()) {
             continue;
         }
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.name == name)
-            .ok_or_else(read_denied)?;
+        let Some(definition) = definitions.iter().find(|definition| definition.name == name)
+        else {
+            undeclared = true;
+            continue;
+        };
         pending.extend(definition.type_params.numerator.as_deref());
         pending.extend(definition.type_params.denominator.as_deref());
         read.push(definition);
     }
-    Ok(read)
+    (read, undeclared)
+}
+
+/// The checker reports question findings within a list (`/questions/0/…`);
+/// one submitted question is that list's only entry.
+fn rebased(mut findings: Vec<norn_checker::Diagnostic>) -> Vec<norn_checker::Diagnostic> {
+    const ENTRY: &str = "/questions/0";
+    for span in findings.iter_mut().filter_map(|finding| finding.span.as_mut()) {
+        if span.pointer == ENTRY || span.pointer.starts_with("/questions/0/") {
+            span.pointer.replace_range(..ENTRY.len(), "");
+        }
+    }
+    findings
 }
 
 /// Authorize every metric and object type `question` reads, then admit it.
@@ -408,7 +423,17 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
 ) -> Result<(QuestionPlan, &'r [u8]), Refusal> {
     let key = handle_key(runtime)?;
     let named: &dyn QuestionRuntime<E> = runtime;
-    let metrics = read_metrics(question, runtime.definitions())?;
+    let (named_metrics, undeclared) = read_metrics(question, runtime.definitions());
+    // D61: that a named metric does not exist is disclosed (as the checker's
+    // 422) only to a caller who may read every metric the cell declares, so
+    // it says nothing they could not see. For anyone else an undeclared
+    // metric is the same opaque denial as an ungranted one: no existence
+    // oracle over the catalog.
+    let metrics: Vec<&MetricDefinition> = if undeclared {
+        runtime.definitions().iter().collect()
+    } else {
+        named_metrics
+    };
     let mut types = BTreeSet::from([question.object_set.0.clone()]);
     types.extend(metrics.iter().filter_map(|metric| {
         metric
@@ -462,7 +487,7 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
             "the question is not admissible",
             "each diagnostic names the rule and where in the question it applies",
         )
-        .with_diagnostics(&findings, "/question")
+        .with_diagnostics(&rebased(findings), "/question")
     })?;
     if !types.contains(plan.grain().as_str()) {
         return Err(read_denied());
@@ -474,9 +499,11 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
 /// answer it once, under the same row gates and D53 redaction as a named
 /// question. Nothing is installed.
 /// # Errors
-/// Any ungranted or undeclared metric or type (one opaque 403, before
-/// admission), an inadmissible question (422 `question.refused` with
-/// diagnostics), a bound (413), or a compute refusal.
+/// Any ungranted metric or type, or an undeclared metric from a caller who
+/// cannot read every declared metric (one opaque 403, before admission); an
+/// inadmissible question, including an undeclared metric from a caller who
+/// can (422 `question.refused` with diagnostics); a bound (413); or a
+/// compute refusal.
 #[utoipa::path(post, path = "/v1/questions:evaluate", params(ScopeQuery), request_body = EvaluateRequest, responses((status = 200, body = crate::answers::NornQuestionAnswer), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
 pub fn evaluate_question<E: SqlEngine>(
     host: &DevHost<E>,
