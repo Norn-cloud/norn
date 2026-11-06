@@ -1,5 +1,6 @@
 import { gatewayModel, respond, type AgentRequest } from "./agent.ts"
 import type { AgentBudget } from "./budget.ts"
+import { boundedText } from "./body.ts"
 import type { Scope } from "./limits.ts"
 
 export { AgentBudget } from "./budget.ts"
@@ -53,7 +54,15 @@ async function agent(request: Request, env: Env, ctx: ExecutionContext): Promise
 /** One recorded example proposal, checked by the server's checker without the model: `{chip}` names it. */
 async function example(request: Request): Promise<Response> {
   if (request.method !== "POST") return refuse(405, "Use POST.", { allow: "POST" })
-  const body = await request.json().catch(() => null) as { chip?: unknown } | null
+  // Unauthenticated, so the body is bounded while it is read, before it is parsed.
+  const text = await boundedText(request, MAX_BODY)
+  if (text === undefined) return refuse(413, "The request is too large.")
+  let body: { chip?: unknown } | null
+  try {
+    body = JSON.parse(text) as { chip?: unknown } | null
+  } catch {
+    body = null
+  }
   if (typeof body?.chip !== "string") return refuse(400, "Expected {chip}.")
   // Loaded on first use, like the assistant: the checker's WebAssembly is not needed elsewhere.
   const [{ exampleVerdict }, { check }] = await Promise.all([import("./examples.ts"), import("./checker.ts")])
