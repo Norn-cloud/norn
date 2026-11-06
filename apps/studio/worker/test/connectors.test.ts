@@ -337,3 +337,53 @@ test("a tool with no gateway version gets sha256- and the first 12 hex of its di
   expect(connectorVersion(null, digest)).toBe("sha256-ab12ab12ab12")
   expect(connectorVersion("dpl_7", digest)).toBe("dpl_7")
 })
+
+test("the whole link round trip: state cookie, basic client auth, resource, introspection, then a linked grant", async () => {
+  const db = new Database(":memory:")
+  for (const file of ["0001_better_auth.sql", "0002_connector_binding.sql", "0003_connector_binding_manifest.sql", "0004_connector_binding_definition.sql"]) db.exec(migration(file))
+  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
+  const jar = new Map<string, string>()
+  const keep = (response: Response) => { for (const line of response.headers.getSetCookie()) { const [pair] = line.split(";"); const [name, ...rest] = (pair ?? "").split("="); if (name) jar.set(name, rest.join("=")) } return response }
+  const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ")
+  const call = async (path: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers); headers.set("cookie", cookie()); headers.set("origin", ORIGIN); headers.set("cf-connecting-ip", "198.51.100.77")
+    return keep(await worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers, redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env))
+  }
+  const json = (value: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
+  await call("/api/auth/sign-up/email", json({ email: "ada@example.com", password: "correct horse battery", name: "Ada" }))
+  await call("/api/auth/sign-in/email", json({ email: "ada@example.com", password: "correct horse battery" }))
+  // The gateway's token and introspection endpoints, as Executor answers them.
+  const real = globalThis.fetch
+  const seen: { url: string; auth: string | null; body: string }[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init)
+    if (!request.url.startsWith(GATEWAY)) return real(input, init)
+    const body = await request.text()
+    seen.push({ url: request.url, auth: request.headers.get("authorization"), body })
+    if (request.url.endsWith("/oauth2/token")) {
+      if (body.includes("client_secret=")) return Response.json({ error: "invalid_client", error_description: "client registered for client_secret_basic cannot use client_secret_post" }, { status: 400 })
+      return Response.json({ access_token: TOKEN, refresh_token: "r", token_type: "Bearer", expires_in: 3600, scope: "executor offline_access" })
+    }
+    if (request.url.endsWith("/oauth2/introspect")) return Response.json({ active: true, sub: "gw_user_1" })
+    return new Response("not found", { status: 404 })
+  }) as typeof fetch
+  try {
+    const link = await call("/api/connectors/link", { method: "POST" })
+    const state = new URL(((await link.json()) as { url: string }).url).searchParams.get("state") ?? ""
+    const back = await call(`/api/auth/callback/executor?code=abc&state=${encodeURIComponent(state)}`)
+    expect(back.status).toBe(302)
+    expect(back.headers.get("location") ?? "").not.toContain("error")
+    const token = seen.find((r) => r.url.endsWith("/oauth2/token"))
+    expect(token?.auth).toBe(`Basic ${btoa(`studio:${"s".repeat(32)}`)}`)
+    expect(token?.body).toContain(`resource=${encodeURIComponent(`${GATEWAY}/api`)}`)
+    expect(token?.body).not.toContain("client_secret=")
+    expect(seen.some((r) => r.url.endsWith("/oauth2/introspect"))).toBe(true)
+    // The grant is now linked to this person, and never leaves the server.
+    const status = await call("/api/connectors/status")
+    const text = await status.text()
+    expect(JSON.parse(text)).toEqual({ gateway: GATEWAY, linked: true })
+    expect(text).not.toContain(TOKEN)
+  } finally {
+    globalThis.fetch = real
+  }
+})

@@ -75,6 +75,8 @@ const gatewayLink = (gateway: GatewayClient) => genericOAuth({
     // The gateway grants only these (its /.well-known/oauth-authorization-server); it has no OpenID userinfo.
     scopes: ["executor", "offline_access"],
     pkce: true,
+    // Studio's client is registered at the gateway for client_secret_basic, which refuses the secret in the body.
+    tokenEndpointAuth: { method: "client_secret_basic" },
     disableSignUp: true,
     disableImplicitSignUp: true,
     // RFC 8707: the gateway issues tokens only for a named resource, its product API.
