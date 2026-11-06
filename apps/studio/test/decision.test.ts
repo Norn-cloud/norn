@@ -38,7 +38,8 @@ test("an ask step lowers to a wait for norn.decision and a route on the choice",
   expect(problems).toEqual([])
   expect(lowered?.states.get("chase")).toContain("awaiting_perform_ask_chase")
   expect(lowered?.states.get("escalate")).toContain("awaiting_perform_ask_escalate")
-  const rule = JSON.stringify(lowered?.artifacts.find(({ kind }) => kind === "rule"))
+  // The rule without the canvas layout extension (which carries the drawing's own config).
+  const rule = JSON.stringify(lowered?.artifacts.find(({ kind }) => kind === "rule"), (key, value: unknown) => key === "extensions" ? undefined : value)
   expect(rule).toContain("norn.decision")
   // The relayed contract: decider {roles, law?}, options with effect {action} | {binding}, optional expiresInMs.
   for (const text of ["decider", "billing.reminder_needs_a_person", "expiresInMs", "14400000", "billing.leave_open"]) expect(rule).toContain(text)
