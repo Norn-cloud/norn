@@ -70,6 +70,12 @@ export interface Binding {
   readonly runRole: RunRole
   readonly updatedBy: string
   readonly updatedAt: number
+  /** `sha256:<hex>` of the tool manifest the binding was saved against. */
+  readonly manifestDigest: string
+  /** `gateway:app/tool@version`. */
+  readonly connectorRef: string
+  /** The cell definition agents reference; null while the stage keeps bindings in Studio only. */
+  readonly definition: { readonly id: string; readonly version: number } | null
 }
 
 export interface Tool {

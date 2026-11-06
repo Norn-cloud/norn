@@ -146,6 +146,10 @@ function BindingRow({ binding, manage }: { readonly binding: Binding; readonly m
         <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 px-4 pb-3 text-meta">
           <dt className="text-muted-foreground">Fixed inputs</dt>
           <dd>{Object.keys(binding.inputMapping).length === 0 ? "none" : Object.entries(binding.inputMapping).map(([name, { fixed }]) => `${name} = ${show(fixed)}`).join(", ")}</dd>
+          <dt className="text-muted-foreground">Connector</dt><dd className="font-mono">{binding.connectorRef}</dd>
+          <dt className="text-muted-foreground">In the cell</dt>
+          <dd>{binding.definition === null ? "Kept by Studio until this deployment's cell stores bindings" : <span className="font-mono">{binding.definition.id} · v{binding.definition.version}</span>}</dd>
+          <dt className="text-muted-foreground">Manifest</dt><dd className="truncate font-mono" title={binding.manifestDigest}>{binding.manifestDigest}</dd>
           <dt className="text-muted-foreground">Last changed</dt><dd>{new Date(binding.updatedAt).toLocaleString()}</dd>
           <dt className="text-muted-foreground">Input schema</dt>
           <dd><pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{tools.isPending ? "Loading…" : JSON.stringify(tool?.inputSchema ?? null, null, 2)}</pre></dd>
