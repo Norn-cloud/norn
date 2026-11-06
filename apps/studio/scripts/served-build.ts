@@ -23,7 +23,7 @@ export async function awaitServed(origin: string, expected: string, timeoutMs: n
   let served: string | undefined
   for (;;) {
     try {
-      const response = await fetcher(`${origin}/?served-build=${Date.now()}`, { headers: { "cache-control": "no-cache" } })
+      const response = await fetcher(`${origin}/?served-build=${Date.now()}`, { headers: { "cache-control": "no-cache", "user-agent": "norn-served-build/1" } })
       served = response.ok ? entryChunk(await response.text()) : undefined
     } catch {
       served = undefined
