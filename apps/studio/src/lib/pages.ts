@@ -8,6 +8,7 @@ export const PAGES = {
   "/sources": "/sources",
   "/sources/$concept": "/sources/canon.Item",
   "/sources/$concept/$": "/sources/canon.Item/demo/item/gold",
+  "/objects/$type": "/objects/canon.Item",
   "/questions": "/questions",
   "/questions/new": "/questions/new",
   "/questions/build": "/questions/build",
