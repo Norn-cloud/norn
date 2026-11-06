@@ -2,6 +2,9 @@ import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, settleExample, timeline, verdictOf, type ExampleRun } from "../src/agent/verdict.ts"
+import { Chat } from "@ai-sdk/react"
+import type { UIMessage } from "ai"
+import { AgentPanel, type AgentState } from "../src/agent/panel.tsx"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
 const refusal = {
@@ -55,7 +58,8 @@ test("a verdict leads with the law in words; ids, pointers and codes are folded 
   const admitted = verdictOf({ proposal, admitted: true, stage: "admitted", receiptSha256: "eef45040c171aa", refusals: [] })
   if (refused === undefined || admitted === undefined) throw new Error("verdicts")
   for (const html of [renderToStaticMarkup(<VerdictCard verdict={refused} />), renderToStaticMarkup(<VerdictCard verdict={admitted} />)]) {
-    const [shown = "", folded = ""] = html.split("<details")
+    const at = html.indexOf("<details")
+    const [shown, folded] = [html.slice(0, at), html.slice(at)]
     expect(shown).not.toContain("/payload/")
     expect(shown).not.toContain("law.model.")
     expect(folded).toContain("/payload/response/expression")
@@ -72,4 +76,37 @@ test("examples sit among chat messages in the order they were sent, a new one af
   const examples: ExampleRun[] = [{ id: 0, chip: "first", after: 0, verdict: "pending" }, { id: 1, chip: "later", after: 2, verdict: "pending" }]
   const order = timeline(["m0", "m1"], examples).map((entry) => entry.kind === "message" ? entry.message : entry.example.chip)
   expect(order).toEqual(["first", "m0", "m1", "later"])
+})
+
+test("a refusal with no findings still names the proposal's location under Details", () => {
+  const verdict = verdictOf({ ...refusal, refusals: [] })
+  if (verdict === undefined) throw new Error("a verdict")
+  const html = renderToStaticMarkup(<VerdictCard verdict={verdict} />)
+  expect(html).toContain("Refused by the checker")
+  expect(html.slice(html.indexOf("<details"))).toContain("stress.purchase_positive.law /payload/response/expression")
+})
+
+test("a proposal or refusal without the fields the card reads is not a verdict", () => {
+  expect(verdictOf({ ...refusal, proposal: null })).toBeUndefined()
+  expect(verdictOf({ proposal: "x", error: "No artifact x." })).toBeUndefined()
+  expect(verdictOf({ ...refusal, refusals: [null] })).toBeUndefined()
+  expect(verdictOf({ ...refusal, refusals: [{ code: "x" }] })).toBeUndefined()
+})
+
+test("a tab keeps one session id when its storage throws", () => {
+  const broken = { getItem: (): string | null => { throw new Error("SecurityError") }, setItem: () => { throw new Error("QuotaExceededError") } }
+  const first = sessionId(broken)
+  expect(first).toMatch(/^[0-9a-f-]{36}$/)
+  expect(sessionId(broken)).toBe(first)
+  expect(sessionId(undefined)).toBe(first)
+})
+
+test("the panel renders the conversation and draft it is given, so reopening the sheet keeps them", () => {
+  const chat = new Chat<UIMessage>({ messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Let Receive start from draft" }] }] })
+  const state: AgentState = { chat, input: "half-typed draft", setInput: () => {}, stopped: new Set(), setStopped: () => {}, examples: [{ id: 0, chip: "an example sent before the sheet closed", after: 1, verdict: "pending" }], setExamples: () => {}, nextExample: { current: 1 } }
+  const html = renderToStaticMarkup(<AgentPanel state={state} />)
+  expect(html).toContain("Let Receive start from draft")
+  expect(html).toContain("half-typed draft")
+  expect(html).toContain("an example sent before the sheet closed")
+  expect(html).not.toContain("Propose a change")
 })
