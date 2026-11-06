@@ -121,9 +121,12 @@ export function authOptions(config: AuthConfig) {
         create: {
           before: async (session, ctx) => {
             const method = ctx === null ? undefined : AUTH_METHODS[ctx.path as keyof typeof AUTH_METHODS]
-            const member = ctx === null ? null : await (await getCurrentAdapter(ctx.context.adapter)).findOne<{ organizationId: string }>({
+            // The earliest membership, the same rule activeMembership uses when a session has none.
+            const [member] = ctx === null ? [] : await (await getCurrentAdapter(ctx.context.adapter)).findMany<{ organizationId: string }>({
               model: "member",
               where: [{ field: "userId", value: session.userId }],
+              sortBy: { field: "createdAt", direction: "asc" },
+              limit: 1,
             })
             return { data: { ...session, authMethod: method ?? null, activeOrganizationId: member?.organizationId ?? null } }
           },
