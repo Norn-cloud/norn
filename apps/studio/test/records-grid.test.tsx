@@ -48,7 +48,9 @@ test("a recorded page shows its records, says it is recorded, and keeps server s
   expect(html).toContain("Gold scrap")
   expect(html).toContain(">Recorded<")
   expect(html).toContain(SERVER_QUERY_UNAVAILABLE)
-  expect(html).toMatch(/<button[^>]*disabled[^>]*title="[^"]*sort or filter[^"]*"[^>]*>.*?Filter/)
+  const filterButton = html.match(/<button[^>]*>(?:(?!<\/button>).)*?Filter(?:(?!<\/button>).)*<\/button>/)?.[0] ?? ""
+  expect(filterButton).toContain('disabled=""')
+  expect(filterButton).toContain("sort or filter records on the server yet")
   expect(html).toContain('role="grid"')
   expect(html).not.toContain('aria-sort="ascending"')
 })

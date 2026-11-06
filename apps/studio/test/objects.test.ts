@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import type { Field } from "../src/lib/catalog.ts"
+import { catalogOf, type Field } from "../src/lib/catalog.ts"
 import { numberTexts, readDocument } from "../src/lib/exact.ts"
 import { exactJson, exactPretty, factText, lifecycleOf, lifecycleStates, readProblem, readsOf, recordName } from "../src/lib/objects.ts"
-import type { LinkPage, ObjectPage, ObjectRecord } from "../src/lib/transport.ts"
+import type { Artifact, LinkPage, ObjectPage, ObjectRecord } from "../src/lib/transport.ts"
 
 // The cell's reads of the three-systems world (crates/norn-api/tests/explorer_objects.rs).
 const recorded = (name: string) => readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects", name), "utf8")
@@ -38,9 +38,6 @@ test("server strings render verbatim: codes and identifiers are never reworded",
   expect(factText({ ...text, id: "sku" }, read.document, read.numbers, "")).toBe("SKU_123")
 })
 
-const page = (records: number, scannedThrough: string | null, quarantineCount = 0) =>
-  readDocument<ObjectPage>(JSON.stringify({ objectType: "t", records: Array.from({ length: records }, (_, i) => ({ objectType: "t", id: `r${i}`, scope: "s", version: 1, values: {} })), quarantineCount, scannedThrough }), "recorded")
-
 test("a failed read surfaces its message instead of loading forever", () => {
   expect(readProblem({ error: null }, { error: new Error("catalog read refused: scope.denied") })).toBe("catalog read refused: scope.denied")
   expect(readProblem({ error: null }, { error: null })).toBeUndefined()
@@ -54,6 +51,10 @@ test("a recorded object is returned only for the identity it was asked for", () 
   expect(readsOf("canon.Item", "demo~item~gold", object, links)).toBe(false)
   expect(readsOf("canon.Party", "demo/item/gold", object, links)).toBe(false)
 })
+
+// Lifecycles come from the admitted definitions; the record is a minimal synthetic one.
+const lifecycleCatalog = catalogOf(readDocument<readonly Artifact[]>(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8"), "recorded").document)
+const record = { objectType: "t", id: "x", scope: "s", version: 1, values: {} } as ObjectRecord
 
 test("a lifecycle's states follow its declared transitions from the initial state", () => {
   const [lifecycle] = lifecycleCatalog.byName.get("core.analytics.Restatement")?.lifecycles ?? []
