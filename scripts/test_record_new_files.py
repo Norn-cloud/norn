@@ -6,6 +6,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import coverage_manifest
@@ -114,6 +115,24 @@ class RecordNewFilesTests(unittest.TestCase):
                 entry.unlink()
         self.write("elsewhere/new.py", "pass\n")
         self.assertEqual(self.run_tool(), 2)
+
+    def test_a_failed_provenance_write_rolls_the_enrollment_back(self):
+        self.write("app/src/new.ts", "export {}\n")
+        updates = tool.plan(self.root)
+        entry = next(p for p in updates if p.startswith(f"{COVERAGE}/") and "new.ts" in (updates[p] or b"").decode())
+        record = f"{PROVENANCE}/app/src/new.ts.json"
+        self.assertIn(record, updates)
+        real = Path.write_bytes
+        def failing(path, data):
+            if path.as_posix().endswith(record):
+                raise OSError("disk full")
+            return real(path, data)
+        with mock.patch.object(Path, "write_bytes", failing), self.assertRaises(OSError):
+            tool.apply(self.root, updates)
+        self.assertFalse((self.root / entry).exists(), "the coverage entry outlived the failed provenance write")
+        self.assertFalse((self.root / PROVENANCE / f"{entry}.json").exists())
+        self.assertNotIn("app/src/new.ts", self.enrolled())
+        self.assertEqual(self.run_tool("--check"), 1, "the tree is back where it started: still needs recording")
 
     def test_a_source_enrolled_twice_is_refused_before_any_write(self):
         duplicate = f"{COVERAGE}/subsystems/lib/sourceFiles/{coverage_manifest.entry_id('app/src/main.ts')}.json"
