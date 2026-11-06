@@ -14,6 +14,10 @@ type Page = {
   getByText(text: string | RegExp, options?: { exact?: boolean }): Locator
   locator(selector: string, options?: { hasText?: string | RegExp }): Locator
   on(event: "dialog", listener: (dialog: { accept(): Promise<void> }) => void): void
+  request: {
+    get(url: string): Promise<{ ok(): boolean; json(): Promise<unknown> }>
+    delete(url: string, options: { headers: Record<string, string> }): Promise<{ ok(): boolean; status(): number }>
+  }
   route(url: string, handler: (route: { fulfill(response: { status: number; contentType: string; body: string }): Promise<void> }) => unknown): Promise<void>
   unroute(url: string): Promise<void>
 }
@@ -200,6 +204,33 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
   },
 }
 
+/**
+ * Self-cleaning: before the rows run, remove what earlier runs left on the fixture app only:
+ * bindings named "e2e binding …" for the fixture tool, and accounts renamed "e2e …" on norn-e2e.
+ * It goes through Studio's own API, as the signed-in admin; nothing else is touched.
+ */
+async function cleanUp(page: Page) {
+  const api = `${base}/api/connectors`
+  const headers = { origin: base }
+  const read = async <T>(path: string): Promise<T | null> => { const r = await page.request.get(`${api}${path}`); return r.ok() ? await r.json() as T : null }
+  const bindings = (await read<{ bindings: { id: string; label: string; tool: string }[] }>("/bindings"))?.bindings ?? []
+  for (const binding of bindings.filter((b) => b.label.startsWith("e2e binding ") && b.tool === env("E2E_TOOL"))) {
+    const r = await page.request.delete(`${api}/bindings/${encodeURIComponent(binding.id)}`, { headers })
+    console.log(`cleanup binding ${binding.label}: ${r.status()}`)
+  }
+  // Accounts need the gateway signed in; without it there is nothing of ours to clean there.
+  const inventory = await read<{ apps: { id: string; name: string }[]; accounts: { id: string; label: string }[] }>("/inventory")
+  const fixture = inventory?.apps.find((a) => a.name === app())
+  if (inventory === null || fixture === undefined) return
+  const requirements = (await read<{ requirements: { requirement: string; account: string | null }[] }>(`/apps/${encodeURIComponent(fixture.id)}/accounts`))?.requirements ?? []
+  for (const { requirement, account } of requirements) {
+    const label = inventory.accounts.find((a) => a.id === account)?.label ?? ""
+    if (account === null || !label.startsWith("e2e ")) continue
+    const r = await page.request.delete(`${api}/apps/${encodeURIComponent(fixture.id)}/accounts/${encodeURIComponent(requirement)}/${encodeURIComponent(account)}`, { headers })
+    console.log(`cleanup account ${label}: ${r.status()}`)
+  }
+}
+
 const supported = (verbs: Readonly<Record<string, VerbSupport>>) => Object.entries(verbs).filter(([, support]) => support === "supported").map(([verb]) => verb)
 const { chromium } = await import("playwright-core" as string) as { chromium: { launch(o: object): Promise<{ newContext(o: object): Promise<{ newPage(): Promise<unknown>; close(): Promise<void> }>; close(): Promise<void> }> } }
 const browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/usr/bin/google-chrome", args: ["--no-sandbox"] })
@@ -208,6 +239,7 @@ const page = await context.newPage() as Page
 // One handler for the whole run: every confirmation the suite triggers (disconnect, remove) is accepted once.
 page.on("dialog", (dialog) => void dialog.accept())
 await signIn(page)
+await cleanUp(page)
 let failed = 0
 for (const [kind, verbs] of Object.entries(MATRIX) as [keyof typeof MATRIX, Readonly<Record<string, VerbSupport>>][]) {
   const done = new Set<string>()
