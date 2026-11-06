@@ -79,3 +79,19 @@ test("a client-supplied actor header is refused and other APIs need a session", 
   expect((await call(env, "/api/anything")).status).toBe(401)
   expect(await (await call(env, "/")).text()).toContain("studio")
 })
+
+test("sign-in always lands in the earliest of several organizations", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  const signUp = await post(env, "/api/auth/sign-up/email", { email: "fa@example.com", password: "correct horse battery", name: "Fa" })
+  const own = (db.query("select organizationId from member").get() as { organizationId: string }).organizationId
+  const user = (db.query("select id from user").get() as { id: string }).id
+  db.run("insert into organization (id, name, slug, createdAt) values ('later', 'Later', 'later', ?)", [new Date(Date.now() + 60_000).toISOString()])
+  db.run("insert into member (id, organizationId, userId, role, createdAt) values ('m2', 'later', ?, 'viewer', ?)", [user, new Date(Date.now() + 60_000).toISOString()])
+  await post(env, "/api/auth/sign-out", {}, { cookie: cookieOf(signUp) })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const signIn = await post(env, "/api/auth/sign-in/email", { email: "fa@example.com", password: "correct horse battery" })
+    const me = (await (await call(env, "/api/me", { headers: { cookie: cookieOf(signIn) } })).json()) as { organization: { id: string; role: string } }
+    expect(me.organization).toMatchObject({ id: own, role: "owner" })
+  }
+})
