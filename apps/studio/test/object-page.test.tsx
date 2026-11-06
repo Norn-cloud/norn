@@ -8,7 +8,7 @@ import { readDocument } from "../src/lib/exact.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { ObjectPage, SourcesItemPage } = await import("../src/objects.tsx")
+const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
 const { ObjectTypePage } = await import("../src/sources.tsx")
 const { ViewProvider } = await import("../src/lib/view.tsx")
 
@@ -48,7 +48,7 @@ test("the technical view shows only Norn artefacts: the definition, the mapping 
   expect(html).toContain("Record document")
   expect(html).toContain("Copy erpnext.three.mapping@0.1.0")
   expect(html).toContain("Copy 6ec08e5b9fc6375526a98b96eeff65f402fbad558e4df418ed603f32b3017980")
-  expect(html).toContain("This page shows a recorded snapshot. Live reads return the access decision and receipt for your account.")
+  expect(html).toContain("This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.")
   expect(html).toContain("Viewing as")
   expect(html).not.toContain("no signed-in principal")
   expect(html).toContain("&quot;objectType&quot;: &quot;canon.Item&quot;")
@@ -82,4 +82,18 @@ test("the overview says in one sentence what the record is and what its stored l
   expect(html).toContain("Gold scrap is an item record, read from ERPNext by mapping erpnext.three.mapping. Its one declared relation has no stored link in this snapshot.")
   expect(html).toContain("Holding records (item)")
   expect(html).toContain("none in this snapshot")
+})
+
+test("when the server returned only the first page of links, the summary does not claim the snapshot has none", () => {
+  const concept = { name: "canon.Item", title: "Item", relationships: [] } as unknown as Parameters<typeof summaryOf>[0]
+  const holding = { name: "canon.Holding", title: "Holding", relationships: [{ id: "item", target: "canon.Item" }] } as unknown as Parameters<typeof summaryOf>[0]
+  const reads = (hasMore: boolean, items: unknown[]) => ({
+    object: { document: { id: "demo/item/gold", objectType: "canon.Item", values: { label: "Gold scrap" } } },
+    links: { document: { objectType: "canon.Item", id: "demo/item/gold", items, hasMore } },
+    source: null,
+  }) as unknown as Parameters<typeof summaryOf>[1]
+  const edge = { sourceType: "canon.Holding", link: "item", source: "h1", targetType: "canon.Item", target: "demo/item/gold", version: 1 }
+  expect(summaryOf(concept, reads(true, []), [holding])).toContain("No stored link appears on the first page the server returned; more may exist.")
+  expect(summaryOf(concept, reads(true, [edge]), [holding])).toContain("At least 1 stored link connects it to other records.")
+  expect(summaryOf(concept, reads(false, []), [holding])).toContain("Its one declared relation has no stored link in this snapshot.")
 })
