@@ -108,3 +108,15 @@ export const handle = (page: Page, id: string, side: "left" | "right") => node(p
 
 /** A shortcut with the platform's command key: `press(page, "z")` is ⌘Z or Ctrl+Z. */
 export const press = (page: Page, combo: string) => page.keyboard.press(`${mod}+${combo}`)
+
+/** Each node's position as drawn (its React Flow transform), by id: equal maps mean an identical layout. */
+export const placed = (page: Page) => page.locator(".react-flow__node").evaluateAll((all) =>
+  Object.fromEntries(all.map((one) => [one.getAttribute("data-id") ?? "", (one as HTMLElement).style.transform])))
+
+/** Each connection's ends, from React Flow's own "Edge from <source> to <target>" label. */
+export const edgeEnds = (page: Page) => page.locator(".react-flow__edge").evaluateAll((all) =>
+  all.map((one) => /^Edge from (\S+) to (\S+)$/.exec(one.getAttribute("aria-label") ?? "")?.slice(1) ?? []).filter((ends) => ends.length === 2) as [string, string][])
+
+/** Each node's left edge on screen, by id. */
+export const lefts = async (page: Page) => Object.fromEntries(await page.locator(".react-flow__node").evaluateAll((all) =>
+  all.map((one) => [one.getAttribute("data-id") ?? "", one.getBoundingClientRect().x] as const)))

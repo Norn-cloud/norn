@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { clickEdge, drag, edge, node, open, press, shown, clear } from "./canvas.ts"
+import { clear, clickEdge, drag, edge, edgeEnds, lefts, node, open, placed, press, shown } from "./canvas.ts"
 
 // One test per row of the automation canvas's verb matrix (see the PR body).
 const out = (page: Parameters<typeof node>[0], id: string, port: string) => node(page, id).locator(`.react-flow__handle[data-handleid="${port}"]`)
@@ -157,9 +157,6 @@ test("selection and problems: multi-select, copy/paste, delete selected, jump to
   await expect(page.getByRole("heading", { name: /^Outcome\s*·\s*(paid|draft)_copy$/ })).toBeVisible()
 })
 
-// Positions as drawn (React Flow's node transforms), by node id.
-const placed = (page: Parameters<typeof node>[0]) => page.locator(".react-flow__node").evaluateAll((all) =>
-  Object.fromEntries(all.map((one) => [one.getAttribute("data-id") ?? "", (one as HTMLElement).style.transform])))
 const boxes = (page: Parameters<typeof node>[0], selector: string) => page.locator(selector).evaluateAll((all) => all.map((one) => one.getBoundingClientRect().toJSON() as DOMRect))
 const overlap = (a: DOMRect, b: DOMRect) => a.x < b.x + b.width - 0.5 && a.x + a.width > b.x + 0.5 && a.y < b.y + b.height - 0.5 && a.y + a.height > b.y + 0.5
 
@@ -178,11 +175,10 @@ test("tidy up: lays the whole graph out with room for labels, as one step undo p
     for (const other of labels.slice(index + 1)) expect(overlap(label, other)).toBe(false)
   })
   // The order holds: every connection runs left to right.
-  const x = Object.fromEntries((await page.locator(".react-flow__node").evaluateAll((all) => all.map((one) => [one.getAttribute("data-id") ?? "", one.getBoundingClientRect().x] as const))))
-  // React Flow names each connection "Edge from <source> to <target>".
-  const ends = await page.locator(".react-flow__edge").evaluateAll((all) => all.map((one) => /^Edge from (\S+) to (\S+)$/.exec(one.getAttribute("aria-label") ?? "")?.slice(1) ?? []))
+  const x = await lefts(page)
+  const ends = await edgeEnds(page)
   expect(ends.length).toBeGreaterThan(0)
-  for (const [source, target] of ends) expect(x[target!]!).toBeGreaterThan(x[source!]!)
+  for (const [source, target] of ends) expect(x[target]!).toBeGreaterThan(x[source]!)
   // One undo restores the person's layout; redo tidies again. The shortcut does the same.
   await press(page, "z")
   await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(before))

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { clickEdge, drag, edge, handle, node, open, press, shown, clear } from "./canvas.ts"
+import { clear, clickEdge, drag, edge, edgeEnds, handle, lefts, node, open, placed, press, shown } from "./canvas.ts"
 
 // One test per row of the lifecycle canvas's verb matrix (see the PR body). Each test exercises every ✓ verb of its row.
 
@@ -149,4 +149,27 @@ test("problems panel: lists each finding and jumps to the state it is on", async
   await expect(page.getByTestId("problem")).toHaveCount(2)
   await page.getByTestId("problem").first().click()
   await expect(page.getByLabel("Name")).toHaveValue("new_state")
+})
+
+test("tidy up: lays the lifecycle out from its initial state, as one step undo puts back", async ({ page }) => {
+  await open(page)
+  const before = await placed(page)
+  await page.getByRole("button", { name: "Tidy up" }).click()
+  await expect.poll(async () => JSON.stringify(await placed(page))).not.toBe(JSON.stringify(before))
+  const after = await placed(page)
+  await page.waitForTimeout(400)
+  // The order holds: the initial state leads, and every other state is reached by a step from a column to its left.
+  // (A lifecycle may step back, so a step running right to left is allowed; each state's first way in is not.)
+  const x = await lefts(page)
+  const ends = await edgeEnds(page)
+  expect(ends.length).toBeGreaterThan(0)
+  for (const id of Object.keys(x)) {
+    if (id === "draft") expect(x[id]).toBe(Math.min(...Object.values(x)))
+    else expect(ends.some(([source, target]) => target === id && x[source]! < x[id]! - 1)).toBe(true)
+  }
+  // One undo restores the person's layout; redo tidies again.
+  await press(page, "z")
+  await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(before))
+  await press(page, "Shift+z")
+  await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(after))
 })
