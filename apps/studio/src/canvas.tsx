@@ -14,6 +14,7 @@ import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { AutomationEditor } from "./automation-canvas.tsx"
+import { AgentsView } from "./agent-canvas.tsx"
 import { words } from "./lib/format.ts"
 import { recordedTransport, type Envelope } from "./lib/transport.ts"
 
@@ -158,7 +159,7 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
   const envelopes = useMemo(() => definitions.data ?? [], [definitions.data])
   const found = useMemo(() => lifecyclesIn(envelopes), [envelopes])
   const [chosen, setChosen] = useState(0)
-  const [kind, setKind] = useState<"lifecycle" | "automation">("lifecycle")
+  const [kind, setKind] = useState<"lifecycle" | "automation" | "agents">("lifecycle")
   const lifecycle = found[chosen]
   const envelope = envelopes.find(({ artifactId }) => artifactId === lifecycle?.artifactId)
   return (
@@ -170,8 +171,10 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
       <div className="flex flex-wrap gap-1.5">
         {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{words(ref.objectType)}</Button>)}
         <Button size="sm" variant={kind === "automation" ? "default" : "outline"} onClick={() => setKind("automation")}>Automation</Button>
+        <Button size="sm" variant={kind === "agents" ? "default" : "outline"} onClick={() => setKind("agents")}>Agents</Button>
       </div>
       {kind === "automation" && <AutomationEditor />}
+      {kind === "agents" && <AgentsView />}
       {definitions.isPending && <Panel label="Canvas"><Well><p className="p-6 text-sm text-muted-foreground" role="status">Reading definitions…</p></Well></Panel>}
       {definitions.error && <Panel label="Canvas"><Well><p className="p-6 text-sm text-destructive" role="alert">The definitions could not be read: {definitions.error.message}</p></Well></Panel>}
       {definitions.data && found.length === 0 && <Panel label="Canvas"><Well><EmptyState icon={Network}>No admitted definition declares a lifecycle yet.</EmptyState></Well></Panel>}
