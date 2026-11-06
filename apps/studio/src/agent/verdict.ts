@@ -1,3 +1,5 @@
+import type { UIMessage } from "ai"
+
 /** The checker's answer to one proposal, as the agent Worker's propose tool returns it. */
 export interface Law {
   readonly artifactId: string
@@ -58,3 +60,14 @@ export const SUGGESTIONS = [
   "Let Receive start from a shipped state",
   "Let Receive start straight from draft",
 ] as const
+
+/** What a turn is doing while the server works, in the order it happens. */
+export const STEPS = ["Drafting a proposal", "Checking it against every law", "Reading the checker's answer"] as const
+
+/** How far the current turn has got: drafting until it proposes, checking until the checker answers. */
+export function stepOf(message: UIMessage | undefined): number {
+  const proposal = message?.role === "assistant" ? message.parts.filter((part) => part.type === "tool-propose").at(-1) : undefined
+  if (proposal === undefined) return 0
+  const state = "state" in proposal ? proposal.state : undefined
+  return state === "output-available" || state === "output-error" ? 2 : 1
+}

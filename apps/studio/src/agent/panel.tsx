@@ -1,15 +1,15 @@
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport, type UIMessage } from "ai"
-import { Bot, LoaderCircle, Sparkles } from "lucide-react"
+import { Check, LoaderCircle, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useMemo, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Streamdown } from "streamdown"
 import { StickToBottom } from "use-stick-to-bottom"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionCard, VerdictCard } from "./cards.tsx"
-import { SUGGESTIONS, sessionId, verdictOf } from "./verdict.ts"
+import { STEPS, SUGGESTIONS, sessionId, stepOf, verdictOf } from "./verdict.ts"
 
 const ALTERNATIVE = "Suggest a different change that keeps the intent but that the checker would admit, and propose it."
 
@@ -29,6 +29,34 @@ const refused = (message: UIMessage) => {
   return verdict !== undefined && ("error" in verdict || !verdict.admitted)
 }
 
+/** The wait made visible: each step ticks off as the stream reaches it, with the seconds so far. */
+function Progress({ step }: { readonly step: number }) {
+  const [seconds, setSeconds] = useState(0)
+  useEffect(() => {
+    const started = Date.now()
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  return (
+    <div className="enter rounded-xl border bg-card p-3.5 text-sm">
+      {/* Only the step is announced; the seconds tick visually. */}
+      <p role="status" aria-live="polite" className="sr-only">{STEPS[step]}</p>
+      <ol className="space-y-2.5">
+        {STEPS.map((label, index) => (
+          <li key={label} aria-current={index === step ? "step" : undefined} className={cn("flex items-center gap-2.5 transition-colors", index > step && "text-muted-foreground/60")}>
+            <span className={cn("flex size-5 shrink-0 items-center justify-center rounded-full border", index < step && "border-transparent bg-success text-background", index === step && "border-ring")}>
+              {index < step ? <Check className="size-3" strokeWidth={3} /> : index === step ? <LoaderCircle className="size-3 animate-spin text-ring" /> : null}
+            </span>
+            <span className={cn(index === step && "font-medium")}>{label}</span>
+            {index === step && <span aria-hidden className="ms-auto text-meta text-muted-foreground tabular-nums">{seconds} s</span>}
+          </li>
+        ))}
+      </ol>
+      <p className="mt-3 text-meta text-muted-foreground">The checker runs on the server; a full check usually takes 10 to 20 seconds.</p>
+    </div>
+  )
+}
+
 function Parts({ message }: { readonly message: UIMessage }) {
   return message.parts.map((part, index) => {
     const key = `${message.id}:${index}`
@@ -39,7 +67,7 @@ function Parts({ message }: { readonly message: UIMessage }) {
         return verdict ? <VerdictCard key={key} verdict={verdict} /> : <p key={key} className="text-sm text-muted-foreground">The checker's answer could not be read.</p>
       }
       if (part.state === "output-error") return <p key={key} className="text-sm text-destructive">The checker could not run: {part.errorText}</p>
-      return <p key={key} className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Asking the checker…</p>
+      return null
     }
     if (part.type === "tool-world" || part.type === "tool-artifact") return <p key={key} className="text-meta text-muted-foreground">Read the definitions</p>
     return null
@@ -61,9 +89,9 @@ export function AgentPanel() {
       <StickToBottom className="relative min-h-0 flex-1 overflow-y-hidden" initial="smooth" resize="smooth" role="log">
         <StickToBottom.Content className="flex flex-col gap-4 p-4">
           {messages.length === 0 && (
-            <div className="flex flex-col items-center gap-2 py-10 text-center">
-              <Bot className="size-8 text-muted-foreground" />
-              <div className="font-medium">Propose a change</div>
+            <div className="enter flex flex-col items-center gap-2 py-10 text-center">
+              <span className="mb-1 flex size-11 items-center justify-center rounded-2xl bg-muted"><Sparkles className="size-5 text-muted-foreground" /></span>
+              <div className="text-base font-semibold">Propose a change</div>
               <p className="max-w-xs text-sm text-muted-foreground">Ask in plain words. The checker on the server admits or refuses every proposal, and names the law when it refuses. Nothing is installed.</p>
             </div>
           )}
@@ -72,6 +100,7 @@ export function AgentPanel() {
               <Parts message={message} />
             </div>
           ))}
+          {busy && <Progress key={messages.filter(({ role }) => role === "user").length} step={stepOf(last)} />}
           {last?.role === "assistant" && !busy && refused(last) && !stopped.has(last.id) && (
             <DecisionCard disabled={busy} onStop={() => setStopped((set) => new Set(set).add(last.id))} onAlternative={() => send(ALTERNATIVE)} />
           )}
@@ -84,9 +113,10 @@ export function AgentPanel() {
           )}
         </StickToBottom.Content>
       </StickToBottom>
-      <div className="space-y-2 border-t p-3">
+      <div className="space-y-2.5 border-t p-3">
+        {messages.length === 0 && <div className="text-meta text-muted-foreground">Try one of these</div>}
         {messages.length === 0 && (
-          <div className="flex flex-wrap gap-2">{SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}</div>
+          <div className="flex flex-wrap gap-2">{SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start font-normal whitespace-normal transition-colors hover:border-foreground/25" onClick={() => send(suggestion)}>{suggestion}</Button>)}</div>
         )}
         <form onSubmit={submit} className="flex items-end gap-2">
           <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. let Approve skip Submit" rows={2} className="min-h-0 resize-none"
