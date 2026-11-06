@@ -8,12 +8,13 @@ import { QuestionBuilder, buildQuestion, fieldOf, initialDraft, issuesOf, type D
 
 const fixture = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo", path), "utf8"))
 // The catalogue as GET /api/questions/catalog serves it for the demo analytics world.
-const world = fixture("analytics.world.json")
+const objectType = fixture("answers/scrap-yield.object-type.json")
+const metrics = fixture("answers/scrap-yield.metrics.json")
 const cell = fixture("answers/scrap-yield.question.json")
 const catalog: QuestionCatalog = {
   objectSet: "demo.Conversion",
-  properties: world.artifacts[0].payload.objectType.properties.map(({ id, type }: { id: string; type: { kind: string; unit?: { code: string } } }) => ({ name: id, kind: type.kind, unit: type.unit?.code ?? null })),
-  metrics: world.metrics.map(({ name, label, type }: { name: string; label: string; type: string }) => ({ name, label, type })),
+  properties: objectType.properties.map(({ id, type }: { id: string; type: { kind: string; unit?: { code: string } } }) => ({ name: id, kind: type.kind, unit: type.unit?.code ?? null })),
+  metrics: metrics.map(({ name, label, type }: { name: string; label: string; type: string }) => ({ name, label, type })),
   grains: ["day", "week", "month", "quarter", "year"],
   operators: ["eq", "ne", "lt", "le", "gt", "ge"],
   example: cell,
