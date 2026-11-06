@@ -38,8 +38,12 @@ struct Cell {
 }
 
 fn cell(kinds: DefinitionKinds) -> Cell {
+    cell_on(NativeEngine::open_in_memory().unwrap(), kinds)
+}
+
+fn cell_on(engine: NativeEngine, kinds: DefinitionKinds) -> Cell {
     let scope = analytics::analytics_scope();
-    let opened = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let opened = analytics::provision(engine, &scope).unwrap();
     let policy =
         ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
     let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
@@ -1385,4 +1389,50 @@ fn colliding_flow_artifacts_are_refused() {
         install_flow(&cell, &flow_body(FLOW_ID, &lowered(), Some(1))).0,
         200
     );
+}
+
+/// A cell whose active set gained a flow (and its Run type) reopens with
+/// the model of that set, and reopening writes nothing.
+#[test]
+fn a_cell_with_an_installed_flow_reopens_unchanged() {
+    let directory =
+        std::env::temp_dir().join(format!("norn-defs-flow-reopen-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("cell.sqlite");
+    let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+    {
+        let cell = cell_on(open(), DefinitionKinds::default().with_roles(ROLES));
+        assert_eq!(
+            install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+            200
+        );
+        assert_eq!(
+            install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None)).0,
+            200
+        );
+    }
+    let reopened = analytics::provision(open(), &analytics::analytics_scope()).unwrap();
+    let head = reopened.store.verified_head().unwrap().commits;
+    let active = reopened
+        .store
+        .read()
+        .installed_definitions(None)
+        .unwrap()
+        .unwrap();
+    assert!(active.canonical_set.contains("crm.route_message.flow.rule"));
+    assert!(
+        reopened
+            .store
+            .model()
+            .object_types()
+            .any(|object_type| object_type.name.as_str() == "crm.RouteMessageRun")
+    );
+    drop(reopened);
+    let again = analytics::provision(open(), &analytics::analytics_scope()).unwrap();
+    assert_eq!(
+        again.store.verified_head().unwrap().commits,
+        head,
+        "reopening writes nothing"
+    );
+    std::fs::remove_dir_all(&directory).unwrap();
 }
