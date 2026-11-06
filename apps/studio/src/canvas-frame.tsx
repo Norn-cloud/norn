@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { Background, Controls, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type Node, type NodeTypes } from "@xyflow/react"
+import { Background, Controls, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { CircleAlert, Copy, Redo2, Save, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -38,6 +38,8 @@ export interface CanvasFrameProps {
   readonly initial: g.Graph
   readonly kinds: g.Kinds
   readonly nodeTypes: NodeTypes
+  /** Custom edge renderers (an automation's exit labels), when a surface needs them. */
+  readonly edgeTypes?: EdgeTypes
   readonly issues: (graph: g.Graph) => { readonly issues: readonly Issue[]; readonly status: ReactNode }
   readonly toNode: (node: g.CanvasNode, issues: readonly Issue[], selected: boolean) => Node
   /** Draws one edge; the graph lets a label read its node (a route's condition, a decision's option). */
@@ -202,7 +204,7 @@ function Frame(props: CanvasFrameProps) {
             <ReactFlow
               nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
               edges={graph.edges.map((edge) => props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph))}
-              nodeTypes={props.nodeTypes} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
+              nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
               onConnect={(connection) => edit(g.connect(graph, kinds, props.newEdge(connection, graph)))}
