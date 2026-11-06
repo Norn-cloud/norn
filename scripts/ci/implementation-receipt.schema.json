@@ -57,14 +57,16 @@
   },
   "$defs": {
     "verdict": {
-      "description": "One verifier line per implementation_proved claim. Only rechecked and unchanged claims are admitted.",
+      "description": "One verifier line per implementation_proved claim. No verdict admits a claim until an isolated producer exists (#969); label says what the verdict establishes.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["claim", "kind", "verdict", "rechecked", "candidateReported"],
+      "required": ["claim", "kind", "verdict", "label", "rechecked", "candidateReported"],
       "properties": {
         "claim": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]*$"},
         "kind": {"enum": ["kani", "extraction"]},
-        "verdict": {"enum": ["rechecked", "candidate-reported", "unchanged"]},
+        "verdict": {"enum": ["candidate-reported", "unchanged"]},
+        "label": {"enum": ["candidate-reported Kani result",
+                           "F* re-checked theorem about the uploaded model, correspondence candidate-reported"]},
         "rechecked": {"type": "array", "items": {"enum": ["fstar-typecheck", "fstar-option-allowlist", "proof-hole-scan"]}},
         "candidateReported": {"type": "array", "items": {"enum": ["hax-extraction", "kani-baseline", "kani-mutations"]}}
       }
