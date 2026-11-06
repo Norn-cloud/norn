@@ -221,11 +221,7 @@ fn installed_flow<E: SqlEngine>(
             .ok_or_else(flow_not_found)?
             .to_owned(),
         environment_hash: active.receipt_sha256,
-        // DEFS retires a flow by moving its rule out of the live lifecycle.
-        retired: matches!(
-            text(rule, "/lifecycle"),
-            Some("deprecated" | "superseded" | "rejected")
-        ),
+        retired: text(rule, "/lifecycle") == Some("retired"),
     })
 }
 

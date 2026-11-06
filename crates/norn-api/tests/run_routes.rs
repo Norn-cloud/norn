@@ -369,7 +369,7 @@ fn a_retired_flow_starts_no_new_runs() {
     let mut artifacts = artifacts();
     for artifact in &mut artifacts {
         if artifact["kind"] == "rule" {
-            artifact["lifecycle"] = serde_json::json!("deprecated");
+            artifact["lifecycle"] = serde_json::json!("retired");
         }
     }
     let host = host_with(artifacts);
