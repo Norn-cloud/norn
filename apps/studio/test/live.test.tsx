@@ -40,7 +40,7 @@ test("the host's 403 is shown as its refusal; the Worker's own errors and a miss
 
 test("the trace is asked for by the answer's lineage and the row key exactly as the server wrote it", async () => {
   let asked = ""
-  await liveTrace("demo.yield_week", answer.lineageRef, bucket, async (url) => { asked = String(url); return new Response(traceText) })
+  await liveTrace("demo.yield_week", answer.lineageRef, bucket, async (url: string) => { asked = url; return new Response(traceText) })
   const url = new URL(asked, "https://studio")
   expect(url.pathname).toBe("/api/host/v1/questions/demo.yield_week/trace")
   expect(Object.fromEntries(url.searchParams)).toEqual({ orgId: "org_demo", environmentId: "analytics", lineageRef: answer.lineageRef, bucket })
