@@ -7,7 +7,7 @@
  * Idempotent: re-running changes nothing but the members' roles.
  * Preview only. Prod gets the organization when it is promoted.
  *
- *   bun scripts/seed-demo-org.ts --stage preview --member viewer@demo.norn.cloud=viewer --member analyst@demo.norn.cloud=admin
+ *   bun scripts/seed-demo-org.ts --stage preview --member viewer@demo.norn.cloud=viewer --member analyst@demo.norn.cloud=member
  *
  * Needs CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY. The members must already have signed up and verified their email addresses.
  */
@@ -31,27 +31,20 @@ export function seedStatements(members: readonly { readonly email: string; reado
         params: [`m_${DEMO_ORG.id}_${crypto.randomUUID()}`, DEMO_ORG.id, role, at, email, DEMO_ORG.id],
       },
       { sql: `update "member" set "role" = ? where "organizationId" = ? and "userId" = (select "id" from "user" where "email" = ? and "emailVerified" = 1)`, params: [role, DEMO_ORG.id, email] },
+      // A failed assertion violates NOT NULL and rolls the entire D1 batch back.
+      { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select null, null, null, null, null where not exists (select 1 from "member" join "user" on "user"."id" = "member"."userId" where "member"."organizationId" = ? and "member"."role" = ? and "user"."email" = ? and "user"."emailVerified" = 1)`, params: [DEMO_ORG.id, role, email] },
     ]),
   ]
 }
 
-/** Verify every account before writing, and check each guarded role update took effect. */
+/** Run the organization and all guarded memberships as one atomic D1 batch. */
 export async function seedDemoOrg(
   members: readonly { readonly email: string; readonly role: OrgRole }[],
   now: Date,
-  query: (statement: Statement) => Promise<{ results: unknown[]; changes: number }>,
+  batch: (statements: readonly Statement[]) => Promise<void>,
 ): Promise<void> {
-  for (const { email } of members) {
-    const result = await query({ sql: `select "id" from "user" where "email" = ? and "emailVerified" = 1`, params: [email] })
-    if (result.results.length !== 1) throw new Error(`Demo account is missing or its email is not verified: ${email}`)
-  }
-  const statements = seedStatements(members, now)
-  for (const [index, statement] of statements.entries()) {
-    const result = await query(statement)
-    if (index > 0 && index % 2 === 0 && result.changes !== 1) {
-      throw new Error(`Demo membership could not be updated for a verified account: ${members[index / 2 - 1]?.email}`)
-    }
-  }
+  try { await batch(seedStatements(members, now)) }
+  catch (error) { throw new Error("Demo provisioning failed or its result is unknown; check the D1 error and ensure every account has a verified email.", { cause: error }) }
 }
 
 /** `email=role` pairs, each role one the organization plugin knows. */
@@ -80,12 +73,11 @@ async function main(argv: readonly string[]) {
   if (!found.success) throw new Error(`could not list D1 databases: ${JSON.stringify(found.errors)}`)
   const database = (found.result as { uuid: string; name: string }[]).find((db) => db.name === name)
   if (database === undefined) throw new Error(`no D1 database ${name}`)
-  await seedDemoOrg(members, new Date(), async ({ sql, params }) => {
-    const result = await api(`/${database.uuid}/query`, { sql, params })
-    if (!result.success) throw new Error(`seed failed: ${JSON.stringify(result.errors)}`)
-    const row = (result.result as { results?: unknown[]; meta?: { changes?: number } }[] | null)?.[0]
-    if (!row || !Array.isArray(row.results) || typeof row.meta?.changes !== "number") throw new Error("seed failed: invalid D1 response")
-    return { results: row.results, changes: row.meta.changes }
+  await seedDemoOrg(members, new Date(), async (batch) => {
+    const result = await api(`/${database.uuid}/query`, { batch })
+    if (!result.success || !Array.isArray(result.result) || result.result.length !== batch.length || result.result.some((row: { success?: boolean }) => row.success !== true)) {
+      throw new Error(`seed failed: ${JSON.stringify(result.errors)}`)
+    }
   })
   const check = await api(`/${database.uuid}/query`, { sql: `select "user"."email" as email, "member"."role" as role from "member" join "user" on "user"."id" = "member"."userId" where "organizationId" = ?`, params: [DEMO_ORG.id] })
   const stored = (check.result as { results?: unknown }[] | null)?.[0]?.results
