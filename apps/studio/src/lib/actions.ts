@@ -149,7 +149,8 @@ export type Spec =
   /** The dialect's bounded JSON leaf (the full six-type union). */
   | { readonly kind: "json" }
   | { readonly kind: "object"; readonly fields: readonly FormField[]; readonly groups: readonly Group[] }
-  | { readonly kind: "array"; readonly item: Spec }
+  /** `itemTitle`: the items schema's own `title`, naming one entry ("Lot"). */
+  | { readonly kind: "array"; readonly item: Spec; readonly itemTitle: string | null }
   /** A shape this form cannot offer; the action is shown but not callable from Studio. */
   | { readonly kind: "unsupported"; readonly reason: string }
 
@@ -198,7 +199,7 @@ function specOf(schema: unknown, pointer: string): { spec: Spec; nullable: boole
     }
     case "boolean": return { spec: { kind: "boolean" }, nullable: false }
     case "object": return { spec: { kind: "object", fields: fieldsOf(node, pointer), groups: groupsOf(node) }, nullable: false }
-    case "array": return { spec: { kind: "array", item: specOf(node["items"], `${pointer}/0`).spec }, nullable: false }
+    case "array": return { spec: { kind: "array", item: specOf(node["items"], `${pointer}/0`).spec, itemTitle: text((node["items"] as { title?: unknown } | undefined)?.title, 120) }, nullable: false }
     default: return { spec: { kind: "unsupported", reason: `type ${String(type)}` }, nullable: false }
   }
 }
@@ -314,6 +315,16 @@ export function unplaced(diagnostics: readonly Diagnostic[], fields: readonly Fo
 
 /** A field's id in words, sentence-cased: `cost_currency` → "Cost currency". Used only when the schema gives no title. */
 export const fieldLabel = (name: string) => { const words = name.replaceAll("_", " "); return words.charAt(0).toUpperCase() + words.slice(1) }
+
+/** One entry of a list, in words: the items' own title, else the list's label made singular ("Lots" → "lot"). */
+export function itemNoun(itemTitle: string | null, listLabel: string): string {
+  if (itemTitle !== null) return itemTitle.toLowerCase()
+  const label = listLabel.toLowerCase()
+  if (label.endsWith("ies")) return `${label.slice(0, -3)}y`
+  if (/(ss|us|is)$/.test(label)) return label
+  if (label.endsWith("es") && /(sh|ch|x|z)es$/.test(label)) return label.slice(0, -2)
+  return label.endsWith("s") ? label.slice(0, -1) : label
+}
 
 /** "e.g. 12.500" for an exact decimal of scale 3: an example, never a value. */
 export const decimalExample = (scale: number | null) => scale === null || scale === 0 ? "e.g. 12" : `e.g. 12.${"5".padEnd(scale, "0")}`

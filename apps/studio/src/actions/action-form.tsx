@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Minus, Plus } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Lock, Plus, X } from "lucide-react"
 import { useId, useMemo, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, newIdempotencyKey, pastTense, risky as isRisky, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, itemNoun, newIdempotencyKey, pastTense, risky as isRisky, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type CallResult, type Diagnostic, type Draft, type FormField, type Spec,
 } from "../lib/actions.ts"
 
@@ -117,7 +117,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
           <p className="text-muted-foreground">{action.title}{action.uiEffects.destructive && action.uiEffects.irreversible ? ": it removes business data and can't be undone." : "."} The cell still checks it before anything changes.</p>
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* The submit bar stays in view on a long form: a footer on the sheet's surface with a hairline above. */}
+      <div className="sticky bottom-0 z-10 -mx-6 flex flex-wrap items-center gap-2 border-t border-node-border bg-card/95 px-6 py-3 backdrop-blur-sm">
         {dirty && phase.kind === "editing" && <span className="text-meta text-muted-foreground">Not sent yet</span>}
         <span className="flex-1" />
         {phase.kind === "confirm" && <Button type="button" variant="ghost" onClick={() => setPhase({ kind: "editing" })}>Back</Button>}
@@ -149,10 +150,16 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
       </label>
       {field.description && <p id={`${id}-help`} className="text-meta text-muted-foreground">{field.description}</p>}
       {locked
-        ? <p className="flex items-center gap-2 text-sm"><code>{String(value ?? "")}</code><span className="text-meta text-muted-foreground">this record</span></p>
+        ? (
+          <div className="relative">
+            <Lock className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input id={id} readOnly aria-readonly value={String(value ?? "")} title="This record: set by where you opened the action"
+              className="h-9 cursor-default bg-muted/70 pl-8 font-mono text-xs text-muted-foreground focus-visible:ring-0" />
+          </div>
+        )
         : field.nullable
-          ? <Nullable field={field} value={value ?? ""} onEdit={onEdit} widget={<Widget spec={field.spec} pointer={field.pointer} value={value ?? ""} root={draft} diagnostics={diagnostics} onEdit={onEdit} aria={aria} />} />
-          : <Widget spec={field.spec} pointer={field.pointer} value={value ?? ""} root={draft} diagnostics={diagnostics} onEdit={onEdit} aria={aria} />}
+          ? <Nullable field={field} value={value ?? ""} onEdit={onEdit} widget={<Widget spec={field.spec} pointer={field.pointer} label={field.label} value={value ?? ""} root={draft} diagnostics={diagnostics} onEdit={onEdit} aria={aria} />} />
+          : <Widget spec={field.spec} pointer={field.pointer} label={field.label} value={value ?? ""} root={draft} diagnostics={diagnostics} onEdit={onEdit} aria={aria} />}
       {problems.length > 0 && <div id={`${id}-problem`} role="alert" className="grid text-meta text-destructive">{problems.map((p) => <span key={`${p.pointer}:${p.code}:${p.message}`}>{p.message}</span>)}</div>}
     </div>
   )
@@ -176,8 +183,8 @@ type Aria = Record<string, string | boolean | undefined>
 const rebase = (fields: readonly FormField[], from: string, to: string): readonly FormField[] =>
   fields.map((f) => ({ ...f, pointer: to + f.pointer.slice(from.length), spec: f.spec.kind === "object" ? { ...f.spec, fields: rebase(f.spec.fields, from, to) } : f.spec }))
 
-function Widget({ spec, pointer, value, root, diagnostics, onEdit, aria }: {
-  readonly spec: Spec; readonly pointer: string; readonly value: Draft; readonly root: Draft; readonly diagnostics: readonly Diagnostic[]
+function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, bare = false }: {
+  readonly spec: Spec; readonly pointer: string; readonly label: string; readonly value: Draft; readonly bare?: boolean; readonly root: Draft; readonly diagnostics: readonly Diagnostic[]
   readonly onEdit: (pointer: string, value: Draft) => void; readonly aria: Aria
 }) {
   const text = typeof value === "string" ? value : ""
@@ -206,25 +213,26 @@ function Widget({ spec, pointer, value, root, diagnostics, onEdit, aria }: {
     case "json": return <Textarea {...aria} className="min-h-20 font-mono text-xs" spellCheck={false} placeholder="JSON" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
     case "object":
       return (
-        <div className="grid gap-3 rounded-lg border border-node-border p-3">
+        <div className={cn("grid gap-3", !bare && "rounded-lg border border-node-border p-3")}>
           {spec.fields.map((child) => <FieldRow key={child.pointer} field={child} label={child.label} draft={root} diagnostics={diagnostics} locked={false} onEdit={onEdit} />)}
         </div>
       )
     case "array": {
       const items = Array.isArray(value) ? value as readonly Draft[] : []
       const blank: Draft = spec.item.kind === "object" ? emptyDraft(spec.item.fields) : ""
+      const noun = itemNoun(spec.itemTitle, label)
       return (
         <div className="grid gap-2">
           {items.map((item, index) => (
-            <div key={index} className="flex items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <Widget spec={spec.item.kind === "object" ? { ...spec.item, fields: rebase(spec.item.fields, `${pointer}/0`, `${pointer}/${index}`) } : spec.item}
-                  pointer={`${pointer}/${index}`} value={item} root={root} diagnostics={diagnostics} onEdit={onEdit} aria={{ "aria-label": `Item ${index + 1}` }} />
-              </div>
-              <Button type="button" variant="ghost" size="icon" aria-label={`Remove item ${index + 1}`} onClick={() => onEdit(pointer, items.filter((_, i) => i !== index))}><Minus /></Button>
+            <div key={index} className="relative rounded-lg border border-node-border bg-card p-3 pr-11">
+              <Widget spec={spec.item.kind === "object" ? { ...spec.item, fields: rebase(spec.item.fields, `${pointer}/0`, `${pointer}/${index}`) } : spec.item}
+                pointer={`${pointer}/${index}`} label={`${noun} ${index + 1}`} value={item} root={root} diagnostics={diagnostics} onEdit={onEdit} bare
+                aria={{ "aria-label": `${noun.charAt(0).toUpperCase()}${noun.slice(1)} ${index + 1}` }} />
+              <Button type="button" variant="ghost" size="icon" className="absolute top-2 right-2 size-7 text-muted-foreground hover:text-foreground"
+                aria-label={`Remove ${noun} ${index + 1}`} title={`Remove ${noun} ${index + 1}`} onClick={() => onEdit(pointer, items.filter((_, i) => i !== index))}><X /></Button>
             </div>
           ))}
-          <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => onEdit(pointer, [...items, blank])}><Plus /> Add item</Button>
+          <Button type="button" variant="outline" size="sm" className="justify-self-start border-node-border" onClick={() => onEdit(pointer, [...items, blank])}><Plus /> Add {noun}</Button>
         </div>
       )
     }

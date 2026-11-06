@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { callAction, decimalExample, newIdempotencyKey, pastTense, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
-import { OPEN_HOLDING } from "../e2e/action-fixtures.ts"
+import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
 // Real admitted actions from the cell's own fixtures: an upsert with exact decimals and a transition.
 const fixture = (name: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../crates/norn-cell/tests/fixtures", name), "utf8")) as unknown
@@ -179,4 +179,11 @@ test("the business sentence's verb and the decimal example", () => {
     .toEqual(["opened", "adjusted", "retired", "restocked", "sent", "copied", "recounted"])
   expect(pastTense("3-way match")).toBeNull()
   expect([decimalExample(3), decimalExample(0), decimalExample(null)]).toEqual(["e.g. 12.500", "e.g. 12", "e.g. 12"])
+})
+
+test("a list names its entries: the items' own title, else its label made singular", () => {
+  expect(itemNoun("Lot", "Lots")).toBe("lot")
+  expect([itemNoun(null, "Lots"), itemNoun(null, "Entries"), itemNoun(null, "Boxes"), itemNoun(null, "Status"), itemNoun(null, "Stock")]).toEqual(["lot", "entry", "box", "status", "stock"])
+  const restock = fieldsOf(RESTOCK_HOLDING.inputSchema).find((f) => f.name === "lots")
+  expect(restock?.spec).toMatchObject({ kind: "array", itemTitle: null })
 })

@@ -48,7 +48,7 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                 ? <SheetDescription className="font-mono text-xs">{open.action.actionId}</SheetDescription>
                 : <SheetDescription className="sr-only">{open.action.title}</SheetDescription>}
             </SheetHeader>
-            <div className="px-6 pb-6">
+            <div className="px-6">
               <ActionForm key={`${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
