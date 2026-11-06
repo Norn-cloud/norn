@@ -17,6 +17,9 @@ test("a run with no answer says why: the route not there yet, signed out, the ce
   expect(notRun({ kind: "unavailable", status: 401 })).toBe("Not run: sign in again.")
   expect(notRun({ kind: "unavailable", status: 502 })).toBe("Not run: the cell did not answer (502).")
   expect(notRun({ kind: "refused", refusal: { code: "authz.denied", message: "the read request is not authorized" } })).toBe("the read request is not authorized")
+  expect(notRun({ kind: "too-large", code: "question.bucket_bound_exceeded", message: "" })).toBe("Too large to run: it would answer with more buckets than the cell allows.")
+  expect(notRun({ kind: "too-large", code: "core.compute.bound_exceeded", message: "the question reads more than 100000 rows" })).toBe("Too large to run: the question reads more than 100000 rows.")
+  expect(notRun({ kind: "bad-request", message: "unknown field `extra`" })).toBe("Not run: the cell refused the request (unknown field `extra`).")
 })
 
 test("a run answer reads with the catalogue's declarations, like a published answer", () => {
@@ -32,6 +35,8 @@ test("the cell's refusal of a run lands on the builder's fields, whether its poi
   expect(fieldOf("/filter/1/value")).toBe("filter.1")
   expect(fieldOf("/window")).toBe("window")
   expect(fieldOf("/questions/0/aggregate/0/metric")).toBe("measure.0")
+  expect(fieldOf("/question/aggregate/0/metric")).toBe("measure.0")
+  expect(fieldOf("/question/window")).toBe("window")
 })
 
 test("Run is offered before anything runs, and nothing is shown in place of an answer", () => {

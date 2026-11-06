@@ -64,9 +64,9 @@ export function buildQuestion(draft: Draft, catalog: QuestionCatalog) {
  * groupBy, filter) and the checker's own (metrics, dimensions, filters) place.
  */
 export function fieldOf(pointer: string | null): string | null {
-  // The checker's pointers start at the checked document (/questions/0/...); the cell's evaluate route at the question itself.
   const parts = (pointer ?? "").split("/").slice(1)
-  const [section, index] = parts[0] === "questions" ? parts.slice(2) : parts
+  // The checker's pointers start at the checked document (/questions/0/...), the cell's evaluate route at /question.
+  const [section, index] = parts[0] === "questions" ? parts.slice(2) : parts[0] === "question" ? parts.slice(1) : parts
   if (section === "aggregate" || section === "metrics") return index === undefined ? "measures" : `measure.${index}`
   if (section === "groupBy" || section === "dimensions") return "by"
   if (section === "filter" || section === "filters") return index === undefined ? "filters" : `filter.${index}`
