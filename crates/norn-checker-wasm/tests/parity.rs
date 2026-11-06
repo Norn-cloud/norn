@@ -788,6 +788,10 @@ fn agent_admission_reports_every_rule_with_a_payload_pointer() {
         "a malformed context is invalid input, not a finding"
     );
     assert!(
+        output_of("agent-context-bad-digest").starts_with("error: invalid context"),
+        "a binding manifest is named by digest, never a tag"
+    );
+    assert!(
         check_agent_json("not json", "{\"models\":[],\"bindings\":[],\"laws\":[]}").is_err(),
         "agent text that is not JSON is invalid input"
     );

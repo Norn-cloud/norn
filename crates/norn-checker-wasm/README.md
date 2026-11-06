@@ -34,10 +34,13 @@ profile, source, and evaluation failures. Invalid artifacts are findings.
   numbers are read exactly; `maxCostUsd` may be a number or a plain decimal
   string. The caps are `norn_checker::agent::MAX_*` (prompt 32 KiB, 10,000
   runs, 1,000 tool calls, 1,000 USD).
-- `contextJson` for `checkAgent`: `{models, bindings, laws, limits?}` — the
-  model allowlist, the tool binding ids bound for the org, and the admitted
-  law ids (unknown members are rejected); `limits` defaults to
-  `norn.limits/1` and its slice byte bound caps the payload text.
+- `contextJson` for `checkAgent` (host-supplied only): `{models, bindings:
+  [{id, connector, manifestDigest}], laws, limits?}` — the model allowlist,
+  the org's tool bindings resolved to installed connectors and their
+  manifests by digest (`sha256:<64 hex>`), and the admitted law ids. Unknown
+  members, a blank id or connector, a malformed digest, or a duplicate id
+  throw. `limits` defaults to `norn.limits/1`; its slice byte bound caps the
+  payload text (it has no agent caps, so those are constants).
 - `expectedType`: `bool`, `text`, `integer`, `number`, `date`, `duration`,
   `json`, an object type name (e.g. `retail.Sku`), `list<T>`, or `T?`.
 - `selfType`: the object type `self` is bound to (optional).

@@ -17,6 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_canonical::{CanonicalJsonError, JsonValue};
+use norn_ir::function::Digest;
 use norn_ir::{Decimal, ResourceLimitProfile};
 
 use crate::property_types::error;
@@ -56,17 +57,83 @@ pub const MAX_AGENT_TOOL_CALLS: u64 = 1_000;
 /// [`MAX_AGENT_RUNS`]).
 pub const MAX_AGENT_COST_USD: u64 = 1_000;
 
-/// What an agent is admitted against.
+/// A tool binding the host resolved to an installed connector and its
+/// manifest, by digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolBinding {
+    /// The tool binding id an agent's `tools` names.
+    pub id: String,
+    /// The installed connector the binding resolves to.
+    pub connector: String,
+    /// The connector manifest's content digest, `sha256:<64 hex>`.
+    pub manifest_digest: Digest,
+}
+
+/// What an agent is admitted against: host-supplied context only. Build it
+/// with [`AgentContext::new`], which refuses a malformed binding, so a
+/// context in hand is well formed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentContext {
-    /// The model allowlist.
-    pub models: BTreeSet<String>,
-    /// The tool binding ids bound for this org.
-    pub bindings: BTreeSet<String>,
-    /// The admitted law ids.
-    pub laws: BTreeSet<String>,
-    /// The resource-limit profile; its slice byte bound caps the payload text.
-    pub limits: ResourceLimitProfile,
+    models: BTreeSet<String>,
+    bindings: BTreeMap<String, ToolBinding>,
+    laws: BTreeSet<String>,
+    limits: ResourceLimitProfile,
+}
+
+impl AgentContext {
+    /// A context of the model allowlist `models`, the org's resolved tool
+    /// `bindings`, the admitted `laws`, and the resource-limit profile
+    /// `limits`. The profile's slice byte bound caps the payload text;
+    /// `norn.limits/1` has no prompt, run, tool-call, or cost fields, so those
+    /// caps are this module's named constants ([`MAX_PROMPT_BYTES`],
+    /// [`MAX_AGENT_RUNS`], [`MAX_AGENT_TOOL_CALLS`], [`MAX_AGENT_COST_USD`]).
+    ///
+    /// # Errors
+    ///
+    /// A binding with a blank id or connector, a `manifestDigest` that is not
+    /// `sha256:<64 lower-case hex>`, or an id bound twice.
+    pub fn new(
+        models: BTreeSet<String>,
+        bindings: Vec<ToolBinding>,
+        laws: BTreeSet<String>,
+        limits: ResourceLimitProfile,
+    ) -> Result<Self, String> {
+        let mut by_id = BTreeMap::new();
+        for binding in bindings {
+            if binding.id.trim().is_empty() {
+                return Err("a tool binding has a blank id".to_owned());
+            }
+            if binding.connector.trim().is_empty() {
+                return Err(format!(
+                    "tool binding {:?} has a blank connector",
+                    binding.id
+                ));
+            }
+            if !binding.manifest_digest.is_well_formed() {
+                return Err(format!(
+                    "tool binding {:?} has manifestDigest {:?}, not sha256:<64 lower-case hex>",
+                    binding.id,
+                    binding.manifest_digest.as_str()
+                ));
+            }
+            let id = binding.id.clone();
+            if by_id.insert(id, binding).is_some() {
+                return Err("a tool binding id is bound twice".to_owned());
+            }
+        }
+        Ok(Self {
+            models,
+            bindings: by_id,
+            laws,
+            limits,
+        })
+    }
+
+    /// The resolved binding of tool `id`, when the org binds it.
+    #[must_use]
+    pub fn binding(&self, id: &str) -> Option<&ToolBinding> {
+        self.bindings.get(id)
+    }
 }
 
 /// When an agent's proposals are approved.
@@ -505,7 +572,7 @@ pub fn check_agent(payload: &str, context: &AgentContext) -> Vec<Diagnostic> {
     }
     let mut seen = BTreeSet::new();
     for (index, tool) in agent.tools.iter().enumerate() {
-        let message = match (seen.insert(tool), context.bindings.contains(tool)) {
+        let message = match (seen.insert(tool), context.bindings.contains_key(tool)) {
             (false, _) => format!("tool {tool:?} is listed more than once"),
             (true, true) => continue,
             (true, false) => format!("tool {tool:?} is not a binding bound for this org"),
@@ -578,12 +645,42 @@ mod tests {
 
     fn context() -> AgentContext {
         let set = |items: &[&str]| items.iter().map(|item| (*item).to_owned()).collect();
-        AgentContext {
-            models: set(&["claude-opus-5-5"]),
-            bindings: set(&["crm.lookup", "mail.send"]),
-            laws: set(&["finance.no_overspend", "privacy.no_pii"]),
-            limits: ResourceLimitProfile::norn_limits_v1(),
+        AgentContext::new(
+            set(&["claude-opus-5-5"]),
+            vec![binding("crm.lookup"), binding("mail.send")],
+            set(&["finance.no_overspend", "privacy.no_pii"]),
+            ResourceLimitProfile::norn_limits_v1(),
+        )
+        .expect("well-formed context")
+    }
+
+    fn binding(id: &str) -> ToolBinding {
+        ToolBinding {
+            id: id.to_owned(),
+            connector: "crm".to_owned(),
+            manifest_digest: Digest::from_hex(&"a".repeat(64)),
         }
+    }
+
+    #[test]
+    fn a_malformed_binding_is_refused() {
+        let context = |bindings| {
+            AgentContext::new(
+                BTreeSet::new(),
+                bindings,
+                BTreeSet::new(),
+                ResourceLimitProfile::norn_limits_v1(),
+            )
+        };
+        assert!(context(vec![binding("crm.lookup")]).is_ok());
+        let mut blank = binding("crm.lookup");
+        blank.connector = " ".to_owned();
+        assert!(context(vec![blank]).is_err());
+        let mut tag = binding("crm.lookup");
+        tag.manifest_digest = Digest("sha256:latest".to_owned());
+        assert!(context(vec![tag]).is_err());
+        assert!(context(vec![binding(""), binding("x")]).is_err());
+        assert!(context(vec![binding("x"), binding("x")]).is_err());
     }
 
     fn agent() -> Value {

@@ -23,7 +23,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use norn_checker::agent::{AgentContext, agent_payload_syntax, check_agent};
+use norn_checker::agent::{AgentContext, ToolBinding, agent_payload_syntax, check_agent};
 use norn_checker::function::{
     admit_function_manifest, check_function_invocation, check_function_receipt,
     decode_function_invocation, decode_function_manifest, decode_function_receipt,
@@ -965,8 +965,8 @@ pub fn function_contract_json(
 struct AgentContextInput {
     /// The model allowlist.
     models: BTreeSet<String>,
-    /// The tool binding ids bound for the org.
-    bindings: BTreeSet<String>,
+    /// The org's tool bindings, resolved by the host to installed connectors.
+    bindings: Vec<BindingInput>,
     /// The admitted law ids.
     laws: BTreeSet<String>,
     /// The resource-limit profile; `norn.limits/1` when absent.
@@ -974,13 +974,25 @@ struct AgentContextInput {
     limits: Option<ResourceLimitProfile>,
 }
 
+/// One `bindings` entry of [`check_agent_json`]'s context.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BindingInput {
+    id: String,
+    connector: String,
+    manifest_digest: Digest,
+}
+
 /// Admit an agent definition payload (decision D58,
 /// `norn_checker::agent::check_agent`).
 ///
 /// `agent_json` is the payload's JSON text, read with exact numbers.
-/// `context_json` is `{"models", "bindings", "laws", "limits"?}`: the model
-/// allowlist, the tool binding ids bound for the org, the admitted law ids,
-/// and a resource-limit profile (default `norn.limits/1`).
+/// `context_json` is host-supplied only: `{"models", "bindings", "laws",
+/// "limits"?}` — the model allowlist, the org's tool bindings as
+/// `{"id", "connector", "manifestDigest"}` resolved to installed connectors
+/// and their manifests by digest, the admitted law ids, and a resource-limit
+/// profile (default `norn.limits/1`). Registry-ready: the same function backs
+/// the `agent` validator of `/v1/definitions:admit`.
 ///
 /// Returns `{"format", "admitted", "diagnostics"}`: `diagnostics` is the
 /// `norn-checker/diagnostics@1` document with `agent.validation.*` codes and
@@ -989,21 +1001,33 @@ struct AgentContextInput {
 /// # Errors
 ///
 /// [`AbiError::InvalidInput`] when `agent_json` is not JSON or `context_json`
-/// is not a context object. An invalid agent is a finding, never an error.
+/// is not a well-formed context (unknown members, a blank binding id or
+/// connector, a malformed `manifestDigest`, or an id bound twice). An invalid
+/// agent is a finding, never an error.
 pub fn check_agent_json(agent_json: &str, context_json: &str) -> Result<String, AbiError> {
     // Not `serde_json::Value`: its depth limit would refuse valid, deeply
     // nested payloads that are findings.
     agent_payload_syntax(agent_json).map_err(|detail| invalid("agent", detail))?;
     let context: AgentContextInput = serde_json::from_value(parse_json("context", context_json)?)
         .map_err(|error| invalid("context", error.to_string()))?;
-    let context = AgentContext {
-        models: context.models,
-        bindings: context.bindings,
-        laws: context.laws,
-        limits: context
+    let bindings = context
+        .bindings
+        .into_iter()
+        .map(|binding| ToolBinding {
+            id: binding.id,
+            connector: binding.connector,
+            manifest_digest: binding.manifest_digest,
+        })
+        .collect();
+    let context = AgentContext::new(
+        context.models,
+        bindings,
+        context.laws,
+        context
             .limits
             .unwrap_or_else(ResourceLimitProfile::norn_limits_v1),
-    };
+    )
+    .map_err(|detail| invalid("context", detail))?;
     let findings = check_agent(agent_json, &context);
     Ok(json!({
         "format": AGENT_FORMAT,
