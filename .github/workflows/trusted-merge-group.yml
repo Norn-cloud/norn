@@ -46,9 +46,14 @@ jobs:
       # first-parent path from the group head to its base. This records their
       # `/approve-gates` comments; the base-owned gate walks the same path in
       # git and decides.
+      # Transient GitHub API failures (5xx) are retried with backoff by github-script;
+      # 400, 401, 403, 404 and 422 are never retried. The publication probe re-reads its
+      # own checkpoint up to three times, since a status just written can list late.
+      # Every refusal (policy, ledger, deadline, changed checkpoint) still fails closed.
       - name: Record admin approvals of the queued heads
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
+          retries: 3
           script: |
             const collect=async function collectRights(github, context, core, parameters, probe) {
               const fs=require('fs'), crypto=require('crypto'), {owner,repo}=context.repo;
@@ -82,10 +87,14 @@ jobs:
                   if (!row||row.state!=='success'||JSON.parse(row.description).d!==ledger.checkpoint.digest||failure(rows)!==ledger.failure_version)
                     throw new Error('Rights checkpoint changed before publication');
                 }
-                const p=probe.publication, rows=await statusRows(p.head_sha), row=checkpointRow(rows,p.tree_sha,'publication');
-                if (!row||row.state!=='success'||JSON.parse(row.description).d!==p.digest||failure(rows)!==p.failure_version)
-                  throw new Error('Publication checkpoint changed');
-                return probe;
+                const p=probe.publication;
+                for(let read=1;;read++){
+                  if(Date.now()>probe.authority_deadline)throw new Error('Rights publication expired');
+                  const rows=await statusRows(p.head_sha), row=checkpointRow(rows,p.tree_sha,'publication');
+                  if(row&&row.state==='success'&&JSON.parse(row.description).d===p.digest&&failure(rows)===p.failure_version)return probe;
+                  if(read>=3)throw new Error('Publication checkpoint changed');
+                  await new Promise(resolve=>setTimeout(resolve,2000*read));
+                }
               }
               const sourceId=context.payload.workflow_run?.id||context.runId;
               const {data:source}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:sourceId});
