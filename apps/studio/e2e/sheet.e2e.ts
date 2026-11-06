@@ -17,5 +17,6 @@ test("sheet: all states on one page", async ({ page }) => {
   await page.goto("/sheet.html")
   await expect(page.locator("[data-state]")).toHaveCount(SHEET.length)
   await page.waitForTimeout(800)
-  await page.screenshot({ path: "test-results/sheet/all.png", fullPage: true })
+  // The sheet element, not a full-page capture: Chrome can refuse a very tall page capture under load.
+  await page.locator("main").screenshot({ path: "test-results/sheet/all.png" })
 })
