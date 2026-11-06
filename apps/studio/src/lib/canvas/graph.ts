@@ -106,6 +106,47 @@ export function freshName(used: Iterable<string>, stem: string): string {
 
 export const freshId = (graph: Graph, stem: string): string => freshName(graph.nodes.map(({ id }) => id), stem)
 
+/** Move an edge to new ends, keeping its id and configuration; refused like any new edge. */
+export function reconnect(graph: Graph, kinds: Kinds, id: string, ends: Pick<CanvasEdge, "source" | "sourcePort" | "target" | "targetPort">): Graph | Refusal {
+  const edge = graph.edges.find((one) => one.id === id)
+  if (!edge) return { code: "canvas.port.unknown", message: `No edge ${id}` }
+  const rest = { ...graph, edges: graph.edges.filter((one) => one.id !== id) }
+  const next = connect(rest, kinds, { ...edge, ...ends })
+  // Keep the edge where it was in the list, so compiled order does not shift.
+  return isRefusal(next) ? next : { ...next, edges: graph.edges.map((one) => one.id === id ? { ...edge, ...ends } : one) }
+}
+
+/** The nodes named and the edges between them: what copy takes and duplicate repeats. */
+export function subgraph(graph: Graph, nodes: readonly string[]): Graph {
+  const chosen = new Set(nodes)
+  return { nodes: graph.nodes.filter(({ id }) => chosen.has(id)), edges: graph.edges.filter(({ source, target }) => chosen.has(source) && chosen.has(target)) }
+}
+
+/**
+ * Add a copy of `piece` beside where it was: every node and edge gets a fresh
+ * id, edges follow their copied ends, and `edgeConfig` may rename what must
+ * stay unique (a lifecycle step id). Returns the graph and the new node ids.
+ */
+export function paste(graph: Graph, piece: Graph, offset = 40, edgeConfig: (edge: CanvasEdge, taken: readonly string[]) => CanvasEdge["config"] = (edge) => edge.config): { readonly graph: Graph; readonly nodes: readonly string[] } {
+  const ids = new Map<string, string>()
+  const nodes: CanvasNode[] = []
+  for (const node of piece.nodes) {
+    const id = freshName([...graph.nodes, ...nodes].map((one) => one.id), node.id.replace(/(_copy)?(_\d+)?$/, "_copy"))
+    ids.set(node.id, id)
+    nodes.push({ ...node, id, position: { x: node.position.x + offset, y: node.position.y + offset }, config: { ...node.config } })
+  }
+  const edges: CanvasEdge[] = []
+  for (const edge of piece.edges) {
+    const source = ids.get(edge.source)
+    const target = ids.get(edge.target)
+    if (!source || !target) continue
+    const config = edgeConfig(edge, [...graph.edges, ...edges].map((one) => one.config.transition ?? ""))
+    const id = freshName([...graph.edges, ...edges].map((one) => one.id), `${config.transition || edge.id}:${source}`)
+    edges.push({ ...edge, id, source, target, config })
+  }
+  return { graph: { nodes: [...graph.nodes, ...nodes], edges: [...graph.edges, ...edges] }, nodes: nodes.map(({ id }) => id) }
+}
+
 /** Every edit is one step back; a drag is one step however many moves it makes. */
 export interface History {
   readonly past: readonly Graph[]

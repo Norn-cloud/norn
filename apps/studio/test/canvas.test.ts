@@ -65,6 +65,24 @@ test("steps renamed onto one id keep their own rules, and compile apart for the 
   expect(lifecycle?.transitions.filter(({ id }) => id === "hold").map(({ guards }) => guards)).toEqual([["self.total > 0"], ["self.total > 1"]])
 })
 
+test("a step reconnects to new ends keeping its id and rule, and a typed refusal stays refused", () => {
+  const graph = decompile(orderEnvelope, order)
+  const kinds = lifecycleKinds(order)
+  const moved = g.reconnect(graph, kinds, "invoice:approved", { source: "approved", sourcePort: "out", target: "completed", targetPort: "in" })
+  expect(g.isRefusal(moved) ? moved : moved.edges.find(({ id }) => id === "invoice:approved")).toMatchObject({ target: "completed", config: { transition: "invoice" } })
+  expect(g.reconnect(graph, kinds, "invoice:approved", { source: "approved", sourcePort: "out", target: "completed", targetPort: "nope" })).toMatchObject({ code: "canvas.port.unknown" })
+})
+
+test("duplicating states copies them and the steps between them, with fresh ids and step names", () => {
+  const graph = decompile(orderEnvelope, order)
+  const { graph: next, nodes } = g.paste(graph, g.subgraph(graph, ["invoiced", "completed"]), 40, (edge, taken) => ({ ...edge.config, transition: g.freshName(taken, `${edge.config.transition}_copy`) }))
+  expect(nodes).toEqual(["invoiced_copy", "completed_copy"])
+  const copied = next.edges.filter(({ source }) => source === "invoiced_copy")
+  expect(copied.map(({ target, config }) => `${config.transition}->${target}`)).toEqual(["complete_copy->completed_copy"])
+  expect(new Set(next.edges.map(({ id }) => id)).size).toBe(next.edges.length)
+  expect(g.paste(next, g.subgraph(graph, ["invoiced"])).nodes).toEqual(["invoiced_copy_2"])
+})
+
 test("renaming a state carries its steps; removing a state removes its steps", () => {
   const graph = g.renameNode(decompile(orderEnvelope, order), "on_hold", "paused")
   expect(graph.edges.filter(({ source, target }) => source === "paused" || target === "paused").map(({ config }) => config.transition).sort()).toEqual(["amend", "approve", "cancel", "hold", "hold"])
