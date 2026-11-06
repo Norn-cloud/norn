@@ -407,6 +407,33 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
     runtime: &'r dyn AdHocQuestions<E>,
 ) -> Result<(QuestionPlan, &'r [u8]), Refusal> {
     let key = handle_key(runtime)?;
+    match check_ad_hoc(host, scope, actor, question, runtime)? {
+        Ok(plan) => Ok((plan, key)),
+        Err(findings) => Err(Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            "question.refused",
+            "the question is not admissible",
+            "each diagnostic names the rule and where in the question it applies",
+        )
+        .with_diagnostics(&findings, "/question")),
+    }
+}
+
+/// F2b's question admission without evaluation: authorize every metric and
+/// object type `question` reads for `actor` (one opaque 403 otherwise,
+/// decided before admission), then admit it against the cell's declared
+/// metrics. Returns the plan, or the checker's findings with pointers into
+/// the question. Saved definitions (dashboard tiles) admit their questions
+/// through this same path.
+/// # Errors
+/// An ungranted or undeclared metric or type, or a scope mismatch.
+pub fn check_ad_hoc<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: &str,
+    question: &QuestionIR,
+    runtime: &dyn AdHocQuestions<E>,
+) -> Result<Result<QuestionPlan, Vec<norn_checker::Diagnostic>>, Refusal> {
     let named: &dyn QuestionRuntime<E> = runtime;
     let metrics = read_metrics(question, runtime.definitions())?;
     let mut types = BTreeSet::from([question.object_set.0.clone()]);
@@ -449,25 +476,19 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
             },
         )?);
     }
-    let plan = admit(
+    let plan = match admit(
         runtime.definitions(),
         question,
         runtime.catalog(),
         runtime.max_rows(),
-    )
-    .map_err(|findings| {
-        Refusal::new(
-            http::StatusCode::UNPROCESSABLE_ENTITY,
-            "question.refused",
-            "the question is not admissible",
-            "each diagnostic names the rule and where in the question it applies",
-        )
-        .with_diagnostics(&findings, "/question")
-    })?;
+    ) {
+        Ok(plan) => plan,
+        Err(findings) => return Ok(Err(findings)),
+    };
     if !types.contains(plan.grain().as_str()) {
         return Err(read_denied());
     }
-    Ok((plan, key))
+    Ok(Ok(plan))
 }
 
 /// F2b: admit an ad-hoc question against the cell's declared metrics and

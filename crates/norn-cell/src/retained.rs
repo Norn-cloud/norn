@@ -187,19 +187,22 @@ pub(crate) fn insert(
 /// Lower-case hex SHA-256 of a canonical payload.
 #[must_use]
 pub fn payload_sha256(payload: &str) -> String {
+    use std::fmt::Write as _;
     use transparency_sha2::{Digest, Sha256};
     Sha256::digest(payload.as_bytes())
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 fn to_i64(value: u64) -> Result<i64, CellError> {
-    i64::try_from(value).map_err(|_| CellError::OutOfRange("retained definition"))
+    crate::read::to_i64(value, "retained definition")
 }
 
 fn to_u64(value: i64) -> Result<u64, CellError> {
-    u64::try_from(value).map_err(|_| CellError::OutOfRange("retained definition"))
+    crate::read::to_u64(value, "retained definition")
 }
 
 fn current_revision(engine: &impl SqlEngine, id: &str) -> Result<Option<u64>, CellError> {

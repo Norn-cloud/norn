@@ -10,6 +10,7 @@
 
 use std::cell::Cell;
 
+use norn_api::definition_routes::DefinitionKinds;
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::scope::CellScope;
@@ -57,6 +58,8 @@ pub struct NornCell {
     caller: std::sync::Arc<crate::policy::CallerSlot>,
     /// The cell's collections, for `GET /v1/access`.
     object_types: Vec<String>,
+    /// The retained-definition kinds this cell admits.
+    kinds: DefinitionKinds,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -160,6 +163,8 @@ impl NornCell {
             last_refresh_ms: Cell::new(f64::NEG_INFINITY),
             caller,
             object_types,
+            // Dashboards are built in; agents wait for lane CANVAS's checker.
+            kinds: DefinitionKinds::default(),
         })
     }
 
@@ -216,7 +221,7 @@ impl NornCell {
                 &request,
             )
         } else {
-            server::handle_with(&self.host, resolver, questions, &request)
+            server::handle_all(&self.host, resolver, questions, &self.kinds, &request)
         };
         let unknown_kid = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(),

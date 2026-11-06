@@ -1,0 +1,964 @@
+//! Retained definitions: Studio dashboards and agents saved in the cell.
+//!
+//! These are not kernel artifacts (the IR has no kind for them). Each kind
+//! has a host validator ([`DefinitionKinds`]) whose context comes only from
+//! the host. `:admit` runs it without side effects; `:install` and `:retire`
+//! re-admit, then append one revision through the governed definitions
+//! install ([`norn_cell::SqliteCell::install_retained_definition`]), which
+//! creates a new definitions version, its ledger event and commit receipt
+//! atomically, with the kernel set and its checker receipt unchanged.
+//!
+//! Reads need [`Operation::ReadDefinitions`]; writes need
+//! [`Operation::WriteDefinitions`]. Every denied or out-of-scope request gets
+//! the one opaque 403, decided before the body is interpreted.
+
+use std::collections::BTreeSet;
+
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use http::StatusCode;
+use norn_cell::engine::SqlEngine;
+use norn_cell::retained::{
+    RetainedDefinition, RetainedDefinitionChange, RetainedDefinitionRecord, RetainedLifecycle,
+    payload_sha256,
+};
+use norn_cell::{CellError, InstalledDefinitionInput};
+use norn_ir::{QuestionIR, ResourceLimitProfile, RuntimeValue};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use serde_json::value::RawValue;
+use utoipa::{IntoParams, ToSchema};
+
+use crate::authz::{AccessRequest, Operation, read_denied};
+use crate::host::DevHost;
+use crate::question_routes::{AdHocQuestions, check_ad_hoc};
+use crate::refusal::{Refusal, RefusalDiagnostic};
+use crate::scope::ScopeQuery;
+
+/// The largest canonical payload a definition may carry, in bytes.
+pub const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
+/// The most tiles a dashboard may hold.
+pub const MAX_TILES: usize = 64;
+/// The longest title, in characters after trimming.
+pub const MAX_TITLE_CHARS: usize = 120;
+/// The largest grid coordinate or extent of a tile layout.
+pub const MAX_LAYOUT: u64 = 1000;
+/// The largest list page.
+pub const MAX_LIST_LIMIT: u32 = 100;
+
+/// Stable `definition.*` codes.
+pub mod codes {
+    /// The admitted payload is refused (422, with diagnostics).
+    pub const REFUSED: &str = "definition.refused";
+    /// `expectedVersion` is not the id's current version (409).
+    pub const VERSION_CONFLICT: &str = "definition.version_conflict";
+    /// No definition has this id (or this version of it) (404).
+    pub const NOT_FOUND: &str = "definition.not_found";
+    /// The kind has no validator in this cell (422).
+    pub const KIND_UNKNOWN: &str = "definition.kind_unknown";
+    /// The id does not match `^[a-z][a-z0-9._-]{0,127}$` (400).
+    pub const ID_INVALID: &str = "definition.id_invalid";
+    /// The list cursor is malformed or bound to another listing (400).
+    pub const CURSOR_INVALID: &str = "definition.cursor_invalid";
+    /// The payload is not the kind's shape.
+    pub const INVALID_PAYLOAD: &str = "definition.invalid_payload";
+    /// A dashboard or tile title is blank, too long or has control characters.
+    pub const TILE_TITLE_INVALID: &str = "definition.tile_title_invalid";
+    /// A tile id is blank, too long or repeated.
+    pub const TILE_ID_INVALID: &str = "definition.tile_id_invalid";
+    /// A tile view is not `chart` (`line`, `bar`, `area`) or `table`.
+    pub const VIEW_INVALID: &str = "definition.view_invalid";
+    /// A tile layout is not non-negative bounded integers with a positive extent.
+    pub const LAYOUT_INVALID: &str = "definition.layout_invalid";
+    /// A tile question does not decode as a `QuestionIR`.
+    pub const QUESTION_INVALID: &str = "definition.question_invalid";
+    /// This cell admits no ad-hoc questions, so a tile cannot be checked.
+    pub const QUESTION_UNAVAILABLE: &str = "definition.question_unavailable";
+    /// The id is used by a definition of another kind.
+    pub const ID_IN_USE: &str = "definition.id_in_use";
+    /// The definition is already retired.
+    pub const ALREADY_RETIRED: &str = "definition.already_retired";
+}
+
+/// One tool binding the host resolved for the org: what an agent's `tools`
+/// may name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentToolBinding {
+    /// The tool binding id.
+    pub id: String,
+    /// The installed connector it resolves to.
+    pub connector: String,
+    /// The connector manifest digest, `sha256:<64 hex>`.
+    pub manifest_digest: String,
+}
+
+/// What an agent is admitted against: host-supplied only, never from the
+/// request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentAdmissionContext {
+    /// The model allowlist.
+    pub models: BTreeSet<String>,
+    /// The org's resolved tool bindings.
+    pub bindings: Vec<AgentToolBinding>,
+    /// The admitted law ids.
+    pub laws: BTreeSet<String>,
+    /// The resource-limit profile.
+    pub limits: ResourceLimitProfile,
+}
+
+/// The agent checker: canonical payload JSON text and the host context in,
+/// findings with RFC 6901 pointers into the payload out. Any error-severity
+/// finding refuses.
+pub type AgentChecker = fn(&str, &AgentAdmissionContext) -> Vec<norn_checker::Diagnostic>;
+
+/// The per-kind validator registry. `dashboard` is built in; `agent` is
+/// admitted only once a checker is registered with [`Self::with_agent`].
+#[derive(Debug, Default)]
+pub struct DefinitionKinds {
+    agent: Option<(AgentChecker, AgentAdmissionContext)>,
+}
+
+impl DefinitionKinds {
+    /// Register the agent checker with its host context.
+    #[must_use]
+    pub fn with_agent(mut self, check: AgentChecker, context: AgentAdmissionContext) -> Self {
+        self.agent = Some((check, context));
+        self
+    }
+}
+
+/// `POST /v1/definitions:admit`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AdmitDefinitionRequest {
+    /// `dashboard` or `agent`.
+    pub kind: String,
+    /// The definition id.
+    pub id: String,
+    /// The kind's payload.
+    #[schema(value_type = Object)]
+    pub payload: Box<RawValue>,
+}
+
+/// `POST /v1/definitions:install`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InstallDefinitionRequest {
+    /// `dashboard` or `agent`.
+    pub kind: String,
+    /// The definition id.
+    pub id: String,
+    /// The kind's payload.
+    #[schema(value_type = Object)]
+    pub payload: Box<RawValue>,
+    /// The id's current version; absent requires that the id is unused.
+    pub expected_version: Option<u64>,
+}
+
+/// `POST /v1/definitions/{id}:retire`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetireDefinitionRequest {
+    /// The id's current version.
+    pub expected_version: u64,
+}
+
+/// The admission decision.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmitDefinitionResponse {
+    /// True when no finding is an error.
+    pub admitted: bool,
+    /// Every finding, each pointing into the payload.
+    pub diagnostics: Vec<RefusalDiagnostic>,
+}
+
+/// The commit that installed a version.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DefinitionReceipt {
+    /// The commit receipt's hash.
+    pub receipt_hash: String,
+    /// The commit sequence.
+    pub commit_seq: u64,
+    /// Host time of the commit, in Unix milliseconds.
+    pub recorded_at_ms: u64,
+}
+
+/// An installed (or retired) version.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallDefinitionResponse {
+    /// Always true.
+    pub installed: bool,
+    /// The definition id.
+    pub id: String,
+    /// The new version.
+    pub version: u64,
+    /// Its commit.
+    pub receipt: DefinitionReceipt,
+}
+
+/// `GET /v1/definitions:list` query.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct ListDefinitionsQuery {
+    /// Required organization.
+    pub org_id: Option<String>,
+    /// Required environment.
+    pub environment_id: Option<String>,
+    /// The kind to list.
+    pub kind: Option<String>,
+    /// `retired` also lists retired definitions.
+    pub include: Option<String>,
+    /// Page size, 1–100 (default 50).
+    pub limit: Option<u32>,
+    /// The previous page's cursor, bound to `kind` and `include`.
+    pub cursor: Option<String>,
+}
+
+/// One listed definition, without its payload.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DefinitionSummary {
+    /// The definition id.
+    pub id: String,
+    /// Its kind.
+    pub kind: String,
+    /// Its title.
+    pub title: String,
+    /// Its current version.
+    pub version: u64,
+    /// `active` or `retired`.
+    pub lifecycle: String,
+    /// When its current version was installed, in Unix milliseconds.
+    pub updated_at_ms: u64,
+}
+
+/// One page of definitions, ordered by id.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DefinitionPage {
+    /// This page.
+    pub items: Vec<DefinitionSummary>,
+    /// The next page's cursor; null on the last page.
+    pub cursor: Option<String>,
+}
+
+/// `GET /v1/definitions/{id}` query.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct GetDefinitionQuery {
+    /// Required organization.
+    pub org_id: Option<String>,
+    /// Required environment.
+    pub environment_id: Option<String>,
+    /// A past version; absent selects the current one.
+    pub version: Option<u64>,
+}
+
+/// One version of one definition.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DefinitionDocument {
+    /// The definition id.
+    pub id: String,
+    /// Its kind.
+    pub kind: String,
+    /// This version.
+    pub version: u64,
+    /// `active` or `retired`.
+    pub lifecycle: String,
+    /// The admitted payload, as canonical JSON.
+    #[schema(value_type = Object)]
+    pub payload: Box<RawValue>,
+    /// The commit that installed this version.
+    pub receipt: DefinitionReceipt,
+}
+
+/// Whether `id` matches `^[a-z][a-z0-9._-]{0,127}$`.
+#[must_use]
+pub fn valid_id(id: &str) -> bool {
+    let mut bytes = id.bytes();
+    bytes.next().is_some_and(|first| first.is_ascii_lowercase())
+        && id.len() <= 128
+        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+/// Decide `operation` for `actor` and admit the explicit scope: the one
+/// opaque 403 otherwise. Transports call it before interpreting a body.
+/// # Errors
+/// A denied, anonymous or out-of-scope request.
+pub fn authorize<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    operation: Operation,
+) -> Result<(), Refusal> {
+    let authorized = host.authorizer.authorize(&AccessRequest {
+        scope: host.scope(),
+        actor,
+        operation,
+    });
+    let scoped = host
+        .scope()
+        .admit(scope.org_id.as_deref(), scope.environment_id.as_deref());
+    if authorized.is_err() || scoped.is_err() || actor.is_none() {
+        return Err(read_denied());
+    }
+    Ok(())
+}
+
+fn check_id(id: &str) -> Result<(), Refusal> {
+    if valid_id(id) {
+        return Ok(());
+    }
+    Err(Refusal::new(
+        StatusCode::BAD_REQUEST,
+        codes::ID_INVALID,
+        "the definition id is invalid",
+        "an id matches ^[a-z][a-z0-9._-]{0,127}$",
+    ))
+}
+
+fn kind_unknown(kind: &str) -> Refusal {
+    Refusal::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        codes::KIND_UNKNOWN,
+        "the definition kind is not admitted by this cell",
+        format!("this cell admits no definitions of kind {kind:?}"),
+    )
+}
+
+fn refused(diagnostics: Vec<RefusalDiagnostic>) -> Refusal {
+    let mut refusal = Refusal::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        codes::REFUSED,
+        "the definition is not admissible",
+        "each diagnostic names the rule and where in the payload it applies",
+    );
+    refusal.diagnostics = diagnostics;
+    refusal
+}
+
+fn version_conflict() -> Refusal {
+    Refusal::new(
+        StatusCode::CONFLICT,
+        codes::VERSION_CONFLICT,
+        "the definition changed since it was read",
+        "reopen the definition and apply the change to its current version",
+    )
+}
+
+fn not_found() -> Refusal {
+    Refusal::new(
+        StatusCode::NOT_FOUND,
+        codes::NOT_FOUND,
+        "no such definition",
+        "no definition (or version of it) with this id is installed in the cell",
+    )
+}
+
+/// A payload admitted by its kind's validator, ready to install.
+struct Admitted {
+    title: String,
+    canonical: String,
+}
+
+/// Canonical JSON text of `payload`.
+fn canonical(payload: &RawValue) -> Result<String, Refusal> {
+    let value = RuntimeValue::from_json_text(payload.get())
+        .map_err(|error| Refusal::invalid(format!("payload: {error}")))?;
+    let bytes = value
+        .canonical_json()
+        .map_err(|error| Refusal::invalid(format!("payload: {error}")))?;
+    let text = String::from_utf8(bytes).map_err(Refusal::host)?;
+    if text.len() > MAX_PAYLOAD_BYTES {
+        return Err(Refusal::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "definition.payload_too_large",
+            "the definition payload is too large",
+            format!("a payload is at most {MAX_PAYLOAD_BYTES} bytes of canonical JSON"),
+        ));
+    }
+    Ok(text)
+}
+
+/// Run `kind`'s validator: the canonical payload and every finding.
+fn validate<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: &str,
+    kinds: &DefinitionKinds,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kind: &str,
+    payload: &RawValue,
+) -> Result<(Admitted, Vec<RefusalDiagnostic>), Refusal> {
+    let canonical = canonical(payload)?;
+    let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
+    let mut findings = Vec::new();
+    match kind {
+        "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
+        "agent" => {
+            let (check, context) = kinds.agent.as_ref().ok_or_else(|| kind_unknown(kind))?;
+            findings.extend(RefusalDiagnostic::from_checker(&check(&canonical, context), ""));
+        }
+        other => return Err(kind_unknown(other)),
+    }
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .map(|title| title.trim().to_owned())
+        .unwrap_or_default();
+    Ok((Admitted { title, canonical }, findings))
+}
+
+fn admitted(findings: &[RefusalDiagnostic]) -> bool {
+    !findings.iter().any(|finding| finding.severity == "error")
+}
+
+/// Members of `value` at `at` as an object, reporting unknown members.
+fn members<'v>(
+    value: &'v Value,
+    at: &str,
+    known: &[&str],
+    findings: &mut Vec<RefusalDiagnostic>,
+) -> Option<&'v serde_json::Map<String, Value>> {
+    let Some(object) = value.as_object() else {
+        findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "expected an object",
+            at,
+        ));
+        return None;
+    };
+    for key in object.keys().filter(|key| !known.contains(&key.as_str())) {
+        findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            format!("unknown member {key:?}"),
+            format!("{at}/{}", pointer_token(key)),
+        ));
+    }
+    Some(object)
+}
+
+fn pointer_token(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
+fn title(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
+    let text = value.and_then(Value::as_str);
+    let trimmed = text.map(str::trim);
+    let ok = trimmed.is_some_and(|title| {
+        let chars = title.chars().count();
+        (1..=MAX_TITLE_CHARS).contains(&chars) && !title.chars().any(char::is_control)
+    });
+    if !ok {
+        findings.push(RefusalDiagnostic::error(
+            codes::TILE_TITLE_INVALID,
+            format!(
+                "a title is 1 to {MAX_TITLE_CHARS} characters after trimming, without control characters or newlines"
+            ),
+            at,
+        ));
+    }
+}
+
+fn dashboard<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: &str,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    value: &Value,
+    findings: &mut Vec<RefusalDiagnostic>,
+) -> Result<(), Refusal> {
+    let Some(object) = members(value, "", &["title", "tiles"], findings) else {
+        return Ok(());
+    };
+    title(object.get("title"), "/title", findings);
+    let Some(tiles) = object.get("tiles").and_then(Value::as_array) else {
+        findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "tiles is an array",
+            "/tiles",
+        ));
+        return Ok(());
+    };
+    if tiles.len() > MAX_TILES {
+        findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            format!("a dashboard has at most {MAX_TILES} tiles"),
+            "/tiles",
+        ));
+        return Ok(());
+    }
+    let mut ids = BTreeSet::new();
+    for (index, tile) in tiles.iter().enumerate() {
+        let at = format!("/tiles/{index}");
+        let Some(tile) = members(
+            tile,
+            &at,
+            &["id", "title", "question", "view", "layout"],
+            findings,
+        ) else {
+            continue;
+        };
+        let id = tile.get("id").and_then(Value::as_str);
+        if !id.is_some_and(|id| !id.trim().is_empty() && id.len() <= 128 && ids.insert(id)) {
+            findings.push(RefusalDiagnostic::error(
+                codes::TILE_ID_INVALID,
+                "a tile id is a non-blank string of at most 128 bytes, unique in the dashboard",
+                format!("{at}/id"),
+            ));
+        }
+        title(tile.get("title"), &format!("{at}/title"), findings);
+        view(tile.get("view"), &format!("{at}/view"), findings);
+        layout(tile.get("layout"), &format!("{at}/layout"), findings);
+        let under = format!("{at}/question");
+        match tile
+            .get("question")
+            .map(|question| serde_json::from_value::<QuestionIR>(question.clone()))
+        {
+            None => findings.push(RefusalDiagnostic::error(
+                codes::QUESTION_INVALID,
+                "a tile has a question",
+                under,
+            )),
+            Some(Err(error)) => findings.push(RefusalDiagnostic::error(
+                codes::QUESTION_INVALID,
+                format!("the question is not a QuestionIR: {error}"),
+                under,
+            )),
+            Some(Ok(question)) => match questions {
+                None => findings.push(RefusalDiagnostic::error(
+                    codes::QUESTION_UNAVAILABLE,
+                    "this cell admits no ad-hoc questions",
+                    under,
+                )),
+                Some(runtime) => {
+                    // The same admission as POST /v1/questions:evaluate (F2b):
+                    // an ungranted or undeclared read is the one opaque 403.
+                    if let Err(question_findings) =
+                        check_ad_hoc(host, scope, actor, &question, runtime)?
+                    {
+                        findings.extend(RefusalDiagnostic::from_checker(&question_findings, &under));
+                    }
+                }
+            },
+        }
+    }
+    Ok(())
+}
+
+fn view(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
+    let Some(view) = value else {
+        findings.push(RefusalDiagnostic::error(codes::VIEW_INVALID, "a tile has a view", at));
+        return;
+    };
+    let Some(object) = members(view, at, &["kind", "chart"], findings) else {
+        return;
+    };
+    let kind = object.get("kind").and_then(Value::as_str);
+    let chart = object.get("chart");
+    let ok = match (kind, chart) {
+        (Some("table" | "chart"), None) => true,
+        (Some("chart"), Some(chart)) => {
+            matches!(chart.as_str(), Some("line" | "bar" | "area"))
+        }
+        _ => false,
+    };
+    if !ok {
+        findings.push(RefusalDiagnostic::error(
+            codes::VIEW_INVALID,
+            "a view is {kind: table} or {kind: chart, chart?: line | bar | area}",
+            at,
+        ));
+    }
+}
+
+fn layout(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
+    let Some(layout) = value else {
+        findings.push(RefusalDiagnostic::error(codes::LAYOUT_INVALID, "a tile has a layout", at));
+        return;
+    };
+    let Some(object) = members(layout, at, &["x", "y", "w", "h"], findings) else {
+        return;
+    };
+    for (key, least) in [("x", 0), ("y", 0), ("w", 1), ("h", 1)] {
+        let ok = object
+            .get(key)
+            .and_then(Value::as_u64)
+            .is_some_and(|n| (least..=MAX_LAYOUT).contains(&n));
+        if !ok {
+            findings.push(RefusalDiagnostic::error(
+                codes::LAYOUT_INVALID,
+                format!("{key} is an integer from {least} to {MAX_LAYOUT}"),
+                format!("{at}/{key}"),
+            ));
+        }
+    }
+}
+
+/// `POST /v1/definitions:admit`: run the kind's validator. Side-effect free.
+/// # Errors
+/// A denied caller (403), a malformed request or id (400), an unknown kind
+/// (422 `definition.kind_unknown`), or a host failure.
+#[utoipa::path(post, path = "/v1/definitions:admit", params(ScopeQuery), request_body = AdmitDefinitionRequest, responses((status = 200, body = AdmitDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+pub fn admit_definition<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    kinds: &DefinitionKinds,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    request: &AdmitDefinitionRequest,
+) -> Result<AdmitDefinitionResponse, Refusal> {
+    authorize(host, scope, actor, Operation::WriteDefinitions)?;
+    let actor = actor.ok_or_else(read_denied)?;
+    check_id(&request.id)?;
+    let (_, diagnostics) = validate(
+        host,
+        scope,
+        actor,
+        kinds,
+        questions,
+        &request.kind,
+        &request.payload,
+    )?;
+    Ok(AdmitDefinitionResponse {
+        admitted: admitted(&diagnostics),
+        diagnostics,
+    })
+}
+
+fn receipt<E: SqlEngine>(
+    host: &DevHost<E>,
+    record: &RetainedDefinitionRecord,
+) -> Result<DefinitionReceipt, Refusal> {
+    let cell = host.cell()?;
+    let receipt_hash = cell
+        .store()
+        .read()
+        .receipt_hash_at(record.commit_seq)
+        .map_err(Refusal::host)?
+        .ok_or_else(|| Refusal::host("retained definition commit has no receipt"))?;
+    Ok(DefinitionReceipt {
+        receipt_hash,
+        commit_seq: record.commit_seq,
+        recorded_at_ms: record.recorded_at,
+    })
+}
+
+/// Append `definition` (compare-and-set on `expected`) through the governed
+/// definitions install, at host time `now_ms`.
+fn append<E: SqlEngine>(
+    host: &DevHost<E>,
+    definition: RetainedDefinition,
+    expected: Option<u64>,
+    now_ms: u64,
+) -> Result<InstallDefinitionResponse, Refusal> {
+    let _epoch = host.definition_write()?;
+    let record = {
+        let mut cell = host.cell()?;
+        let reader = cell.store().read();
+        let active = reader
+            .installed_definitions(None)
+            .map_err(Refusal::host)?
+            .ok_or_else(|| Refusal::host("the cell has no installed definitions"))?;
+        let current = reader
+            .retained_definition(&definition.id, None)
+            .map_err(Refusal::host)?;
+        drop(reader);
+        if current.as_ref().map(|current| current.definition.revision) != expected {
+            return Err(version_conflict());
+        }
+        if let Some(current) = &current
+            && current.definition.kind != definition.kind
+        {
+            return Err(refused(vec![RefusalDiagnostic {
+                code: codes::ID_IN_USE.to_owned(),
+                severity: "error".to_owned(),
+                message: "the id is used by a definition of another kind".to_owned(),
+                law: None,
+                span: None,
+            }]));
+        }
+        let installed_at = now_ms.max(cell.now().as_millis());
+        let input = InstalledDefinitionInput {
+            canonical_set: active.canonical_set,
+            registry: active.registry,
+            receipt_sha256: active.receipt_sha256,
+            admission_receipt: active.admission_receipt,
+            readmission: None,
+            diff: serde_json::json!({
+                "added": [], "removed": [], "changed": [], "narrowing": [],
+                "retained": {
+                    "kind": definition.kind,
+                    "id": definition.id,
+                    "revision": definition.revision,
+                    "lifecycle": definition.lifecycle.as_str(),
+                    "payloadSha256": definition.payload_sha256,
+                },
+            }),
+            installed_at,
+            layout: None,
+        };
+        let change = RetainedDefinitionChange {
+            definition,
+            expected_revision: expected,
+        };
+        let installed = match cell.install_retained_definition(&input, Some(active.version), &change) {
+            Ok(installed) => installed,
+            Err(
+                CellError::RetainedDefinitionConflict { .. }
+                | CellError::DefinitionVersionConflict { .. },
+            ) => return Err(version_conflict()),
+            Err(error) => return Err(Refusal::host(error)),
+        };
+        RetainedDefinitionRecord {
+            definition: change.definition,
+            definitions_version: installed.version,
+            commit_seq: installed.commit_seq,
+            recorded_at: installed.installed_at,
+        }
+    };
+    Ok(InstallDefinitionResponse {
+        installed: true,
+        id: record.definition.id.clone(),
+        version: record.definition.revision,
+        receipt: receipt(host, &record)?,
+    })
+}
+
+/// `POST /v1/definitions:install`: re-admit, then install the next version
+/// through the governed definitions install.
+/// # Errors
+/// As [`admit_definition`]; an inadmissible payload (422 `definition.refused`
+/// with diagnostics); a stale `expectedVersion` (409
+/// `definition.version_conflict`).
+#[utoipa::path(post, path = "/v1/definitions:install", params(ScopeQuery), request_body = InstallDefinitionRequest, responses((status = 200, body = InstallDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 409, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+pub fn install_definition<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    kinds: &DefinitionKinds,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    request: &InstallDefinitionRequest,
+    now_ms: u64,
+) -> Result<InstallDefinitionResponse, Refusal> {
+    authorize(host, scope, actor, Operation::WriteDefinitions)?;
+    let actor = actor.ok_or_else(read_denied)?;
+    check_id(&request.id)?;
+    let (payload, diagnostics) = validate(
+        host,
+        scope,
+        actor,
+        kinds,
+        questions,
+        &request.kind,
+        &request.payload,
+    )?;
+    if !admitted(&diagnostics) {
+        return Err(refused(diagnostics));
+    }
+    let revision = request
+        .expected_version
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(version_conflict)?;
+    append(
+        host,
+        RetainedDefinition {
+            kind: request.kind.clone(),
+            id: request.id.clone(),
+            revision,
+            lifecycle: RetainedLifecycle::Active,
+            title: payload.title,
+            payload_sha256: payload_sha256(&payload.canonical),
+            payload: payload.canonical,
+        },
+        request.expected_version,
+        now_ms,
+    )
+}
+
+/// `POST /v1/definitions/{id}:retire`: record a retired version; history
+/// stays readable.
+/// # Errors
+/// A denied caller (403), an unknown id (404 `definition.not_found`), a stale
+/// `expectedVersion` (409), an already retired definition (422).
+#[utoipa::path(post, path = "/v1/definitions/{id}:retire", params(("id" = String, Path, description = "The definition id."), ScopeQuery), request_body = RetireDefinitionRequest, responses((status = 200, body = InstallDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 409, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+pub fn retire_definition<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    id: &str,
+    request: &RetireDefinitionRequest,
+    now_ms: u64,
+) -> Result<InstallDefinitionResponse, Refusal> {
+    authorize(host, scope, actor, Operation::WriteDefinitions)?;
+    check_id(id)?;
+    let current = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .retained_definition(id, None)
+            .map_err(Refusal::host)?
+            .ok_or_else(not_found)?
+    };
+    if current.definition.revision != request.expected_version {
+        return Err(version_conflict());
+    }
+    if current.definition.lifecycle == RetainedLifecycle::Retired {
+        return Err(refused(vec![RefusalDiagnostic {
+            code: codes::ALREADY_RETIRED.to_owned(),
+            severity: "error".to_owned(),
+            message: "the definition is already retired".to_owned(),
+            law: None,
+            span: None,
+        }]));
+    }
+    let mut definition = current.definition;
+    definition.revision = definition
+        .revision
+        .checked_add(1)
+        .ok_or_else(version_conflict)?;
+    definition.lifecycle = RetainedLifecycle::Retired;
+    append(host, definition, Some(request.expected_version), now_ms)
+}
+
+#[derive(Serialize, Deserialize)]
+struct Cursor {
+    k: String,
+    r: bool,
+    a: String,
+}
+
+fn cursor_invalid() -> Refusal {
+    Refusal::new(
+        StatusCode::BAD_REQUEST,
+        codes::CURSOR_INVALID,
+        "the cursor is not valid for this listing",
+        "pass back a cursor exactly as a listing of the same kind and include returned it",
+    )
+}
+
+/// `GET /v1/definitions:list`: the current version of each definition of a
+/// kind, ordered by id, retired ones only with `include=retired`.
+/// # Errors
+/// A denied caller (403), a missing kind, a bad limit or cursor (400).
+#[utoipa::path(get, path = "/v1/definitions:list", params(ListDefinitionsQuery), responses((status = 200, body = DefinitionPage), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 500, body = Refusal)))]
+pub fn list_definitions<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &ListDefinitionsQuery,
+    actor: Option<&str>,
+) -> Result<DefinitionPage, Refusal> {
+    let scope = ScopeQuery {
+        org_id: query.org_id.clone(),
+        environment_id: query.environment_id.clone(),
+    };
+    authorize(host, &scope, actor, Operation::ReadDefinitions)?;
+    let kind = query
+        .kind
+        .as_deref()
+        .ok_or_else(|| Refusal::invalid("kind is required"))?;
+    let include_retired = match query.include.as_deref() {
+        None => false,
+        Some("retired") => true,
+        Some(other) => return Err(Refusal::invalid(format!("include: unknown value {other:?}"))),
+    };
+    let limit = query.limit.unwrap_or(50);
+    if !(1..=MAX_LIST_LIMIT).contains(&limit) {
+        return Err(Refusal::invalid(format!("limit is 1 to {MAX_LIST_LIMIT}")));
+    }
+    let after = query
+        .cursor
+        .as_deref()
+        .map(|cursor| {
+            let bytes = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| cursor_invalid())?;
+            let cursor: Cursor = serde_json::from_slice(&bytes).map_err(|_| cursor_invalid())?;
+            if cursor.k != kind || cursor.r != include_retired {
+                return Err(cursor_invalid());
+            }
+            Ok(cursor.a)
+        })
+        .transpose()?;
+    let _epoch = host.definition_read()?;
+    let mut rows = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .retained_definitions(kind, include_retired, after.as_deref(), limit.saturating_add(1))
+            .map_err(Refusal::host)?
+    };
+    let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
+    rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let cursor = if more {
+        rows.last()
+            .map(|last| {
+                serde_json::to_vec(&Cursor {
+                    k: kind.to_owned(),
+                    r: include_retired,
+                    a: last.definition.id.clone(),
+                })
+                .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
+                .map_err(Refusal::host)
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    Ok(DefinitionPage {
+        items: rows
+            .into_iter()
+            .map(|row| DefinitionSummary {
+                id: row.definition.id,
+                kind: row.definition.kind,
+                title: row.definition.title,
+                version: row.definition.revision,
+                lifecycle: row.definition.lifecycle.as_str().to_owned(),
+                updated_at_ms: row.recorded_at,
+            })
+            .collect(),
+        cursor,
+    })
+}
+
+/// `GET /v1/definitions/{id}`: one version of one definition, the current
+/// one unless `version` names a past one.
+/// # Errors
+/// A denied caller (403), an invalid id (400), an unknown id or version (404
+/// `definition.not_found`).
+#[utoipa::path(get, path = "/v1/definitions/{id}", params(("id" = String, Path, description = "The definition id."), GetDefinitionQuery), responses((status = 200, body = DefinitionDocument), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 500, body = Refusal)))]
+pub fn get_definition<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &GetDefinitionQuery,
+    actor: Option<&str>,
+    id: &str,
+) -> Result<DefinitionDocument, Refusal> {
+    let scope = ScopeQuery {
+        org_id: query.org_id.clone(),
+        environment_id: query.environment_id.clone(),
+    };
+    authorize(host, &scope, actor, Operation::ReadDefinitions)?;
+    check_id(id)?;
+    let _epoch = host.definition_read()?;
+    let record = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .retained_definition(id, query.version)
+            .map_err(Refusal::host)?
+            .ok_or_else(not_found)?
+    };
+    let receipt = receipt(host, &record)?;
+    Ok(DefinitionDocument {
+        id: record.definition.id,
+        kind: record.definition.kind,
+        version: record.definition.revision,
+        lifecycle: record.definition.lifecycle.as_str().to_owned(),
+        payload: RawValue::from_string(record.definition.payload).map_err(Refusal::host)?,
+        receipt,
+    })
+}

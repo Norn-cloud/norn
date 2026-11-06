@@ -9,7 +9,10 @@
 //! undeclared role grants nothing. Each capability has its own grant name, and
 //! the policy checks that the trusted request mapping asked for the capability
 //! being decided. Definition reads remain the host operation
-//! [`Operation::ReadDefinitions`], granted to any principal the table grants.
+//! [`Operation::ReadDefinitions`], granted to any principal the table grants
+//! (every granted role holds Population). Definition writes (admit, install,
+//! retire) are [`Operation::WriteDefinitions`], granted only to the table's
+//! declared writer roles.
 
 use std::sync::{Arc, Mutex};
 
@@ -46,6 +49,9 @@ pub struct GrantTable {
     pub version: &'static str,
     /// Norn role and the capabilities it grants.
     pub entries: &'static [(&'static str, &'static [ReadCapability])],
+    /// Norn roles that may write retained definitions (admit, install,
+    /// retire); a writer must also hold a read grant.
+    pub definition_writers: &'static [&'static str],
 }
 
 impl GrantTable {
@@ -66,12 +72,25 @@ impl GrantTable {
         }
         granted
     }
+
+    /// Whether `roles` include a declared definition writer that also holds
+    /// a read grant.
+    #[must_use]
+    pub fn writes_definitions(&self, roles: &[String]) -> bool {
+        !self.capabilities(roles).is_empty()
+            && self
+                .definition_writers
+                .iter()
+                .any(|writer| roles.iter().any(|held| held == writer))
+    }
 }
 
 /// The demo cells' table over `studio-roles/1` Norn roles: a viewer sees which
 /// members exist, a member also their values, an admin or owner also sources.
+/// Admins and owners write retained definitions (dashboards, agents); `/2`
+/// added that grant to `/1`'s read mapping, unchanged.
 pub const DEMO_GRANTS: GrantTable = GrantTable {
-    version: "norn-cell-do-grants/1",
+    version: "norn-cell-do-grants/2",
     entries: &[
         ("viewer", &[ReadCapability::Population]),
         (
@@ -95,6 +114,7 @@ pub const DEMO_GRANTS: GrantTable = GrantTable {
             ],
         ),
     ],
+    definition_writers: &["admin", "owner"],
 };
 
 /// The principal a resolver verified for the current request.
@@ -235,10 +255,18 @@ impl ReadPolicy {
 
 impl Authorizer for ReadPolicy {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
-        let granted = matches!(request.operation, Operation::ReadDefinitions)
-            && request
+        let granted = match request.operation {
+            Operation::ReadDefinitions => request
                 .actor
-                .is_some_and(|actor| self.pdp_for(actor).is_some());
+                .is_some_and(|actor| self.pdp_for(actor).is_some()),
+            Operation::WriteDefinitions => request.actor.is_some_and(|actor| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == actor)
+                    .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
+            }),
+            Operation::CallAction(_) => false,
+        };
         if granted {
             Ok(())
         } else {
