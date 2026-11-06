@@ -7,7 +7,8 @@
 )]
 use norn_api::host::DevHost;
 use norn_cell::engine::NativeEngine;
-use norn_cell_do::principal::{DEMO_PRINCIPALS, FixturePolicy};
+use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
+use norn_cell_do::principal::DEMO_PRINCIPALS;
 use norn_cell_do::{seed, server};
 use serde_json::Value;
 
@@ -17,9 +18,10 @@ const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 fn host(engine: NativeEngine) -> DevHost<NativeEngine> {
     let scope = seed::demo_scope();
     let store = seed::provision(engine, &scope).expect("demo cell provisions");
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, DEMO_GRANTS).unwrap();
     DevHost::from_store(store, scope, |command| command.payload.clone())
         .unwrap()
-        .with_authorizer(FixturePolicy(DEMO_PRINCIPALS))
+        .with_authorizer(policy)
 }
 
 fn get(host: &DevHost<NativeEngine>, path: &str, query: &str, auth: Option<&str>) -> (u16, Value) {
