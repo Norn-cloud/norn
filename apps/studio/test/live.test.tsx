@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
 import { amountTexts, hostRead, liveTrace, type Trace } from "../src/lib/live.ts"
+import * as answerLib from "../src/lib/answer.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
@@ -73,13 +74,13 @@ test("a refused live read shows the server's reason over the recorded snapshot",
   expect(html).toContain(">Recorded snapshot<")
 })
 
-// D52: a restricted row's contribution is a row Value; the host sends none for a reader without Values.
+// D52 / DATA-VALUES-1: a restricted row's amounts are row Values; the host sends amounts: null to a reader without Values.
 const withheldText = (shape: string) => `{"result":${answerText},"bucket":${JSON.stringify(bucket)},"contributions":[
   {"fact":{"key":"SYN-MELT-00-0","objectType":"demo.Conversion","version":1},${shape}"receiptHash":"c4c6464b07aa","factDigest":null,"source":{"status":"restricted"},"commitSeq":7,"recordedAtMs":1,"restricted":true,"values":null},
   {"fact":{"key":"SYN-MELT-00-1","objectType":"demo.Conversion","version":1},"amounts":[55.917,57.071],"receiptHash":"d5d7","factDigest":"f","source":{"status":"resolved","provenance":{}},"commitSeq":8,"recordedAtMs":1,"restricted":false,"values":{}}]}`
 
-test("a contribution the server withholds has no amount, whatever field says so; none is computed", () => {
-  for (const shape of ['"contributes":null,', '"amounts":null,', "", '"amounts":[null,null],']) {
+test("a contribution the server withholds (amounts: null) has no amount; none is computed", () => {
+  for (const shape of ['"amounts":null,']) {
     const read = readDocument<Trace>(withheldText(shape), "live")
     expect({ shape, texts: amountTexts(read, 0) }).toEqual({ shape, texts: null })
     expect(amountTexts(read, 1)).toEqual(["55.917", "57.071"])
@@ -89,7 +90,7 @@ test("a contribution the server withholds has no amount, whatever field says so;
 test("the drawer shows Withheld for that row and keeps its record, receipt and commit", () => {
   const client = new QueryClient()
   const lineageRef = "lineage-1"
-  client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(withheldText('"contributes":null,'), "live") })
+  client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(withheldText('"amounts":null,'), "live") })
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
   const rows = html.split("<tr").slice(2)
   expect(rows[0]).toContain("SYN-MELT-00-0")
@@ -98,4 +99,17 @@ test("the drawer shows Withheld for that row and keeps its record, receipt and c
   expect(rows[0]).toContain("commit 7")
   expect(rows[0]).not.toMatch(/\d+\.\d+ \/ /)
   expect(rows[1]).toContain("55.917 / 57.071")
+})
+
+test("an answer whose members' amounts are withheld still reads, its totals intact, each member Withheld", () => {
+  const { buckets, contribution } = answerLib
+  const withheld = JSON.parse(answerText) as { rows: Record<string, { members: Record<string, { amounts: unknown }> }> }
+  for (const row of Object.values(withheld.rows)) for (const member of Object.values(row.members)) member.amounts = null
+  const recorded = (name: string) => readDocument(text(name), "recorded").document
+  const declared = { question: recorded("scrap-yield.question.json"), metrics: recorded("scrap-yield.metrics.json"), objectType: recorded("scrap-yield.object-type.json") } as Parameters<typeof buckets>[0]
+  const plain = buckets(declared, { answer: readDocument(answerText, "live").document as never, numbers: readDocument(answerText, "live").numbers, at: "" })
+  const source = JSON.stringify(withheld)
+  const rows = buckets(declared, { answer: JSON.parse(source), numbers: readDocument(source, "live").numbers, at: "" })
+  expect(rows.map(({ value, totals }) => ({ value, totals }))).toEqual(plain.map(({ value, totals }) => ({ value, totals })))
+  expect(rows.every(({ members }) => members.every(({ amounts }) => amounts === null && contribution(amounts) === "Withheld"))).toBe(true)
 })

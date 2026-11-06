@@ -21,10 +21,8 @@ export type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 /** One original record behind an answer bucket (the host's `NornNumericContribution`). */
 export interface Contribution {
   readonly fact: Schemas["NornIrFactRef"]
-  /** Sum or numerator/denominator. Absent or null when the reader may not see this row's values (ruling D52). */
-  readonly amounts?: readonly (number | null)[] | null
-  /** The newer name for the row's contribution; `null` when withheld from the reader's role. */
-  readonly contributes?: unknown
+  /** Sum or numerator/denominator; `null` when the reader may not see this row's values (D52, DATA-VALUES-1). */
+  readonly amounts: readonly (number | null)[] | null
   readonly receiptHash: string
   readonly factDigest: string | null
   readonly source: { readonly status: "resolved" | "restricted" | "unavailable" }
@@ -71,12 +69,11 @@ export const liveTrace = (question: string, lineageRef: string, bucket: string, 
 
 /**
  * A contribution's amounts as the exact number texts the server sent, or `null`
- * when it sent none: the row's contribution is withheld from the reader's role
- * (`contributes: null`, or no amounts). Nothing is ever computed in its place.
+ * when it sent `amounts: null`: the row's values are withheld from the reader's
+ * role. Nothing is ever computed in their place.
  */
 export function amountTexts(read: Read<Trace>, index: number): readonly (string | null)[] | null {
-  const contribution = read.document.contributions[index]
-  const amounts = contribution?.amounts
-  if (contribution === undefined || contribution.contributes === null || amounts == null || amounts.every((amount) => amount === null)) return null
+  const amounts = read.document.contributions[index]?.amounts
+  if (amounts == null) return null
   return amounts.map((amount, at) => amount === null ? null : read.numbers.get(`/contributions/${index}/amounts/${at}`) ?? String(amount))
 }

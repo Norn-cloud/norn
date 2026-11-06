@@ -10,7 +10,7 @@ import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
+import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { conceptTitle } from "./lib/catalog.ts"
 import { chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
@@ -83,7 +83,7 @@ function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefi
               <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead></TableRow></TableHeader>
               <TableBody>
                 {bucket.members.map(({ id, amounts }) => (
-                  <TableRow key={id}><TableCell className="font-mono">{id}</TableCell><TableCell className="text-right tabular-nums">{fraction(amounts)}</TableCell></TableRow>
+                  <TableRow key={id}><TableCell className="font-mono">{id}</TableCell><TableCell className={amounts === null ? "text-right text-muted-foreground" : "text-right tabular-nums"}>{contribution(amounts)}</TableCell></TableRow>
                 ))}
               </TableBody>
               <TableFooter><TableRow><TableCell>Total</TableCell><TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell></TableRow></TableFooter>
