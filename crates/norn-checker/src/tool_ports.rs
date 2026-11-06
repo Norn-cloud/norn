@@ -271,7 +271,11 @@ impl Lowering<'_> {
             return refuse(path, Reason::Recursive(target.to_owned()));
         }
         self.stack.push(target.to_owned());
-        let port = self.lower(resolved, target[1..].to_owned(), depth + 1);
+        let port = self.lower(
+            resolved,
+            target.trim_start_matches('#').to_owned(),
+            depth.saturating_add(1),
+        );
         self.stack.pop();
         port
     }
@@ -292,7 +296,7 @@ impl Lowering<'_> {
         let [(index, member)] = rest.as_slice() else {
             return refuse(path, Reason::Union);
         };
-        let port = self.lower(member, format!("{path}/{index}"), depth + 1)?;
+        let port = self.lower(member, format!("{path}/{index}"), depth.saturating_add(1))?;
         Ok(if nullable {
             PortType::Nullable(Box::new(port))
         } else {
@@ -320,7 +324,7 @@ impl Lowering<'_> {
                 Some(items @ Value::Object(_)) => PortType::List(Box::new(self.lower(
                     items,
                     format!("{path}/items"),
-                    depth + 1,
+                    depth.saturating_add(1),
                 )?)),
                 _ => return refuse(path, Reason::UntypedItems),
             },
@@ -343,7 +347,7 @@ impl Lowering<'_> {
                 Some(value @ Value::Object(_)) => Ok(PortType::Map(Box::new(self.lower(
                     value,
                     format!("{path}/additionalProperties"),
-                    depth + 1,
+                    depth.saturating_add(1),
                 )?))),
                 _ => refuse(path, Reason::Untyped),
             };
@@ -358,7 +362,7 @@ impl Lowering<'_> {
             let port = self.lower(
                 schema,
                 format!("{path}/properties/{}", escape(name)),
-                depth + 1,
+                depth.saturating_add(1),
             )?;
             fields.insert(
                 name.clone(),

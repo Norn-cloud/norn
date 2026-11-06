@@ -2,17 +2,17 @@ use serde_json::json;
 
 use super::*;
 
-fn port(schema: serde_json::Value) -> PortType {
-    ports_from_schema(&schema).expect("supported schema")
+fn port(schema: &serde_json::Value) -> PortType {
+    ports_from_schema(schema).expect("supported schema")
 }
 
-fn refused(schema: serde_json::Value) -> Unsupported {
-    ports_from_schema(&schema).expect_err("unsupported schema")
+fn refused(schema: &serde_json::Value) -> Unsupported {
+    ports_from_schema(schema).expect_err("unsupported schema")
 }
 
 #[test]
 fn a_typical_tool_input_lowers_to_a_record() {
-    let input = port(json!({
+    let input = port(&json!({
         "type": "object",
         "properties": {
             "repo": {"type": "string"},
@@ -45,7 +45,7 @@ fn local_references_resolve_and_nullable_unions_collapse() {
         "properties": {"owner": {"anyOf": [{"$ref": "#/$defs/user"}, {"type": "null"}]}},
         "$defs": {"user": {"type": "object", "properties": {"login": {"type": "string"}}}}
     });
-    let PortType::Record { fields, .. } = port(schema) else {
+    let PortType::Record { fields, .. } = port(&schema) else {
         panic!("record")
     };
     assert!(matches!(fields["owner"].port, PortType::Nullable(_)));
@@ -54,35 +54,35 @@ fn local_references_resolve_and_nullable_unions_collapse() {
 #[test]
 fn typed_maps_lower_and_free_objects_are_refused() {
     assert_eq!(
-        port(json!({"type": "object", "additionalProperties": {"type": "number"}})),
+        port(&json!({"type": "object", "additionalProperties": {"type": "number"}})),
         PortType::Map(Box::new(PortType::Number))
     );
-    assert_eq!(refused(json!({"type": "object"})).reason, Reason::Untyped);
-    assert_eq!(refused(json!({})).reason, Reason::Untyped);
+    assert_eq!(refused(&json!({"type": "object"})).reason, Reason::Untyped);
+    assert_eq!(refused(&json!({})).reason, Reason::Untyped);
 }
 
 #[test]
 fn refusals_name_the_subschema_and_the_reason() {
-    let unsupported = refused(json!({
+    let unsupported = refused(&json!({
         "type": "object",
         "properties": {"a/b": {"oneOf": [{"type": "string"}, {"type": "integer"}]}}
     }));
     assert_eq!(unsupported.path, "/properties/a~1b/oneOf");
     assert_eq!(unsupported.reason.code(), "tool_port.union");
     assert_eq!(
-        refused(json!({"type": "array"})).reason,
+        refused(&json!({"type": "array"})).reason,
         Reason::UntypedItems
     );
     assert_eq!(
-        refused(json!({"enum": [1, 2]})).reason,
+        refused(&json!({"enum": [1, 2]})).reason,
         Reason::NonStringEnum
     );
     assert_eq!(
-        refused(json!({"allOf": []})).reason,
+        refused(&json!({"allOf": []})).reason,
         Reason::Combinator("allOf".to_owned())
     );
     assert_eq!(
-        refused(json!({"$ref": "https://example.com/schema"})).reason,
+        refused(&json!({"$ref": "https://example.com/schema"})).reason,
         Reason::Reference("https://example.com/schema".to_owned())
     );
 }
@@ -94,7 +94,7 @@ fn recursive_references_are_refused() {
         "$defs": {"node": {"type": "object", "properties": {"next": {"$ref": "#/$defs/node"}}}}
     });
     assert_eq!(
-        refused(schema).reason,
+        refused(&schema).reason,
         Reason::Recursive("#/$defs/node".to_owned())
     );
 }
@@ -127,12 +127,12 @@ fn edges_widen_but_never_narrow() {
 
 #[test]
 fn record_edges_check_required_fields_by_path() {
-    let target = port(json!({
+    let target = port(&json!({
         "type": "object",
         "properties": {"issue": {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]}},
         "required": ["issue"]
     }));
-    let optional_title = port(json!({
+    let optional_title = port(&json!({
         "type": "object",
         "properties": {"issue": {"type": "object", "properties": {"title": {"type": "string"}}}},
         "required": ["issue"]
@@ -142,7 +142,7 @@ fn record_edges_check_required_fields_by_path() {
         (refusal.path.as_str(), refusal.code),
         ("issue.title", "edge.missing_field")
     );
-    let empty = port(json!({"type": "object", "properties": {"other": {"type": "string"}}}));
+    let empty = port(&json!({"type": "object", "properties": {"other": {"type": "string"}}}));
     assert_eq!(
         edge_refusal(&empty, &target).expect("absent").found,
         "absent"
