@@ -527,6 +527,31 @@ pub fn get_object_query<E: SqlEngine>(
     params: &ObjectQueryParams,
     access: &dyn ObjectAccess,
 ) -> Result<NornObjectQueryPage, Refusal> {
+    get_object_query_within(
+        host,
+        (scope, actor),
+        object_type,
+        params,
+        access,
+        MAX_QUERY_SCAN,
+    )
+}
+
+/// [`get_object_query`] under a visible-row bound of `max_scan` instead of
+/// [`MAX_QUERY_SCAN`]: the seam lets a test cross the bound without a
+/// collection of ten thousand rows.
+///
+/// # Errors
+/// As [`get_object_query`].
+#[doc(hidden)]
+pub fn get_object_query_within<E: SqlEngine>(
+    host: &DevHost<E>,
+    (scope, actor): (&ScopeQuery, Option<&str>),
+    object_type: &str,
+    params: &ObjectQueryParams,
+    access: &dyn ObjectAccess,
+    max_scan: usize,
+) -> Result<NornObjectQueryPage, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let properties = {
         let cell = host.cell()?;
@@ -557,13 +582,7 @@ pub fn get_object_query<E: SqlEngine>(
         (Some(cursor), false) => (Some(cursor.id.as_str()), query.limit.saturating_add(1)),
         _ => (None, usize::MAX),
     };
-    let scan = scan_listed(
-        host,
-        access,
-        &actor,
-        object_type,
-        (from, want, MAX_QUERY_SCAN),
-    )?;
+    let scan = scan_listed(host, access, &actor, object_type, (from, want, max_scan))?;
     if let Some(cursor) = &cursor
         && (cursor.c, cursor.r) != scan.version
     {
