@@ -174,7 +174,7 @@ function Frame(props: CanvasFrameProps) {
           <Button size="sm" variant="outline" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
           <Button size="sm" variant="outline" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
           <Button size="sm" variant="outline" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
-          <Button size="sm" disabled title={props.saveBlocked}>Save to server</Button>
+          <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
           {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
         </div>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
