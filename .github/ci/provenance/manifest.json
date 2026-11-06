@@ -16,7 +16,7 @@
       "license": "MIT",
       "evidence": {
         "path": "apps/studio/src/components/ui/provenance.json",
-        "sha256": "cefd46dd57c04efe6d5a73287a8048841a2aadf3e0863b940f6d2f227ee75c0f"
+        "sha256": "8c70c6591a8d4677eaed13470fbc17ecb473f39e27ec6b838b5ab991e47c4920"
       }
     }
   ]

@@ -38,6 +38,12 @@
 /// ID-UNIQUE-1: one canonical key binding per declaring root, scope and world.
 pub const IDENTITY_COLLISION: &str = "core.identity.collision";
 
+/// ID-STABLE-1: ordinary authoring cannot restore a deleted identity.
+pub const IDENTITY_REUSE: &str = "core.identity.reuse";
+/// Actionable guidance shared by every authored identity-reuse refusal.
+pub const IDENTITY_REUSE_MESSAGE: &str =
+    "this identity was deleted; restore it explicitly or use a new identity";
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
@@ -312,9 +318,16 @@ pub enum EffectiveKind {
     Unresolved,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum WriteAuthority {
+    RulesOnly,
+    CallersAndRules,
+}
+
 /// One effective property with every constraint set that applies to it.
 #[derive(Debug, Clone)]
 pub struct EffectiveProperty {
+    write_authority: WriteAuthority,
     /// The property id: the key in object payloads.
     pub id: PropertyId,
     /// The resolved type.
@@ -358,6 +371,16 @@ pub enum InstanceError {
 }
 
 impl EffectiveProperty {
+    pub(crate) fn protect(&mut self) {
+        self.write_authority = WriteAuthority::RulesOnly;
+    }
+
+    /// Whether only declared rule outputs may write this property.
+    #[must_use]
+    pub const fn protected(&self) -> bool {
+        matches!(self.write_authority, WriteAuthority::RulesOnly)
+    }
+
     /// Resolved members of the closed record, including referenced constraints.
     pub(crate) fn record_members(&self) -> &[Self] {
         &self.record_members
@@ -407,6 +430,11 @@ impl EffectiveProperty {
                 property.default.clone()
             },
             computed,
+            write_authority: if property.protected {
+                WriteAuthority::RulesOnly
+            } else {
+                WriteAuthority::CallersAndRules
+            },
             patterns,
             record_members: Vec::new(),
         }
@@ -448,6 +476,7 @@ impl EffectiveProperty {
             }
             *remaining = remaining.saturating_sub(1);
             let property = norn_ir::Property {
+                protected: false,
                 id: member.id.clone(),
                 description: None,
                 property_type: member.property_type.clone(),
@@ -558,7 +587,7 @@ impl EffectiveProperty {
             }
             PropertyType::Record { .. }
             | PropertyType::Text { .. }
-            | PropertyType::Integer {}
+            | PropertyType::Integer { .. }
             | PropertyType::Boolean {}
             | PropertyType::Enum { .. }
             | PropertyType::Timestamp { .. }
@@ -636,7 +665,7 @@ impl EffectiveProperty {
                 | Value::Array(_)
                 | Value::Object(_) => Err(InstanceError::TypeMismatch("enum")),
             },
-            PropertyType::Integer {} => {
+            PropertyType::Integer { .. } => {
                 let integer =
                     integer_literal(value).ok_or(InstanceError::TypeMismatch("integer"))?;
                 self.check_bounds(&integer.to_string())
@@ -742,7 +771,7 @@ impl EffectiveProperty {
                 Some(text) if values.iter().any(|entry| entry.value == text) => Ok(()),
                 _ => Err(InstanceError::TypeMismatch("enum")),
             },
-            PropertyType::Integer {} => {
+            PropertyType::Integer { .. } => {
                 let Some(integer) = value.as_i64() else {
                     return Err(InstanceError::TypeMismatch("integer"));
                 };
@@ -969,20 +998,28 @@ impl EffectiveProperty {
         self.check_runtime_value(value)
     }
 
-    /// Whether `self` and `previous` admit the same effective values. Exact
+    /// Whether `self` and `previous` have the same value and aggregation contracts. Exact
     /// comparison of conjunctive constraints is conservative when equivalent
     /// patterns have different spellings.
     #[must_use]
     pub fn same_contract(&self, previous: &Self) -> bool {
+        self.same_contract_by(previous, same_effective_kind)
+    }
+
+    fn same_contract_by(
+        &self,
+        previous: &Self,
+        same_kind: fn(&EffectiveKind, &EffectiveKind) -> bool,
+    ) -> bool {
         self.nullable == previous.nullable
-            && same_effective_kind(&self.kind, &previous.kind)
+            && same_kind(&self.kind, &previous.kind)
             && effective_constraints_equal(&self.constraints, &previous.constraints)
             && self.record_members.len() == previous.record_members.len()
             && self.record_members.iter().all(|member| {
                 previous
                     .record_members
                     .iter()
-                    .any(|old| old.id == member.id && member.same_contract(old))
+                    .any(|old| old.id == member.id && member.same_contract_by(old, same_kind))
             })
     }
 
@@ -997,12 +1034,12 @@ impl EffectiveProperty {
                 !previous
                     .record_members
                     .iter()
-                    .any(|old| old.id == member.id && member.same_contract(old))
+                    .any(|old| old.id == member.id && member.same_contract_by(old, same_value_kind))
             })
         {
             reasons.push("record member contract changed".to_owned());
         }
-        if !same_effective_kind(&self.kind, &previous.kind)
+        if !same_value_kind(&self.kind, &previous.kind)
             && kind_narrows(&self.kind, &previous.kind) != Some(false)
         {
             reasons.push("property type became narrower or changed".to_owned());
@@ -1044,14 +1081,15 @@ impl EffectiveProperty {
     ) -> Result<RuntimeValue, norn_ir::RuntimeValueError> {
         match (&self.kind, literal) {
             (
-                EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. }),
+                EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }),
                 JsonValue::String(text),
             ) => text.parse::<norn_ir::Decimal>().map(RuntimeValue::Number),
-            (EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. }), _) => {
-                Err(norn_ir::RuntimeValueError::InvalidJson {
-                    message: "numeric IR defaults must be exact decimal strings".to_owned(),
-                })
-            }
+            (
+                EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }),
+                _,
+            ) => Err(norn_ir::RuntimeValueError::InvalidJson {
+                message: "numeric IR defaults must be exact decimal strings".to_owned(),
+            }),
             (EffectiveKind::Base(PropertyType::Record { .. }), JsonValue::Object(values)) => values
                 .iter()
                 .map(|(name, value)| {
@@ -1091,11 +1129,11 @@ impl EffectiveProperty {
         }
         let value = match (&self.kind, &default.0) {
             // An integer default is an exact decimal string in IR.
-            (EffectiveKind::Base(PropertyType::Integer {}), JsonValue::String(text)) => text
+            (EffectiveKind::Base(PropertyType::Integer { .. }), JsonValue::String(text)) => text
                 .parse::<i64>()
                 .map(Value::from)
                 .map_err(|_out_of_range| InstanceError::TypeMismatch("integer"))?,
-            (EffectiveKind::Base(PropertyType::Integer {}), _) => {
+            (EffectiveKind::Base(PropertyType::Integer { .. }), _) => {
                 return Err(InstanceError::TypeMismatch("integer"));
             }
             (EffectiveKind::Base(PropertyType::Record { .. }), literal) => {
@@ -1210,30 +1248,69 @@ fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> Effectiv
 
 /// VAL-ROUND: compare effective contracts, including the default refusal mode.
 fn same_effective_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
+    if let (EffectiveKind::Base(left), EffectiveKind::Base(right)) = (left, right) {
+        if matches!(
+            (left, right),
+            (PropertyType::Record { .. }, PropertyType::Record { .. })
+        ) {
+            return left == right;
+        }
+        if left.additivity() != right.additivity() {
+            return false;
+        }
+    }
+    same_value_kind(left, right)
+}
+
+fn same_value_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
     match (left, right) {
-        (
-            EffectiveKind::Base(PropertyType::Decimal { .. }),
-            EffectiveKind::Base(PropertyType::Decimal { .. }),
-        ) => kind_narrows(left, right) == Some(true) && kind_narrows(right, left) == Some(true),
-        (EffectiveKind::Base(left), EffectiveKind::Base(right)) => match (left, right) {
-            (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
-                enum_values(left) == enum_values(right)
-            }
-            (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
-            _ => left == right,
-        },
+        (EffectiveKind::Base(left), EffectiveKind::Base(right)) => {
+            same_base_value_kind(left, right)
+        }
         (EffectiveKind::Registry(left), EffectiveKind::Registry(right)) => left == right,
         (EffectiveKind::Unresolved, EffectiveKind::Unresolved) => true,
         _ => false,
     }
 }
 
+fn same_base_value_kind(left: &PropertyType, right: &PropertyType) -> bool {
+    match (left, right) {
+        (PropertyType::Decimal { .. }, PropertyType::Decimal { .. }) => {
+            base_kind_narrows(left, right) == Some(true)
+                && base_kind_narrows(right, left) == Some(true)
+        }
+        (PropertyType::Integer { .. }, PropertyType::Integer { .. })
+        | (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
+        (PropertyType::Record { members: left }, PropertyType::Record { members: right }) => {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|(left, right)| {
+                    left.id == right.id
+                        && left.constraints == right.constraints
+                        && same_base_value_kind(&left.property_type, &right.property_type)
+                })
+        }
+        (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
+            enum_values(left) == enum_values(right)
+        }
+        _ => left == right,
+    }
+}
+
+/// METRIC-ADDITIVITY-MIGRATION: aggregation semantics never narrow stored values.
 fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<bool> {
     let (EffectiveKind::Base(candidate), EffectiveKind::Base(previous)) = (candidate, previous)
     else {
         return None;
     };
+    base_kind_narrows(candidate, previous)
+}
+
+fn base_kind_narrows(candidate: &PropertyType, previous: &PropertyType) -> Option<bool> {
     match (candidate, previous) {
+        (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => Some(true),
+        (PropertyType::Record { .. }, PropertyType::Record { .. }) => {
+            same_base_value_kind(candidate, previous).then_some(true)
+        }
         (PropertyType::Text { format: candidate }, PropertyType::Text { format: previous }) => {
             match (candidate, previous) {
                 (_, None) => Some(true),
@@ -1260,6 +1337,7 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
                 currency_source: candidate_currency,
                 rounding: candidate_rounding,
                 per_unit: candidate_per_unit,
+                ..
             },
             PropertyType::Decimal {
                 scale: previous_scale,
@@ -1267,6 +1345,7 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
                 currency_source: previous_currency,
                 rounding: previous_rounding,
                 per_unit: previous_per_unit,
+                ..
             },
         ) if candidate_per_unit == previous_per_unit
             && candidate_unit == previous_unit
@@ -1552,7 +1631,7 @@ impl EffectiveKey {
                         let steps = self.normalize.get(id).map_or(&[][..], Vec::as_slice);
                         Some(KeyComponent::Text(normalize_text(text, steps)))
                     }
-                    (PropertyType::Integer {}, value) => {
+                    (PropertyType::Integer { .. }, value) => {
                         integer_literal(value).map(KeyComponent::Integer)
                     }
                     (PropertyType::Boolean {}, Value::Bool(value)) => {
@@ -1975,6 +2054,24 @@ mod tests {
                 assert!(a.same_contract(b));
                 assert!(a.narrowing_reasons_from(b).is_empty());
             }
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn additivity_changes_preserve_values_but_change_the_plan_contract(integer in proptest::bool::ANY, scale in 0u64..=28, nested in proptest::bool::ANY) {
+            let mut kind = if integer { serde_json::json!({"kind":"integer"}) }
+                else { serde_json::json!({"kind":"decimal","scale":scale}) };
+            let property = |kind| if nested {
+                serde_json::json!({"id":"payload","type":{"kind":"record","members":[{"id":"amount","type":kind}]}})
+            } else { serde_json::json!({"id":"amount","type":kind}) };
+            let previous = effective_property(property(kind.clone()));
+            kind["additivity"] = serde_json::json!({"kind":"additive"});
+            let candidate = effective_property(property(kind));
+            proptest::prop_assert!(!candidate.same_contract(&previous));
+            proptest::prop_assert!(candidate.narrowing_reasons_from(&previous).is_empty());
+            let value = RuntimeValue::from_json_text(if nested { r#"{"amount":1}"# } else { "1" }).expect("exact value");
+            proptest::prop_assert!(candidate.check_runtime_value_from(&previous, &value).is_ok());
         }
     }
 

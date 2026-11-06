@@ -42,7 +42,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use norn_kernel::CommitError::{AccountingPosting, AtomicDeliveryBoundary, EffectiveValues};
+use norn_kernel::CommitError::{
+    AccountingPosting, AtomicDeliveryBoundary, EffectiveValues, UnsupportedLinkRead,
+};
 
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
@@ -1165,6 +1167,18 @@ impl CellModel {
         commit: &LawCommit,
         model: CommitModel<'_, '_>,
     ) -> Result<(), CommitError<Infallible>> {
+        for write in &commit.writes {
+            let key = model.canonical(&write.key);
+            if matches!(write.mutation, FactMutation::Put { .. })
+                && self
+                    .facts
+                    .get(&key)
+                    .is_some_and(|state| state.version != FactVersion::ABSENT)
+                && !self.concrete.contains_key(&key)
+            {
+                return Err(CommitError::IdentityReuse);
+            }
+        }
         let version = |key: &FactKey| {
             self.facts
                 .get(&model.canonical(key))
@@ -1918,6 +1932,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
     use norn_kernel::CommitError::{self as Error, IdentityCollision};
 
     Ok(match error {
+        Error::IdentityReuse => Error::IdentityReuse,
         Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
         AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
         Error::Law { key, reason } => Error::Law { key, reason },
@@ -1964,9 +1979,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         Error::LinkReadConflict { source_key, link } => {
             Error::LinkReadConflict { source_key, link }
         }
-        Error::UnsupportedLinkRead { source_key, link } => {
-            Error::UnsupportedLinkRead { source_key, link }
-        }
+        UnsupportedLinkRead { source_key, link } => UnsupportedLinkRead { source_key, link },
         Error::DuplicateLinkRead { source_key, link } => {
             Error::DuplicateLinkRead { source_key, link }
         }

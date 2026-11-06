@@ -706,8 +706,12 @@ fn missing_incomplete_and_stale_candidates_never_replace_the_complete_output() {
     let mut incomplete = requests(&plan, &context, point);
     incomplete[0]
         .context
-        .exclusions
-        .insert("SYN-MELT-15-1".into(), "quarantine".into());
+        .watermarks
+        .get_mut("erp")
+        .expect("source")
+        .get_mut("measurements")
+        .expect("partition")
+        .complete = false;
     assert!(
         store
             .prepare_restatement(build, incomplete, |_| Ok(true))
@@ -740,6 +744,13 @@ fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
     let (mut store, plan, mut context, model) = setup(&path);
+    assert!(
+        norn_checker::metric::compute::certificate::question(&plan)
+            .algebraic
+            .iter()
+            .all(|result| *result
+                == norn_checker::metric::compute::certificate::Algebraic::ProvedAlgebraic)
+    );
     let point = cutoff(&store, &context);
     stage(&mut store, &plan, &context, point);
     drop(store);

@@ -687,6 +687,12 @@ pub fn metric_ir_schema() -> Schema {
     schema_for!(crate::osi::MetricIR)
 }
 
+/// JSON Schema for one named metric definition.
+#[must_use]
+pub fn metric_definition_schema() -> Schema {
+    schema_for!(MetricDefinition)
+}
+
 /// JSON Schema for the standalone question vocabulary.
 #[must_use]
 pub fn question_ir_schema() -> Schema {

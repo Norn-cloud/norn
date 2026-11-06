@@ -365,7 +365,9 @@ impl<'a> TypeCatalog<'a> {
             .is_some_and(|property| {
                 matches!(
                     &property.kind,
-                    EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. })
+                    EffectiveKind::Base(
+                        PropertyType::Integer { .. } | PropertyType::Decimal { .. }
+                    )
                 )
             })
     }
@@ -1497,6 +1499,9 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// ID-STABLE-1: a deleted identity needs explicit governed restoration.
+    #[error("{message}", message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
     /// ID-UNIQUE-1: commit refused a normalized business-key collision.
     #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
     IdentityCollision {
@@ -1790,6 +1795,7 @@ impl<X> DecisionRefusal<X> {
             Self::SourceOwnedTarget { .. } => "decision.source_owned_target",
             Self::ObjectMissing { .. } => "decision.object_missing",
             Self::ObjectExists { .. } => "decision.object_exists",
+            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
             Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::LifecyclePropertySet { .. } => lifecycle_codes::DIRECT_WRITE,
             Self::ImmutableStateWrite { .. } => lifecycle_codes::IMMUTABLE_STATE_WRITE,
@@ -1841,7 +1847,8 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::IdentityCollision { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
@@ -1861,6 +1868,7 @@ impl<X> DecisionRefusal<X> {
 
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
+            CommitError::IdentityReuse => Self::IdentityReuse,
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
             AtomicDeliveryBoundary { consumed } => Self::AtomicDeliveryBoundary { consumed },
             CommitError::Law { key, reason } => Self::Law { key, reason },
@@ -2573,12 +2581,51 @@ fn apply_change<X>(
     let Some(entry) = working.get_mut(&key) else {
         return Err(DecisionRefusal::NotInSlice { key });
     };
+    let protected = |property: &str| {
+        catalog
+            .effective_type(&key.object_type)
+            .and_then(|effective| effective.property(property))
+            .is_some_and(norn_checker::EffectiveProperty::protected)
+    };
+    let forbidden = match change {
+        FactChange::Create { values, .. } => {
+            origin != AdmissionOrigin::OwnedRows
+                && values.keys().any(|property| protected(property.as_str()))
+        }
+        FactChange::Set { property, .. } => protected(property.as_str()),
+        FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
+        FactChange::Delete { .. } => {
+            catalog
+                .effective_type(&key.object_type)
+                .is_some_and(|effective| {
+                    effective
+                        .properties
+                        .iter()
+                        .any(norn_checker::EffectiveProperty::protected)
+                })
+        }
+    };
+    if forbidden {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!("{key} has protected properties writable only by rules"),
+        });
+    }
     let event = match change {
         FactChange::Create { values, .. } => {
             if entry.values.is_some() {
                 return Err(DecisionRefusal::ObjectExists { key });
             }
-            let values = with_initial_states(catalog, &key, values)?;
+            let mut values = values.clone();
+            if origin == AdmissionOrigin::Observation {
+                for lifecycle in catalog.lifecycles(&key.object_type).into_values() {
+                    if let [initial] = lifecycle.initial.as_slice() {
+                        values
+                            .entry(lifecycle.property.as_str().to_owned())
+                            .or_insert_with(|| JsonValue::String(initial.clone()));
+                    }
+                }
+            }
+            let values = with_initial_states(catalog, &key, &values)?;
             let values = catalog
                 .effective_object_values(&key.object_type, &values)
                 .map_err(|error| DecisionRefusal::InvalidOutput {
@@ -2923,4 +2970,77 @@ fn timer<X>(
         due,
         payload: record.clone(),
     })
+}
+
+#[cfg(test)]
+mod field_authority_tests {
+    use super::{
+        AdmissionOrigin, BTreeMap, BTreeSet, FactChange, FactKey, FactSlice, FactVersion,
+        JsonObject, JsonValue, ObjectTypeDef, TypeCatalog, Working, apply_change,
+    };
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test fixtures and assertions require successful setup and existing keys"
+    )]
+    fn protected_delete_then_recreate_is_refused() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = TypeCatalog::new([&object]);
+        let key = FactKey::new("test.Counter", "one");
+        for origin in [
+            AdmissionOrigin::Command,
+            AdmissionOrigin::Observation,
+            AdmissionOrigin::OwnedRows,
+        ] {
+            let values = Some(JsonObject::from([(
+                "total".to_owned(),
+                JsonValue::from(2_i64),
+            )]));
+            let mut working = BTreeMap::from([(
+                key.clone(),
+                Working {
+                    expected: FactVersion(1),
+                    values: values.clone(),
+                    written: false,
+                },
+            )]);
+            for change in [
+                FactChange::Delete {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                },
+                FactChange::Create {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                    values: JsonObject::default(),
+                },
+            ] {
+                let error = apply_change::<std::convert::Infallible>(
+                    &catalog,
+                    &FactSlice::new(),
+                    &mut working,
+                    &change,
+                    origin,
+                    &BTreeSet::new(),
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.code(),
+                    if matches!(change, FactChange::Delete { .. }) {
+                        "decision.invalid_output"
+                    } else {
+                        "decision.object_exists"
+                    }
+                );
+                assert_eq!(working[&key].values, values);
+                assert!(!working[&key].written);
+            }
+        }
+    }
 }

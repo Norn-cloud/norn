@@ -487,7 +487,7 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    check_versions(commit, model, view)?;
+    check_versions(commit, model, view, authorization)?;
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;
     check_endpoints(commit, model, view, &links)?;
@@ -551,9 +551,12 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     next_versions(commit)
 }
 
-// Outgoing links share the source's authority, not their target's authority.
-// Authored incoming edges remain authored; pending target resolution carries
-// the original source's sealed scope and exact relation intent.
+/// Outgoing links share the source's authority, not their target's authority.
+/// Authored incoming edges remain authored; pending target resolution carries
+/// the original source's sealed scope and exact relation intent.
+///
+/// OBS-LINK-CONVERGE-1: only opaque claim edges share canonical relation authority.
+/// Authored writes retain their namespace and claim-metadata protections.
 #[allow(
     clippy::too_many_lines,
     reason = "one shared boundary fences source ownership, pending intents, and outgoing relations atomically"
@@ -564,6 +567,13 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    if commit.writes.iter().any(|write| {
+        model.canonical(&write.key).object_type.as_str()
+            == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+            && !authorization.is_some_and(|a| a.authorizes_claim_write(write))
+    }) {
+        return Err(CommitError::ObservationAuthorization);
+    }
     if authorization.is_none()
         && commit
             .writes
@@ -573,9 +583,12 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
         return Err(CommitError::ObservationAuthorization);
     }
     check_source_markers(commit, view, authorization)?;
+    let convergent =
+        authorization.map_or_else(Vec::new, ObservationAuthorization::convergent_links);
     let sources: BTreeSet<_> = commit
         .links
         .iter()
+        .filter(|write| !convergent.contains(write))
         .map(|write| model.canonical(&write.key.source))
         .chain(
             authorization
@@ -1565,7 +1578,21 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
+    authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    // ID-STABLE-1: event payloads never establish the per-write observation authority.
+    for write in &commit.writes {
+        if matches!(write.mutation, FactMutation::Put { .. }) {
+            let key = model.canonical(&write.key);
+            let version = view.version(&key).map_err(CommitError::Host)?;
+            let live = view.concrete(&key).map_err(CommitError::Host)?.is_some();
+            if version.has_committed_deletion(live)
+                && !authorization.is_some_and(|proof| proof.authorizes_write(write))
+            {
+                return Err(CommitError::IdentityReuse);
+            }
+        }
+    }
     let expectations = commit
         .reads
         .iter()

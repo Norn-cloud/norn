@@ -187,7 +187,8 @@ impl<X> CommitError<X> {
             | Self::Conflict { .. }
             | Self::LinkConflict { .. }
             | Self::LinkReadConflict { .. } => RefusalCategory::Conflict,
-            Self::IdentityCollision { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::DanglingLink { .. }
             | Self::LinkCardinality { .. }
             | Self::LinkRequired { .. }
@@ -291,7 +292,8 @@ impl<X> DecisionRefusal<X> {
     pub const fn category(&self) -> RefusalCategory {
         match self {
             Self::Law { reason, .. } => law_category(reason),
-            Self::IdentityCollision { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::GuardFalse { .. }
             | Self::GuardError { .. }
             | Self::NotFromState { .. }
@@ -545,7 +547,8 @@ impl<X> DecisionRefusal<X> {
                 key,
                 lifecycle_guard(transition, guard, Some(reason)),
             )),
-            Self::IdentityCollision { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::AtomicBoundary { .. }
             | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
