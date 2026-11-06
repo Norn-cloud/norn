@@ -60,9 +60,11 @@ export interface paths {
          *     answer it once, under the same row gates and D53 redaction as a named
          *     question. Nothing is installed.
          *     # Errors
-         *     Any ungranted or undeclared metric or type (one opaque 403, before
-         *     admission), an inadmissible question (422 `question.refused` with
-         *     diagnostics), a bound (413), or a compute refusal.
+         *     Any ungranted metric or type, or an undeclared metric from a caller who
+         *     cannot read every declared metric (one opaque 403, before admission); an
+         *     inadmissible question, including an undeclared metric from a caller who
+         *     can (422 `question.refused` with diagnostics); a bound (413); or a
+         *     compute refusal.
          */
         post: operations["evaluate_question"];
         delete?: never;
