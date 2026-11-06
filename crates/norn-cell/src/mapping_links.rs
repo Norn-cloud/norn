@@ -509,7 +509,11 @@ mod tests {
 
     fn consumed(store: &CellStore, position: i64, key: &str) {
         let id = format!("mapping-bundle:{position}");
-        let observed = serde_json::json!({ "records": [{ "key": key }] }).to_string();
+        // The index reads consumed bundle records that declare a link.
+        let observed = serde_json::json!({
+            "input": { "records": [{ "key": key, "links": [{ "key": key, "targetKey": "demo/target" }] }] }
+        })
+        .to_string();
         store
             .conn
             .execute(
