@@ -91,7 +91,7 @@ export default {
     if (pathname.startsWith("/api/connectors/")) {
       // A gateway URL without its OAuth client is not a gateway this stage can use.
       const gatewayEnv = env.TOOL_GATEWAY_CLIENT_ID === undefined || env.TOOL_GATEWAY_CLIENT_SECRET === undefined ? { ...env, TOOL_GATEWAY_URL: undefined } : env
-      return connectors(request, gatewayEnv, auth(env), pathname.slice("/api/connectors".length), { db: env.AUTH_DB })
+      return connectors(request, gatewayEnv, auth(env), pathname.slice("/api/connectors".length), { db: env.AUTH_DB, ...env.NORN_HOST === undefined ? {} : { host: env.NORN_HOST } })
     }
     const session = await auth(env).api.getSession({ headers: request.headers })
     if (session === null) return refuse(401, "Sign in first.")

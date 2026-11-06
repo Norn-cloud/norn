@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, type ConnectorDeps } from "../connectors.ts"
-import { canonicalJson, manifestDigest, readDraft, toolManifest } from "../bindings.ts"
+import { canonicalJson, connectorVersion, manifestDigest, readDraft, toolManifest } from "../bindings.ts"
 import { Gateway } from "../gateway.ts"
 import worker, { type Env } from "../index.ts"
 
@@ -33,6 +33,7 @@ function stage(gatewayClient = false) {
   db.exec(migration("0001_better_auth.sql"))
   db.exec(migration("0002_connector_binding.sql"))
   db.exec(migration("0003_connector_binding_manifest.sql"))
+  db.exec(migration("0004_connector_binding_definition.sql"))
   const env: Env = {
     ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
     AUTH_DB: db as unknown as D1Database,
@@ -270,4 +271,58 @@ test("a fixed value for a property without a declared type is left to the gatewa
   const schema = { type: "object", properties: { filter: {}, choice: { anyOf: [{ type: "string" }, { type: "integer" }] }, n: { type: "integer" } } }
   expect(readDraft({ app: "github", tool: "t", inputMapping: { filter: { fixed: { any: "thing" } }, choice: { fixed: 3 } } }, schema)).toMatchObject({ inputMapping: { filter: { fixed: { any: "thing" } } } })
   expect(readDraft({ app: "github", tool: "t", inputMapping: { n: { fixed: "x" } } }, schema)).toMatchObject({ field: "inputMapping.n" })
+})
+
+/** A cell host that answers DEFS's definition writes from `answer`, recording each request. */
+function cellHost(answer: (path: string, body: Record<string, unknown>) => Response) {
+  const seen: { path: string; body: Record<string, unknown>; bearer: boolean }[] = []
+  const host = { fetch: async (request: Request) => {
+    const body = (await request.json()) as Record<string, unknown>
+    const path = new URL(request.url).pathname
+    seen.push({ path, body, bearer: (request.headers.get("authorization") ?? "").startsWith("Bearer ") })
+    return answer(path, body)
+  } } as unknown as Fetcher
+  return { host, seen }
+}
+
+test("a binding is installed in the cell as a definition, which the record and its edits follow", async () => {
+  const { send, signUp } = stage()
+  const owner = await signUp("ada@example.com")
+  let version = 0
+  const { host, seen } = cellHost((path, body) => path === "/v1/definitions:install" ? Response.json({ installed: true, id: body.id, version: ++version, receipt: { receiptHash: "r", commitSeq: version, recordedAtMs: 1 } }) : Response.json({ installed: true, id: "x", version: ++version, receipt: {} }))
+  const added = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Issues" }), cookie: owner }, { host })).body.binding as Record<string, unknown> & { id: string; manifestDigest: string }
+  expect(seen[0]).toMatchObject({ path: "/v1/definitions:install", bearer: true, body: { kind: "binding", id: `studio.binding.${added.id}`, payload: {
+    connector: { gateway: "executor", origin: GATEWAY, app: "github", tool: "list_issues", version: "dpl_1" }, inputSchema: ISSUES, outputSchema: null, manifestDigest: added.manifestDigest,
+  } } })
+  expect(seen[0]?.body).not.toHaveProperty("expectedVersion")
+  expect(added).toMatchObject({ definition: { id: `studio.binding.${added.id}`, version: 1 }, connectorRef: "executor:github/list_issues@dpl_1" })
+  // An edit installs the next version of the same definition.
+  const edited = (await send(`/bindings/${added.id}`, { ...body("PATCH", { label: "Open issues" }), cookie: owner }, { host })).body.binding
+  expect(seen[1]?.body).toMatchObject({ id: `studio.binding.${added.id}`, expectedVersion: 1 })
+  expect(edited).toMatchObject({ definition: { version: 2 } })
+  // Removing retires the definition at its current version first.
+  expect((await send(`/bindings/${added.id}`, { method: "DELETE", cookie: owner }, { host })).body).toEqual({ removed: added.id, retired: `studio.binding.${added.id}` })
+  expect(seen[2]).toMatchObject({ path: `/v1/definitions/studio.binding.${added.id}:retire`, body: { expectedVersion: 2 } })
+})
+
+test("a refused or conflicting definition saves nothing; a stage without the route keeps the local record", async () => {
+  const { send, signUp } = stage()
+  const owner = await signUp("ada@example.com")
+  const refusing = cellHost(() => Response.json({ code: "definition.refused", diagnostics: [{ code: "binding.digest_mismatch", message: "manifestDigest does not match the payload", span: { pointer: "/payload/manifestDigest" } }] }, { status: 422 }))
+  const refused = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: refusing.host })
+  expect(refused).toMatchObject({ status: 422, body: { code: "connectors.binding_refused", findings: [{ code: "binding.digest_mismatch", pointer: "/payload/manifestDigest" }] } })
+  expect((await send("/bindings", { cookie: owner })).body.bindings).toEqual([])
+  const conflicting = cellHost(() => Response.json({ code: "definition.version_conflict" }, { status: 409 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: conflicting.host })).body.code).toBe("connectors.binding_conflict")
+  const noRoute = cellHost(() => Response.json({ code: "route.not_found" }, { status: 404 }))
+  const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: noRoute.host })).body.binding
+  expect(local).toMatchObject({ definition: null, connectorRef: "executor:github/list_issues@dpl_1" })
+  const down = { fetch: async () => { throw new TypeError("connect refused") } } as unknown as Fetcher
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: down })).body.code).toBe("connectors.cell_unavailable")
+})
+
+test("a tool with no gateway version gets sha256- and the first 12 hex of its digest", () => {
+  const digest = `sha256:${"ab12".repeat(16)}`
+  expect(connectorVersion(null, digest)).toBe("sha256-ab12ab12ab12")
+  expect(connectorVersion("dpl_7", digest)).toBe("dpl_7")
 })

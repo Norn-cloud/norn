@@ -16,9 +16,18 @@ export interface ConnectorRef {
   readonly origin: string
   readonly app: string
   readonly tool: string
-  /** The app version the tool was read from when the binding was last saved; null when the gateway did not say. */
-  readonly version: string | null
+  /**
+   * The app version the tool was read from when the binding was last saved. A gateway that names
+   * none gets `sha256-<first 12 hex of the manifest digest>`, so it is never empty.
+   */
+  readonly version: string
 }
+
+/** The version a connector carries: the gateway's, or one derived from the manifest digest. */
+export const connectorVersion = (version: string | null, digest: string) => version ?? `sha256-${digest.replace(/^sha256:/, "").slice(0, 12)}`
+
+/** `gateway:app/tool@version`, the connector's one-line identity. */
+export const connectorString = (c: ConnectorRef) => `${c.gateway}:${c.app}/${c.tool}@${c.version}`
 
 export interface Binding {
   readonly id: string
@@ -32,6 +41,8 @@ export interface Binding {
   /** `sha256:<hex>` of the tool manifest (see `toolManifest`) the binding was saved against. */
   readonly manifestDigest: string
   readonly connector: ConnectorRef
+  /** The cell definition agents reference; null while this stage keeps bindings locally only. */
+  readonly definition: { readonly id: string; readonly version: number } | null
 }
 
 export interface BindingDraft {
@@ -42,13 +53,14 @@ export interface BindingDraft {
   readonly runRole: RunRole
 }
 
-interface Row { id: string; app: string; tool: string; label: string; input_mapping: string; run_role: RunRole; updated_by: string; updated_at: number; manifest_digest: string; connector: string }
+interface Row { id: string; app: string; tool: string; label: string; input_mapping: string; run_role: RunRole; updated_by: string; updated_at: number; manifest_digest: string; connector: string; definition_id: string | null; definition_version: number | null }
 const fromRow = (row: Row): Binding => ({
   id: row.id, app: row.app, tool: row.tool, label: row.label, inputMapping: JSON.parse(row.input_mapping) as InputMapping,
   runRole: row.run_role, updatedBy: row.updated_by, updatedAt: row.updated_at,
   manifestDigest: row.manifest_digest, connector: JSON.parse(row.connector) as ConnectorRef,
+  definition: row.definition_id === null || row.definition_version === null ? null : { id: row.definition_id, version: row.definition_version },
 })
-const COLUMNS = "id, app, tool, label, input_mapping, run_role, updated_by, updated_at, manifest_digest, connector"
+const COLUMNS = "id, app, tool, label, input_mapping, run_role, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version"
 
 export async function listBindings(db: D1Database, orgId: string): Promise<readonly Binding[]> {
   const { results } = await db.prepare(`SELECT ${COLUMNS} FROM connector_binding WHERE org_id = ? ORDER BY app, tool, label`).bind(orgId).all<Row>()
@@ -89,14 +101,14 @@ export async function manifestDigest(manifest: ToolManifest): Promise<string> {
 }
 
 /** What the live tool contributes to a save: its manifest digest and connector reference. */
-export interface Pin { readonly manifestDigest: string; readonly connector: ConnectorRef }
+export interface Pin { readonly manifestDigest: string; readonly connector: ConnectorRef; readonly definition: Binding["definition"] }
 
 export async function saveBinding(db: D1Database, orgId: string, actor: string, draft: BindingDraft, pin: Pin, id: string = crypto.randomUUID()): Promise<Binding> {
   const now = Date.now()
   await db.prepare(
-    "INSERT INTO connector_binding (id, org_id, app, tool, label, input_mapping, run_role, created_by, created_at, updated_by, updated_at, manifest_digest, connector) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-    "ON CONFLICT (id) DO UPDATE SET label = excluded.label, input_mapping = excluded.input_mapping, run_role = excluded.run_role, updated_by = excluded.updated_by, updated_at = excluded.updated_at, manifest_digest = excluded.manifest_digest, connector = excluded.connector",
-  ).bind(id, orgId, draft.app, draft.tool, draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, actor, now, pin.manifestDigest, JSON.stringify(pin.connector)).run()
+    "INSERT INTO connector_binding (id, org_id, app, tool, label, input_mapping, run_role, created_by, created_at, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT (id) DO UPDATE SET label = excluded.label, input_mapping = excluded.input_mapping, run_role = excluded.run_role, updated_by = excluded.updated_by, updated_at = excluded.updated_at, manifest_digest = excluded.manifest_digest, connector = excluded.connector, definition_id = excluded.definition_id, definition_version = excluded.definition_version",
+  ).bind(id, orgId, draft.app, draft.tool, draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), pin.definition?.id ?? null, pin.definition?.version ?? null).run()
   return { id, ...draft, updatedBy: actor, updatedAt: now, ...pin }
 }
 
