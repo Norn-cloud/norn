@@ -212,7 +212,6 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
             .expect("kind")
             .is_empty()
     );
-    drop(reader);
 
     // The export journal carries each revision; a restore rebuilds them.
     let records: Vec<_> = (1..=5)
