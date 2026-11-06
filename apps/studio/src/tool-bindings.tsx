@@ -151,9 +151,13 @@ function BindingRow({ binding, manage }: { readonly binding: Binding; readonly m
           <dd><pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{tools.isPending ? "Loading…" : JSON.stringify(tool?.inputSchema ?? null, null, 2)}</pre></dd>
         </dl>
       )}
+      {mode !== null && mode !== "view" && tools.isPending && <p className="border-t px-4 py-3 text-sm text-muted-foreground">Loading the tool…</p>}
       {mode !== null && mode !== "view" && tools.isError && <ConnectorProblem error={tools.error} />}
+      {mode !== null && mode !== "view" && tools.isSuccess && tool === undefined && (
+        <p role="alert" className="border-t px-4 py-3 text-sm text-destructive">The gateway no longer lists {binding.app}.{binding.tool}. Remove this binding, or bind the tool again once the app serves it.</p>
+      )}
       {mode === "edit" && tool && <BindingEditor tool={tool} binding={binding} onDone={() => setMode(null)} />}
-      {mode === "run" && !tools.isPending && !tools.isError && <TestRun binding={binding} tool={tool} />}
+      {mode === "run" && tool && <TestRun binding={binding} tool={tool} />}
       {remove.isError && <ConnectorProblem error={remove.error} />}
     </div>
   )

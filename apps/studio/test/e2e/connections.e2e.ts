@@ -146,7 +146,8 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     const editor = page.getByRole("form", { name: `Bind ${tool}` })
     await editor.getByLabel("Binding name").fill(name)
     await editor.getByLabel(`Fix ${field}`).check()
-    await editor.getByLabel(field).fill("fixed-by-e2e")
+    // Exactly the field's input, not its "Fix <field>" checkbox.
+    await editor.getByLabel(field, { exact: true }).fill("fixed-by-e2e")
     await editor.getByRole("button", { name: "Add binding" }).click()
     const row = page.locator(`[data-binding]:has-text("${name}")`)
     await row.waitFor(); did("add")
