@@ -9,7 +9,7 @@
 import type { Expr } from "../../../../../tools/norn-ts/src/builder/expr.ts"
 import { X, lowerFlow, type BuildDiagnostic, type EnvelopeOptions, type FlowDef, type FnRef, type Step } from "../../../../../tools/norn-ts/src/builder/index.ts"
 import type { CanvasEdge, CanvasNode, Graph, Kinds, Port } from "./graph.ts"
-import { decisionPorts, decisionSteps, optionPort, optionsOf, rolesOf } from "./decision.ts"
+import { decisionPorts, decisionSteps, effectOf, optionPort, optionsOf, rolesOf } from "./decision.ts"
 
 /** Control flow: every step hands on to the next. What a step reads is typed by its tool's schemas, which lowering checks. */
 const FLOW = "flow"
@@ -135,6 +135,7 @@ export function toFlow(graph: Graph, tools: readonly FnRef[], meta: { readonly i
     if (!(node.config.question ?? "").trim()) problems.push({ code: "canvas.decision.no_question", message: "Say what the person is deciding", node: node.id })
     if (options.length === 0) problems.push({ code: "canvas.decision.no_options", message: "A decision needs at least one option", node: node.id })
     if (rolesOf(node).length === 0) problems.push({ code: "canvas.decision.no_decider", message: "Name the roles that may decide", node: node.id })
+    for (const option of options) if (!effectOf(option)?.ref) problems.push({ code: "canvas.decision.option_without_effect", message: `Option ${option.id} (${option.label}) does not say what it starts: an action or a tool binding`, node: node.id })
     const continues = graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === "next")
     for (const option of options) if (!continues && !graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === optionPort(option)))
       problems.push({ code: "canvas.decision.option_leads_nowhere", message: `Option ${option.id} (${option.label}) leads nowhere; connect it, or continue after the decision`, node: node.id })

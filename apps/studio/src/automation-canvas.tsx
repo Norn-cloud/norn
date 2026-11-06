@@ -12,7 +12,7 @@ import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Conditi
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
-import { RISKS, decisionView, nextOptionId, optionsOf, setOptions, type DecisionOption } from "./lib/canvas/decision.ts"
+import { RISKS, decisionView, effectOf, nextOptionId, optionsOf, setOptions, type DecisionOption } from "./lib/canvas/decision.ts"
 import { DecisionTree } from "./decision-tree.tsx"
 import { words } from "./lib/format.ts"
 
@@ -79,7 +79,7 @@ function Options({ editing, id, options, pick }: { readonly editing: Editing; re
     <div className="space-y-2">
       <div className="text-meta text-muted-foreground">Options, in the order the decider sees them</div>
       {options.map((option, index) => (
-        <div key={`${option.id}:${option.label}:${option.scope}`} className="space-y-1 rounded-md border p-2">
+        <div key={`${option.id}:${option.label}:${option.scope}:${JSON.stringify(option.effect ?? null)}`} className="space-y-1 rounded-md border p-2">
           <div className="flex items-center gap-1">
             <span className="w-6 font-mono text-xs text-muted-foreground">{index + 1}</span>
             <Input aria-label={`Option ${index + 1} label`} defaultValue={option.label} onBlur={(event) => { const label = event.target.value.trim(); if (label && label !== option.label) set(options.map((one) => one.id === option.id ? { ...one, label } : one)) }} />
@@ -88,11 +88,23 @@ function Options({ editing, id, options, pick }: { readonly editing: Editing; re
             <Button size="icon" variant="ghost" aria-label={`Duplicate option ${index + 1}`} onClick={() => set([...options.slice(0, index + 1), { ...option, id: nextOptionId(options), label: `${option.label} (copy)` }, ...options.slice(index + 1)])}><Copy /></Button>
             <Button size="icon" variant="ghost" aria-label={`Delete option ${index + 1}`} onClick={() => set(options.filter((one) => one.id !== option.id))}><Trash2 /></Button>
           </div>
+          <div className="flex gap-1">
+            <select aria-label={`Option ${index + 1} starts`} className="rounded-md border bg-background px-2 py-1 text-xs" value={effectOf(option)?.kind ?? "binding"}
+              onChange={(event) => set(options.map((one) => one.id === option.id ? { ...one, effect: event.target.value === "action" ? { action: effectOf(one)?.ref ?? "" } : { binding: effectOf(one)?.ref ?? "" } } : one))}>
+              <option value="binding">Tool binding</option><option value="action">Action</option>
+            </select>
+            {effectOf(option)?.kind === "action"
+              ? <Input aria-label={`Option ${index + 1} action`} className="text-xs" placeholder="action id, e.g. billing.send_reminder" defaultValue={effectOf(option)?.ref} onBlur={(event) => { const ref = event.target.value.trim(); if (ref !== effectOf(option)?.ref) set(options.map((one) => one.id === option.id ? { ...one, effect: { action: ref } } : one)) }} />
+              : <select aria-label={`Option ${index + 1} tool binding`} className="w-full rounded-md border bg-background px-2 py-1 text-xs" value={effectOf(option)?.ref ?? ""} onChange={(event) => set(options.map((one) => one.id === option.id ? { ...one, effect: { binding: event.target.value } } : one))}>
+                <option value="">Choose a tool binding</option>
+                {RECORDED_TOOLS.map(({ id: tool }) => <option key={tool} value={tool}>{tool}</option>)}
+              </select>}
+          </div>
           <Input aria-label={`Option ${index + 1} scope`} className="text-xs" placeholder="Who it reaches, e.g. #incidents only" defaultValue={option.scope} onBlur={(event) => { const scope = event.target.value.trim(); if (scope !== option.scope) set(options.map((one) => one.id === option.id ? { ...one, scope } : one)) }} />
           <label className="flex items-center gap-2 text-meta"><input type="radio" name={`${id}:pick`} aria-label={`Agent's pick: option ${index + 1}`} checked={pick === option.id} onChange={() => edit(g.configureNode(graph, id, { agentPick: option.id }))} />Agent's pick</label>
         </div>
       ))}
-      <Button size="sm" variant="outline" onClick={() => set([...options, { id: nextOptionId(options), label: "New option", scope: "" }])}><Plus />Option</Button>
+      <Button size="sm" variant="outline" onClick={() => set([...options, { id: nextOptionId(options), label: "New option", scope: "", effect: { binding: "" } }])}><Plus />Option</Button>
     </div>
   )
 }
@@ -152,6 +164,8 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
             {RISKS.map((risk) => <option key={risk} value={risk}>{words(risk)}</option>)}
           </select></label>
         {field("Who decides (roles, comma separated)", "roles", node.config.deciderRoles, (text) => edit(g.configureNode(graph, node.id, { deciderRoles: text.split(",").map((role) => role.trim()).filter(Boolean).join(",") })))}
+        {field("Under law (optional)", "law", node.config.deciderLaw, (text) => edit(g.configureNode(graph, node.id, { deciderLaw: text.trim() })), { placeholder: "the law that makes this a person's call" })}
+        {field("Expires after (hours, optional)", "expires", node.config.expiresInMs ? String(Number(node.config.expiresInMs) / 3_600_000) : "", (text) => edit(g.configureNode(graph, node.id, { expiresInMs: /^\d+(\.\d+)?$/.test(text.trim()) ? String(Math.round(Number(text) * 3_600_000)) : "" })), { type: "number" })}
         <Options editing={editing} id={node.id} options={optionsOf(node)} pick={node.config.agentPick ?? ""} />
       </>}
       {node.kind === "sleep" && field("Wait (milliseconds)", "millis", node.config.millis, (text) => edit(g.configureNode(graph, node.id, { millis: text })), { type: "number" })}
@@ -164,7 +178,7 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
 
 const DEFAULTS: Record<string, Record<string, string>> = {
   perform: { tool: RECORDED_TOOLS[0]?.id ?? "", input: "{}" },
-  decide: { question: "", risk: "medium", deciderRoles: "admin", agentPick: "", options: JSON.stringify([{ id: "o1", label: "Approve", scope: "" }, { id: "o2", label: "Decline", scope: "" }]) },
+  decide: { question: "", risk: "medium", deciderRoles: "admin", deciderLaw: "", expiresInMs: "", agentPick: "", options: JSON.stringify([{ id: "o1", label: "Approve", scope: "", effect: { binding: RECORDED_TOOLS[0]?.id ?? "" } }, { id: "o2", label: "Decline", scope: "Nothing happens", effect: { action: "norn.decline" } }]) },
   route: { branches: "[[]]" },
   sleep: { millis: "60000" },
   succeed: { outcome: "done" },

@@ -34,6 +34,7 @@ function Level({ view, path, depth, choose }: { readonly view: DecisionView; rea
                 </span>
                 <span className="mt-1 flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                   <span>{option.scope || "No scope stated"}</span>
+                  {option.effect && <span className="font-mono text-xs">{"action" in option.effect ? `action ${option.effect.action}` : `binding ${option.effect.binding}`}</span>}
                   {tools.map((tool) => <span key={tool} className="inline-flex items-center gap-1 font-mono text-xs"><Wrench className="size-3" />{tool}</span>)}
                 </span>
               </button>
@@ -71,7 +72,8 @@ export function DecisionTree({ view, agent, initialPath = [] }: { readonly view:
             <div className="text-meta text-muted-foreground">{agent ? `${agent.title} · ${agent.model}` : "Asked by this automation"}</div>
             <p className="font-medium">{view.question || "No question yet"}</p>
             <p className="text-meta text-muted-foreground">Context numbers and money at risk come from the cell's admitted questions when it asks.</p>
-            <p className="text-meta text-muted-foreground">Decided by: {view.deciderRoles.join(", ") || "no role named"}</p>
+            <p className="text-meta text-muted-foreground">Decided by: {view.deciderRoles.join(", ") || "no role named"}{view.law ? ` · under ${view.law}` : ""}</p>
+            {view.expiresInMs !== undefined && <p className="text-meta text-muted-foreground">Expires {Math.round(view.expiresInMs / 3_600_000)} h after it is asked; then it is withdrawn, not decided.</p>}
           </div>
         </div>
         {view.options.length > 0 ? <Level view={view} path={path} depth={0} choose={choose} /> : <p className="text-sm text-muted-foreground">No options yet.</p>}
