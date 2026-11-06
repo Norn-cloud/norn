@@ -54,4 +54,28 @@ export interface Issue {
 }
 
 /** A shortcut's key as the reader's platform writes it. */
+/**
+ * Whether two editor values are the same: plain objects and arrays by their
+ * fields, Maps and Sets by their entries, Dates by their time, and a cycle by
+ * the pair it returns to, so no value is lost to JSON or makes it throw.
+ */
+export function sameValue(a: unknown, b: unknown, seen: Map<object, object> = new Map()): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false
+  if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false
+  if (seen.get(a) === b) return true
+  seen.set(a, b)
+  if (a instanceof Date) return a.getTime() === (b as Date).getTime()
+  if (a instanceof Map) {
+    const other = b as Map<unknown, unknown>
+    return a.size === other.size && [...a].every(([key, value]) => other.has(key) && sameValue(value, other.get(key), seen))
+  }
+  if (a instanceof Set) {
+    const other = b as Set<unknown>
+    return a.size === other.size && [...a].every((value) => other.has(value))
+  }
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((key) => Object.hasOwn(b, key) && sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], seen))
+}
+
 export const modKey = (platform = globalThis.navigator?.platform ?? "") => /mac|iphone|ipad/i.test(platform) ? "⌘" : "Ctrl+"
