@@ -21,7 +21,8 @@ export class Cell {
   }
   /** The pinned JWKS document. The URL is configuration, never taken from a token. */
   async jwks() {
-    const response = await fetch(this.env.NORN_HOST_JWKS_URL, { redirect: "error" });
+    // Never follow a redirect: anything but 200 from the pinned URL fails.
+    const response = await fetch(this.env.NORN_HOST_JWKS_URL, { redirect: "manual" });
     if (!response.ok) throw new Error(`JWKS fetch failed: HTTP ${response.status}`);
     return response.text();
   }
