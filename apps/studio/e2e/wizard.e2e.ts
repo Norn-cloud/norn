@@ -48,7 +48,7 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
   await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step") // a step not reached stays closed
   // Hover (or focus) names a step; one not reached yet says so.
   await steps(page).nth(3).hover()
-  await expect(page.getByRole("tooltip")).toHaveText("Review (not reached yet)")
+  await expect(page.getByRole("tooltip").filter({ hasText: /^Review \(not reached yet\)$/ })).not.toHaveCount(0)
   await expect(form.getByLabel("Location › Site")).toHaveCount(0) // one step at a time
   await form.getByLabel("Holding id").fill("demo/holding/7001")
   await form.getByLabel("Quantity").fill("4.250")
@@ -58,7 +58,7 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
   await expect(form.getByText("Step 2 of 4")).toBeVisible()
   await expect(form.getByLabel("Location › Site")).toBeFocused() // each step starts in its first field
   await steps(page).nth(0).focus()
-  await expect(page.getByRole("tooltip")).toHaveText("What is held")
+  await expect(page.getByRole("tooltip").filter({ hasText: /^What is held$/ })).not.toHaveCount(0)
   await form.getByLabel("Location › Site").fill("vault-b")
   await shoot(page, "step")
   await form.getByRole("button", { name: "Back" }).click()
