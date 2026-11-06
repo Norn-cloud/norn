@@ -203,6 +203,23 @@ pub struct DefinitionKinds {
 /// UTF-8 bytes.
 pub type Restater = fn(&str, &str, &[MetricDefinition]) -> Result<String, String>;
 
+/// The flow restatement as a [`Restater`]: flows restate from their IR
+/// ([`crate::flow_definitions::restate`]); other kinds have none here.
+///
+/// # Errors
+/// A non-flow kind, or a payload that does not restate.
+pub fn flow_restater(
+    kind: &str,
+    payload: &str,
+    _metrics: &[MetricDefinition],
+) -> Result<String, String> {
+    if kind == "flow" {
+        crate::flow_definitions::restate(payload)
+    } else {
+        Err(format!("a {kind} has no plain-words restatement here"))
+    }
+}
+
 impl DefinitionKinds {
     /// Declare the roles a binding's `runRole` may name: the cell's own role
     /// table, never the request. Without any, every binding is refused.

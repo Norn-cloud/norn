@@ -1494,3 +1494,79 @@ fn a_flow_carries_its_title_and_step_labels() {
         );
     }
 }
+
+/// D59 for flows: the server restates a flow from its IR, `:admit` and `GET`
+/// return the words, and a signed install must sign exactly them.
+#[test]
+fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
+    use norn_api::definition_routes::flow_restater;
+    let cell = cell(
+        DefinitionKinds::default()
+            .with_roles(ROLES)
+            .with_restater(flow_restater),
+    );
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let mut body = flow_body(FLOW_ID, &lowered(), None);
+    body["payload"]["flow"]["title"] = json!("Route a WhatsApp message");
+    body["payload"]["flow"]["steps"] =
+        json!([{ "id": "classify", "label": "Classify the intent" }]);
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(status, 200, "{admitted}");
+    let words = admitted["restatement"].as_str().unwrap().to_owned();
+    assert_eq!(
+        words,
+        "Automation \"Route a WhatsApp message\" (version 1.0.0).\nIt runs when a run of it is started.\n1. Classify the intent: calls norn.classify.whatsapp-intent at version 1."
+    );
+    assert_eq!(admitted["restatementSha256"], json!(sha256(&words)));
+
+    // A sign-off of other words is refused with the server's own words.
+    let mut wrong = body.clone();
+    wrong["signoff"] = json!({ "restatementSha256": sha256("something else") });
+    let (status, refused) = install_flow(&cell, &wrong);
+    assert_eq!(
+        (status, refused["code"].clone()),
+        (422, json!("definition.signoff_mismatch")),
+        "{refused}"
+    );
+    assert_eq!(refused["restatement"], json!(words));
+    // Signing those words installs; GET recomputes the same and records the signer.
+    let mut signed = body;
+    signed["signoff"] = json!({ "restatementSha256": sha256(&words) });
+    let (status, installed) = install_flow(&cell, &signed);
+    assert_eq!(status, 200, "{installed}");
+    let (_, document) = get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER);
+    assert_eq!(document["restatement"], json!(words));
+    assert_eq!(
+        document["signoff"]["restatementSha256"],
+        json!(sha256(&words))
+    );
+    assert_eq!(document["signoff"]["signer"], json!("viewer@demo"));
+}
+
+#[test]
+fn a_decision_step_restates_as_asking_a_person() {
+    let decision: Vec<Value> = serde_json::from_str(
+        &serde_json::to_string(&lowered())
+            .unwrap()
+            .replace(&format!("function: '{TOOL}'"), "function: 'norn.decision'"),
+    )
+    .unwrap();
+    let payload = json!({ "flow": { "id": FLOW_ID, "version": "1.0.0" }, "artifacts": decision });
+    let words = norn_api::flow_definitions::restate(&payload.to_string()).unwrap();
+    assert!(
+        words.ends_with("1. classify: asks a person to decide, and waits for their decision."),
+        "{words}"
+    );
+    assert!(
+        words.starts_with("Automation \"crm.route_message\" (version 1.0.0)."),
+        "{words}"
+    );
+    // Deterministic: the same payload restates the same.
+    assert_eq!(
+        norn_api::flow_definitions::restate(&payload.to_string()).unwrap(),
+        words
+    );
+}
