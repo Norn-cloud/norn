@@ -17,6 +17,22 @@ pub const MAX_PARAMETERS: usize = 100;
 /// Maximum SQL statement length in bytes in the admitted host subset.
 pub const MAX_STATEMENT_BYTES: usize = 100_000;
 
+/// How a sequence of reads on one engine knows it saw a single snapshot
+/// (HOST-READ-2). Every engine declares one; there is no default, so a
+/// wrapper cannot inherit a guarantee it does not provide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadIsolation {
+    /// [`SqlEngine::read_cache_revision`] returns `Some` outside a
+    /// transaction, and equal revisions imply unchanged database contents,
+    /// including writes by other connections. A reader that finds `None`
+    /// must refuse rather than assume stability.
+    Revisioned,
+    /// The engine's connection is the only one to its database and every read
+    /// path runs synchronously, without yielding, so nothing can write between
+    /// two reads of one call. Only the Durable Object engine declares this.
+    ExclusiveSynchronous,
+}
+
 /// An owned SQLite value, shared by native and portable hosts.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlValue {
@@ -141,6 +157,10 @@ pub trait SqlEngine {
     /// # Errors
     /// The closure's error, or a backend begin/commit/rollback error.
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X>;
+
+    /// How a sequence of reads knows it saw one snapshot; required, so every
+    /// engine states it.
+    fn read_isolation(&self) -> ReadIsolation;
 
     /// Optional connection-local revision for disposable verified read caches.
     /// Equal revisions must imply unchanged database contents on this connection,
@@ -276,6 +296,10 @@ pub enum NoEngine {}
 
 #[cfg(not(feature = "native"))]
 impl SqlEngine for NoEngine {
+    fn read_isolation(&self) -> ReadIsolation {
+        match *self {}
+    }
+
     fn execute(&self, _sql: &str, _params: &[SqlValue]) -> Result<(), CellError> {
         match *self {}
     }
@@ -415,6 +439,10 @@ impl rusqlite::types::ToSql for SqlValue {
 
 #[cfg(feature = "native")]
 impl SqlEngine for NativeEngine {
+    fn read_isolation(&self) -> ReadIsolation {
+        ReadIsolation::Revisioned
+    }
+
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         if !self.conn.is_autocommit() {
             return Ok(None);
