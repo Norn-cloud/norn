@@ -17,7 +17,8 @@ import { RISKS, decisionView, effectOf, nextOptionId, optionPort, optionsOf, set
 import { DecisionTree } from "./decision-tree.tsx"
 import { words } from "./lib/format.ts"
 
-const META = { id: "studio.automation", version: "0.1.0" }
+/** The automation's identity and display title (the frame's label); the title rides into the flow as display data. */
+const META = { id: "studio.automation", version: "0.1.0", title: "Automation" }
 export const STEP_KINDS = { start: "Start", perform: "Tool", decide: "Ask a person", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
 export const RUN_BLOCKED = "Running happens in the cell with receipts; the run route is not live yet."
 

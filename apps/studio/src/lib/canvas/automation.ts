@@ -8,6 +8,8 @@
  */
 import type { Expr } from "../../../../../tools/norn-ts/src/builder/expr.ts"
 import { X, lowerFlow, type BuildDiagnostic, type EnvelopeOptions, type FlowDef, type FnRef, type Step } from "../../../../../tools/norn-ts/src/builder/index.ts"
+import type { FlowDisplay } from "../../../../../tools/norn-ts/src/builder/lower-flow.ts"
+import { words } from "../format.ts"
 import type { CanvasEdge, CanvasNode, Graph, Kinds, Port } from "./graph.ts"
 import { DECISION_BOUNDS, decisionPorts, decisionSteps, effectOf, expiresOf, optionPort, optionsOf, rolesOf } from "./decision.ts"
 
@@ -78,7 +80,13 @@ const at = (node: CanvasNode) => ({ file: `canvas/${node.id}`, line: 1 })
 export const nodeOfLocation = (file: string | undefined) => file?.startsWith("canvas/") ? file.slice("canvas/".length) : undefined
 
 /** The flow definition the graph draws, or the canvas's own findings when it draws none. */
-export function toFlow(graph: Graph, tools: readonly FnRef[], meta: { readonly id: string; readonly version: string }): { readonly flow?: FlowDef; readonly problems: readonly Problem[] } {
+/** A canvas step's title, as its card shows it; it rides into the flow as the step's display label. */
+export const stepTitle = (node: CanvasNode) => words(node.id)
+
+/** The flow's identity and, when it has one, its display title (display-only: never changes what runs). */
+export interface FlowMeta { readonly id: string; readonly version: string; readonly title?: string }
+
+export function toFlow(graph: Graph, tools: readonly FnRef[], meta: FlowMeta): { readonly flow?: FlowDef; readonly problems: readonly Problem[] } {
   const problems: Problem[] = []
   const byId = new Map(graph.nodes.map((node) => [node.id, node]))
   const starts = graph.nodes.filter(({ kind }) => kind === "start")
@@ -112,9 +120,9 @@ export function toFlow(graph: Graph, tools: readonly FnRef[], meta: { readonly i
         if (!tool) { problems.push({ code: "canvas.tool.unknown", message: `No tool ${node.config.tool ?? ""} is connected`, node: node.id }); return undefined }
         const fields = Object.entries(inputsOf(node)).map(([field, text]) => [field, value(text)] as const)
         const bind = node.config.bind?.trim()
-        return { _tag: "Perform", step: node.id, fn: tool, input: X.record(Object.fromEntries(fields)), ...(bind ? { bind } : {}), at: at(node), sourceMap }
+        return { _tag: "Perform", step: node.id, fn: tool, input: X.record(Object.fromEntries(fields)), ...(bind ? { bind } : {}), label: stepTitle(node), at: at(node), sourceMap }
       }
-      case "sleep": return { _tag: "Sleep", step: node.id, millis: Number(node.config.millis ?? "0"), at: at(node), sourceMap }
+      case "sleep": return { _tag: "Sleep", step: node.id, millis: Number(node.config.millis ?? "0"), label: stepTitle(node), at: at(node), sourceMap }
       case "succeed": return { _tag: "Succeed", value: X.record({ outcome: X.lit(node.config.outcome ?? "") }), at: at(node), sourceMap }
       case "route": {
         const conditions = branchesOf(node)
@@ -159,10 +167,15 @@ export interface Lowered {
   readonly artifacts: readonly Artifact[]
   /** Each canvas step's generated states, by node id. */
   readonly states: ReadonlyMap<string, readonly string[]>
+  /** The flow's display data as lowerFlow reports it: id, version, title and each labelled step. */
+  readonly flow: FlowDisplay
 }
 
+/** What a flow definition installs: its artifacts, and its display data as `payload.flow` (DEFS' flow kind). */
+export const flowDefinitionPayload = (lowered: Lowered) => ({ artifacts: lowered.artifacts, flow: lowered.flow })
+
 /** Lower the drawn flow to its artifacts; lowering findings point back at the node they came from. */
-export function lower(graph: Graph, tools: readonly FnRef[], meta: { readonly id: string; readonly version: string }, options: EnvelopeOptions = { scope: {}, sourcePath: "apps/studio/canvas" }): { readonly lowered?: Lowered; readonly problems: readonly Problem[] } {
+export function lower(graph: Graph, tools: readonly FnRef[], meta: FlowMeta, options: EnvelopeOptions = { scope: {}, sourcePath: "apps/studio/canvas" }): { readonly lowered?: Lowered; readonly problems: readonly Problem[] } {
   const drawn = toFlow(graph, tools, meta)
   if (!drawn.flow) return { problems: drawn.problems }
   const built = lowerFlow(drawn.flow, options)
@@ -171,7 +184,7 @@ export function lower(graph: Graph, tools: readonly FnRef[], meta: { readonly id
     ? { ...artifact, payload: { ...artifact.payload, extensions: { [CANVAS_EXTENSION]: { nodes: graph.nodes, edges: graph.edges } } } }
     : artifact)
   const states = new Map((built.flowSourceMap?.flows ?? []).flatMap(({ steps }) => steps.map(({ id, stateIds }) => [id, stateIds] as const)))
-  return { lowered: { artifacts, states }, problems: [] }
+  return { lowered: { artifacts, states, flow: built.flow }, problems: [] }
 }
 
 /**
@@ -179,7 +192,7 @@ export function lower(graph: Graph, tools: readonly FnRef[], meta: { readonly id
  * these artifacts; a rule changed outside the canvas is not redrawn as if it
  * were the canvas's.
  */
-export function redraw(artifacts: readonly Artifact[], tools: readonly FnRef[], meta: { readonly id: string; readonly version: string }, options?: EnvelopeOptions): Graph | undefined {
+export function redraw(artifacts: readonly Artifact[], tools: readonly FnRef[], meta: FlowMeta, options?: EnvelopeOptions): Graph | undefined {
   const rule = artifacts.find(({ kind }) => kind === "rule")
   const saved = (rule?.payload.extensions as Record<string, { nodes: CanvasNode[]; edges: CanvasEdge[] }> | undefined)?.[CANVAS_EXTENSION]
   if (!saved) return undefined

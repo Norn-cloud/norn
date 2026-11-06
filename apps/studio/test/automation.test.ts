@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { loadInvoice, notify } from "../../../tools/norn-ts/fixtures/flows/support/billing.builder.ts"
-import { CANVAS_EXTENSION, branchesOf, lower, redraw, setBranches, type Condition } from "../src/lib/canvas/automation.ts"
+import { CANVAS_EXTENSION, branchesOf, flowDefinitionPayload, lower, redraw, setBranches, type Condition } from "../src/lib/canvas/automation.ts"
 import type { CanvasEdge, CanvasNode, Graph } from "../src/lib/canvas/graph.ts"
 
 const tools = [loadInvoice, notify]
@@ -75,4 +75,23 @@ test("reordering a route's branches carries each branch's exit; removing a branc
   expect(lower(swapped, tools, meta, options).problems).toEqual([])
   const dropped = setBranches(route, "settled", [draft], [1])
   expect(dropped.edges.filter(({ source }) => source === "settled").map(({ sourcePort, target }) => `${sourcePort}->${target}`).sort()).toEqual(["b0->draft", "next->overdue"])
+})
+
+test("the canvas's titles reach the flow definition payload: the flow's title and each tool and wait step's label", () => {
+  const titled = { ...meta, title: "Invoice follow-up" }
+  const waiting: Graph = {
+    nodes: [...route.nodes.filter(({ id }) => id !== "remind"), node("pause", "sleep", { millis: "60000" }), node("remind", "perform", { tool: "billing.notify", input: JSON.stringify({ invoiceId: "invoice.id", outcome: "overdue" }) })],
+    edges: [...route.edges.filter(({ target }) => target !== "remind"), edge("overdue", "b0", "pause"), edge("pause", "next", "remind")],
+  }
+  const { lowered, problems } = lower(waiting, tools, titled, options)
+  expect(problems).toEqual([])
+  expect(lowered?.flow).toEqual({
+    id: "billing.route", version: "1.0.0", title: "Invoice follow-up",
+    steps: [{ id: "load", label: "Load" }, { id: "pause", label: "Pause" }, { id: "remind", label: "Remind" }],
+  })
+  const payload = flowDefinitionPayload(lowered!)
+  expect(payload.flow).toBe(lowered!.flow)
+  expect(payload.artifacts).toBe(lowered!.artifacts)
+  // Display-only: the untitled lowering runs exactly the same artifacts.
+  expect(withoutLayout(lower(route, tools, meta, options).lowered?.artifacts ?? [])).toEqual(golden)
 })
