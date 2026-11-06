@@ -4,7 +4,7 @@ import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, verdictOf } from "../src/agent/verdict.ts"
 import { Chat } from "@ai-sdk/react"
 import type { UIMessage } from "ai"
-import { AgentPanel, type AgentState } from "../src/agent/panel.tsx"
+import { AgentPanel, sendsOnEnter, type AgentState } from "../src/agent/panel.tsx"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
 const refusal = {
@@ -75,4 +75,29 @@ test("the panel renders the conversation and draft it is given, so reopening the
   expect(html).toContain("Let Receive start from draft")
   expect(html).toContain("half-typed draft")
   expect(html).not.toContain("Propose a change")
+})
+
+test("a verdict is read only when every field the cards render has the Worker's shape", () => {
+  const admitted = { proposal, admitted: true, stage: "admitted", receiptSha256: "eef45040c171aa", refusals: [] }
+  expect(verdictOf(admitted)).toBeDefined()
+  expect(verdictOf({ ...admitted, receiptSha256: null })).toBeDefined()
+  for (const broken of [
+    { proposal: {}, admitted: true, stage: "admitted", refusals: [], receiptSha256: "r" },
+    { ...admitted, receiptSha256: 42 },
+    { ...admitted, stage: { name: "admitted" } },
+    { ...admitted, stage: "unheard-of" },
+    { ...refusal, refusals: [{ ...refusal.refusals[0], code: 7 }] },
+    { ...refusal, refusals: [{ ...refusal.refusals[0], law: { ...refusal.refusals[0]?.law, name: { text: "x" } } }] },
+    { ...refusal, refusals: [{ ...refusal.refusals[0], law: "law" }] },
+    { proposal, error: 3 },
+  ]) expect(verdictOf(broken)).toBeUndefined()
+  const html = renderToStaticMarkup(<VerdictCard verdict={verdictOf(refusal) ?? (() => { throw new Error("a verdict") })()} />)
+  expect(html).toContain("Refused by the checker")
+})
+
+test("Enter sends, but not with Shift and not while an IME composition is being confirmed", () => {
+  expect(sendsOnEnter({ key: "Enter", shiftKey: false, nativeEvent: { isComposing: false } })).toBe(true)
+  expect(sendsOnEnter({ key: "Enter", shiftKey: true, nativeEvent: { isComposing: false } })).toBe(false)
+  expect(sendsOnEnter({ key: "Enter", shiftKey: false, nativeEvent: { isComposing: true } })).toBe(false)
+  expect(sendsOnEnter({ key: "a", shiftKey: false, nativeEvent: {} })).toBe(false)
 })
