@@ -386,7 +386,7 @@ fn submissions_are_posted_json_and_malformed_ones_refuse() {
     );
 }
 
-/// D61: an undeclared metric is the checker's 422, with its pointer, only for
+/// D62: an undeclared metric is the checker's 422, with its pointer, only for
 /// a caller who can read every metric the cell declares. A caller missing any
 /// metric grant gets the opaque 403, byte-identical for an undeclared and an
 /// ungranted metric: no existence oracle over the catalog.

@@ -327,7 +327,7 @@ fn allowed<E: SqlEngine>(
 /// the union of every catalog metric and object type it reads, all of which
 /// must be granted, decided before admission so that a refusal's diagnostics
 /// never describe an ungranted resource. A question naming an undeclared
-/// metric reads, for this purpose, every declared metric (D61).
+/// metric reads, for this purpose, every declared metric (D62).
 pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
     /// The cell's declared metric definitions; a question may name only these.
     fn definitions(&self) -> &[MetricDefinition];
@@ -424,7 +424,7 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
     let key = handle_key(runtime)?;
     let named: &dyn QuestionRuntime<E> = runtime;
     let (named_metrics, undeclared) = read_metrics(question, runtime.definitions());
-    // D61: that a named metric does not exist is disclosed (as the checker's
+    // D62: that a named metric does not exist is disclosed (as the checker's
     // 422) only to a caller who may read every metric the cell declares, so
     // it says nothing they could not see. For anyone else an undeclared
     // metric is the same opaque denial as an ungranted one: no existence
