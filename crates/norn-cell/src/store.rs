@@ -1955,9 +1955,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// SQL failures; existing metadata, ledger or history returns false.
     pub fn engine_is_fresh(engine: &E) -> Result<bool, CellError> {
         let platform = engine.platform_table_globs();
-        let filter: String = (1..=platform.len())
-            .map(|index| format!(" AND name NOT GLOB ?{index}"))
-            .collect();
+        let filter = " AND name NOT GLOB ?".repeat(platform.len());
         let sql =
             format!("SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'{filter} LIMIT 1");
         let globs: Vec<SqlValue> = platform.iter().map(|glob| SqlValue::from(*glob)).collect();
