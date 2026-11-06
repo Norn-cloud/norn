@@ -1,7 +1,7 @@
 import { AgentButton } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router"
-import { ChartLine, Database, Gauge, LayoutDashboard, Plug, ShieldCheck, Workflow } from "lucide-react"
+import { ChartLine, Database, Gauge, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
@@ -16,6 +16,7 @@ import { ObjectTypePage, SourcesPage, useSourcesMenu } from "./sources.tsx"
 import { StatusPage } from "./status.tsx"
 import { GuaranteesPage, useGuaranteesMenu } from "./guarantees.tsx"
 import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
+import { CanvasPage } from "./canvas.tsx"
 import { SourcesItemPage } from "./objects.tsx"
 import { QuestionBuilderPage } from "./builder.tsx"
 import { DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
@@ -28,6 +29,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model" },
   { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, summary: "Saved sets of questions, each a definition the cell checks before it is kept.", group: "Model" },
   { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules" },
+  { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "Rules" },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
   { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "Tools" },
   { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", foot: true },
@@ -85,7 +87,7 @@ const router = createRouter({
     ...SECTIONS.map((section) => createRoute({
       getParentRoute: () => root,
       path: section.path,
-      component: section.path === "/questions" ? QuestionsPage : section.path === "/dashboards" ? DashboardsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : section.path === "/connections" ? ConnectionsWithBindings : () => <NotYet {...section} />,
+      component: section.path === "/questions" ? QuestionsPage : section.path === "/dashboards" ? DashboardsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/canvas" ? CanvasPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : section.path === "/connections" ? ConnectionsWithBindings : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: SourcesItemPage }),
