@@ -121,8 +121,12 @@ export async function connectors(request: Request, env: ConnectorEnv, auth: Auth
   if (gatewayOrigin === undefined) return refusal(503, "connectors.not_configured", "No tool gateway is configured for this deployment.")
   if (route === "POST /link") {
     // Connect and reconnect: the generic OAuth provider is a social provider to Better Auth; linking needs the session.
-    const { url } = await auth.api.linkSocialAccount({ body: { provider: GATEWAY_PROVIDER, callbackURL: "/connections" }, headers: request.headers })
-    return ok({ url })
+    // Better Auth keeps the OAuth state in a signed cookie it sets here; the browser must receive
+    // it, or the callback refuses with a state mismatch.
+    const { headers: set, response } = await auth.api.linkSocialAccount({ body: { provider: GATEWAY_PROVIDER, callbackURL: "/connections" }, headers: request.headers, returnHeaders: true })
+    const answer = ok({ url: response.url })
+    for (const cookie of set.getSetCookie()) answer.headers.append("set-cookie", cookie)
+    return answer
   }
   if (route === "POST /unlink") {
     const accountId = await gatewayAccount(auth, request)

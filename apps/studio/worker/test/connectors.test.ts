@@ -57,7 +57,7 @@ function stage(gatewayClient = false) {
     const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { TOOL_GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides })
     const text = await response.text()
     expect(text).not.toContain(TOKEN)
-    return { status: response.status, body: JSON.parse(text) as Record<string, unknown> }
+    return { status: response.status, body: JSON.parse(text) as Record<string, unknown>, cookies: response.headers.getSetCookie() }
   }
   /** A new person; with `colleagueOf`, a member of that person's organization instead of their own. */
   const signUp = async (email: string, role = "owner", colleagueOf?: string) => {
@@ -78,7 +78,7 @@ const gatewayCalls = (calls: Request[], from: number) => calls.slice(from).filte
 
 test("every route needs a signed-in person and names its refusal", async () => {
   const { send } = stage()
-  expect(await send("/inventory")).toEqual({ status: 401, body: { code: "connectors.sign_in", error: "Sign in first." } })
+  expect(await send("/inventory")).toMatchObject({ status: 401, body: { code: "connectors.sign_in", error: "Sign in first." } })
 })
 
 test("gateway sign-in: status, connect, reconnect and disconnect", async () => {
@@ -91,7 +91,10 @@ test("gateway sign-in: status, connect, reconnect and disconnect", async () => {
   expect((await send("/inventory", { cookie: owner }, { grant: undefined })).body).toMatchObject({ code: "connectors.not_linked", action: { kind: "sign_in_gateway" } })
   for (let attempt = 0; attempt < 2; attempt++) {
     // Connecting and reconnecting are the same authorization-code link with PKCE, back to Connections.
-    const url = new URL(String((await send("/link", { method: "POST", cookie: owner })).body.url))
+    const linked = await send("/link", { method: "POST", cookie: owner })
+    // The OAuth state cookie reaches the browser, so the callback can match it.
+    expect(linked.cookies.some((cookie) => /state/i.test(cookie.split("=")[0] ?? ""))).toBe(true)
+    const url = new URL(String(linked.body.url))
     expect(`${url.origin}${url.pathname}`).toBe(`${GATEWAY}/api/auth/oauth2/authorize`)
     expect([url.searchParams.get("client_id"), url.searchParams.get("code_challenge_method")]).toEqual(["studio", "S256"])
     expect(url.searchParams.get("scope")?.split(" ").sort()).toEqual(["executor", "offline_access"])
