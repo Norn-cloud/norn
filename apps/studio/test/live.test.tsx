@@ -83,3 +83,21 @@ test("a 200 that is JSON but not an answer document is no live read, so the page
   expect(await liveAnswer("demo.yield_week", respond(200, "null"))).toEqual({ kind: "unavailable", status: 200 })
   expect(await liveAnswer("demo.yield_week", respond(200, '{"error":"unavailable"}'))).toEqual({ kind: "unavailable", status: 200 })
 })
+
+test("a live answer with a malformed row, watermark or freshness is no live read, so the page keeps its recording", async () => {
+  const broken = (change: (doc: Record<string, unknown>) => void) => { const doc = JSON.parse(answerText) as Record<string, unknown>; change(doc); return JSON.stringify(doc) }
+  const first = (doc: Record<string, unknown>) => Object.keys(doc.rows as object)[0] ?? ""
+  for (const body of [
+    broken((doc) => { (doc.rows as Record<string, unknown>)[first(doc)] = null }),
+    broken((doc) => { delete ((doc.rows as Record<string, Record<string, unknown>>)[first(doc)] ?? {}).totals }),
+    broken((doc) => { ((doc.rows as Record<string, Record<string, unknown>>)[first(doc)] ?? {}).members = { x: { version: 1, amounts: "1" } } }),
+    broken((doc) => { doc.watermarks = { measurements: { observed: null } } }),
+    broken((doc) => { doc.freshness = "unheard-of" }),
+  ]) expect(await liveAnswer("demo.yield_week", respond(200, body))).toEqual({ kind: "unavailable", status: 200 })
+})
+
+test("a live trace that is not the drawer's document is no live read, so the drawer says it could not read the records", async () => {
+  expect((await liveTrace("demo.yield_week", answer.lineageRef, bucket, respond(200, traceText))).kind).toBe("read")
+  for (const body of ["null", '{"error":"unavailable"}', `{"bucket":${JSON.stringify(bucket)}}`, `{"bucket":${JSON.stringify(bucket)},"contributions":[null]}`, `{"bucket":${JSON.stringify(bucket)},"contributions":[{"fact":{"key":"k"},"amounts":[1]}]}`])
+    expect(await liveTrace("demo.yield_week", answer.lineageRef, bucket, respond(200, body))).toEqual({ kind: "unavailable", status: 200 })
+})

@@ -1,4 +1,5 @@
 import { readDocument, type Read } from "./exact.ts"
+import { FRESHNESS } from "./format.ts"
 import type { Answer, Schemas } from "./transport.ts"
 
 /** A refusal exactly as the server wrote it (`{code, category, message, explanation}`). */
@@ -75,17 +76,33 @@ const DEMO = "orgId=org_demo"
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
-/** The fields of a `NornQueryResult` the question card reads. */
+const isAmounts = (value: unknown): boolean => Array.isArray(value) && value.every((amount) => amount === null || typeof amount === "number")
+
+/** One answer row as `buckets` reads it: a bucket key, its totals, and each member's version and amounts. */
+const isRow = (row: unknown): boolean =>
+  isRecord(row) && "bucket" in row && Array.isArray(row.totals) && isRecord(row.members) &&
+  Object.values(row.members).every((member) => isRecord(member) && typeof member.version === "number" && isAmounts(member.amounts))
+
+/** The fields of a `NornQueryResult` the question card reads, down to each row and watermark partition. */
 export const isAnswer = (value: unknown): boolean =>
-  isRecord(value) && isRecord(value.rows) && isRecord(value.watermarks) && typeof value.freshness === "string" &&
+  isRecord(value) && isRecord(value.rows) && Object.values(value.rows).every(isRow) &&
+  isRecord(value.watermarks) && Object.values(value.watermarks).every((partitions) => isRecord(partitions) && Object.values(partitions).every((partition) => isRecord(partition) && typeof partition.complete === "boolean")) &&
+  typeof value.freshness === "string" && Object.hasOwn(FRESHNESS, value.freshness) &&
   typeof value.lineageRef === "string" && typeof value.nowMs === "number" && typeof value.knownAsOf === "number"
+
+/** The fields of a `NornNumericTrace` the records drawer reads, for every contribution. */
+export const isTrace = (value: unknown): boolean =>
+  isRecord(value) && typeof value.bucket === "string" && Array.isArray(value.contributions) &&
+  value.contributions.every((contribution) => isRecord(contribution) && isRecord(contribution.fact) &&
+    typeof contribution.fact.key === "string" && typeof contribution.fact.version === "number" && isAmounts(contribution.amounts) &&
+    typeof contribution.receiptHash === "string" && typeof contribution.commitSeq === "number" && typeof contribution.restricted === "boolean")
 
 export const liveAnswer = (question: string, fetcher?: Fetch) =>
   hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer?${DEMO}&environmentId=analytics`, fetcher, isAnswer)
 
 /** One bucket of a live answer; `bucket` is the answer's row key exactly as the server wrote it. */
 export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) =>
-  hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${DEMO}&environmentId=analytics&lineageRef=${encodeURIComponent(lineageRef)}&bucket=${encodeURIComponent(bucket)}`, fetcher)
+  hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${DEMO}&environmentId=analytics&lineageRef=${encodeURIComponent(lineageRef)}&bucket=${encodeURIComponent(bucket)}`, fetcher, isTrace)
 
 /** A contribution's amounts as the exact number texts the server sent. */
 export const amountTexts = (read: Read<Trace>, index: number): readonly (string | null)[] =>
