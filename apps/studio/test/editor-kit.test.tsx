@@ -1,0 +1,73 @@
+import { expect, test } from "bun:test"
+import { renderToStaticMarkup } from "react-dom/server"
+import { EditorToolbar, RowActions, ValidationPanel } from "../src/components/editor.tsx"
+import { VERBS, history, list, modKey, verbTable } from "../src/lib/editor.ts"
+import { SUITES } from "./e2e/suites.ts"
+import { defineVerbs, supported } from "./e2e/verbs.ts"
+
+test("history undoes and redoes whole states, forgets the redo branch on a new edit, and keeps at most 100 steps", () => {
+  let h = history.start(0)
+  for (const n of [1, 2, 3]) h = history.set(h, n)
+  h = history.undo(history.undo(h))
+  expect(h).toEqual({ past: [0], present: 1, future: [2, 3] })
+  expect(history.redo(h).present).toBe(2)
+  h = history.set(h, 9)
+  expect(h.future).toEqual([])
+  expect(history.set(h, 9)).toBe(h)
+  expect(history.undo(history.start(5))).toEqual(history.start(5))
+  for (let n = 0; n < 150; n++) h = history.set(h, n + 10)
+  expect(h.past.length).toBe(100)
+})
+
+test("list verbs duplicate as a separate copy, move within bounds and remove", () => {
+  const rows = [{ a: 1 }, { a: 2 }, { a: 3 }]
+  const copied = list.duplicate(rows, 0)
+  expect(copied).toEqual([{ a: 1 }, { a: 1 }, { a: 2 }, { a: 3 }])
+  expect(copied[1]).not.toBe(rows[0])
+  expect(list.move(rows, 2, 0)).toEqual([{ a: 3 }, { a: 1 }, { a: 2 }])
+  expect(list.move(rows, 0, 3)).toBe(rows)
+  expect(list.remove(rows, 1)).toEqual([{ a: 1 }, { a: 3 }])
+  expect(list.duplicate(rows, 7)).toBe(rows)
+})
+
+const matrix = { create: "supported", view: "supported", edit: "supported", delete: "supported", duplicate: "supported", reorder: { na: "a single value has no order" }, undo: "supported", redo: "supported", validate: "supported", save: "supported", reopen: "supported", run: { na: "nothing to run" } } as const
+
+test("the verb matrix names every verb, and its table reads ✓ or N/A with the reason", () => {
+  const table = verbTable({ Thing: matrix })
+  expect(table.split("\n")[0]).toBe(`| Object | ${VERBS.join(" | ")} |`)
+  expect(table).toContain("| Thing | ✓ | ✓ | ✓ | ✓ | ✓ | N/A: a single value has no order | ✓ | ✓ | ✓ | ✓ | ✓ | N/A: nothing to run |")
+})
+
+test("a verb suite must have a test for exactly the supported verbs (checked by the type, and here at run time)", () => {
+  const noop = async () => {}
+  const suite = defineVerbs("Thing", matrix, { create: noop, view: noop, edit: noop, delete: noop, duplicate: noop, undo: noop, redo: noop, validate: noop, save: noop, reopen: noop })
+  expect(supported(suite)).toEqual(["create", "view", "edit", "delete", "duplicate", "undo", "redo", "validate", "save", "reopen"])
+  // @ts-expect-error a supported verb without its end-to-end test does not compile
+  defineVerbs("Thing", matrix, { create: noop })
+  // @ts-expect-error neither does a test for a verb the matrix marks N/A
+  defineVerbs("Thing", matrix, { create: noop, view: noop, edit: noop, delete: noop, duplicate: noop, undo: noop, redo: noop, validate: noop, save: noop, reopen: noop, run: noop })
+  for (const registered of SUITES) expect(supported(registered).filter((verb) => typeof registered.specs[verb] !== "function")).toEqual([])
+})
+
+test("the toolbar shows undo, redo and save state; rows offer move, duplicate and remove within bounds", () => {
+  const editor = { undo: () => {}, redo: () => {}, canUndo: false, canRedo: true, dirty: true }
+  const toolbar = renderToStaticMarkup(<EditorToolbar editor={editor} onSave={() => {}} />)
+  expect(toolbar).toMatch(/aria-label="Undo"[^>]*disabled/)
+  expect(toolbar).not.toMatch(/aria-label="Redo"[^>]*disabled/)
+  expect(toolbar).toContain("Unsaved changes")
+  expect(renderToStaticMarkup(<EditorToolbar editor={{ ...editor, dirty: false }} onSave={() => {}} />)).toContain("All changes saved")
+  const first = renderToStaticMarkup(<RowActions index={0} count={2} label="condition 1" onDuplicate={() => {}} onMove={() => {}} onRemove={() => {}} />)
+  expect(first).toMatch(/aria-label="Move condition 1 up"[^>]*disabled/)
+  expect(first).not.toMatch(/aria-label="Move condition 1 down"[^>]*disabled/)
+  for (const verb of ["Duplicate", "Remove"]) expect(first).toContain(`aria-label="${verb} condition 1"`)
+  expect(modKey("MacIntel")).toBe("⌘")
+  expect(modKey("Linux x86_64")).toBe("Ctrl+")
+})
+
+test("the validation panel links each placed finding to its field and states the rest", () => {
+  const html = renderToStaticMarkup(<ValidationPanel issues={[{ code: "a", message: "No metric demo.purity", field: "measure" }, { code: "b", message: "The engine evaluates weekly questions only", field: null }]} />)
+  expect(html).toContain('role="alert"')
+  expect(html).toMatch(/<button[^>]*>No metric demo.purity<\/button>/)
+  expect(html).toMatch(/<span>The engine evaluates weekly questions only<\/span>/)
+  expect(renderToStaticMarkup(<ValidationPanel issues={[]} />)).toBe("")
+})

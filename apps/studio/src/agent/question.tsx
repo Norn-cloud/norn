@@ -9,7 +9,8 @@ export interface QuestionVerdict {
   readonly question: unknown
   readonly admitted: boolean
   readonly plan: { readonly grain: string; readonly question: QuestionShape; readonly sums: readonly { readonly metric: string; readonly property: string }[]; readonly metrics: readonly { readonly name: string; readonly label: string }[] } | null
-  readonly findings: readonly { readonly code: string; readonly message: string }[]
+  /** Each finding as the checker wrote it, with its JSON pointer into the checked document when it names one. */
+  readonly findings: readonly { readonly code: string; readonly message: string; readonly pointer?: string | null }[]
 }
 
 interface QuestionShape {
@@ -26,7 +27,8 @@ export function questionVerdictOf(output: unknown): QuestionVerdict | undefined 
 }
 
 const words = (property: string | undefined) => (property ?? "").replaceAll("_", " ")
-const OPERATORS: Record<string, string> = { eq: "is", ne: "is not", lt: "is below", lte: "is at most", gt: "is above", gte: "is at least" }
+// The IR's filter operators (`norn_ir::metric::FilterOperator`).
+const OPERATORS: Record<string, string> = { eq: "is", ne: "is not", lt: "is below", le: "is at most", gt: "is above", ge: "is at least" }
 
 /** The checked plan in Business words: what it measures, of what, by what, for which records and over which window. */
 export function planWords(plan: NonNullable<QuestionVerdict["plan"]>): readonly [string, string][] {
