@@ -55,13 +55,14 @@ export function decisionSteps(node: CanvasNode, sequence: (port: string) => Step
     deciderRoles: X.list(...rolesOf(node).map((role) => X.lit(role))),
   })
   const ask: Step = { _tag: "Perform", step: `ask_${node.id}`, fn: DECISION_FN, input, bind: node.id, at, sourceMap: { id: node.id, kind: "perform" } }
+  // The cell accepts only a listed choice, so the last option takes the otherwise slot: the route stays total for lowering.
+  const last = options.at(-1)
   const route: Step = {
     _tag: "Route",
-    branches: options.map((option) => ({ when: X.eq(X.ref(node.id, "choice"), X.lit(option.id)), then: sequence(optionPort(option)) })),
-    // The cell accepts only a listed choice, so nothing falls through here.
-    otherwise: [],
+    branches: options.slice(0, -1).map((option) => ({ when: X.eq(X.ref(node.id, "choice"), X.lit(option.id)), then: sequence(optionPort(option)) })),
+    otherwise: last ? sequence(optionPort(last)) : [],
     at,
-    sourceMap: { id: `${node.id}_route`, kind: "switch", branchLabels: options.map(optionPort), otherwiseLabel: "otherwise" },
+    sourceMap: { id: `${node.id}_route`, kind: "switch", branchLabels: options.slice(0, -1).map(optionPort), otherwiseLabel: last ? optionPort(last) : "otherwise" },
   }
   return [ask, route]
 }

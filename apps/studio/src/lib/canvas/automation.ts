@@ -124,16 +124,20 @@ export function toFlow(graph: Graph, tools: readonly FnRef[], meta: { readonly i
         return route
       }
       case "decide": {
-        const options = optionsOf(node)
-        if (!(node.config.question ?? "").trim()) problems.push({ code: "canvas.decision.no_question", message: "Say what the person is deciding", node: node.id })
-        if (options.length === 0) problems.push({ code: "canvas.decision.no_options", message: "A decision needs at least one option", node: node.id })
-        if (rolesOf(node).length === 0) problems.push({ code: "canvas.decision.no_decider", message: "Name the roles that may decide", node: node.id })
-        for (const option of options) if (!graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === optionPort(option)) && !graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === "next"))
-          problems.push({ code: "canvas.decision.option_leads_nowhere", message: `Option ${option.id} (${option.label}) leads nowhere; connect it, or continue after the decision`, node: node.id })
         return decisionSteps(node, (port) => sequence(node.id, port), at(node))
       }
       default: return undefined
     }
+  }
+  // A decision's own rules hold whether or not anything reaches it yet.
+  for (const node of graph.nodes.filter(({ kind }) => kind === "decide")) {
+    const options = optionsOf(node)
+    if (!(node.config.question ?? "").trim()) problems.push({ code: "canvas.decision.no_question", message: "Say what the person is deciding", node: node.id })
+    if (options.length === 0) problems.push({ code: "canvas.decision.no_options", message: "A decision needs at least one option", node: node.id })
+    if (rolesOf(node).length === 0) problems.push({ code: "canvas.decision.no_decider", message: "Name the roles that may decide", node: node.id })
+    const continues = graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === "next")
+    for (const option of options) if (!continues && !graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === optionPort(option)))
+      problems.push({ code: "canvas.decision.option_leads_nowhere", message: `Option ${option.id} (${option.label}) leads nowhere; connect it, or continue after the decision`, node: node.id })
   }
   const [start] = starts
   const body = start ? sequence(start.id, "next") : []
