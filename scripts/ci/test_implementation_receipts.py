@@ -277,20 +277,16 @@ class ReceiptTest(unittest.TestCase):
         self.commit()
         base = self.tmp / "base"
         subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
-        original = copy.deepcopy(self.claims)
-        receipts.implementation_claims = lambda root: original if root == base else self.claims
         self.assertFalse(receipts.in_scope(self.root, base))
         for path, expected in (("unrelated.md", False), ("test-only/Cargo.toml", True), ("dep/src/lib.rs", True),
-                               ("src/lib.rs", True), ("fst/Proof.fst", True), ("Cargo.lock", True)):
+                               ("src/lib.rs", True), ("fst/Proof.fst", True), ("Cargo.lock", True),
+                               ("verification/coverage-v1/manifest/claim.json", True)):
+            (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             with (self.root / path).open("a") as handle:
                 handle.write("\n// changed\n")
             self.commit()
             self.assertEqual(receipts.in_scope(self.root, base), expected, path)
             subprocess.run(["git", "-C", str(self.root), "reset", "-q", "--hard", "HEAD~1"], check=True)
-        self.claims["INV-EXTRACT"]["extractionBinding"] = BINDING | {"items": ["lib::g"]}
-        self.assertTrue(receipts.in_scope(self.root, base))
-        self.claims = {}
-        self.assertTrue(receipts.in_scope(self.root, base))
 
     def assert_outside_rust_change_in_scope(self, source: str) -> None:
         (self.root / "src/lib.rs").write_text(source)
@@ -317,20 +313,85 @@ class ReceiptTest(unittest.TestCase):
             'macro_rules! m { ($a:ident) => { #[$a = "../../outside.rs"] mod external; } }\n'
             'm!(path);\n')
 
-    def test_scope_ignores_docs_and_non_rust_files(self) -> None:
+    def test_scope_exempts_only_docs_and_markdown(self) -> None:
         base = self.tmp / "base"
         subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
         (self.root / "README.md").write_text("Documentation change\n")
-        (self.root / "settings.json").write_text('{"changed": true}\n')
+        (self.root / "docs").mkdir()
+        (self.root / "docs/guide.txt").write_text("Documentation change\n")
+        (self.root / "src/notes.md").write_text("Markdown change\n")
         self.commit()
         self.assertFalse(receipts.in_scope(self.root, base))
+
+    def test_scope_covers_nonstandard_build_inputs(self) -> None:
+        for path, consumer in (
+                ("external/code.inc", 'include!("../external/code.inc");\n'),
+                ("data.bin", 'const DATA: &[u8] = include_bytes!("../data.bin");\n'),
+                ("schema.txt", 'fn main() { std::fs::read("schema.txt").unwrap(); }\n')):
+            with self.subTest(path=path):
+                target = self.root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"original\0" if path.endswith(".bin") else b"original")
+                consumer_path = self.root / ("build.rs" if path == "schema.txt" else "src/lib.rs")
+                consumer_path.write_text(consumer)
+                self.commit()
+                base = self.tmp / "base"
+                subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
+                target.write_bytes(b"changed\0" if path.endswith(".bin") else b"changed")
+                self.commit()
+                self.assertTrue(receipts.in_scope(self.root, base))
+                shutil.rmtree(base)
+
+    def test_scope_covers_submodule_gitlink(self) -> None:
+        first = self.head
+        subprocess.run(["git", "-C", str(self.root), "update-index", "--add", "--cacheinfo",
+                        f"160000,{first},docs/submodule.md"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t",
+                        "commit", "-qm", "add gitlink"], check=True)
+        second = receipts.git(self.root, "rev-parse", "HEAD")
+        base = self.tmp / "base"
+        subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "update-index", "--cacheinfo",
+                        f"160000,{second},docs/submodule.md"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t",
+                        "commit", "-qm", "change gitlink"], check=True)
+        self.assertTrue(receipts.in_scope(self.root, base))
+
+    def test_scope_covers_docs_mixed_with_inc(self) -> None:
+        base = self.tmp / "base"
+        subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
+        (self.root / "README.md").write_text("Documentation\n")
+        (self.root / "code.inc").write_text("pub fn f() {}\n")
+        self.commit()
+        self.assertTrue(receipts.in_scope(self.root, base))
+
+    def test_scope_never_exempts_binary_deleted_renamed_or_mode_changed_docs(self) -> None:
+        (self.root / "docs").mkdir()
+        target = self.root / "docs/guide.md"
+        target.write_text("Documentation\n")
+        self.commit()
+        base = self.tmp / "base"
+        subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
+        for change in ("binary", "delete", "rename", "mode"):
+            with self.subTest(change=change):
+                if change == "binary":
+                    target.write_bytes(b"binary\0data")
+                elif change == "delete":
+                    target.unlink()
+                elif change == "rename":
+                    target.rename(self.root / "docs/renamed.md")
+                else:
+                    target.chmod(0o755)
+                self.commit()
+                self.assertTrue(receipts.in_scope(self.root, base))
+                subprocess.run(["git", "-C", str(self.root), "reset", "-q", "--hard", "HEAD~1"], check=True)
 
     def test_scope_covers_added_and_deleted_build_inputs_without_claims(self) -> None:
         self.claims = {}
         base = self.tmp / "base"
         subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
         for path in ("external/new.rs", "external/Cargo.toml", "external/Cargo.lock",
-                     "rust-toolchain-custom", ".cargo/custom.json", "external/build.rs"):
+                     "rust-toolchain-custom", ".cargo/custom.json", "external/build.rs", "settings.json"):
             with self.subTest(path=path):
                 target = self.root / path
                 target.parent.mkdir(parents=True, exist_ok=True)
