@@ -193,8 +193,9 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
       <div className="space-y-3">
         {check.isIdle && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
         {check.isError && <p role="alert" className="text-destructive">{check.error.message}</p>}
-        {check.data && <ValidationPanel issues={issues} title="The checker refused this question" />}
-        {check.data && <QuestionCard verdict={check.data} />}
+        {/* One place for a refusal: the panel links each finding to its field; its codes are under Details. */}
+        {check.data && !check.data.admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{check.data.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
+        {check.data?.admitted && <QuestionCard verdict={check.data} />}
         {/* Only the question the checker admitted, and only while the form still shows it. */}
         {/* Run: the question exactly as the checker admitted it, while the form still shows it. */}
         {check.data?.admitted && check.variables && JSON.stringify(check.variables) === JSON.stringify(draft) && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
