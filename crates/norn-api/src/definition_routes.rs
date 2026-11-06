@@ -23,7 +23,7 @@ use norn_cell::retained::{
     RetainedSignoff, payload_sha256,
 };
 use norn_cell::{CellError, InstalledDefinitionInput};
-use norn_ir::{QuestionIR, ResourceLimitProfile, RuntimeValue};
+use norn_ir::{MetricDefinition, QuestionIR, ResourceLimitProfile, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -192,10 +192,12 @@ pub struct DefinitionKinds {
 }
 
 /// The deterministic plain-words restatement generator (D59), shared with
-/// Studio through the checker: a kind and its admitted canonical payload in,
-/// the restatement a signer read out. `Err` when the payload has nothing to
-/// restate. A sign-off is the SHA-256 of these UTF-8 bytes.
-pub type Restater = fn(&str, &str) -> Result<String, String>;
+/// Studio through the checker: a kind, its admitted canonical payload and
+/// the cell's admitted metric declarations (labels and ratio operands are
+/// not in a `QuestionIR`) in, the restatement a signer read out. `Err` when
+/// the payload has nothing to restate. A sign-off is the SHA-256 of these
+/// UTF-8 bytes.
+pub type Restater = fn(&str, &str, &[MetricDefinition]) -> Result<String, String>;
 
 impl DefinitionKinds {
     /// Register the restatement generator that verifies sign-offs.
@@ -940,7 +942,11 @@ pub fn install_definition<E: SqlEngine>(
     let signed = request
         .signoff
         .as_ref()
-        .map(|claimed| verify_signoff(kinds, &request.kind, &payload.canonical, claimed))
+        .map(|claimed| {
+            // The same declarations the payload's questions were admitted against.
+            let metrics = questions.map_or(&[][..], |runtime| runtime.definitions());
+            verify_signoff(kinds, &request.kind, &payload.canonical, metrics, claimed)
+        })
         .transpose()?
         .map(|restatement_sha256| (actor, restatement_sha256));
     let revision = request
@@ -972,6 +978,7 @@ fn verify_signoff(
     kinds: &DefinitionKinds,
     kind: &str,
     canonical: &str,
+    metrics: &[MetricDefinition],
     claimed: &SignoffRequest,
 ) -> Result<String, Refusal> {
     let unavailable = |detail: String| {
@@ -985,7 +992,7 @@ fn verify_signoff(
     let restate = kinds
         .restater
         .ok_or_else(|| unavailable("this cell has no restatement generator".to_owned()))?;
-    let restatement = restate(kind, canonical).map_err(unavailable)?;
+    let restatement = restate(kind, canonical, metrics).map_err(unavailable)?;
     let recomputed = payload_sha256(&restatement);
     if recomputed != claimed.restatement_sha256 {
         return Err(Refusal::new(

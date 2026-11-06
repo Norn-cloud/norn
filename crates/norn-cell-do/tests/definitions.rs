@@ -21,7 +21,7 @@ use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
 use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::server::{self, Response};
 use norn_checker::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Span};
-use norn_ir::ResourceLimitProfile;
+use norn_ir::{MetricDefinition, ResourceLimitProfile};
 use serde_json::{Value, json};
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
@@ -563,8 +563,10 @@ fn tool_bindings_follow_the_connector_naming_contract() {
 
 /// A stand-in for the shared restatement generator: deterministic in the
 /// admitted payload.
-fn stub_restate(kind: &str, payload: &str) -> Result<String, String> {
+fn stub_restate(kind: &str, payload: &str, metrics: &[MetricDefinition]) -> Result<String, String> {
     let payload: Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+    // The host passes the cell's admitted declarations.
+    assert!(metrics.iter().any(|metric| metric.name == "demo.yield"));
     Ok(format!("A {kind} titled {}", payload["title"]))
 }
 
