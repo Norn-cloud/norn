@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
 import { planWords, questionVerdictOf } from "../src/agent/question.tsx"
-import { QuestionBuilder, buildQuestion, catalogOf, checkedFor, fieldOf, initialDraft, issuesOf, type Draft, type QuestionCatalog } from "../src/builder.tsx"
+import { QuestionBuilder, UNEDITABLE, buildQuestion, windowFitsDraft, catalogOf, checkedFor, fieldOf, initialDraft, issuesOf, type Draft, type QuestionCatalog } from "../src/builder.tsx"
 
 const fixture = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo", path), "utf8"))
 // The catalogue as GET /api/questions/catalog serves it for the demo analytics world.
@@ -106,4 +106,13 @@ test("undo back to a checked draft does not revive its result: the result belong
   expect(checkedFor(result, a, { ranAt, revision: ranAt })).toEqual({ data: "verdict", error: null })
   expect(checkedFor(result, { title: "b" }, { ranAt, revision: edited })).toEqual({ data: undefined, error: null })
   expect(checkedFor(result, a, { ranAt, revision: undone })).toEqual({ data: undefined, error: null })
+})
+
+test("a stored window finer than whole days cannot be edited here: the form says so and keeps Use off", () => {
+  expect(windowFitsDraft({ window: { start: "2026-07-06T00:00:00Z", end: "2026-10-26T00:00:00Z" } } as never)).toBe(true)
+  expect(windowFitsDraft({} as never)).toBe(true)
+  expect(windowFitsDraft({ window: { start: "2026-07-06T12:30:00Z", end: "2026-10-26T00:00:00Z" } } as never)).toBe(false)
+  expect(windowFitsDraft({ window: { start: "2026-07-06T00:00:00.000Z", end: "2026-10-26T00:00:00Z" } } as never)).toBe(false)
+  const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={catalog} unsupported={UNEDITABLE} onUse={() => {}} /></QueryClientProvider>)
+  expect(html).toContain("This question cannot be edited without changing it.")
 })
