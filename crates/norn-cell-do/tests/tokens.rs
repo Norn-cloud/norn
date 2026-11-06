@@ -53,6 +53,8 @@ fn claims(kind: &str, org: &str, role: &str, amr: &str) -> Value {
 struct Demo {
     host: DevHost<NativeEngine>,
     tokens: TokenPrincipals,
+    caller: std::sync::Arc<norn_cell_do::policy::CallerSlot>,
+    object_types: Vec<String>,
 }
 
 fn demo() -> Demo {
@@ -64,7 +66,12 @@ fn demo() -> Demo {
     let host = DevHost::from_store(store, scope, |command| command.payload.clone())
         .unwrap()
         .with_authorizer(policy);
-    Demo { host, tokens }
+    Demo {
+        host,
+        tokens,
+        caller,
+        object_types,
+    }
 }
 
 fn defs(demo: &Demo, authorization: Option<&str>) -> server::Response {
@@ -168,4 +175,83 @@ fn a_verified_caller_does_not_outlive_its_request() {
     assert_eq!(defs(&demo, Some(&token)).status, 200);
     // The next, anonymous request records nobody: the previous caller is gone.
     assert_eq!(defs(&demo, None).status, 403);
+}
+
+fn access(demo: &Demo, query: &str, authorization: Option<&str>) -> server::Response {
+    let request = server::Request {
+        method: "GET",
+        path: "/v1/access",
+        query,
+        authorization,
+        now: NOW,
+    };
+    server::access(
+        &demo.host,
+        &demo.tokens,
+        &demo.caller,
+        &demo.object_types,
+        &request,
+    )
+}
+
+/// `GET /v1/access`: the verified principal and the cell's actual PDP decision
+/// per capability, with the grant-table role that grants it.
+#[test]
+fn the_access_document_reports_each_roles_decisions() {
+    let demo = demo();
+    let viewer = sign(1, "k1", &claims("user", "org_demo", "viewer", "password"));
+    let response = access(&demo, SCOPE, Some(&viewer));
+    assert_eq!(response.status, 200, "{}", response.body);
+    let document: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(
+        document["principal"],
+        json!({ "subjectId": "user:u1", "actorKind": "user", "roles": ["viewer"], "roleTable": "studio-roles/1" })
+    );
+    assert_eq!(
+        (document["policy"].as_str(), document["grantTable"].as_str()),
+        (Some("demo.host.read"), Some("norn-cell-do-grants/1"))
+    );
+    assert_eq!(
+        document["capabilities"],
+        json!({
+            "population": { "decision": "permit", "rule": "norn-cell-do-grants/1:viewer" },
+            "values": { "decision": "deny", "rule": null },
+            "sources": { "decision": "deny", "rule": null },
+        })
+    );
+    let admin = sign(1, "k1", &claims("user", "org_demo", "admin", "password"));
+    let document: Value = serde_json::from_str(&access(&demo, SCOPE, Some(&admin)).body).unwrap();
+    for capability in ["population", "values", "sources"] {
+        assert_eq!(
+            document["capabilities"][capability],
+            json!({ "decision": "permit", "rule": "norn-cell-do-grants/1:admin" }),
+            "{capability}"
+        );
+    }
+}
+
+#[test]
+fn anonymous_foreign_and_out_of_scope_access_reads_share_the_denial() {
+    let demo = demo();
+    let shared = defs(&demo, None);
+    assert_eq!(shared.status, 403);
+    let admin = sign(1, "k1", &claims("user", "org_demo", "admin", "password"));
+    let foreign = sign(1, "k1", &claims("user", "org_other", "admin", "password"));
+    for (query, authorization) in [
+        (SCOPE, None),
+        (SCOPE, Some(foreign.as_str())),
+        ("orgId=org_other&environmentId=dev", Some(admin.as_str())),
+        ("orgId=org_demo", Some(admin.as_str())),
+    ] {
+        let refused = access(&demo, query, authorization);
+        assert_eq!(
+            (refused.status, &refused.body),
+            (403, &shared.body),
+            "{query} {authorization:?}"
+        );
+    }
+    assert_eq!(
+        access(&demo, &format!("{SCOPE}&sql=1"), Some(&admin)).status,
+        400
+    );
 }

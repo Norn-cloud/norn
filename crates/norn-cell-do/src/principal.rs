@@ -120,6 +120,8 @@ impl TokenPrincipals {
         Some(Caller {
             subject_id: principal.subject_id,
             roles: principal.roles,
+            actor_kind: principal.actor_kind.as_str(),
+            role_table: principal.role_table,
         })
     }
 }
@@ -141,6 +143,9 @@ pub struct FixturePrincipals {
     names: &'static [(&'static str, &'static [&'static str])],
     slot: Arc<CallerSlot>,
 }
+
+/// The role table fixture principals report.
+pub const FIXTURE_ROLES: &str = "fixtures/1";
 
 /// The fixture principals: `viewer@demo` holds `admin`, `guest@demo` `viewer`.
 pub const DEMO_FIXTURES: &[(&str, &[&str])] =
@@ -165,6 +170,8 @@ impl PrincipalResolver for FixturePrincipals {
             .map(|(name, roles)| Caller {
                 subject_id: (*name).to_owned(),
                 roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+                actor_kind: "user",
+                role_table: FIXTURE_ROLES,
             });
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);

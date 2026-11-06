@@ -52,6 +52,8 @@ fn caller(subject: &str) -> Option<Caller> {
         .map(|(name, roles)| Caller {
             subject_id: (*name).to_owned(),
             roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+            actor_kind: "user",
+            role_table: "fixtures/1",
         })
 }
 
@@ -219,6 +221,8 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
         host.slot.record(Some(Caller {
             subject_id: "user:u1".into(),
             roles: vec!["analyst".into(), "superuser".into()],
+            actor_kind: "user",
+            role_table: "fixtures/1",
         }));
         let request = ReadRequest {
             capability,
