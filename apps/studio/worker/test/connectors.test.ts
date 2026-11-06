@@ -8,9 +8,6 @@ import { canonicalJson, connectorVersion, manifestDigest, readDraft, toolManifes
 import { Gateway } from "../gateway.ts"
 import worker, { type Env } from "../index.ts"
 
-// The Worker takes an execution context on the integration line (the assistant spends through ctx.waitUntil).
-const CONTEXT = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
-
 const ORIGIN = "https://studio-next.norn.cloud"
 const GATEWAY = "https://gateway.example"
 const TOKEN = "gateway-grant-never-in-a-response"
@@ -45,7 +42,6 @@ function stage(gatewayClient = false) {
   }
   const auth = createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, ...gatewayClient ? { gateway: { url: GATEWAY, clientId: "studio", clientSecret: "s".repeat(32) } } : {} })
   const calls: Request[] = []
-  const environments = new Map<string, string>()
   let answer: (request: Request) => Response = () => Response.json({})
   const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
@@ -60,26 +56,25 @@ function stage(gatewayClient = false) {
     const headers = new Headers(init.headers)
     if (init.cookie !== undefined) headers.set("cookie", init.cookie)
     if (init.method !== undefined && init.method !== "GET") headers.set("origin", ORIGIN)
-    const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { TOOL_GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify(Object.fromEntries(environments)) }, auth, path, { ...deps, ...overrides })
+    const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { TOOL_GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides })
     const text = await response.text()
     expect(text).not.toContain(TOKEN)
     return { status: response.status, body: JSON.parse(text) as Record<string, unknown>, cookies: response.headers.getSetCookie() }
   }
   /** A new person; with `colleagueOf`, a member of that person's organization instead of their own. */
-  const signUp = async (email: string, role = "owner", colleagueOf?: string) => {
+  const signUp = async (email: string, role = "owner", colleagueOf?: string, environment = true) => {
     const init = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": `198.51.100.${++address % 250}` }, body: JSON.stringify(body) })
-    const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
+    const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env)
     await call("/api/auth/sign-up/email", { email, password: "correct horse battery", name: "Ada" })
     const member = "(SELECT id FROM user WHERE email = ?)"
     if (colleagueOf !== undefined) db.query(`UPDATE member SET organizationId = (SELECT organizationId FROM member WHERE userId = ${member}) WHERE userId = ${member}`).run(colleagueOf, email)
-    const organization = db.query("SELECT organizationId FROM member JOIN user ON member.userId = user.id WHERE user.email = ?").get(email) as { organizationId: string }
-    environments.set(organization.organizationId, "analytics")
     const response = await call("/api/auth/sign-in/email", { email, password: "correct horse battery" })
     db.query(`UPDATE member SET role = ? WHERE userId = (SELECT id FROM user WHERE email = ?)`).run(role, email)
+    // The organization's cell environment, as the demo organization's metadata declares it.
+    if (environment) db.query(`UPDATE organization SET metadata = ? WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)) AND metadata IS NULL`).run('{"environmentId":"analytics"}', email)
     return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   }
-  const unmap = (email: string) => { const organization = db.query("SELECT organizationId FROM member JOIN user ON member.userId = user.id WHERE user.email = ?").get(email) as { organizationId: string }; environments.delete(organization.organizationId) }
-  return { send, signUp, unmap, calls, answer: (next: (request: Request) => Response) => { answer = next } }
+  return { send, signUp, calls, answer: (next: (request: Request) => Response) => { answer = next } }
 }
 
 const body = (method: string, value: unknown) => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
@@ -237,7 +232,7 @@ test("the Worker routes /api/connectors/ through the server-side actor", async (
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY }
-  const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
+  const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env)
   expect([response.status, ((await response.json()) as { code: string }).code]).toEqual([401, "connectors.sign_in"])
 })
 
@@ -292,7 +287,7 @@ test("an unreachable gateway, a malformed path and a third-party sign-in are typ
   db.exec(migration("0001_better_auth.sql"))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
   for (const path of ["/api/auth/sign-in/social", "/api/auth/sign-in/oauth2"]) {
-    const response = await worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ provider: "executor", providerId: "executor" }) }) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
+    const response = await worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ provider: "executor", providerId: "executor" }) }) as Parameters<typeof worker.fetch>[0], env)
     expect(response.status).toBe(403)
   }
 })
@@ -315,17 +310,6 @@ function cellHost(answer: (path: string, body: Record<string, unknown>) => Respo
   } } as unknown as Fetcher
   return { host, seen }
 }
-
-test("an unmapped workspace cannot install a binding into a default cell", async () => {
-  const { send, signUp, unmap } = stage()
-  const owner = await signUp("unmapped@example.com")
-  unmap("unmapped@example.com")
-  const { host, seen } = cellHost(() => Response.json({ installed: true, id: "x", version: 1 }))
-  const response = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Issues" }), cookie: owner }, { host })
-  expect(response).toMatchObject({ status: 503, body: { code: "connectors.cell_unavailable", error: "This workspace has no data cell yet." } })
-  expect(seen).toHaveLength(0)
-  expect((await send("/bindings", { cookie: owner })).body.bindings).toEqual([])
-})
 
 test("a binding is installed in the cell as a definition, which the record and its edits follow", async () => {
   const { send, signUp } = stage()
@@ -373,6 +357,9 @@ test("a refused or conflicting definition saves nothing; a stage without the rou
   // The cell's authority says no: a typed denial with the admin fix, never a fallback and never "unavailable".
   const denying = cellHost(() => Response.json({ format: "norn/refusal@2", code: "authz.denied", message: "the read request is not authorized" }, { status: 403 }))
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: denying.host })).body).toMatchObject({ code: "connectors.binding_denied", action: { kind: "ask_admin" } })
+  // The cell does not serve the binding kind yet (422 kind_unknown): kept locally, like a 404.
+  const unknownKind = cellHost(() => Response.json({ code: "definition.kind_unknown", message: "no such kind: binding" }, { status: 422 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: unknownKind.host })).body.binding).toMatchObject({ definition: null })
   const noRoute = cellHost(() => Response.json({ code: "route.not_found" }, { status: 404 }))
   const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: noRoute.host })).body.binding
   expect(local).toMatchObject({ definition: null, connectorRef: "executor:github/list_issues@dpl_1" })
@@ -395,7 +382,7 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ")
   const call = async (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers); headers.set("cookie", cookie()); headers.set("origin", ORIGIN); headers.set("cf-connecting-ip", "198.51.100.77")
-    return keep(await worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers, redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env, CONTEXT))
+    return keep(await worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers, redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env))
   }
   const json = (value: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
   await call("/api/auth/sign-up/email", json({ email: "ada@example.com", password: "correct horse battery", name: "Ada" }))
@@ -434,4 +421,24 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   } finally {
     globalThis.fetch = real
   }
+})
+
+test("every definitions call carries the session's orgId and environmentId; no environment, no call", async () => {
+  const { send, signUp } = stage()
+  const owner = await signUp("ada@example.com")
+  const { host, seen } = cellHost((path, body) => Response.json({ installed: true, id: path.endsWith(":retire") ? "x" : body.id, version: seen.length, receipt: {} }))
+  const added = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host })).body.binding as { id: string }
+  await send(`/bindings/${added.id}`, { ...body("PATCH", { label: "Edited" }), cookie: owner }, { host })
+  await send(`/bindings/${added.id}`, { method: "DELETE", cookie: owner }, { host })
+  expect(seen.map((r) => r.path)).toEqual(["/v1/definitions:install", "/v1/definitions:install", `/v1/definitions/studio.binding.${added.id}:retire`])
+  for (const call of seen) {
+    const query = new URLSearchParams(call.query)
+    expect(query.get("orgId")).toMatch(/.+/)
+    expect(query.get("environmentId")).toBe("analytics")
+  }
+  // An organization that names no environment: refused before the cell is called, never defaulted.
+  const lone = await signUp("lone@example.com", "owner", undefined, false)
+  const other = cellHost(() => Response.json({}))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: lone }, { host: other.host })).body).toMatchObject({ code: "connectors.no_environment", action: { kind: "ask_admin" } })
+  expect(other.seen).toEqual([])
 })

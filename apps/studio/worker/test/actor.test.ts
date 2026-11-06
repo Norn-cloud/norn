@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { HOST_TOKEN_SECONDS, hostToken, resolveActor, workspaceEnvironment } from "../actor.ts"
+import { HOST_TOKEN_SECONDS, hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 
@@ -41,13 +41,7 @@ const signUp = async (env: Env, email: string) => {
 }
 const claims = (token: string) => JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as Record<string, unknown>
 
-test("workspace environment configuration is server-held and fails closed", () => {
-  expect(workspaceEnvironment("org_demo")).toBe("analytics")
-  expect(workspaceEnvironment("unknown")).toBeNull()
-  expect(workspaceEnvironment("org_other", JSON.stringify({ org_other: "warehouse" }))).toBe("warehouse")
-  expect(workspaceEnvironment("org_demo", "not-json")).toBeNull()
-  expect(workspaceEnvironment("toString", "{} ")).toBeNull()
-})
+
 
 test("a password session resolves to a user actor in its organization", async () => {
   const { env, auth } = stage()

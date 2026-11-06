@@ -71,18 +71,16 @@ export class CellUnavailable extends Error {}
 
 /** The cell's definition writes, as one actor, over the NORN_HOST service binding. */
 export class BindingDefinitions {
-  /** `environmentId` names the cell environment the definitions live in (DEFS's routes take it with orgId). */
-  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string | null) {}
+  /** `environmentId` is the cell environment of the actor's active organization (`activeEnvironment`). */
+  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string) {}
 
   /** DEFS's scope query: the actor's server-resolved organization and the environment. */
   private scoped(path: string): string {
-    if (this.environmentId === null) throw new CellUnavailable("This workspace has no data cell yet.")
     return `${path}?${new URLSearchParams({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
   }
 
   private async post(path: string, body: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {
     const { host } = this
-    if (this.environmentId === null) throw new CellUnavailable("This workspace has no data cell yet.")
     if (host === undefined) return null
     const headers = new Headers({ authorization: `Bearer ${await hostToken(this.auth, this.actor)}`, "content-type": "application/json", accept: "application/json" })
     let response: Response
@@ -99,6 +97,8 @@ export class BindingDefinitions {
     const { status, body } = answer
     const b = body as { installed?: unknown; id?: unknown; version?: unknown; code?: unknown } | null
     if (status === 200 && b?.installed === true && typeof b.id === "string" && typeof b.version === "number") return { kind: "installed", id: b.id, version: b.version }
+    // The cell does not serve the binding kind yet: keep the local record, like a missing route.
+    if (status === 422 && b?.code === "definition.kind_unknown") return { kind: "local" }
     if (status === 422 && b?.code === "definition.refused") {
       const findings = findingsOf(b)
       // Until DEFS takes label, inputMapping and runRole, that refusal keeps the local record, like a 404.

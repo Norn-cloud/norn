@@ -1,15 +1,20 @@
 import { activeMembership, type Auth } from "./auth.ts"
 
-/** Worker-held workspace-to-cell configuration; malformed or unmapped entries fail closed. */
-const DEFAULT_WORKSPACE_ENVIRONMENTS: Readonly<Record<string, string>> = { org_demo: "analytics" }
-export function workspaceEnvironment(orgId: string, configured?: string): string | null {
-  let mapping: unknown = DEFAULT_WORKSPACE_ENVIRONMENTS
-  if (configured !== undefined) {
-    try { mapping = JSON.parse(configured) } catch { return null }
+/**
+ * The active Studio scope's cell environment: the `environmentId` in the active organization's
+ * metadata (`{"environmentId": "analytics"}` for the demo organization). Null when the
+ * organization names none; the caller refuses rather than guess, as the cell does.
+ */
+export async function activeEnvironment(auth: Auth, orgId: string): Promise<string | null> {
+  const { adapter } = await auth.$context
+  const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: orgId }] })
+  const raw = org?.metadata
+  let metadata: unknown = raw
+  if (typeof raw === "string") {
+    try { metadata = JSON.parse(raw) } catch { return null }
   }
-  if (typeof mapping !== "object" || mapping === null || Array.isArray(mapping) || !Object.hasOwn(mapping, orgId)) return null
-  const value = (mapping as Record<string, unknown>)[orgId]
-  return typeof value === "string" && value.trim() !== "" ? value : null
+  const environmentId = (metadata as { environmentId?: unknown } | null)?.environmentId
+  return typeof environmentId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(environmentId) ? environmentId : null
 }
 
 /**

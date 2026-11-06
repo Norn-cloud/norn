@@ -1,4 +1,4 @@
-import { originAllowed, resolveActor, workspaceEnvironment, type NornActor } from "./actor.ts"
+import { activeEnvironment, originAllowed, resolveActor, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
 import { connectorString, connectorVersion, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, saveBinding, toolManifest, type Binding } from "./bindings.ts"
@@ -30,8 +30,6 @@ export interface ConnectorEnv {
   /** The gateway origin, e.g. https://gateway.example; absent when this stage has no gateway. */
   readonly TOOL_GATEWAY_URL?: string
   readonly BETTER_AUTH_URL: string
-  /** Server-held JSON map from workspace ids to their cell environments. */
-  readonly STUDIO_WORKSPACE_ENVIRONMENTS?: string
 }
 
 /** What the routes reach outside the request: the bindings table, the person's grant and the network. */
@@ -137,7 +135,11 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
 
   // Bindings are Norn's own records: viewing and removing them needs no gateway.
   const shown = (binding: Binding) => ({ ...binding, connectorRef: connectorString(binding.connector) })
-  const cell = new BindingDefinitions(deps.host, auth, actor, workspaceEnvironment(actor.orgId, env.STUDIO_WORKSPACE_ENVIRONMENTS))
+  // The cell scope is the session's: its active organization and that organization's environment.
+  const environmentId = await activeEnvironment(auth, actor.orgId)
+  // Without a cell host there is nothing to scope: the binding stays a local record, as before.
+  const cellFor = () => deps.host === undefined ? new BindingDefinitions(undefined, auth, actor, "") : environmentId === null ? null : new BindingDefinitions(deps.host, auth, actor, environmentId)
+  const noEnvironment = () => refusal(409, "connectors.no_environment", "Your organization has no cell environment yet, so tool bindings cannot be saved there.", { kind: "ask_admin" })
   /** A definition write that did not land is a typed refusal; `null` when it landed or the stage keeps bindings locally. */
   const cellRefusal = (outcome: Install) =>
     outcome.kind === "refused" ? Response.json({ code: "connectors.binding_refused", error: "The cell refused this binding.", findings: outcome.findings }, { status: 422, headers: NO_STORE })
@@ -152,6 +154,8 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
     if (existing === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
     // Retire the cell definition first: agents must stop referencing it before the record goes.
     if (existing.definition !== null) {
+      const cell = cellFor()
+      if (cell === null) return noEnvironment()
       const retired = await cell.retire(existing.definition.id, existing.definition.version).catch((error: unknown) => { if (error instanceof CellUnavailable) return error; throw error })
       if (retired instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", retired.message)
       const refused = cellRefusal(retired)
@@ -241,6 +245,8 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const connector = { gateway: "executor" as const, origin: gatewayOrigin, app: tool.app, tool: tool.name, version: connectorVersion(tool.version, digest) }
       const id = existing?.id ?? crypto.randomUUID()
       // The cell installs the binding as a definition (it recomputes the digest); the local record follows it.
+      const cell = cellFor()
+      if (cell === null) return noEnvironment()
       let outcome: Install
       try {
         outcome = await cell.install(existing?.definition?.id ?? bindingDefinitionId(id), { connector, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, manifestDigest: digest, label: draft.label, inputMapping: draft.inputMapping, runRole: draft.runRole }, existing?.definition?.version)

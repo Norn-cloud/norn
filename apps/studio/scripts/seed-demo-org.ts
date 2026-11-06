@@ -4,8 +4,8 @@
  * and the host only accepts a token whose `norn.org` is the cell's org (#985),
  * so demo users need a real membership there.
  *
- * Idempotent: re-running changes nothing but the members' roles.
- * Preview only. Prod gets the organization when it is promoted.
+ * Idempotent: re-running keeps the demo environment and members' roles current.
+ * Preview and next only. Prod gets the organization when it is promoted.
  *
  *   bun scripts/seed-demo-org.ts --stage preview --member viewer@demo.norn.cloud=viewer --member analyst@demo.norn.cloud=admin
  *
@@ -25,6 +25,7 @@ export function seedStatements(members: readonly { readonly email: string; reado
   const at = now.toISOString()
   return [
     { sql: `insert into "organization" ("id", "name", "slug", "createdAt") values (?, ?, ?, ?) on conflict ("id") do nothing`, params: [DEMO_ORG.id, DEMO_ORG.name, DEMO_ORG.slug, at] },
+    { sql: `update "organization" set "metadata" = json_set(case when json_valid("metadata") then "metadata" else '{}' end, '$.environmentId', ?) where "id" = ?`, params: ["analytics", DEMO_ORG.id] },
     ...members.flatMap(({ email, role }) => [
       {
         sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, "id", ?, ? from "user" where "email" = ? and not exists (select 1 from "member" where "organizationId" = ? and "userId" = "user"."id")`,
@@ -47,8 +48,19 @@ export function parseMembers(args: readonly string[]): { email: string; role: Or
 
 async function main(argv: readonly string[]) {
   const stage = argv[argv.indexOf("--stage") + 1]
-  if (argv.indexOf("--stage") < 0 || stage !== "preview") throw new Error("--stage preview is required; prod gets org_demo only on promotion")
+  if (argv.indexOf("--stage") < 0 || (stage !== "preview" && stage !== "next")) throw new Error("--stage preview or next is required; prod gets org_demo only on promotion")
   const members = parseMembers(argv.flatMap((arg, index) => argv[index - 1] === "--member" ? [arg] : []))
+  if (stage === "next") {
+    const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+    for (const { sql, params } of seedStatements(members, new Date())) {
+      let i = 0
+      const statement = sql.replaceAll("?", () => `'${(params[i++] ?? "").replaceAll("'", "''")}'`)
+      const result = Bun.spawnSync(["ssh", "-o", "IdentityAgent=none", "hetzner", `/opt/norn-demo/d1-next execute norn-studio-auth-next --command ${shellQuote(statement)}`])
+      if (result.exitCode !== 0) throw new Error(`next seed failed: ${result.stderr.toString()}`)
+    }
+    console.log(`${DEMO_ORG.id} seeded on next`)
+    return
+  }
   const { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_EMAIL: email, CLOUDFLARE_API_KEY: key } = process.env
   if (!account || !email || !key) throw new Error("CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY are required")
   const api = (path: string, body?: unknown) => fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database${path}`, {

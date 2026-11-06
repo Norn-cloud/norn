@@ -44,6 +44,7 @@ test("seeding twice makes one Norn demo organization with each demo member once,
   for (const email of ["viewer@demo.norn.cloud", "analyst@demo.norn.cloud"]) await signUp(env, email)
   seed()
   seed()
+  expect(db.query(`select json_extract(metadata, '$.environmentId') as environmentId from organization where id = ?`).get(DEMO_ORG.id)).toEqual({ environmentId: "analytics" })
   expect(db.query(`select "name", "slug" from "organization" where "id" = ?`).all(DEMO_ORG.id)).toEqual([{ name: "Norn demo", slug: "norn-demo" }])
   expect(db.query(`select "user"."email" as email, "role" from "member" join "user" on "user"."id" = "member"."userId" where "organizationId" = ? order by email`).all(DEMO_ORG.id))
     .toEqual([{ email: "analyst@demo.norn.cloud", role: "admin" }, { email: "viewer@demo.norn.cloud", role: "viewer" }])
