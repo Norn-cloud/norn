@@ -3,10 +3,13 @@
 //! This crate is the engine's compiled-in registry. Its only entry so far is
 //! [`decision`] (`norn.decision@1`). A built-in's manifest pins this crate
 //! by name, version and HOST-TREE-1 source-tree digest. The digest lives in
-//! `registry/builtins/norn-builtins.json`, outside the tree it digests, and
-//! the drift test (`tests/pin.rs`) fails whenever the crate's sources no longer
-//! match it. Authored and pack definitions still cannot install `host`
-//! Functions; nothing here is reachable through definition admission.
+//! `registry/builtins/norn-builtins.json`, outside the tree it digests.
+//! `build.rs` recomputes the digest and fails the build when the crate's
+//! sources no longer match the pin, so a stale pin never becomes a registry.
+//! Only this registry hands out a [`Registered`] manifest, and the decision
+//! functions accept nothing else. Authored and pack definitions still cannot
+//! install `host` Functions; nothing here is reachable through definition
+//! admission.
 //!
 //! Ring 0: pure, sans-IO and wasm32-portable.
 
@@ -25,12 +28,15 @@ pub const CRATE: &str = env!("CARGO_PKG_NAME");
 pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The reviewed pin of this crate's source tree.
 pub const PIN: &str = include_str!("../../../registry/builtins/norn-builtins.json");
+/// This crate's source-tree digest as `build.rs` computed it; the build
+/// refused unless it equals the pin.
+pub const BUILT_SOURCE_TREE: &str = env!("NORN_BUILTINS_SOURCE_TREE");
 
 /// Why the registry cannot produce a manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistryError {
-    /// The pin file is malformed or names another crate or version
-    /// (`builtin.pin_mismatch`).
+    /// The pin file is malformed, names another crate or version, or is not
+    /// the source tree this crate was built from (`builtin.pin_mismatch`).
     PinMismatch,
     /// A schema document or closure does not canonicalize.
     Canonical,
@@ -59,11 +65,15 @@ struct Pin {
 /// The pinned HOST-TREE-1 digest of this crate's source tree.
 ///
 /// # Errors
-/// [`RegistryError::PinMismatch`] when the pin file is malformed or names
-/// another crate or version.
+/// [`RegistryError::PinMismatch`] when the pin file is malformed, names
+/// another crate or version, or differs from [`BUILT_SOURCE_TREE`].
 pub fn source_tree_pin() -> Result<Digest, RegistryError> {
     let pin: Pin = serde_json::from_str(PIN).map_err(|_shape| RegistryError::PinMismatch)?;
-    if pin.krate != CRATE || pin.version != CRATE_VERSION || !pin.source_tree.is_well_formed() {
+    if pin.krate != CRATE
+        || pin.version != CRATE_VERSION
+        || !pin.source_tree.is_well_formed()
+        || pin.source_tree.0 != BUILT_SOURCE_TREE
+    {
         return Err(RegistryError::PinMismatch);
     }
     Ok(pin.source_tree)
@@ -78,6 +88,45 @@ fn schema(id: &str, document: &str) -> Result<SchemaRef, RegistryError> {
     })
 }
 
+/// A built-in manifest from the compiled-in registry, with its content
+/// digest. Only this crate constructs one, so a decision call can name no
+/// other manifest: a tampered copy with a recomputed digest is not
+/// `Registered`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Registered {
+    manifest: FunctionManifest,
+    digest: Digest,
+}
+
+impl Registered {
+    fn new(manifest: FunctionManifest) -> Result<Self, RegistryError> {
+        let digest = manifest
+            .content_digest()
+            .map_err(|_canonical| RegistryError::Canonical)?;
+        Ok(Self { manifest, digest })
+    }
+
+    /// The manifest.
+    #[must_use]
+    pub const fn manifest(&self) -> &FunctionManifest {
+        &self.manifest
+    }
+
+    /// Its content digest, the one a dispatch of it pins.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+}
+
+/// The registered `norn.decision@1`.
+///
+/// # Errors
+/// A [`RegistryError`].
+pub fn registered_decision() -> Result<Registered, RegistryError> {
+    Registered::new(decision_manifest()?)
+}
+
 /// The `norn.decision@1` manifest. A host-format, effectful, uncacheable
 /// Function that runs only behind `perform` and makes no sandbox claim. The
 /// dependency closure is empty: the Norn crates it builds on ship in the same
@@ -85,7 +134,7 @@ fn schema(id: &str, document: &str) -> Result<SchemaRef, RegistryError> {
 ///
 /// # Errors
 /// A [`RegistryError`].
-pub fn decision_manifest() -> Result<FunctionManifest, RegistryError> {
+fn decision_manifest() -> Result<FunctionManifest, RegistryError> {
     let tree = source_tree_pin()?;
     let closure = DependencyClosure {
         digest: Digest(String::new()),
@@ -158,9 +207,9 @@ pub fn parks(payload: &norn_ir::RuntimeValue) -> bool {
 ///
 /// # Errors
 /// A [`RegistryError`].
-pub fn resolve(function_id: &str, version: u32) -> Result<Option<FunctionManifest>, RegistryError> {
+pub fn resolve(function_id: &str, version: u32) -> Result<Option<Registered>, RegistryError> {
     if function_id == decision::FUNCTION_ID && version == decision::VERSION {
-        decision_manifest().map(Some)
+        registered_decision().map(Some)
     } else {
         Ok(None)
     }

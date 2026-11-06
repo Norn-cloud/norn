@@ -5,20 +5,22 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     reason = "test assertions"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 
+use norn_builtins::Registered;
 use norn_builtins::decision::{
-    DeciderEvidence, Decision, DecisionRefusal, IssuedOnly, REQUEST_BLOB, expire, issue,
-    parse_request, withdraw,
+    DeciderEvidence, Decision, DecisionRefusal, IssuedOnly, MAX_OPTION_ID_CHARS, MAX_TEXT_CHARS,
+    REQUEST_BLOB, expire, issue, parse_request, withdraw,
 };
 use norn_ir::function::{
     Authority, AuthorityKind, BlobRef, Digest, Fencing, FreshnessMode, FunctionInvocation,
-    FunctionManifest, FunctionOutcome, FunctionReceipt, MemberPin, PredicatePin,
-    RelevantStateToken, RetryCeiling, RunRef,
+    FunctionOutcome, FunctionReceipt, MemberPin, PredicatePin, RelevantStateToken, RetryCeiling,
+    RunRef,
 };
 use norn_kernel::result_reconciliation::{
     Completion, DispatchedCommand, InvalidReceipt, ReceiptValidator, ReconcileContext,
@@ -32,8 +34,8 @@ use serde_json::json;
 const TENANT: &str = "org_demo";
 const DEADLINE: u64 = 10_000;
 
-fn manifest() -> FunctionManifest {
-    norn_builtins::decision_manifest().unwrap()
+fn manifest() -> Registered {
+    norn_builtins::registered_decision().unwrap()
 }
 
 fn request(extra: &serde_json::Value) -> Vec<u8> {
@@ -56,7 +58,7 @@ fn request(extra: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&body).unwrap()
 }
 
-fn invocation(manifest: &FunctionManifest, request: &[u8]) -> FunctionInvocation {
+fn invocation(manifest: &Registered, request: &[u8]) -> FunctionInvocation {
     FunctionInvocation {
         tenant: TENANT.to_owned(),
         world: "main".to_owned(),
@@ -69,7 +71,7 @@ fn invocation(manifest: &FunctionManifest, request: &[u8]) -> FunctionInvocation
             id: "run-1".to_owned(),
             generation: 1,
         },
-        manifest: manifest.content_digest().unwrap(),
+        manifest: manifest.digest().clone(),
         inputs: BTreeMap::new(),
         blobs: BTreeMap::from([(
             REQUEST_BLOB.to_owned(),
@@ -143,18 +145,18 @@ impl StateView for Unchanged {
 
 /// Reconcile `receipt` as the perform's result under the issued-only contract.
 fn deliver(
-    manifest: &FunctionManifest,
+    manifest: &Registered,
     invocation: &FunctionInvocation,
     issued: &BTreeSet<Digest>,
     receipt: &FunctionReceipt,
 ) -> Reconciliation {
     let dispatched = DispatchedCommand::pin(
         invocation.clone(),
-        manifest.execution_profile_digest().unwrap(),
+        manifest.manifest().execution_profile_digest().unwrap(),
     )
     .unwrap();
     let state = norn_kernel::result_reconciliation::CommandState::dispatched(&dispatched);
-    let digest = manifest.content_digest().unwrap();
+    let digest = manifest.digest().clone();
     let validator = IssuedOnly {
         manifest: &digest,
         issued,
@@ -524,10 +526,10 @@ proptest! {
         attempts.push((Attempt::Expire, 2 * DEADLINE));
         let dispatched = DispatchedCommand::pin(
             invocation.clone(),
-            manifest.execution_profile_digest().unwrap(),
+            manifest.manifest().execution_profile_digest().unwrap(),
         )
         .unwrap();
-        let digest = manifest.content_digest().unwrap();
+        let digest = manifest.digest().clone();
         let mut state = norn_kernel::result_reconciliation::CommandState::dispatched(&dispatched);
         let mut ledger = BTreeSet::new();
         let mut first_issued = None;
@@ -577,5 +579,115 @@ proptest! {
         }
         prop_assert_eq!(accepted.len(), 1, "exactly one terminal receipt");
         prop_assert_eq!(Some(&accepted[0]), first_issued.as_ref());
+    }
+}
+
+#[test]
+fn only_the_registered_manifest_binds() {
+    // Sol S2 on #1046: a manifest with another implementation or runtime
+    // digest, and an invocation pinned to its recomputed digest, issue nothing.
+    let registered = manifest();
+    let body = request(&json!({}));
+    let held = roles(&["finance.approver"]);
+    let laws = roles(&["law.two_person"]);
+    let evidence = DeciderEvidence {
+        actor: &ada(),
+        roles: &held,
+        satisfied_laws: &laws,
+    };
+    let other = Digest(format!("sha256:{}", "e".repeat(64)));
+    let mut implementation = registered.manifest().clone();
+    implementation.implementation.digest = other.clone();
+    let mut runtime = registered.manifest().clone();
+    runtime.runtime.digest = other;
+    for forged in [implementation, runtime] {
+        let mut dispatch = invocation(&registered, &body);
+        dispatch.manifest = forged.content_digest().unwrap();
+        assert_ne!(&dispatch.manifest, registered.digest());
+        assert_eq!(
+            issue(
+                &registered,
+                &dispatch,
+                &body,
+                &evidence,
+                &decide("hold"),
+                5_000
+            ),
+            Err(DecisionRefusal::NotThisCommand)
+        );
+        assert_eq!(
+            withdraw(&registered, &dispatch, &body, &evidence, 5_000),
+            Err(DecisionRefusal::NotThisCommand)
+        );
+        assert_eq!(
+            expire(&registered, &dispatch, &body, DEADLINE),
+            Err(DecisionRefusal::NotThisCommand)
+        );
+    }
+    // The registry is the only source of a `Registered` manifest.
+    assert_eq!(
+        norn_builtins::resolve("norn.decision", 1).unwrap(),
+        Some(registered)
+    );
+}
+
+#[test]
+fn every_accepted_choice_fits_the_receipt_summary() {
+    // Sol S3 on #1046: an unbounded option id passed the input bound but
+    // overflowed the 32 KiB summary.
+    let option =
+        |id: &str| json!({ "id": id, "label": "L", "effect": { "action": "a" }, "scope": "S" });
+    let refused = |extra: serde_json::Value| {
+        parse_request(&request(&extra))
+            .map(|_| ())
+            .unwrap_err()
+            .code()
+    };
+    let longest = format!("o{}", "x".repeat(MAX_OPTION_ID_CHARS - 1));
+    assert_eq!(
+        refused(json!({ "options": [option(&format!("{longest}x"))], "agentPick": null })),
+        "decision.option_id"
+    );
+    assert_eq!(
+        refused(json!({ "options": [option(&"o".repeat(33_000))], "agentPick": null })),
+        "decision.option_id"
+    );
+    for field in ["label", "scope"] {
+        let mut wide = option("a");
+        wide[field] = json!("l".repeat(MAX_TEXT_CHARS + 1));
+        assert_eq!(
+            refused(json!({ "options": [wide], "agentPick": null })),
+            "decision.option_text",
+            "{field}"
+        );
+    }
+    // The widest accepted answer: the longest id and the longest note of the
+    // widest characters (4-byte UTF-8; U+0958 also changes under NFC).
+    let body = request(&json!({ "options": [option(&longest)], "agentPick": null }));
+    let registered = manifest();
+    let dispatch = invocation(&registered, &body);
+    let held = roles(&["finance.approver"]);
+    let laws = roles(&["law.two_person"]);
+    let evidence = DeciderEvidence {
+        actor: &ada(),
+        roles: &held,
+        satisfied_laws: &laws,
+    };
+    for wide in ['\u{1f600}', '\u{958}', '\u{1}'] {
+        let answer = Decision {
+            choice: longest.clone(),
+            note: Some(wide.to_string().repeat(MAX_TEXT_CHARS)),
+        };
+        let issued = issue(&registered, &dispatch, &body, &evidence, &answer, 5_000).unwrap();
+        let FunctionOutcome::Success(success) = &issued.receipt().outcome else {
+            panic!("a decision succeeds")
+        };
+        let size = norn_ir::canonical::canonical_json_of(&success.summary)
+            .unwrap()
+            .len();
+        assert!(
+            u64::try_from(size).unwrap() <= norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES,
+            "{wide:?}: {size} bytes"
+        );
     }
 }
