@@ -62,8 +62,9 @@ fn mapped(
     let request = access
         .access(host_scope, actor, capability, object_type, row)
         .map_err(|_denial| read_denied())?;
-    let (expected_type, expected_id) =
-        row.map_or((object_type, object_type), |row| (row.object_type.as_str(), row.id.as_str()));
+    let (expected_type, expected_id) = row.map_or((object_type, object_type), |row| {
+        (row.object_type.as_str(), row.id.as_str())
+    });
     if request.principal.subject_id != actor
         || request.resource.object_type != expected_type
         || request.resource.id != expected_id
@@ -81,14 +82,20 @@ fn row_visible<E: SqlEngine>(
     row: &ObjectRecord,
 ) -> bool {
     [Population, Values].into_iter().all(|capability| {
-        mapped(host.scope(), access, actor, capability, &row.object_type, Some(row)).is_ok_and(
-            |request| {
-                host.read_permitted(&ReadRequest {
-                    capability,
-                    access: &request,
-                })
-            },
+        mapped(
+            host.scope(),
+            access,
+            actor,
+            capability,
+            &row.object_type,
+            Some(row),
         )
+        .is_ok_and(|request| {
+            host.read_permitted(&ReadRequest {
+                capability,
+                access: &request,
+            })
+        })
     })
 }
 
