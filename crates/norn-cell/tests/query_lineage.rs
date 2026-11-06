@@ -59,7 +59,8 @@ fn data_lineage_reconciles_294_over_300_with_exact_fact_versions_and_restricted_
         assert_eq!(member.receipt_hash, receipt.hash);
         assert_eq!(member.recorded_at_ms, receipt.body.logical_time);
         assert_eq!(member.restricted, member.fact.key == "SYN-MELT-15-1");
-        assert_eq!(member.values.is_none(), member.restricted);
+        // D53: one restricted member withholds every member's values in the bucket.
+        assert!(member.values.is_none() && member.fact_digest.is_none());
     }
     let bytes = serde_json::to_string(&trace).expect("wire");
     assert!(bytes.contains("\"restricted\":true,\"values\":null"));

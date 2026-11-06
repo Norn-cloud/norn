@@ -227,24 +227,34 @@ impl<E: SqlEngine> CellStore<E> {
 #[must_use]
 pub fn keyed_lineage_handle(key: &[u8], lineage_ref: &str) -> String {
     use transparency_sha2::{Digest, Sha256};
-    const BLOCK: usize = 64;
-    let mut block = [0_u8; BLOCK];
-    if key.len() > BLOCK {
-        block[..32].copy_from_slice(&Sha256::digest(key));
+    let hashed;
+    let source: &[u8] = if key.len() > 64 {
+        hashed = Sha256::digest(key);
+        &hashed
     } else {
-        block[..key.len()].copy_from_slice(key);
+        key
+    };
+    let mut block = [0_u8; 64];
+    for (slot, byte) in block.iter_mut().zip(source) {
+        *slot = *byte;
     }
     let pad = |byte: u8| block.map(|k| k ^ byte);
     let inner = Sha256::new()
         .chain_update(pad(0x36))
         .chain_update(lineage_ref.as_bytes())
         .finalize();
-    let outer = Sha256::new().chain_update(pad(0x5c)).chain_update(inner).finalize();
-    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let outer = Sha256::new()
+        .chain_update(pad(0x5c))
+        .chain_update(inner)
+        .finalize();
     let mut handle = String::with_capacity(64);
     for byte in outer {
-        handle.push(char::from(HEX[usize::from(byte >> 4)]));
-        handle.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        for nibble in [byte >> 4, byte & 0x0f] {
+            // Every nibble is below 16, so a hex digit always exists.
+            if let Some(digit) = char::from_digit(u32::from(nibble), 16) {
+                handle.push(digit);
+            }
+        }
     }
     handle
 }
