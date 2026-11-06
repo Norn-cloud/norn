@@ -229,3 +229,58 @@ proptest::proptest! {
         proptest::prop_assert!(!authorizer.disclose_refusal_detail(&request));
     }
 }
+
+/// HOST-READ-1 decisions of the wrapped policy pass through unchanged: the
+/// refusal-disclosure wrapper neither grants nor drops data-read capabilities.
+#[test]
+fn wrapped_read_decisions_are_the_inner_policy_decisions() {
+    use crate::authz::{ReadCapability, ReadRequest};
+    struct ValuesOnly;
+    impl Authorizer for ValuesOnly {
+        fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
+            DenyAll.authorize(request)
+        }
+        fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
+            if request.capability == ReadCapability::Values {
+                Ok(())
+            } else {
+                Err(crate::authz::read_denied())
+            }
+        }
+    }
+    let scope = scope();
+    let detail = RefusalDetailRequest {
+        scope: &scope,
+        actor: "principal:operator",
+        action_id: "inventory.cycle.receive",
+    };
+    let access = claims(&detail).unwrap();
+    let wrapped = PdpRefusalAuthorizer::new(
+        ValuesOnly,
+        pdp(&[DISCLOSE_REFUSAL_DETAIL_ACTION], true),
+        claims,
+    );
+    for capability in [
+        ReadCapability::Population,
+        ReadCapability::Values,
+        ReadCapability::Sources,
+    ] {
+        let request = ReadRequest {
+            capability,
+            access: &access,
+        };
+        assert_eq!(
+            wrapped.read(&request),
+            ValuesOnly.read(&request),
+            "{capability:?}"
+        );
+    }
+    assert!(
+        wrapped
+            .read(&ReadRequest {
+                capability: ReadCapability::Values,
+                access: &access,
+            })
+            .is_ok()
+    );
+}
