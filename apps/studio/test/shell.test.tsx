@@ -5,7 +5,7 @@ import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import type { Account } from "../src/lib/session.ts"
-import { Shell, Submenu, groupOpen, hiddenLabelTabIndex, initials, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, Submenu, groupOpen, hiddenLabelTabIndex, initials, submenuInert, sectionOf, target, type Section } from "../src/shell.tsx"
 
 const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
 
@@ -104,4 +104,16 @@ test("a group label's button leaves the tab order only while the desktop sidebar
   expect(hiddenLabelTabIndex("collapsed", false)).toBe(-1)
   expect(hiddenLabelTabIndex("expanded", false)).toBeUndefined()
   expect(hiddenLabelTabIndex("collapsed", true)).toBeUndefined()
+})
+
+test("the collapsed desktop submenu is inert, so its links and Show more take no focus; open, it is live", async () => {
+  const many: Section = { ...sources, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
+  const collapsed = await at("/sources", () => <SidebarProvider defaultOpen={false}><Submenu section={many} /></SidebarProvider>)
+  expect(collapsed).toMatch(/<div[^>]*data-slot="sidebar"[^>]*inert=""/)
+  expect(collapsed).toContain("Show more")
+  const open = await at("/sources", () => <SidebarProvider><Submenu section={many} /></SidebarProvider>)
+  expect(open).not.toContain('inert=""')
+  expect(submenuInert("collapsed", false)).toBe(true)
+  expect(submenuInert("collapsed", true)).toBe(false)
+  expect(submenuInert("expanded", false)).toBe(false)
 })
