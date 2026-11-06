@@ -1,15 +1,16 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { Bell, ChevronDown, Keyboard, Search, UserRound, type LucideIcon } from "lucide-react"
+import { Bell, ChevronDown, Keyboard, LogOut, Search, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInput, SidebarInset,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import type { Account } from "@/lib/session"
 import { cn } from "@/lib/utils"
 
 export interface Section {
@@ -196,6 +197,36 @@ export const target = (section: Pick<Section, "path">, href: string) =>
 export const sectionOf = (sections: readonly Section[], pathname: string) =>
   sections.find(({ path }) => pathname === path || pathname.startsWith(`${path}/`))
 
+export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
+
+/** The signed-in user, their organization and role, and sign-out. The role is shown, never used to hide or allow anything. */
+export function AccountMenu({ account, onSignOut }: { readonly account: Account; readonly onSignOut: () => void }) {
+  const { user, organization } = account
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuButton tooltip={{ children: `${user.name} · ${organization?.name ?? "No organization"}`, hidden: false }} className="size-10! justify-center rounded-full p-0!">
+          <span className="flex size-9 items-center justify-center rounded-full bg-muted text-xs font-medium ring-1 ring-border">{initials(user.name || user.email)}</span>
+          <span className="sr-only">Account</span>
+        </SidebarMenuButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="end" className="min-w-56">
+        <DropdownMenuLabel className="grid">
+          <span className="font-medium">{user.name}</span>
+          <span className="text-meta font-normal text-muted-foreground">{user.email}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="grid font-normal">
+          <span>{organization?.name ?? "No organization"}</span>
+          {organization && <span className="text-meta text-muted-foreground">Role: {organization.role}</span>}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onSignOut}><LogOut />Sign out</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 /** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   return (
@@ -223,7 +254,7 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
  * Two islands on a grey page: the active section's submenu card and the page
  * card, with a thin rail of square tiles on the grey to their left.
  */
-export function Shell({ sections, tools }: { readonly sections: readonly Section[]; readonly tools?: ReactNode }) {
+export function Shell({ sections, tools, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
   const main = sections.filter(({ foot }) => foot !== true)
@@ -252,12 +283,7 @@ export function Shell({ sections, tools }: { readonly sections: readonly Section
             </SidebarContent>
             <SidebarFooter className="items-center px-0 pb-1">
               {foot.length > 0 && <SidebarMenu className="items-center gap-2">{foot.map((section) => <RailItem key={section.path} section={section} active={section === current} />)}</SidebarMenu>}
-              <SidebarMenu><SidebarMenuItem className="flex justify-center">
-                <SidebarMenuButton tooltip={{ children: "Not signed in: recorded demo", hidden: false }} className="size-10! justify-center rounded-full p-0!">
-                  <span className="flex size-9 items-center justify-center rounded-full bg-muted ring-1 ring-border"><UserRound className="size-5 text-muted-foreground" /></span>
-                  <span className="sr-only">Not signed in: recorded demo</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem></SidebarMenu>
+              <SidebarMenu><SidebarMenuItem className="flex justify-center"><AccountMenu account={account} onSignOut={onSignOut} /></SidebarMenuItem></SidebarMenu>
             </SidebarFooter>
           </Sidebar>
           {current && <Submenu key={current.path} section={current} />}
