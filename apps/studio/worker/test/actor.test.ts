@@ -160,3 +160,14 @@ test("the assistant answers only a signed-in user, from the Studio's own origin,
   expect(refused.status).toBe(403)
   expect(await refused.json() as unknown).toEqual({ error: "The assistant is for signed-in users, not API keys." })
 })
+
+test("example proposals have the assistant's gate: signed-in users only, from the Studio's own origin", async () => {
+  const { env, auth } = stage()
+  const post = (headers: Record<string, string>) => call(env, "/api/agent/example", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ chip: "Subtract a refining loss in the fine-mass law" }) })
+  expect((await post({ origin: ORIGIN })).status).toBe(401)
+  const cookie = await signUp(env, "fe@example.com")
+  expect((await post({ cookie, origin: "https://elsewhere.example" })).status).toBe(403)
+  const owner = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner?.orgId }, headers: new Headers({ cookie }) })
+  expect((await post({ "x-api-key": key.key })).status).toBe(403)
+})
