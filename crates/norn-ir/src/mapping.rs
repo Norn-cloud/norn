@@ -36,7 +36,7 @@
 
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entitlement::EntitlementStatus;
 use crate::members::present_non_null;
@@ -803,6 +803,13 @@ pub struct ObservedLinkClaim {
     pub target: Option<ObservedLinkTarget>,
     /// Source row, mapping version and exact relation rule.
     pub provenance: InstanceProvenance,
+    /// OBS-LINK-CONTRIBUTION-1: identities of the earlier claims of this
+    /// contribution that this claim replaces. Mapping evaluation leaves it empty;
+    /// the claim planner fills it from retained claims. It is part of the
+    /// evidence preimage, so retained claims stay ordered by a content-addressed,
+    /// necessarily acyclic chain. An empty set is absent from the preimage.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub supersedes: BTreeSet<String>,
 }
 
 /// Registry concept used for immutable, ordinary claim snapshots.
@@ -820,10 +827,18 @@ pub struct ObservedLinkTarget {
 
 impl ObservedLinkClaim {
     /// Project the typed claim into its registry-declared scalar properties.
+    /// `evidence` holds the exact canonical JSON of the typed preimage
+    /// (sorted keys, verbatim strings and numbers), as UTF-8 text.
     ///
     /// # Errors
-    /// Serialization of the complete evidence preimage failed.
-    pub fn values(&self) -> Result<crate::RuntimeObject, serde_json::Error> {
+    /// The complete evidence preimage has no exact canonical encoding.
+    pub fn values(&self) -> Result<crate::RuntimeObject, crate::canonical::CanonicalJsonError> {
+        let evidence =
+            String::from_utf8(norn_canonical::canonical_json_exact_of(self)?).map_err(|error| {
+                crate::canonical::CanonicalJsonError::Serialize {
+                    message: error.to_string(),
+                }
+            })?;
         let text = |value: &str| crate::RuntimeValue::from(value);
         let nullable = |value: Option<&str>| value.map_or(crate::RuntimeValue::Null, text);
         Ok(crate::RuntimeObject::from([
@@ -840,7 +855,7 @@ impl ObservedLinkClaim {
                 "target_key".into(),
                 nullable(self.target.as_ref().map(|t| t.key.as_str())),
             ),
-            ("evidence".into(), text(&serde_json::to_string(self)?)),
+            ("evidence".into(), text(&evidence)),
         ]))
     }
 
@@ -943,6 +958,7 @@ impl MappedRecord {
                     key: patch.target_key.clone(),
                 }),
                 provenance: patch.provenance.clone(),
+                supersedes: BTreeSet::new(),
             })
             .chain(self.cleared_links.iter().map(|role| ObservedLinkClaim {
                 observation_id: observation_id.to_owned(),
@@ -956,6 +972,7 @@ impl MappedRecord {
                     provenance.transform = Some(format!("{}.{}", self.map, role.as_str()));
                     provenance
                 },
+                supersedes: BTreeSet::new(),
             }))
             .collect()
     }

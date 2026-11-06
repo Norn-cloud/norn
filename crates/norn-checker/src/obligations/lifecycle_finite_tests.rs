@@ -8,6 +8,9 @@ use super::lifecycle::finite::{Batch, Bounds};
 use super::*;
 
 fn source(entity_root: bool) -> DefinitionSource {
+    definition_source(&declarations(entity_root))
+}
+fn declarations(entity_root: bool) -> Value {
     let mut declarations: Value =
         serde_json::from_str(include_str!("../../tests/fixtures/jewelry_demo.json"))
             .expect("actual authored source");
@@ -19,7 +22,7 @@ fn source(entity_root: bool) -> DefinitionSource {
         }
         declarations[1]["payload"]["provenance"]["sourcePath"] = json!("tests/lifecycle_finite");
     }
-    definition_source(&declarations)
+    declarations
 }
 fn definition_source(declarations: &Value) -> DefinitionSource {
     let units: Value = serde_json::from_str(include_str!(
@@ -252,6 +255,105 @@ fn lifecycle_inputs_reject_an_empty_enum_at_admission() {
         .expect_err("empty enum"),
         ChallengeError::NotAdmitted
     );
+}
+
+#[test]
+fn lifecycle_graph_preserves_unknown_reasons_and_refuses_duplicate_rows() {
+    let unsupported = source(false);
+    assert!(
+        super::lifecycle_tests::authority(&unsupported)
+            .lifecycle_graph(&unsupported, &BTreeSet::new(), &bounds())
+            .expect("fresh source")
+            .graph
+            .expect_err("actual App-root law stays Unknown")
+            .contains("UnsupportedUntilB2")
+    );
+    let source = source(true);
+    let mut profile = bounds();
+    profile
+        .frozen
+        .insert("id".into(), vec!["\"synthetic\"".into(); 2]);
+    assert_eq!(
+        super::lifecycle_tests::authority(&source)
+            .lifecycle_graph(&source, &BTreeSet::new(), &profile)
+            .expect("source")
+            .graph
+            .expect_err("no duplicate node identities"),
+        "duplicate finite scalar valuations"
+    );
+}
+
+/// One row per state, so only native budgets, not global work, can refuse these graphs.
+fn single_row_batch(declarations: &Value) -> super::lifecycle::graph::Batch {
+    let source = definition_source(declarations);
+    let mut profile = bounds();
+    profile
+        .frozen
+        .insert("loss_fine_g".into(), vec!["1".into()]);
+    profile
+        .frozen
+        .insert("id".into(), vec![format!("\"{}\"", costly_id())]);
+    super::lifecycle_tests::authority(&source)
+        .lifecycle_graph(&source, &BTreeSet::new(), &profile)
+        .expect("fresh source")
+}
+/// Closures are Unknown, so cost comes from comparing a near-limit frozen literal.
+fn costly_id() -> String {
+    "x".repeat(9_000)
+}
+fn costly(comparisons: usize) -> String {
+    format!(
+        "len([{}]) > 0",
+        vec!["self.id == self.id"; comparisons].join(", ")
+    )
+}
+fn units(source: &str) -> u64 {
+    let context = norn_expr::Value::object([(
+        "self",
+        norn_expr::Value::object([("id", norn_expr::Value::from(costly_id()))]),
+    )]);
+    norn_expr::Expression::compile(source)
+        .expect("compiled")
+        .evaluate(&context, norn_expr::EvaluationBudget::new(2_000_000))
+        .expect("within global work")
+        .units_used()
+}
+#[test]
+fn a_guard_beyond_the_native_budget_makes_the_graph_unknown() {
+    let guard = costly(75);
+    let cost = units(&guard);
+    assert!((1_000_001..1_900_000).contains(&cost), "{cost}");
+    let mut declarations = declarations(true);
+    assert!(single_row_batch(&declarations).graph.is_ok());
+    declarations[0]["payload"]["objectType"]["lifecycles"][0]["transitions"][0]["guards"] =
+        json!([guard]);
+    let reason = single_row_batch(&declarations)
+        .graph
+        .expect_err("native never commits this edge");
+    assert!(
+        reason.contains("transition measure") && reason.contains("1000000"),
+        "{reason}"
+    );
+}
+#[test]
+fn a_false_guard_stops_later_guards_like_native() {
+    let mut declarations = declarations(true);
+    declarations[0]["payload"]["objectType"]["lifecycles"][0]["transitions"][0]["guards"] =
+        json!(["false", "1"]);
+    let graph = single_row_batch(&declarations)
+        .graph
+        .expect("native refuses GuardFalse first");
+    assert!(graph.edges.iter().all(|edge| edge.transition != "measure"));
+}
+#[test]
+fn lifecycle_graph_pins_native_evaluation_limits() {
+    let source = source(true);
+    let batch = super::lifecycle_tests::authority(&source)
+        .lifecycle_graph(&source, &BTreeSet::new(), &bounds())
+        .expect("source");
+    let profile: Value = serde_json::from_str(&batch.bounds_json).expect("pinned profile");
+    assert_eq!(profile["maxGuardUnits"], 1_000_000);
+    assert_eq!(profile["maxRowLawUnits"], 1_000_000);
 }
 
 proptest::proptest! {

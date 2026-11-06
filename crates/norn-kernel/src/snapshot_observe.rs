@@ -190,6 +190,26 @@ pub enum ObservationRefusal {
     Overflow,
 }
 
+/// A prepared claim's standing within its contribution for this turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimStanding {
+    Current,
+    Superseded,
+    Contested,
+}
+
+/// One claim's evidence in this turn, with its canonical endpoints fixed at
+/// preparation so standing can be resolved wherever the commit is validated.
+#[derive(Debug, Clone, PartialEq)]
+struct PreparedClaim {
+    supersedes: BTreeSet<String>,
+    values: JsonObject,
+    contribution: String,
+    role: norn_ir::LinkId,
+    source: FactKey,
+    target: Option<FactKey>,
+}
+
 /// Retained source namespace protecting authored mutations of observed outputs.
 /// Canonical observed claims converge without acquiring this namespace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,8 +254,10 @@ pub struct ObservationAuthorization {
     reference_targets: BTreeSet<FactKey>,
     source_scopes: Vec<(FactExpectation, ObservedSourceOwner)>,
     links: Vec<LinkWrite>,
-    convergent_links: Vec<LinkWrite>,
-    claims: BTreeMap<FactKey, (norn_ir::mapping::ObservedLinkClaim, JsonObject)>,
+    /// Edge changes proposed by a sealed claim. They carry no authority until
+    /// resolved against the final claim set by [`Self::convergent_links`].
+    claim_intents: Vec<(FactKey, LinkWrite)>,
+    claims: BTreeMap<FactKey, PreparedClaim>,
     owner_recreations: Vec<(FactKey, ObservedSourceOwner, FactWrite)>,
     pending_writes: Vec<FactWrite>,
     pending_sources: BTreeSet<FactKey>,
@@ -301,7 +323,7 @@ impl ObservationAuthorization {
             reference_targets: BTreeSet::new(),
             source_scopes: Vec::new(),
             links: Vec::new(),
-            convergent_links: Vec::new(),
+            claim_intents: Vec::new(),
             claims: BTreeMap::new(),
             owner_recreations: Vec::new(),
             pending_writes: Vec::new(),
@@ -398,7 +420,7 @@ impl ObservationAuthorization {
         self.snapshot_chunks = None;
         self.source_scopes.extend(other.source_scopes);
         self.links.extend(other.links);
-        self.convergent_links.extend(other.convergent_links);
+        self.claim_intents.extend(other.claim_intents);
         self.claims.extend(other.claims);
         self.owner_recreations.extend(other.owner_recreations);
         self.pending_writes.extend(other.pending_writes);
@@ -683,8 +705,13 @@ impl ObservationAuthorization {
 
     /// OBS-LINK-CONVERGE-1: seal one recomputed canonical relation claim.
     /// The trusted mapping boundary authenticates its retained bundle and pins.
-    /// This permits only its exact edge changes, with a CAS-bound source; it
+    /// This proposes only its exact edge changes, with a CAS-bound source; it
     /// confers no ownership on a source system and exempts no endpoint/type law.
+    /// Sealing records intent only: standing and edge support are decided over
+    /// the final claim set, so claims merged later can still refuse the edge.
+    ///
+    /// The kernel sees prepared claims only. No production caller may land before
+    /// the #877 planner prepares every retained claim of the edge and contribution.
     ///
     /// # Errors
     /// Missing source expectation, undeclared role, or an unrelated mutation.
@@ -716,7 +743,7 @@ impl ObservationAuthorization {
         if !self
             .claims
             .get(&claim_key)
-            .is_some_and(|(_, bound)| bound == &values)
+            .is_some_and(|prepared| prepared.values == values)
             || (!retained && !written)
         {
             return Err(ObservationRefusal::Encoding(
@@ -737,6 +764,34 @@ impl ObservationAuthorization {
         model
             .link(&key.object_type, claim.role.as_str())
             .ok_or_else(|| ObservationRefusal::Encoding("claim role is undeclared".into()))?;
+        let target = claim
+            .target
+            .as_ref()
+            .map(|t| FactKey::new(t.object_type.as_str(), &t.key));
+        let mut intents = Vec::new();
+        for write in commit.links.iter().filter(|w| {
+            model.canonical(&w.key.source) == model.canonical(&key)
+                && w.key.link == claim.role.as_str()
+                && target
+                    .as_ref()
+                    .is_some_and(|t| model.canonical(t) == model.canonical(&w.key.target))
+        }) {
+            // Claims carry no link properties: a convergent edge holds defaults only.
+            if let LinkMutation::Add { values } = &write.mutation {
+                let defaults = catalog
+                    .effective_link_values(
+                        &key.object_type,
+                        claim.role.as_str(),
+                        &JsonObject::new(),
+                    )
+                    .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+                if *values != defaults {
+                    continue;
+                }
+            }
+            intents.push((claim_key.clone(), write.clone()));
+        }
+        // Every fallible check has passed: a refused seal records nothing.
         if !self.source_scopes.iter().any(|(scope, _)| scope == &source) {
             self.source_scopes.push((
                 source.clone(),
@@ -747,68 +802,94 @@ impl ObservationAuthorization {
                 self.observed_reads.push(source);
             }
         }
-        let target = claim
-            .target
-            .as_ref()
-            .map(|t| FactKey::new(t.object_type.as_str(), &t.key));
         if let Some(target) = &target {
             self.reference_targets.insert(target.clone());
             self.reference_targets.insert(model.canonical(target));
         }
-        let superseded = self
-            .has_prepared_successor(claim)
-            .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
-        for write in commit.links.iter().filter(|w| {
-            model.canonical(&w.key.source) == model.canonical(&key)
-                && w.key.link == claim.role.as_str()
-        }) {
-            let permitted = match &write.mutation {
-                LinkMutation::Add { .. } => target
-                    .as_ref()
-                    .is_some_and(|t| model.canonical(t) == model.canonical(&write.key.target)),
-                LinkMutation::Remove => {
-                    superseded
-                        && target.as_ref().is_some_and(|t| {
-                            model.canonical(t) == model.canonical(&write.key.target)
-                        })
-                }
-            };
-            if !permitted {
-                continue;
-            }
-            let mut sealed = write.clone();
-            if let LinkMutation::Add { values } = &mut sealed.mutation {
-                *values = catalog
-                    .effective_link_values(&key.object_type, claim.role.as_str(), values)
-                    .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
-            }
-            if !self.links.contains(&sealed) {
-                self.links.push(sealed.clone());
-            }
-            if !self.convergent_links.contains(&sealed) {
-                self.convergent_links.push(sealed);
+        for intent in intents {
+            if !self.claim_intents.contains(&intent) {
+                self.claim_intents.push(intent);
             }
         }
         Ok(())
     }
 
-    fn has_prepared_successor(
-        &self,
-        claim: &norn_ir::mapping::ObservedLinkClaim,
-    ) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
-        let contribution = claim.contribution_id()?;
-        self.claims.values().try_fold(false, |found, (other, _)| {
-            Ok(found || (other.target != claim.target && other.contribution_id()? == contribution))
-        })
+    /// OBS-LINK-CONTRIBUTION-1: every prepared claim's standing in the final set.
+    /// Only a recorded `supersedes` entry from the same contribution orders two
+    /// claims, and retained evidence never supersedes a fresh claim. Rivals left
+    /// unordered are contested and authorize no edge change.
+    fn claim_standings(&self) -> BTreeMap<&FactKey, ClaimStanding> {
+        // A fresh claim is one this turn's final authorized writes create.
+        let fresh: BTreeSet<&FactKey> = self.writes.iter().map(|w| &w.write.key).collect();
+        let superseded: BTreeSet<&FactKey> = self
+            .claims
+            .iter()
+            .filter(|(key, claim)| {
+                self.claims.iter().any(|(other_key, other)| {
+                    other.contribution == claim.contribution
+                        && other.supersedes.contains(&key.key)
+                        && (fresh.contains(other_key) || !fresh.contains(key))
+                })
+            })
+            .map(|(key, _)| key)
+            .collect();
+        self.claims
+            .iter()
+            .map(|(key, claim)| {
+                let rival = self.claims.iter().any(|(other_key, other)| {
+                    other.contribution == claim.contribution
+                        && other.target != claim.target
+                        && !superseded.contains(other_key)
+                });
+                let standing = if superseded.contains(key) {
+                    ClaimStanding::Superseded
+                } else if rival {
+                    ClaimStanding::Contested
+                } else {
+                    ClaimStanding::Current
+                };
+                (key, standing)
+            })
+            .collect()
     }
 
-    pub(crate) fn authorizes_convergent_link(&self, write: &LinkWrite) -> bool {
-        self.convergent_links.contains(write)
+    /// The sealed edge changes the final claim set authorizes: a current claim
+    /// adds; a superseded claim withdraws only while no other prepared claim for
+    /// the same edge stands. Contested support holds an edge until a fresh claim
+    /// records its order.
+    pub(crate) fn convergent_links(&self) -> Vec<&LinkWrite> {
+        if self.claim_intents.is_empty() {
+            return Vec::new();
+        }
+        let standings = self.claim_standings();
+        let stands = |key: &FactKey| standings.get(key) != Some(&ClaimStanding::Superseded);
+        self.claim_intents
+            .iter()
+            .filter(|(key, write)| {
+                let Some(claim) = self.claims.get(key) else {
+                    return false;
+                };
+                match write.mutation {
+                    LinkMutation::Add { .. } => standings.get(key) == Some(&ClaimStanding::Current),
+                    LinkMutation::Remove => {
+                        !stands(key)
+                            && !self.claims.iter().any(|(other_key, other)| {
+                                other_key != key
+                                    && other.role == claim.role
+                                    && other.source == claim.source
+                                    && other.target == claim.target
+                                    && stands(other_key)
+                            })
+                    }
+                }
+            })
+            .map(|(_, write)| write)
+            .collect()
     }
 
     pub(crate) fn authorizes_claim_write(&self, write: &FactWrite) -> bool {
         write.expected == FactVersion(0)
-            && matches!(&write.mutation, FactMutation::Put { values } if self.claims.get(&write.key).is_some_and(|(_, bound)| bound == values))
+            && matches!(&write.mutation, FactMutation::Put { values } if self.claims.get(&write.key).is_some_and(|claim| &claim.values == values))
             && self.authorizes_write(write)
     }
 
@@ -977,6 +1058,7 @@ impl ObservationAuthorization {
     /// match an exact sealed mapping or pending-resolution intent.
     #[must_use]
     pub fn validates<E, C, T>(&self, commit: &CellCommit<E, C, T>) -> bool {
+        let convergent = self.convergent_links();
         if !commit.effects.is_empty()
             || self.source_scopes.iter().any(|(scope, _)| {
                 !commit.reads.contains(scope)
@@ -985,7 +1067,10 @@ impl ObservationAuthorization {
                         .iter()
                         .any(|write| write.key == scope.key && write.expected == scope.expected)
             })
-            || commit.links.iter().any(|write| !self.links.contains(write))
+            || commit
+                .links
+                .iter()
+                .any(|write| !self.links.contains(write) && !convergent.contains(&write))
             || commit.writes.iter().any(|write| {
                 write.key.object_type.as_str() == "norn.PendingLinks"
                     && !self.pending_writes.contains(write)
@@ -1599,6 +1684,9 @@ pub fn prepare_observed_link_claim_snapshot(
             "immutable claim changed".into(),
         ));
     }
+    let contribution = claim
+        .contribution_id()
+        .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
     let mut prepared = prepare_observed_snapshot(
         catalog,
         slice,
@@ -1610,10 +1698,21 @@ pub fn prepare_observed_link_claim_snapshot(
             provenance: &claim.provenance,
         },
     )?;
-    prepared
-        .authorization
-        .claims
-        .insert(key, (claim.clone(), values));
+    let model = crate::CommitModel::new(catalog);
+    prepared.authorization.claims.insert(
+        key,
+        PreparedClaim {
+            supersedes: claim.supersedes.clone(),
+            values,
+            contribution,
+            role: claim.role.clone(),
+            source: model.canonical(&FactKey::new(claim.source_type.as_str(), &claim.source_key)),
+            target: claim
+                .target
+                .as_ref()
+                .map(|t| model.canonical(&FactKey::new(t.object_type.as_str(), &t.key))),
+        },
+    );
     Ok(prepared)
 }
 

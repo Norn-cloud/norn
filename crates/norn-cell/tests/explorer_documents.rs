@@ -36,7 +36,8 @@ fn retained(name: &str, text: &str) {
     );
 }
 
-/// The admitted three-systems set, as `crates/norn-checker/tests/three_systems.rs` selects it.
+/// The admitted three-systems set, as `crates/norn-checker/tests/three_systems.rs` selects it,
+/// without the Odoo pack, which the demo leaves out for now.
 fn artifacts() -> Vec<ArtifactEnvelope> {
     let excluded = [
         "commerce.SalesOrder.entity",
@@ -47,20 +48,14 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         "location.Space.entity",
         "party.Brand.entity",
     ];
-    let mut paths: Vec<PathBuf> = [
-        "core",
-        "packs/canon",
-        "packs/erpnext",
-        "packs/shopify",
-        "packs/odoo",
-    ]
-    .into_iter()
-    .flat_map(|dir| {
-        std::fs::read_dir(root().join(format!("registry/{dir}/artifacts")))
-            .expect("artifact directory")
-            .map(|entry| entry.expect("entry").path())
-    })
-    .collect();
+    let mut paths: Vec<PathBuf> = ["core", "packs/canon", "packs/erpnext", "packs/shopify"]
+        .into_iter()
+        .flat_map(|dir| {
+            std::fs::read_dir(root().join(format!("registry/{dir}/artifacts")))
+                .expect("artifact directory")
+                .map(|entry| entry.expect("entry").path())
+        })
+        .collect();
     paths.sort();
     paths
         .into_iter()

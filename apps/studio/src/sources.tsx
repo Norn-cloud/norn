@@ -37,14 +37,14 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
           {catalog.systems.map((system) => (
             <div key={system.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
               <span className="font-medium">{system.name}</span>
-              <span className="text-meta text-muted-foreground tabular-nums">{system.datasets.length} kinds of record · feeds {system.feeds.length} concepts</span>
+              <span className="text-meta text-muted-foreground tabular-nums">{system.datasets.length} kinds of record · feeds {system.feeds.length} object types</span>
             </div>
           ))}
         </Well>
       </Panel>
       <ArrowRight aria-hidden className="mx-auto size-5 self-center text-muted-foreground max-md:rotate-90" />
       <KpiTile icon={Shapes} label="One business model" value={concepts.length}
-        sub={`concepts, ${relationships} relationships between them, built on ${catalog.concepts.length - concepts.length} core ideas`} />
+        sub={`object types, ${relationships} links between them, built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
     </div>
   )
 }
@@ -59,7 +59,7 @@ function ConceptCard({ concept, onOpen }: { readonly concept: Concept; readonly 
           <CardDescription className="line-clamp-2 min-h-[2lh]">{concept.description ?? "No description declared."}</CardDescription>
         </CardHeader>
         <CardContent className="mt-auto space-y-3 text-sm">
-          <p className="text-muted-foreground tabular-nums">{concept.fields.length} facts · {concept.relationships.length} relationships</p>
+          <p className="text-muted-foreground tabular-nums">{concept.fields.length} facts · {concept.relationships.length} links</p>
           {systems.length > 0 && <div className="flex flex-wrap gap-1">{systems.map((system) => <Badge key={system} variant="secondary">{system}</Badge>)}</div>}
         </CardContent>
       </Card>
@@ -142,7 +142,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
             </section>
             {concept.relationships.length > 0 && (
               <section>
-                <h3 className="pb-2 font-medium">Relationships</h3>
+                <h3 className="pb-2 font-medium">Links</h3>
                 <ul className="space-y-2 text-sm">
                   {concept.relationships.map((relationship) => (
                     <li key={relationship.id}>
@@ -157,7 +157,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
               <h3 className="pb-2 font-medium">Rules it must keep</h3>
               {concept.rules.length > 0
                 ? <ul className="list-disc space-y-1 pl-5 text-sm">{concept.rules.map((rule) => <li key={rule}>{rule}</li>)}</ul>
-                : <p className="text-sm text-muted-foreground">No rule is declared on this concept itself.</p>}
+                : <p className="text-sm text-muted-foreground">No rule is declared on this object type itself.</p>}
             </section>
             <section>
               <h3 className="pb-2 font-medium">Where its records come from</h3>
@@ -170,11 +170,11 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
   )
 }
 
-/** The concepts the systems feed, for the submenu island. */
+/** The object types the systems feed, for the submenu island. */
 export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
-  return catalog?.concepts.filter(({ kind }) => kind === "concept").map((concept) => ({ href: `#concept-${concept.name}`, label: concept.title }))
+  return catalog?.concepts.filter(({ kind }) => kind === "concept").map((concept) => ({ href: `#concept-${concept.name}`, label: concept.title, group: "Object types" }))
 }
 
 /** The admitted catalog, indexed once per read. */
@@ -196,7 +196,7 @@ export function SourcesPage() {
           <h1 className="text-title font-medium">Sources</h1>
           {read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         </div>
-        <p className="max-w-2xl text-muted-foreground">Three systems keep their own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
+        <p className="max-w-2xl text-muted-foreground">Each connected system keeps its own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
       </div>
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
@@ -205,14 +205,14 @@ export function SourcesPage() {
         <Panel icon={Shapes} label="The business model">
           <Well className="space-y-6 p-4">
             <label className="relative block w-full max-w-sm">
-              <span className="sr-only">Find a concept</span>
+              <span className="sr-only">Find an object type</span>
               <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input type="search" placeholder="Find a concept" value={search} onChange={(event) => setSearch(event.target.value)}
+              <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)}
                 className="border-border bg-background ps-9 dark:bg-background" />
             </label>
             {(["concept", "core idea"] as const).map((kind) => (
               <div key={kind} className="space-y-3">
-                <h3 className="text-meta font-medium text-muted-foreground">{kind === "concept" ? "Concepts the systems feed" : "Core ideas they build on"}</h3>
+                <h3 className="text-meta font-medium text-muted-foreground">{kind === "concept" ? "Object types the systems feed" : "Shared interfaces"}</h3>
                 {catalog.concepts.some((concept) => concept.kind === kind && matches(concept))
                   ? <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
