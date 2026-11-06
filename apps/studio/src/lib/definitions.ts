@@ -56,8 +56,18 @@ export interface DefinitionStore {
   retire(id: string, expectedVersion: number): Promise<Installed>
 }
 
-/** A dashboard's stable definition id, from its title when first saved. */
-export const dashboardId = (title: string) => `studio.dashboard.${title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "untitled"}`
+/**
+ * A new dashboard's definition id: its title when first saved, plus a random
+ * suffix, so two dashboards whose titles read alike never share an id. An
+ * install without `expectedVersion` overwrites, and the cell documents no
+ * create-only install, so distinct ids are what keep a new dashboard from
+ * replacing another. Reopened dashboards keep the id they were saved under.
+ */
+export const dashboardId = (title: string, unique: string = crypto.randomUUID().replaceAll("-", "").slice(0, 12)) =>
+  `studio.dashboard.${title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "untitled"}_${unique}`
+
+const isDashboard = (value: unknown): value is Dashboard =>
+  value !== null && typeof value === "object" && typeof (value as { title?: unknown }).title === "string" && Array.isArray((value as { tiles?: unknown }).tiles)
 
 const KIND = "dashboard"
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
@@ -123,9 +133,9 @@ export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host"): Def
     },
     get: async (id) => {
       const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`)
-      const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: Dashboard; code?: unknown } | null
+      const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: unknown; code?: unknown } | null
       if (status === 404 && b?.code === "definition.not_found") return undefined
-      if (status !== 200 || typeof b?.version !== "number" || b.payload === undefined) throw new CellUnavailable(status, status === 404 ? "Dashboards can't be reopened yet: the cell has no route to read them back." : undefined)
+      if (status !== 200 || typeof b?.version !== "number" || !isDashboard(b.payload)) throw new CellUnavailable(status, status === 404 ? "Dashboards can't be reopened yet: the cell has no route to read them back." : undefined)
       return { id: String(b.id ?? id), version: b.version, dashboard: b.payload }
     },
     admit: async (id, dashboard) => {
