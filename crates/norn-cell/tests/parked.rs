@@ -404,3 +404,52 @@ proptest! {
         prop_assert_eq!(unique.len(), consumed.len());
     }
 }
+
+#[test]
+fn a_claim_on_a_parked_command_is_refused_by_name() {
+    // The same writer applies claims for live commits and retained replay, so
+    // a journal that claims a parked command fails loudly, not as a generic
+    // not-pending claim.
+    let mut cell = fresh();
+    dispatch(&mut cell, vec![command("ask", decision())]);
+    let mut store =
+        norn_cell::CellStore::open_in_memory(Model::from_definitions(&[], &[]).unwrap()).unwrap();
+    store.bind("scope", "org_demo/dev").unwrap();
+    let enqueue = norn_cell::CommitBatch {
+        world: "main".into(),
+        scope: "org_demo/dev".into(),
+        logical_time: 1,
+        effects: vec![norn_cell::EffectRow::Enqueue {
+            command: cell.store().read().parked_commands().unwrap()[0]
+                .command
+                .clone(),
+        }],
+        ..norn_cell::CommitBatch::default()
+    };
+    store.commit(&enqueue).unwrap();
+    let claim = norn_cell::CommitBatch {
+        world: "main".into(),
+        scope: "org_demo/dev".into(),
+        logical_time: 2,
+        effects: vec![norn_cell::EffectRow::ClaimPerform {
+            command_id: "ask".into(),
+            generation: 1,
+        }],
+        ..norn_cell::CommitBatch::default()
+    };
+    let refused = store.commit(&claim).unwrap_err();
+    assert!(
+        matches!(refused, CellError::ParkedClaimUnsupported { ref command_id, generation: 1 } if command_id == "ask"),
+        "{refused}"
+    );
+    assert!(
+        refused
+            .to_string()
+            .starts_with("restore.parked_claim_unsupported")
+    );
+    assert_eq!(
+        store.read().parked_commands().unwrap().len(),
+        1,
+        "nothing changed"
+    );
+}

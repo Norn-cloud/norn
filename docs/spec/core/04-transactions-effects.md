@@ -106,7 +106,9 @@ command that is not parked writes nothing. Its delivery is then pending like
 any result (`Consumed::Result`), and the ordinary delivery fence consumes it
 exactly once. A recorded, unconsumed parked result is redelivered from the store
 (`SqliteCell::parked_results`), so a crash between recording and consuming never
-strands it. Every other command keeps strict FIFO order. Parking is derived
+strands it. A perform claim on a parked command, live or in a retained journal, refuses
+`restore.parked_claim_unsupported`; no build before parked commands could record
+one. Every other command keeps strict FIFO order. Parking is derived
 only from the command's own payload with the compiled-in registry, so every host
 and every export replay classifies a command identically; replay checks a parked
 consumption at its own outbox position and every other at the FIFO head. Named
