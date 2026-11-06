@@ -55,15 +55,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         reveal_source: impl FnOnce(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Option<InstanceSourceProvenance>, CellError> {
         let invalid = || CellError::MappingBundleMismatch;
-        let BudgetedRead::Found(instance) = self.object_at_version_with_budget(
+        // An exhausted budget is a bound, not corrupt evidence: the route serves
+        // it as 413 `core.compute.bound_exceeded`, never a partial trace.
+        let exhausted = || CellError::ComputeRefused("core.compute.bound_exceeded");
+        let instance = match self.object_at_version_with_budget(
             world,
             fact.object_type.as_str(),
             &fact.key,
             fact.version,
             budget,
-        )?
-        else {
-            return Err(invalid());
+        )? {
+            BudgetedRead::Found(instance) => instance,
+            BudgetedRead::Exhausted => return Err(exhausted()),
+            BudgetedRead::Missing => return Err(invalid()),
         };
         if !reveal_source(&instance)? {
             return Ok(None);
@@ -98,7 +102,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 "source input bytes",
             )?)
         {
-            return Err(invalid());
+            return Err(exhausted());
         }
         let record = crate::export_journal::read_record(self.conn, receipt.body.commit_seq)?
             .ok_or_else(invalid)?;
