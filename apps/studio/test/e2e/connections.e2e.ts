@@ -1,7 +1,7 @@
 // One end-to-end test per object kind on Connections, in a real browser against a deployment.
 // Each test records the verbs it exercised; a ✓ verb of the matrix left unexercised fails the run.
-// Usage (on Boat only): E2E_BASE=https://next.norn.cloud E2E_EMAIL=… E2E_PASSWORD=… \
-//   E2E_GATEWAY_EMAIL=… E2E_GATEWAY_PASSWORD=… E2E_APP=… bun test/e2e/connections.e2e.ts
+// Usage (on Boat only): E2E_BASE=https://next.norn.cloud E2E_EMAIL=… E2E_PASSWORD=… (an org admin) \
+//   E2E_GATEWAY_EMAIL=… E2E_GATEWAY_PASSWORD=… E2E_APP=… E2E_APP_KEY=… E2E_TOOL=… E2E_TOOL_FIELD=… bun test/e2e/connections.e2e.ts
 // Credentials come from Infisical by name into the environment; nothing is printed or written.
 import { MATRIX, type VerbSupport } from "../../src/lib/connectors.ts"
 
@@ -12,12 +12,16 @@ type Page = {
   getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator
   getByLabel(text: string | RegExp, options?: { exact?: boolean }): Locator
   getByText(text: string | RegExp, options?: { exact?: boolean }): Locator
-  locator(selector: string): Locator
+  locator(selector: string, options?: { hasText?: string | RegExp }): Locator
   on(event: "dialog", listener: (dialog: { accept(): Promise<void> }) => void): void
+  request: {
+    get(url: string): Promise<{ ok(): boolean; json(): Promise<unknown> }>
+    delete(url: string, options: { headers: Record<string, string> }): Promise<{ ok(): boolean; status(): number }>
+  }
   route(url: string, handler: (route: { fulfill(response: { status: number; contentType: string; body: string }): Promise<void> }) => unknown): Promise<void>
   unroute(url: string): Promise<void>
 }
-type Locator = { click(): Promise<void>; press(key: string): Promise<void>; fill(value: string): Promise<void>; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
+type Locator = { locator(selector: string, options?: { hasText?: string | RegExp }): Locator; all(): Promise<Locator[]>; click(): Promise<void>; press(key: string): Promise<void>; fill(value: string): Promise<void>; check(): Promise<void>; selectOption(value: string): Promise<unknown>; getByLabel: Page["getByLabel"]; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
 
 const env = (name: string) => {
   const value = process.env[name]
@@ -166,6 +170,65 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     await page.getByText("Signed in").waitFor()
     await page.getByRole("region", { name: app() }).waitFor(); did("fix")
   },
+  "Tool binding": async (page, did) => {
+    // E2E_TOOL is a tool of E2E_APP with a string input E2E_TOOL_FIELD; the signed-in person is an admin.
+    // The gateway lists an app's tools only for a caller with its account connected.
+    await ensureAccount(page)
+    const tool = env("E2E_TOOL"), field = env("E2E_TOOL_FIELD"), name = `e2e binding ${Date.now()}`
+    await page.getByLabel("App").selectOption(app())
+    await page.getByRole("button", { name: `Bind ${tool}` }).click()
+    const editor = page.getByRole("form", { name: `Bind ${tool}` })
+    await editor.getByLabel("Binding name").fill(name)
+    await editor.getByLabel(`Fix ${field}`).check()
+    // Exactly the field's input, not its "Fix <field>" checkbox.
+    await editor.getByLabel(field, { exact: true }).fill("fixed-by-e2e")
+    await editor.getByRole("button", { name: "Add binding" }).click()
+    const row = page.locator(`[data-binding]:has-text("${name}")`)
+    await row.waitFor(); did("add")
+    await row.getByRole("button", { name: "View" }).click()
+    await row.getByText(`${field} = fixed-by-e2e`).waitFor(); did("view")
+    await row.getByRole("button", { name: "Edit" }).click()
+    await page.getByRole("form", { name: `Edit ${name}` }).getByLabel("Who may run it").selectOption("admin")
+    await page.getByRole("form", { name: `Edit ${name}` }).getByRole("button", { name: "Save binding" }).click()
+    // The row's run-role badge (not the editor's option of the same name), and the editor closed.
+    await row.locator('[data-slot="badge"]', { hasText: "Admins only" }).waitFor()
+    await page.getByRole("form", { name: `Edit ${name}` }).waitFor({ state: "detached" }); did("edit")
+    await row.getByRole("button", { name: "Test run" }).click()
+    // The fields the binding leaves open, whatever the tool's schema marks required.
+    const run = page.getByRole("form", { name: `Test run ${name}` })
+    for (const input of await run.locator('input[type="text"]').all()) await input.fill("e2e")
+    await run.getByRole("button", { name: "Run" }).click()
+    await row.getByLabel("Result").waitFor({ timeout: 30_000 }); did("test-run")
+    await row.getByRole("button", { name: "Remove" }).click()
+    await row.waitFor({ state: "detached" }); did("remove")
+  },
+}
+
+/**
+ * Self-cleaning: before the rows run, remove what earlier runs left on the fixture app only:
+ * bindings named "e2e binding …" for the fixture tool, and accounts renamed "e2e …" on norn-e2e.
+ * It goes through Studio's own API, as the signed-in admin; nothing else is touched.
+ */
+async function cleanUp(page: Page) {
+  const api = `${base}/api/connectors`
+  const headers = { origin: base }
+  const read = async <T>(path: string): Promise<T | null> => { const r = await page.request.get(`${api}${path}`); return r.ok() ? await r.json() as T : null }
+  const bindings = (await read<{ bindings: { id: string; label: string; tool: string }[] }>("/bindings"))?.bindings ?? []
+  for (const binding of bindings.filter((b) => b.label.startsWith("e2e binding ") && b.tool === env("E2E_TOOL"))) {
+    const r = await page.request.delete(`${api}/bindings/${encodeURIComponent(binding.id)}`, { headers })
+    console.log(`cleanup binding ${binding.label}: ${r.status()}`)
+  }
+  // Accounts need the gateway signed in; without it there is nothing of ours to clean there.
+  const inventory = await read<{ apps: { id: string; name: string }[]; accounts: { id: string; label: string }[] }>("/inventory")
+  const fixture = inventory?.apps.find((a) => a.name === app())
+  if (inventory === null || fixture === undefined) return
+  const requirements = (await read<{ requirements: { requirement: string; account: string | null }[] }>(`/apps/${encodeURIComponent(fixture.id)}/accounts`))?.requirements ?? []
+  for (const { requirement, account } of requirements) {
+    const label = inventory.accounts.find((a) => a.id === account)?.label ?? ""
+    if (account === null || !label.startsWith("e2e ")) continue
+    const r = await page.request.delete(`${api}/apps/${encodeURIComponent(fixture.id)}/accounts/${encodeURIComponent(requirement)}/${encodeURIComponent(account)}`, { headers })
+    console.log(`cleanup account ${label}: ${r.status()}`)
+  }
 }
 
 const supported = (verbs: Readonly<Record<string, VerbSupport>>) => Object.entries(verbs).filter(([, support]) => support === "supported").map(([verb]) => verb)
@@ -176,6 +239,7 @@ const page = await context.newPage() as Page
 // One handler for the whole run: every confirmation the suite triggers (disconnect, remove) is accepted once.
 page.on("dialog", (dialog) => void dialog.accept())
 await signIn(page)
+await cleanUp(page)
 let failed = 0
 for (const [kind, verbs] of Object.entries(MATRIX) as [keyof typeof MATRIX, Readonly<Record<string, VerbSupport>>][]) {
   const done = new Set<string>()

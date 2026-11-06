@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { api, EXECUTABLE_FIXES, fixAction, offersButton, startFix, ConnectorError, CONNECTION_VERBS, ERROR_VERBS, fixLabel, MATRIX, matrixTable } from "../src/lib/connectors.ts"
+import { api, BINDING_VERBS, ConnectorError, CONNECTION_VERBS, ERROR_VERBS, EXECUTABLE_FIXES, fixAction, fixLabel, MATRIX, matrixTable, offersButton, startFix } from "../src/lib/connectors.ts"
 
 const answering = (status: number, body: unknown) => (async () => Response.json(body, { status })) as unknown as typeof fetch
 
@@ -22,6 +22,7 @@ test("every kind's verbs are ✓ or N/A with a reason, and the table says so", (
     expect(support === "supported" || support.na.length > 0).toBe(true)
   }
   for (const verb of ERROR_VERBS) expect(MATRIX["Connector error"][verb]).toBe("supported")
+  for (const verb of BINDING_VERBS) expect(MATRIX["Tool binding"][verb]).toBe("supported")
   expect(matrixTable(MATRIX)).toContain("N/A: one grant per gateway; it has no name of its own")
 })
 
