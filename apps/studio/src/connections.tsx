@@ -40,7 +40,8 @@ function AccountRow({ app, requirement, label }: { readonly app: string; readonl
   const refresh = () => client.invalidateQueries({ queryKey: ["connectors"] })
   const connect = useMutation({ mutationFn: () => api<{ url: string }>(`/apps/${encodeURIComponent(app)}/accounts/${encodeURIComponent(requirement.requirement)}/connect`, { method: "POST", body: account === null ? {} : { account } }), onSuccess: go })
   const rename = useMutation({ mutationFn: (next: string) => api(`/accounts/${encodeURIComponent(account ?? "")}`, { method: "PATCH", body: { label: next } }), onSuccess: () => { setRenaming(null); return refresh() } })
-  const disconnect = useMutation({ mutationFn: () => api(`/accounts/${encodeURIComponent(account ?? "")}`, { method: "DELETE" }), onSuccess: refresh })
+  // Unlinks the account from this app's requirement; the gateway deletes it only when no other app uses it.
+  const disconnect = useMutation({ mutationFn: () => api(`/apps/${encodeURIComponent(app)}/accounts/${encodeURIComponent(requirement.requirement)}/${encodeURIComponent(account ?? "")}`, { method: "DELETE" }), onSuccess: refresh })
   const detail = useQuery({ queryKey: ["connectors", "account", account], queryFn: () => api<AccountDetail>(`/accounts/${encodeURIComponent(account ?? "")}`), enabled: open && account !== null })
   const error = connect.error ?? rename.error ?? disconnect.error
   return (

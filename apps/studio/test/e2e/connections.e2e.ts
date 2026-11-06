@@ -11,7 +11,7 @@ type Page = {
   waitForURL(url: string | RegExp, options?: { timeout?: number }): Promise<void>
   getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator
   getByLabel(text: string | RegExp, options?: { exact?: boolean }): Locator
-  getByText(text: string | RegExp): Locator
+  getByText(text: string | RegExp, options?: { exact?: boolean }): Locator
   locator(selector: string): Locator
   on(event: "dialog", listener: (dialog: { accept(): Promise<void> }) => void): void
   route(url: string, handler: (route: { fulfill(response: { status: number; contentType: string; body: string }): Promise<void> }) => unknown): Promise<void>
@@ -52,22 +52,46 @@ async function gatewaySignIn(page: Page) {
   await page.waitForURL(`${base}/connections`, { timeout: 30_000 })
 }
 
-/** The gateway's own connection form for the test app's API-key account, then back to Connections. */
+/**
+ * The gateway's own connection form for the test app's API-key account (Executor 2.0.0-beta.37):
+ * its app page opens a "Connect Norn e2e echo" dialog with one "Token" field and a "Connect
+ * account" button, then offers "Name this account". It does not send the browser back to Studio.
+ */
 async function gatewayAccountForm(page: Page) {
   await page.waitForURL(/gateway-next\.norn\.cloud\//, { timeout: 30_000 })
-  await page.getByLabel(/api key|token/i).first().fill(env("E2E_APP_KEY"))
-  await page.getByRole("button", { name: /^(connect|save|continue)$/i }).first().click()
-  await page.waitForURL(/gateway-next\.norn\.cloud\/.*(done|complete|success)|next\.norn\.cloud\/connections/, { timeout: 30_000 })
+  if (/\/login/.test(page.url())) {
+    await page.getByLabel("Email").fill(env("E2E_GATEWAY_EMAIL"))
+    await page.getByLabel("Password").fill(env("E2E_GATEWAY_PASSWORD"))
+    await page.getByLabel("Password").press("Enter")
+  }
+  await page.getByLabel(/^(token|api key)$/i).first().fill(env("E2E_APP_KEY"))
+  await page.getByRole("button", { name: /^(connect account|save|update|reconnect)$/i }).first().click()
+  await page.getByText(/name this account|linked for you/i).first().waitFor({ timeout: 30_000 })
+}
+
+/** Whether the gateway reads Signed in, once its status has loaded (never before). */
+async function gatewayLinked(page: Page): Promise<boolean> {
+  const signedIn = page.getByText("Signed in", { exact: true }), signedOut = page.getByText("Not signed in", { exact: true })
+  // The loser's waitFor rejects at its timeout; nothing awaits it, so its rejection is caught here.
+  await Promise.race([signedIn.waitFor().catch(() => {}), signedOut.waitFor().catch(() => {})])
+  return await signedIn.count() > 0
+}
+
+/** The test app's section once its requirements have loaded: each row offers Connect or Reconnect. */
+async function appSection(page: Page) {
+  const section = page.getByRole("region", { name: app() })
+  await section.getByRole("button", { name: /^(Connect|Reconnect)$/ }).first().waitFor()
+  return section
 }
 
 /** The test app's account is connected, connecting it through the gateway's form when it is not. */
 export async function ensureAccount(page: Page) {
   await open(page)
-  const section = page.getByRole("region", { name: app() })
-  await section.waitFor()
+  if (!await gatewayLinked(page)) { await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).click(); await gatewaySignIn(page) }
+  const section = await appSection(page)
   const connect = section.getByRole("button", { name: "Connect", exact: true })
   if (await connect.count() > 0) { await connect.first().click(); await gatewayAccountForm(page); await open(page) }
-  await section.getByRole("button", { name: "Reconnect", exact: true }).first().waitFor()
+  await (await appSection(page)).getByRole("button", { name: "Reconnect", exact: true }).first().waitFor()
 }
 
 const open = async (page: Page) => { await page.goto(`${base}/connections`); await page.getByRole("heading", { name: "Connections" }).waitFor() }
@@ -84,28 +108,34 @@ const app = () => {
 type Spec = (page: Page, did: (verb: string) => void) => Promise<void>
 const SPECS: Record<keyof typeof MATRIX, Spec> = {
   "Gateway sign-in": async (page, did) => {
+    // The gateway panel comes first on the page, so its Reconnect and Disconnect are the first of each.
     await open(page)
-    const disconnect = page.getByRole("button", { name: "Disconnect", exact: true }).first()
-    if (await disconnect.count() > 0) await disconnect.click()
+    if (await gatewayLinked(page)) {
+      await page.getByRole("button", { name: "Disconnect", exact: true }).first().click()
+      await page.getByText("Not signed in", { exact: true }).waitFor()
+    }
     await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).click()
     await gatewaySignIn(page); did("connect")
-    await page.getByText("Signed in").waitFor(); did("view")
-    await page.getByRole("button", { name: "Reconnect" }).first().click()
-    await gatewaySignIn(page); await page.getByText("Signed in").waitFor(); did("reconnect")
-    await page.getByRole("button", { name: "Disconnect" }).first().click()
-    await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).waitFor(); did("disconnect")
+    await page.getByText("Signed in", { exact: true }).waitFor(); did("view")
+    await page.getByRole("button", { name: "Reconnect", exact: true }).first().click()
+    await gatewaySignIn(page); await page.getByText("Signed in", { exact: true }).waitFor(); did("reconnect")
+    await page.getByRole("button", { name: "Disconnect", exact: true }).first().click()
+    await page.getByText("Not signed in", { exact: true }).waitFor(); did("disconnect")
     // Leave the gateway signed in for the next kinds.
     await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).click(); await gatewaySignIn(page)
   },
   "App account": async (page, did) => {
     await open(page)
-    const section = page.getByRole("region", { name: app() })
-    await section.waitFor()
-    const connect = section.getByRole("button", { name: "Connect", exact: true })
-    if (await connect.count() === 0) { await section.getByRole("button", { name: "Disconnect", exact: true }).first().click(); await connect.first().waitFor() }
-    await connect.first().click()
+    let section = await appSection(page)
+    // Start from no account, so the row offers Connect.
+    if (await section.getByRole("button", { name: "Connect", exact: true }).count() === 0) {
+      await section.getByRole("button", { name: "Disconnect", exact: true }).first().click()
+      await section.getByRole("button", { name: "Connect", exact: true }).waitFor()
+    }
+    await section.getByRole("button", { name: "Connect", exact: true }).first().click()
     await gatewayAccountForm(page)
-    await open(page); await section.getByRole("button", { name: "Reconnect", exact: true }).first().waitFor(); did("connect")
+    await open(page); section = await appSection(page)
+    await section.getByRole("button", { name: "Reconnect", exact: true }).first().waitFor(); did("connect")
     await section.getByRole("button", { name: "View" }).first().click()
     await section.getByText("Provider").waitFor(); did("view")
     await section.getByRole("button", { name: "Rename" }).first().click()
