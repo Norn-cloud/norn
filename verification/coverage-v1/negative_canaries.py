@@ -781,6 +781,22 @@ def workflow_sccache_canaries(source: str) -> None:
                     raise AssertionError(f"{name}: sccache start drift on {runner}/{starts}: {result.returncode} {exported}")
                 if not starts:
                     continue
+                # The wrapper's own bookkeeping never fails a build: without a temporary file
+                # (disk full), it compiles with plain rustc and keeps the compiler's status.
+                broken_tmp = root / "no-tmp"
+                broken_tmp.mkdir()
+                (broken_tmp / "mktemp").write_text("#!/bin/sh\necho 'mktemp: No space left on device' >&2\nexit 1\n")
+                (broken_tmp / "mktemp").chmod(0o755)
+                for compiler, status in (("ok", 0), ("broken", 1)):
+                    log = root / f"rustc-no-tmp-{compiler}.log"
+                    compiled = subprocess.run([wrapper, str(rustc), "--crate-name", "probe"], capture_output=True, text=True,
+                                              timeout=30, env={**base, "PATH": f"{broken_tmp}:{base['PATH']}",
+                                                               "FAKE_SCCACHE": "alive", "FAKE_RUSTC": compiler,
+                                                               "RUSTC_LOG": str(log)})
+                    calls = len(log.read_text().splitlines()) if log.exists() else 0
+                    if compiled.returncode != status or calls != 1:
+                        raise AssertionError(f"{name}: sccache wrapper without a temporary file drift {compiler}: "
+                                             f"{compiled.returncode} runs={calls} {compiled.stderr!r}")
                 for server, compiler, status, runs in (("alive", "ok", 0, 1), ("dead", "ok", 0, 1),
                                                        ("alive", "broken", 1, 1), ("dead", "broken", 1, 1)):
                     log = root / f"rustc-{server}-{compiler}.log"
@@ -1128,6 +1144,10 @@ def workflow_context_canaries(source: str) -> None:
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
                         .replace('  exec "$@"\n', "  exit 0\n"))),
+                    ("fatal temporary file", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace('log=$(mktemp) || exec "$@"', "log=$(mktemp)"))),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):

@@ -113,7 +113,7 @@ echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
 wrapper="$RUNNER_TEMP/sccache-rustc"
 cat > "$wrapper" <<'WRAPPER'
 #!/usr/bin/env bash
-log=$(mktemp)
+log=$(mktemp) || exec "$@"
 sccache "$@" 2> "$log"
 status=$?
 if [ "$status" -ne 0 ] && grep -q '^sccache: ' "$log"; then
