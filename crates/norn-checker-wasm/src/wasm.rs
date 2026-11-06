@@ -100,6 +100,16 @@ pub fn function_contract(
     .map_err(JsError::from)
 }
 
+/// `checkAgent(agentJson, contextJson)`: see [`crate::check_agent_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = checkAgent)]
+pub fn check_agent(agent_json: &str, context_json: &str) -> Result<String, JsError> {
+    crate::check_agent_json(agent_json, context_json).map_err(JsError::from)
+}
+
 /// `version()`: see [`crate::version_json`].
 #[wasm_bindgen]
 #[must_use]

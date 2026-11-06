@@ -21,12 +21,23 @@ profile, source, and evaluation failures. Invalid artifacts are findings.
 | `checkExpression(expr, envArtifactsJson, expectedType, selfType?)` | `check_expression_json` | `{format: "norn-checker-abi/expression@1", profile: "norn-zen/6", ok, inferred, diagnostics: [{code, message, span}], environment}` |
 | `evaluateExpression(expr, inputJson, profile?)` | `evaluate_expression_json` | `{format: "norn-checker-abi/evaluation@1", ok, profile: "norn-zen/6", unitsUsed, value | error}` — bounded `norn-expr` evaluation over explicit WidgetIR inputs |
 | `functionContract(manifestJson, invocationJson?, receiptJson?)` | `function_contract_json` | `{format: "norn-checker-abi/function@1", admitted, manifest: {digest, executionProfile}, invocation: {digest, inputIdentity, dependencyToken, actionKey}, receipt: {digest, resultIdentity}, diagnostics}` — the Function contract (T1-FN-1) admitted, with its Norn1 identities; finding pointers are prefixed `/manifest`, `/invocation`, `/receipt` |
+| `checkAgent(agentJson, contextJson)` | `check_agent_json` | `{format: "norn-checker-abi/agent@1", admitted, diagnostics}` — an agent definition payload (D58) admitted against `contextJson`; `diagnostics` is the `norn-checker/diagnostics@1` document with `agent.validation.*` codes and pointers into the payload |
 | `version()` | `version_json` | `{abi: "norn-checker-abi/1", crateVersion, checkerVersion, diagnosticsFormat, receiptFormat, exprProfile}` |
 
 - `artifactsJson` / `envArtifactsJson`: a JSON array of artifact envelopes.
 - `contextJson`: `null` or `{base?, registry?, tenant?: {tenantId, namespace}, limits?}`
   (unknown members are rejected); `base` is the installed layer, `limits`
   defaults to `norn.limits/1`.
+- `agentJson`: the raw JSON text of an agent payload `{name, title, model,
+  prompt, tools, budgets: {maxRuns, maxToolCalls, maxCostUsd}, laws,
+  decisionPolicy: {approve, laws?, deciderRoles}}`. Members are closed and
+  numbers are read exactly; `maxCostUsd` may be a number or a plain decimal
+  string. The caps are `norn_checker::agent::MAX_*` (prompt 32 KiB, 10,000
+  runs, 1,000 tool calls, 1,000 USD).
+- `contextJson` for `checkAgent`: `{models, bindings, laws, limits?}` — the
+  model allowlist, the tool binding ids bound for the org, and the admitted
+  law ids (unknown members are rejected); `limits` defaults to
+  `norn.limits/1` and its slice byte bound caps the payload text.
 - `expectedType`: `bool`, `text`, `integer`, `number`, `date`, `duration`,
   `json`, an object type name (e.g. `retail.Sku`), `list<T>`, or `T?`.
 - `selfType`: the object type `self` is bound to (optional).
