@@ -147,6 +147,16 @@ export default {
       if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
       return pathname === "/api/agent" ? agent(request, env, ctx) : example(request)
     }
+    // The question builder's catalogue and checker: the same gate as the assistant.
+    if (pathname === "/api/questions/catalog" || pathname === "/api/questions/check") {
+      const actor = await resolveActor(request, auth(env))
+      if (actor === null) return refuse(401, "Sign in first.")
+      if (actor.actorKind !== "user") return refuse(403, "The question builder is for signed-in users, not API keys.")
+      if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
+      // Loaded on first use, like the assistant: the checker's WebAssembly is not needed elsewhere.
+      const { questionsRoute } = await import("./questions.ts")
+      return questionsRoute(request, pathname, async () => (await import("./checker.ts")).admitQuestion)
+    }
     const session = await auth(env).api.getSession({ headers: request.headers })
     if (session === null) return refuse(401, "Sign in first.")
     return refuse(404, "No such endpoint.")
