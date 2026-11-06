@@ -448,28 +448,6 @@ pub fn decode_agent(
     let title = text(map, "title", &[], &mut findings);
     let model = text(map, "model", &[], &mut findings);
     let prompt = text(map, "prompt", &[], &mut findings);
-    nonblank(name.as_deref(), "name", &mut findings);
-    nonblank(title.as_deref(), "title", &mut findings);
-    nonblank(prompt.as_deref(), "prompt", &mut findings);
-    if let Some(name) = name.as_ref().filter(|name| !name.trim().is_empty())
-        && !valid_name(name)
-    {
-        findings.push(invalid(
-            format!("name {name:?} does not match [a-z][a-z0-9_.]*"),
-            &["name"],
-        ));
-    }
-    if let Some(prompt) = &prompt
-        && prompt.len() > MAX_PROMPT_BYTES
-    {
-        findings.push(invalid(
-            format!(
-                "the prompt is {} bytes, more than {MAX_PROMPT_BYTES}",
-                prompt.len()
-            ),
-            &["prompt"],
-        ));
-    }
     let tools = texts(map, "tools", &[], &mut findings);
     let laws = texts(map, "laws", &[], &mut findings);
     let budgets = required(map, "budgets", &mut findings)
@@ -614,7 +592,27 @@ pub fn check_agent(payload: &str, context: &AgentContext) -> Vec<Diagnostic> {
         Ok(agent) => agent,
         Err(findings) => return findings,
     };
+    // Blank text, the name grammar and the prompt bound are findings beside the
+    // others, not decode failures, so an editor sees every problem at once.
     let mut findings = Vec::new();
+    nonblank(Some(&agent.name), "name", &mut findings);
+    nonblank(Some(&agent.title), "title", &mut findings);
+    nonblank(Some(&agent.prompt), "prompt", &mut findings);
+    if !agent.name.trim().is_empty() && !valid_name(&agent.name) {
+        findings.push(invalid(
+            format!("name {:?} does not match [a-z][a-z0-9_.]*", agent.name),
+            &["name"],
+        ));
+    }
+    if agent.prompt.len() > MAX_PROMPT_BYTES {
+        findings.push(invalid(
+            format!(
+                "the prompt is {} bytes, more than {MAX_PROMPT_BYTES}",
+                agent.prompt.len()
+            ),
+            &["prompt"],
+        ));
+    }
     if !context.models.contains(&agent.model) {
         findings.push(error(
             codes::UNKNOWN_MODEL,
@@ -822,6 +820,22 @@ mod tests {
         assert_eq!(
             with(|a| a["prompt"] = json!("p".repeat(MAX_PROMPT_BYTES))),
             Vec::new()
+        );
+    }
+
+    #[test]
+    fn a_blank_title_does_not_hide_the_other_findings() {
+        let mut found = with(|a| {
+            a["title"] = json!("");
+            a["model"] = json!("gpt-4");
+        });
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                (codes::INVALID_PAYLOAD.to_owned(), "/title".to_owned()),
+                (codes::UNKNOWN_MODEL.to_owned(), "/model".to_owned()),
+            ]
         );
     }
 
