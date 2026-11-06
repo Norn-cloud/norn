@@ -25,7 +25,7 @@ function d1(db: Database): D1Database {
 }
 
 let address = 0
-function stage() {
+function stage(gatewayClient = false) {
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   db.exec(migration("0002_connector_policy.sql"))
@@ -35,7 +35,7 @@ function stage() {
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
   }
-  const auth = createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN })
+  const auth = createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, ...gatewayClient ? { gateway: { url: GATEWAY, clientId: "studio", clientSecret: "s".repeat(32) } } : {} })
   const calls: Request[] = []
   let answer: (request: Request) => Response = () => Response.json({})
   const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -45,11 +45,11 @@ function stage() {
     return answer(request)
   }) as typeof fetch
   const deps: ConnectorDeps = { db: d1(db), grant: async () => TOKEN, fetch: fetcher }
-  const send = async (path: string, init: RequestInit & { cookie?: string } = {}, overrides: Partial<ConnectorDeps> = {}, gateway: string | undefined = GATEWAY) => {
+  const send = async (path: string, init: RequestInit & { cookie?: string } = {}, overrides: Partial<ConnectorDeps> = {}, gateway: string | null = GATEWAY) => {
     const headers = new Headers(init.headers)
     if (init.cookie !== undefined) headers.set("cookie", init.cookie)
     if (init.method !== undefined && init.method !== "GET") headers.set("origin", ORIGIN)
-    const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { GATEWAY_URL: gateway, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides })
+    const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides })
     const text = await response.text()
     expect(text).not.toContain(TOKEN)
     return { status: response.status, body: JSON.parse(text) as Record<string, unknown> }
@@ -87,8 +87,10 @@ test("only an organization admin sets which tools may be bound; the default is n
 test("a stage without a gateway says so, and an unlinked person is asked to sign in to it", async () => {
   const { send, signUp } = stage()
   const owner = await signUp("ada@example.com")
-  expect((await send("/status", { cookie: owner }, {}, undefined)).body).toEqual({ gateway: null, linked: false })
-  expect((await send("/inventory", { cookie: owner }, {}, undefined)).body.code).toBe("connectors.not_configured")
+  expect((await send("/status", { cookie: owner }, {}, null)).body).toEqual({ gateway: null, linked: false })
+  expect((await send("/inventory", { cookie: owner }, {}, null)).body.code).toBe("connectors.not_configured")
+  // The real grant lookup: this person has linked no gateway account.
+  expect((await send("/status", { cookie: owner }, { grant: undefined })).body).toEqual({ gateway: GATEWAY, linked: false })
   expect((await send("/inventory", { cookie: owner }, { grant: async () => null })).body.code).toBe("connectors.not_linked")
 })
 
@@ -119,7 +121,7 @@ test("a call runs only when policy allows the tool and the role may run tools", 
   expect(calls.slice(before).some((request) => request.url.endsWith("/tools/call"))).toBe(false)
   const ran = await send("/apps/github/tools/list_issues/call", { ...callBody({ repo: "norn" }), cookie: owner })
   expect(ran.body).toEqual({ app: "github", tool: "list_issues", result: { issues: [] } })
-  expect(await calls.at(-1)?.json()).toEqual({ tool: "list_issues", input: { repo: "norn" } })
+  expect((await calls.at(-1)?.json()) as unknown).toEqual({ tool: "list_issues", input: { repo: "norn" } })
   const viewer = await signUp("viewer@example.com", "viewer")
   expect((await send("/apps/github/tools/list_issues/call", { ...callBody({}), cookie: viewer })).body.code).toBe("connectors.forbidden")
 })
@@ -140,4 +142,16 @@ test("the Worker routes /api/connectors/ through the server-side actor", async (
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, GATEWAY_URL: GATEWAY }
   const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env)
   expect([response.status, ((await response.json()) as { code: string }).code]).toEqual([401, "connectors.sign_in"])
+})
+
+test("signing in to the gateway is an authorization-code link with PKCE, back to Connections", async () => {
+  const { send, signUp } = stage(true)
+  const owner = await signUp("ada@example.com")
+  const { body } = await send("/link", { method: "POST", cookie: owner })
+  const url = new URL(String(body.url))
+  expect(`${url.origin}${url.pathname}`).toBe(`${GATEWAY}/api/auth/oauth2/authorize`)
+  expect(url.searchParams.get("client_id")).toBe("studio")
+  expect(url.searchParams.get("code_challenge_method")).toBe("S256")
+  expect(url.searchParams.get("scope")?.split(" ")).toContain("executor")
+  expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/callback/executor`)
 })

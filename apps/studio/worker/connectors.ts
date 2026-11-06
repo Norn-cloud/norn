@@ -34,7 +34,7 @@ export interface ConnectorEnv {
 /** What the routes reach outside the request: the policy table, the user's grant and the network. */
 export interface ConnectorDeps {
   readonly db: D1Database
-  readonly grant?: (auth: Auth, request: Request, actor: NornActor) => Promise<string | null>
+  readonly grant?: (auth: Auth, request: Request) => Promise<string | null>
   readonly fetch?: typeof fetch
 }
 
@@ -71,12 +71,21 @@ async function replacePolicy(db: D1Database, actor: NornActor, entries: readonly
   ])
 }
 
+/** The Better Auth row of the user's linked gateway account, if any. */
+async function gatewayAccount(auth: Auth, request: Request): Promise<string | null> {
+  const accounts = await auth.api.listUserAccounts({ headers: request.headers })
+  return accounts.find((account) => account.providerId === GATEWAY_PROVIDER)?.id ?? null
+}
+
 /** The user's gateway grant, refreshed by Better Auth when it has expired; null when not linked. */
-async function grant(auth: Auth, request: Request, actor: NornActor): Promise<string | null> {
+async function grant(auth: Auth, request: Request): Promise<string | null> {
+  const accountId = await gatewayAccount(auth, request)
+  if (accountId === null) return null
   try {
-    const { accessToken } = await auth.api.getAccessToken({ body: { providerId: GATEWAY_PROVIDER, userId: actor.subjectId }, headers: request.headers })
+    const { accessToken } = await auth.api.getAccessToken({ body: { accountId }, headers: request.headers })
     return accessToken ?? null
   } catch {
+    // A grant that can no longer be refreshed is the same as none: the person signs in again.
     return null
   }
 }
@@ -116,13 +125,15 @@ export async function connectors(request: Request, env: ConnectorEnv, auth: Auth
   if (route === "GET /status" && gatewayOrigin === undefined) return ok({ gateway: null, linked: false })
   if (gatewayOrigin === undefined) return refusal(503, "connectors.not_configured", "No tool gateway is configured for this deployment.")
   if (route === "POST /link") {
-    const { url } = await auth.api.oAuth2LinkAccount({ body: { providerId: GATEWAY_PROVIDER, callbackURL: "/connections" }, headers: request.headers })
+    // The generic OAuth provider is a social provider to Better Auth; linking needs the session.
+    const { url } = await auth.api.linkSocialAccount({ body: { provider: GATEWAY_PROVIDER, callbackURL: "/connections" }, headers: request.headers })
     return ok({ url })
   }
-  const token = await (deps.grant ?? grant)(auth, request, actor)
+  const token = await (deps.grant ?? grant)(auth, request)
   if (route === "GET /status") return ok({ gateway: gatewayOrigin, linked: token !== null })
   if (route === "POST /unlink") {
-    await auth.api.unlinkAccount({ body: { providerId: GATEWAY_PROVIDER }, headers: request.headers })
+    const accountId = await gatewayAccount(auth, request)
+    if (accountId !== null) await auth.api.unlinkAccount({ body: { accountId }, headers: request.headers })
     return ok({ linked: false })
   }
   if (token === null) return refusal(409, "connectors.not_linked", "Sign in to the tool gateway first.")
