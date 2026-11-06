@@ -14,6 +14,7 @@ import { StatusPage } from "./status.tsx"
 import { GuaranteesPage, useGuaranteesMenu } from "./guarantees.tsx"
 import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
 import { CanvasPage } from "./canvas.tsx"
+import { RunPage } from "./run-page.tsx"
 import { ObjectPage } from "./objects.tsx"
 import "./index.css"
 
@@ -83,6 +84,7 @@ const router = createRouter({
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),
     createRoute({ getParentRoute: () => root, path: "/questions/$name", component: QuestionPage }),
+    createRoute({ getParentRoute: () => root, path: "/runs/$id", component: RunPage }),
   ]),
 })
 

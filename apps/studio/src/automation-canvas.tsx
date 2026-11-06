@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query"
-import { useCallback } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useNavigate } from "@tanstack/react-router"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStoreApi, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
-import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, Copy, Play, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,7 +11,10 @@ import { cn } from "@/lib/utils"
 import { CARD, EDGE_PILL, InspectorHead, InspectorSection, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
-import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
+import { FlowRoutesMissing, flowStore, newRunId, nodeOfFinding, type FlowFinding, type FlowPayload, type FlowStore } from "./lib/canvas/flows.ts"
+import { scopeOf } from "./lib/scope.ts"
+import { useAccount } from "./lib/session.ts"
+import { automationKinds, branchesOf, flowDefinitionPayload, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
@@ -283,23 +287,99 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
 }
 
 /** Edit an automation: every change lowers it through lowerFlow and runs the checker over what it lowers to. */
-export function AutomationEditor() {
+/** Why saving an automation is unavailable, by what the server says about this workspace. */
+export const NO_CELL = "This workspace has no data cell yet"
+
+/**
+ * One automation, saved to and run in the cell (D66). Save lowers the drawing and sends it as a flow definition
+ * (admit, then install as the version after the one opened); the cell's refusals land on the steps they name. Run
+ * starts the saved version and opens its run. Retire takes it out of use; the cell keeps its history.
+ */
+export function AutomationEditor({ store: given }: { readonly store?: FlowStore | null } = {}) {
+  const account = useAccount()
+  const scope = given !== undefined ? null : scopeOf(account.data)
+  const store = useMemo(() => given !== undefined ? given : scope ? flowStore(scope) : null, [given, scope?.orgId, scope?.environmentId])
+  const noCell = store === null && !account.isPending
+  const client = useQueryClient()
+  const navigate = useNavigate()
+  const stored = useQuery({ queryKey: ["flow", META.id, scope?.orgId, scope?.environmentId], queryFn: async () => (await store!.get(META.id)) ?? null, enabled: store !== null, retry: false })
+  const routesDown = stored.error instanceof FlowRoutesMissing
+  const [at, setAt] = useState<{ readonly version: number }>()
+  useEffect(() => { setAt(stored.data ? { version: stored.data.version } : undefined) }, [stored.data])
+  // The cell's refusal, held for the drawing it refused: any edit makes it stale, so it goes.
+  const [refused, setRefused] = useState<{ readonly drawing: string; readonly issues: readonly Issue[] } | null>(null)
+  const [notice, setNotice] = useState<{ readonly tone: "refusal" | "info"; readonly text: string } | null>(null)
+  const [busy, setBusy] = useState(false)
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const issues = useCallback((graph: g.Graph) => {
     const { lowered, problems } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
     const own: Issue[] = problems.map(({ code, message, node }) => ({ code, message, ...(node ? { node } : {}) }))
-    if (!lowered) return { issues: own, status: <Badge variant="destructive">{own.length} {own.length === 1 ? "finding" : "findings"}</Badge> }
-    if (checker.isError) return { issues: own, status: <span className="text-destructive" role="alert">Checker not loaded: lowering findings only</span> }
-    if (!checker.data) return { issues: own, status: <span role="status">Lowered; loading the checker…</span> }
+    const cell = refused && refused.drawing === JSON.stringify(graph) ? refused.issues : []
+    if (!lowered) return { issues: [...own, ...cell], status: <Badge variant="destructive">{own.length} {own.length === 1 ? "finding" : "findings"}</Badge> }
+    if (checker.isError) return { issues: [...own, ...cell], status: <span className="text-destructive" role="alert">Checker not loaded: lowering findings only</span> }
+    if (!checker.data) return { issues: [...own, ...cell], status: <span role="status">Lowered; loading the checker…</span> }
     // The checker's findings name generated states; each state belongs to the step that lowered to it.
     const owner = (message: string) => [...lowered.states].find(([, states]) => states.some((name) => message.includes(`"${name}"`)))?.[0]
-    const found: Issue[] = checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message }) => ({ code, message, ...(owner(message) ? { node: owner(message) } : {}) }))
+    const found: Issue[] = [...checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message }) => ({ code, message, ...(owner(message) ? { node: owner(message) } : {}) })), ...cell]
     return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no findings</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
-  }, [checker.isError, checker.data])
+  }, [checker.isError, checker.data, refused])
+  const save = async (graph: g.Graph) => {
+    if (!store) return { tone: "refusal" as const, text: NO_CELL }
+    const { lowered } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
+    if (!lowered) return { tone: "refusal" as const, text: "The drawing does not lower to a flow; fix its findings first." }
+    // The flow, its artifacts, and the drawing itself, so it reopens exactly as it was left.
+    const payload: FlowPayload = { ...flowDefinitionPayload(lowered), layout: { nodes: graph.nodes, edges: graph.edges } }
+    const refuse = (findings: readonly FlowFinding[]) => {
+      const nodes = graph.nodes.map(({ id }) => id)
+      setRefused({ drawing: JSON.stringify(graph), issues: findings.map((finding) => ({ code: finding.code, message: finding.message, ...(nodeOfFinding(finding, nodes, lowered.states) ? { node: nodeOfFinding(finding, nodes, lowered.states)! } : {}) })) })
+      return { tone: "refusal" as const, text: `The cell refused the automation: ${findings.map(({ code }) => code).join(", ")}.` }
+    }
+    const admission = await store.admit(META.id, payload)
+    if (!admission.admitted) return refuse(admission.findings)
+    const result = await store.install(META.id, payload, at?.version)
+    if (result.installed) {
+      setRefused(null); setAt({ version: result.version })
+      void client.invalidateQueries({ queryKey: ["flow", META.id] })
+      return { tone: "info" as const, text: `Saved as version ${result.version}; the cell admitted and installed it${result.receipt ? ` (receipt ${result.receipt.slice(0, 12)}…)` : ""}. Run starts it.` }
+    }
+    if ("conflict" in result) return { tone: "refusal" as const, text: "Someone saved a newer version first. Reopen the automation to see it; your drawing is kept as a draft." }
+    if ("runsLive" in result) return { tone: "refusal" as const, text: "The cell refused: this flow has live runs." }
+    return refuse(result.findings)
+  }
+  const run = async () => {
+    if (!store || !at || busy) return
+    setBusy(true); setNotice(null)
+    try {
+      const started = await store.start(META.id, newRunId())
+      void navigate({ to: "/runs/$id", params: { id: started.id } })
+    } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) }
+    finally { setBusy(false) }
+  }
+  const retire = async () => {
+    if (!store || !at || busy || !globalThis.confirm("Retire this automation? It stops being runnable; the cell keeps its history.")) return
+    setBusy(true); setNotice(null)
+    try {
+      const result = await store.retire(META.id, at.version)
+      if (result.installed) { setAt(undefined); setNotice({ tone: "info", text: `Retired. The cell keeps versions 1 to ${result.version - 1} and their runs.` }); void client.invalidateQueries({ queryKey: ["flow", META.id] }) }
+      else setNotice({ tone: "refusal", text: "runsLive" in result ? "The cell refused: this automation has runs still going. Retire it once they end." : "conflict" in result ? "Someone changed it first; reopen it." : `The cell refused: ${result.findings.map(({ code }) => code).join(", ")}.` })
+    } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) }
+    finally { setBusy(false) }
+  }
+  const blocked = noCell ? NO_CELL : routesDown ? (stored.error as Error).message : SAVE_BLOCKED
+  const frame = automationFrame(issues, stored.data?.payload.layout ? { nodes: [...stored.data.payload.layout.nodes], edges: [...stored.data.payload.layout.edges] } : EXAMPLE)
+  if (store && stored.isLoading) return <p role="status" className="text-sm text-muted-foreground">Opening the automation…</p>
   return (
     <div className="space-y-2">
-      <CanvasFrame {...automationFrame(issues)} />
-      <div className="flex justify-end"><Unavailable reason={RUN_BLOCKED}>Run in the cell</Unavailable></div>
+      {stored.isError && !routesDown && <p role="alert" className="text-destructive">{(stored.error as Error).message}</p>}
+      <CanvasFrame key={stored.data?.version ?? "new"} {...frame} draftKey={`automation:${META.id}:${stored.data?.version ?? "new"}`} saveBlocked={blocked} {...store && !routesDown ? { save } : {}} />
+      <div className="flex flex-wrap items-center justify-end gap-2" data-testid="automation-actions">
+        <span className="text-meta text-muted-foreground">{at ? `Saved in the cell · version ${at.version}` : "Not saved in the cell"}</span>
+        {notice && <span role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{notice.text}</span>}
+        {at && store ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void retire()}>Retire</Button> : null}
+        {at && store
+          ? <Button size="sm" disabled={busy} title={`Start a run of version ${at.version} in the cell`} onClick={() => void run()}><Play />{busy ? "Starting…" : "Run in the cell"}</Button>
+          : <Unavailable reason={noCell ? NO_CELL : "Save the automation to the cell first; a run starts the saved version."}>Run in the cell</Unavailable>}
+      </div>
     </div>
   )
 }

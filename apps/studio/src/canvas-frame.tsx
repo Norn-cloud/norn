@@ -67,6 +67,8 @@ export interface CanvasFrameProps {
   readonly empty: ReactNode
   /** Why the server save is not available, until the admission route is live. */
   readonly saveBlocked: string
+  /** Save to the server (the cell admits and installs); without it, Save to server is unavailable with `saveBlocked`. */
+  readonly save?: (graph: g.Graph) => Promise<{ readonly tone: "refusal" | "info"; readonly text: string }>
   /** Shown under the canvas for the current selection (a decision's preview). */
   readonly below?: (editing: Editing) => ReactNode
   /** Open with these selected (a link to a finding, or a contact-sheet state). */
@@ -168,6 +170,13 @@ function Frame(props: CanvasFrameProps) {
       : { tone: "refusal", text: "This browser does not allow saving a draft here." })
     if (dirty) setDraftAt(at)
   }
+  const [saving, setSaving] = useState(false)
+  const saveServer = async () => {
+    if (!props.save || saving) return
+    if (unresolved) { setNotice({ tone: "refusal", text: unresolved }); return }
+    setSaving(true)
+    try { setNotice(await props.save(graph)) } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) } finally { setSaving(false) }
+  }
   const discard = () => {
     writeDraft(draftKey, undefined)
     setState(g.history(initial))
@@ -193,13 +202,15 @@ function Frame(props: CanvasFrameProps) {
       else if (key === "c") act(() => { clipboard = g.subgraph(graph, copyable(selection.nodes)); setNotice({ tone: "info", text: `Copied ${clipboard.nodes.length} ${clipboard.nodes.length === 1 ? "item" : "items"}.` }) })
       else if (key === "v" && clipboard) act(() => clipboard && duplicate(clipboard))
       else if (key === "a") act(() => setSelection({ nodes: graph.nodes.map(({ id }) => id), edges: graph.edges.map(({ id }) => id) }))
-      else if (key === "s") act(saveDraft)
+      else if (key === "s") act(props.save ? () => void saveServer() : saveDraft)
     }
     window.addEventListener("keydown", keys)
     return () => window.removeEventListener("keydown", keys)
   })
 
   const { issues, status } = useMemo(() => props.issues(graph), [props.issues, graph])
+  // The UI offers a server save only for a drawing with no findings; the cell still checks and decides on its own.
+  const unresolved = issues.length === 0 ? null : `Fix ${issues.length} ${issues.length === 1 ? "problem" : "problems"} first`
   const on = (key: "node" | "edge", id: string) => issues.filter((issue) => issue[key] === id)
   const jump = (issue: Issue) => {
     if (issue.node) { setSelection({ nodes: [issue.node], edges: [] }); void flow.fitView({ nodes: [{ id: issue.node }], duration: 300, maxZoom: 1.2, minZoom: READABLE }) }
@@ -337,7 +348,9 @@ function Frame(props: CanvasFrameProps) {
                   <Sep />
                   <Button size="sm" variant="ghost" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
                   {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
-                  <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
+                  {!props.save ? <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
+                    : unresolved ? <Unavailable reason={unresolved}>Save to server</Unavailable>
+                      : <Button size="sm" title="Save to the cell (⌘S): it checks again and decides" disabled={saving} onClick={() => void saveServer()}>{saving ? "Saving…" : "Save to server"}</Button>}
                 </div>
               </FlowPanel>
             </ReactFlow>}
