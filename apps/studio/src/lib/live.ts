@@ -45,9 +45,22 @@ export interface Trace {
  * stage) mean live reads are not available, and the page keeps its recording.
  */
 export async function hostRead<T>(path: string, fetcher: Fetch = fetch): Promise<LiveRead<T>> {
-  const response = await fetcher(`/api/host${path}`, { headers: { accept: "application/json" } })
-  const text = await response.text()
-  if (response.ok) return { kind: "read", read: readDocument<T>(text, "live") }
+  let response: Response
+  let text: string
+  try {
+    response = await fetcher(`/api/host${path}`, { headers: { accept: "application/json" } })
+    text = await response.text()
+  } catch {
+    // The network failed: no live read, so the page shows its recording rather than a stale "Live".
+    return { kind: "unavailable", status: 0 }
+  }
+  if (response.ok) {
+    try {
+      return { kind: "read", read: readDocument<T>(text, "live") }
+    } catch {
+      return { kind: "unavailable", status: response.status }
+    }
+  }
   if (response.status === 403) {
     try {
       const body = JSON.parse(text) as Partial<Refusal>

@@ -72,3 +72,8 @@ test("a refused live read shows the server's reason over the recorded snapshot",
   expect(html).toContain("authz.denied")
   expect(html).toContain(">Recorded snapshot<")
 })
+
+test("a network failure or a 200 that is not JSON is no live read, so the page keeps its recording", async () => {
+  expect(await hostRead("/v1/x", async () => { throw new TypeError("network") })).toEqual({ kind: "unavailable", status: 0 })
+  expect(await hostRead("/v1/x", respond(200, "<html>gateway</html>"))).toEqual({ kind: "unavailable", status: 200 })
+})
