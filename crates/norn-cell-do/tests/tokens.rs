@@ -63,6 +63,12 @@ fn demo() -> Demo {
     let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
     let tokens =
         TokenPrincipals::new(ISSUER, &jwks(&[(1, "k1")]), scope.clone(), policy.caller()).unwrap();
+    let caller = policy.caller();
+    let object_types = store
+        .model()
+        .object_types()
+        .map(|object_type| object_type.name.as_str().to_owned())
+        .collect();
     let host = DevHost::from_store(store, scope, |command| command.payload.clone())
         .unwrap()
         .with_authorizer(policy);

@@ -254,3 +254,80 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
         [ReadCapability::Population]
     );
 }
+
+/// The declared table, pinned exactly: a change of mapping is a new version.
+#[test]
+fn the_grant_table_is_pinned_exactly() {
+    use ReadCapability::{Population, Sources, Values};
+    let table: Vec<(&str, Vec<ReadCapability>)> = DEMO_GRANTS
+        .entries
+        .iter()
+        .map(|(role, capabilities)| (*role, capabilities.to_vec()))
+        .collect();
+    assert_eq!(
+        table,
+        vec![
+            ("viewer", vec![Population]),
+            ("member", vec![Population, Values]),
+            ("admin", vec![Population, Values, Sources]),
+            ("owner", vec![Population, Values, Sources]),
+        ]
+    );
+    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/1");
+    let held = |roles: &[&str]| {
+        DEMO_GRANTS.capabilities(&roles.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>())
+    };
+    // Roles match exactly: no case folding, no trimming.
+    for variant in ["Admin", "ADMIN", "admin ", " admin", "Viewer"] {
+        assert!(held(&[variant]).is_empty(), "{variant:?}");
+    }
+    // Duplicates and unions add nothing beyond the declared grants.
+    assert_eq!(held(&["viewer", "viewer"]), [Population]);
+    assert_eq!(held(&["viewer", "member"]), [Population, Values]);
+    assert_eq!(held(&["viewer", "analyst"]), [Population]);
+}
+
+/// The grant is the caller's as a user; a request presenting the same subject
+/// as a service is not that caller's grant.
+#[test]
+fn a_service_request_does_not_borrow_a_user_grant() {
+    let host = host();
+    let scope = host.scope().clone();
+    let mut request = access("viewer@demo", ReadCapability::Values, &scope);
+    request.principal.actor_kind = ActorKind::Service;
+    assert_eq!(gate(&host, &request, ReadCapability::Values), Some(403));
+}
+
+/// A verified caller ends with its request: afterwards a direct read naming
+/// that subject is denied. Fails if the request guard is removed.
+#[test]
+fn a_request_s_caller_is_forgotten_when_the_request_ends() {
+    use norn_cell_do::principal::FixturePrincipals;
+    use norn_cell_do::server;
+    let host = host();
+    let scope = host.scope().clone();
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, Arc::clone(&host.slot));
+    for path in ["/v1/definitions", "/v1/not-a-route"] {
+        let request = server::Request {
+            method: "GET",
+            path,
+            query: "orgId=org_demo&environmentId=dev",
+            authorization: Some("Bearer fixture:viewer@demo"),
+            now: 0,
+        };
+        let _ = server::handle(&host.host, &principals, &request);
+        assert!(
+            host.slot.current().is_none(),
+            "{path}: the caller outlived its request"
+        );
+        let after = access("viewer@demo", ReadCapability::Values, &scope);
+        let denied = host.read_access(
+            &explicit(&scope),
+            &ReadRequest {
+                capability: ReadCapability::Values,
+                access: &after,
+            },
+        );
+        assert_eq!(denied.err().map(|r| r.status), Some(403), "{path}");
+    }
+}

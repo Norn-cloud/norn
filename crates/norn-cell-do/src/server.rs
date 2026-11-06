@@ -19,7 +19,7 @@ use norn_cell::engine::SqlEngine;
 use norn_api::authz::{ReadCapability, ReadRequest};
 
 use crate::policy::{CallerSlot, DEMO_GRANTS, READ_POLICY_ID, collection_access};
-use crate::principal::PrincipalResolver;
+use crate::principal::{PrincipalResolver, RequestScope};
 
 /// One finite HTTP response: a status and a JSON body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +71,8 @@ pub fn handle_with<E: SqlEngine>(
         authorization,
         now,
     } = *request;
+    // The verified principal lives exactly as long as this request.
+    let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
     let question = path
@@ -260,6 +262,8 @@ fn access_document<E: SqlEngine>(
         org_id: fields.get("orgId").cloned(),
         environment_id: fields.get("environmentId").cloned(),
     };
+    // The verified principal lives exactly as long as this request.
+    let _request = RequestScope::new(principals);
     let subject = principals.resolve(request.authorization, request.now);
     let decide = |capability| {
         let subject = subject.as_deref().unwrap_or_default();
