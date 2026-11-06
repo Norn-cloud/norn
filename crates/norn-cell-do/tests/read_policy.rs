@@ -313,8 +313,8 @@ fn a_request_s_caller_is_forgotten_when_the_request_ends() {
             path,
             query: "orgId=org_demo&environmentId=dev",
             authorization: Some("Bearer fixture:viewer@demo"),
-            body: "",
             now: 0,
+            body: "",
         };
         let _ = server::handle(&host.host, &principals, &request);
         assert!(

@@ -16,7 +16,9 @@ use norn_cell::{
     },
     engine::SqlEngine,
 };
-use norn_checker::metric::compute::QuestionPlan;
+use norn_checker::EffectiveCatalog;
+use norn_checker::metric::compute::{QuestionPlan, admit};
+use norn_ir::{MetricDefinition, QuestionIR};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use utoipa::IntoParams;
@@ -73,7 +75,9 @@ pub const DEFAULT_MIN_DISCLOSED_BUCKET: usize = 3;
 fn handle_key<E: SqlEngine>(runtime: &dyn QuestionRuntime<E>) -> Result<&[u8], Refusal> {
     let key = runtime.handle_key();
     if key.len() < 32 {
-        return Err(Refusal::host("the lineage handle key is shorter than 32 bytes"));
+        return Err(Refusal::host(
+            "the lineage handle key is shorter than 32 bytes",
+        ));
     }
     Ok(key)
 }
@@ -132,8 +136,21 @@ pub fn get_answer<E: SqlEngine>(
     if access.resource.object_type != plan.grain().as_str() {
         return Err(read_denied());
     }
+    answer_plan(host, runtime, actor, question, &plan, key)
+}
+
+/// Evaluate an admitted `plan` for `actor` under the row gates and D53
+/// redaction, after the caller's collection access was decided.
+fn answer_plan<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: &dyn QuestionRuntime<E>,
+    actor: &str,
+    question: &str,
+    plan: &QuestionPlan,
+    key: &[u8],
+) -> Result<QuestionAnswer, Refusal> {
     let cell = host.cell()?;
-    let snapshot = runtime.snapshot(cell.store(), &plan, actor)?;
+    let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
@@ -143,11 +160,11 @@ pub fn get_answer<E: SqlEngine>(
     let mut answer = match snapshot.cutoff {
         Some(cutoff) => cell
             .store()
-            .evaluate_question_known_at(&plan, snapshot.context, cutoff, visible)
+            .evaluate_question_known_at(plan, snapshot.context, cutoff, visible)
             .map(QuestionAnswer::Historical),
         None => cell
             .store()
-            .evaluate_question(&plan, snapshot.context, visible)
+            .evaluate_question(plan, snapshot.context, visible)
             .map(QuestionAnswer::Live),
     }
     .map_err(Refusal::from_compute)?;
@@ -220,8 +237,24 @@ pub fn get_numeric_trace<E: SqlEngine>(
         .bucket
         .as_deref()
         .ok_or_else(|| Refusal::invalid("bucket is required"))?;
+    trace_plan(host, runtime, actor, question, &plan, key, lineage, bucket)
+}
+
+/// Trace one bucket of an admitted `plan`'s current exact result, named by
+/// its keyed handle, after the caller's collection access was decided.
+#[allow(clippy::too_many_arguments, reason = "one trace's fixed coordinates")]
+fn trace_plan<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: &dyn QuestionRuntime<E>,
+    actor: &str,
+    question: &str,
+    plan: &QuestionPlan,
+    key: &[u8],
+    lineage: &str,
+    bucket: &str,
+) -> Result<NumericTrace, Refusal> {
     let cell = host.cell()?;
-    let snapshot = runtime.snapshot(cell.store(), &plan, actor)?;
+    let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
@@ -235,7 +268,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
     let mut trace = cell
         .store()
         .trace_question_matching(
-            &plan,
+            plan,
             snapshot.context,
             &|internal| lineage_handle_matches(key, internal, lineage),
             bucket,
@@ -247,7 +280,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
         )
         .map_err(Refusal::from_compute)?;
     withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
-    trace.result.lineage_ref = lineage.to_owned();
+    lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)
 }
 
@@ -287,4 +320,227 @@ fn allowed<E: SqlEngine>(
         capability,
         access: &access,
     }))
+}
+
+/// F2b: a cell that also answers ad-hoc questions over its declared metrics.
+/// A question submitted here has no resource of its own: it is authorized as
+/// the union of every catalog metric and object type it reads, all of which
+/// must be granted, decided before admission so that a refusal's diagnostics
+/// never describe an ungranted resource.
+pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
+    /// The cell's declared metric definitions; a question may name only these.
+    fn definitions(&self) -> &[MetricDefinition];
+    /// The effective catalog a question is admitted against.
+    fn catalog(&self) -> &EffectiveCatalog;
+    /// Rows read per evaluation (the admission budget). Above it the
+    /// evaluation refuses `core.compute.bound_exceeded` (413); never a
+    /// truncated answer.
+    fn max_rows(&self) -> u32;
+    /// Output buckets per answer. Above it the answer refuses
+    /// `question.bucket_bound_exceeded` (413); never a truncated answer.
+    fn max_buckets(&self) -> usize;
+}
+
+/// `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EvaluateRequest {
+    /// The `QuestionIR` to admit against the cell's declared metrics. It is
+    /// evaluated once and never installed.
+    #[schema(value_type = Object)]
+    pub question: QuestionIR,
+}
+
+/// `POST /v1/questions:trace`: one bucket of an ad-hoc question's answer.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AdHocTraceRequest {
+    /// The same `QuestionIR` the answer was evaluated from.
+    #[schema(value_type = Object)]
+    pub question: QuestionIR,
+    /// The `lineageRef` handle that answer returned.
+    pub lineage_ref: String,
+    /// Canonical bucket key from that answer.
+    pub bucket: String,
+}
+
+fn bucket_bound_exceeded() -> Refusal {
+    Refusal::new(
+        http::StatusCode::PAYLOAD_TOO_LARGE,
+        "question.bucket_bound_exceeded",
+        "the answer has more buckets than this cell serves",
+        "narrow the question: a shorter time window, a coarser grain or fewer groups",
+    )
+}
+
+/// Every metric `question` reads: those it names and, transitively, a
+/// ratio's numerator and denominator. An undeclared metric is a denial,
+/// indistinguishable from an ungranted one.
+fn read_metrics<'d>(
+    question: &QuestionIR,
+    definitions: &'d [MetricDefinition],
+) -> Result<Vec<&'d MetricDefinition>, Refusal> {
+    let mut seen = BTreeSet::new();
+    let mut read = Vec::new();
+    let mut pending: Vec<&str> = question.metrics.iter().map(|m| m.metric.as_str()).collect();
+    while let Some(name) = pending.pop() {
+        if !seen.insert(name.to_owned()) {
+            continue;
+        }
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == name)
+            .ok_or_else(read_denied)?;
+        pending.extend(definition.type_params.numerator.as_deref());
+        pending.extend(definition.type_params.denominator.as_deref());
+        read.push(definition);
+    }
+    Ok(read)
+}
+
+/// Authorize every metric and object type `question` reads, then admit it.
+fn admit_ad_hoc<'r, E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: &str,
+    question: &QuestionIR,
+    runtime: &'r dyn AdHocQuestions<E>,
+) -> Result<(QuestionPlan, &'r [u8]), Refusal> {
+    let key = handle_key(runtime)?;
+    let named: &dyn QuestionRuntime<E> = runtime;
+    let metrics = read_metrics(question, runtime.definitions())?;
+    let mut types = BTreeSet::from([question.object_set.0.clone()]);
+    types.extend(metrics.iter().filter_map(|metric| {
+        metric
+            .type_params
+            .metric_aggregation_params
+            .as_ref()
+            .map(|params| params.semantic_model.0.clone())
+    }));
+    // The whole read set, before admission: each type as a collection, each
+    // metric as a collection resource of a type the question reads.
+    let resources = types
+        .iter()
+        .map(|object_type| (object_type.as_str(), None))
+        .chain(metrics.iter().map(|metric| {
+            let over = metric
+                .type_params
+                .metric_aggregation_params
+                .as_ref()
+                .map(|params| params.semantic_model.0.as_str());
+            (metric.name.as_str(), Some(over))
+        }));
+    for (resource, over) in resources {
+        let access = mapped(host, named, actor, resource, Population, None)?;
+        let governed = access.resource.object_type.as_str();
+        let expected = match over {
+            None => governed == resource,
+            Some(Some(semantic_model)) => governed == semantic_model,
+            Some(None) => types.contains(governed),
+        };
+        if !expected {
+            return Err(read_denied());
+        }
+        drop(host.read_access(
+            scope,
+            &ReadRequest {
+                capability: Population,
+                access: &access,
+            },
+        )?);
+    }
+    let plan = admit(
+        runtime.definitions(),
+        question,
+        runtime.catalog(),
+        runtime.max_rows(),
+    )
+    .map_err(|findings| {
+        Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            "question.refused",
+            "the question is not admissible",
+            "each diagnostic names the rule and where in the question it applies",
+        )
+        .with_diagnostics(&findings, "/question")
+    })?;
+    if !types.contains(plan.grain().as_str()) {
+        return Err(read_denied());
+    }
+    Ok((plan, key))
+}
+
+/// F2b: admit an ad-hoc question against the cell's declared metrics and
+/// answer it once, under the same row gates and D53 redaction as a named
+/// question. Nothing is installed.
+/// # Errors
+/// Any ungranted or undeclared metric or type (one opaque 403, before
+/// admission), an inadmissible question (422 `question.refused` with
+/// diagnostics), a bound (413), or a compute refusal.
+#[utoipa::path(post, path = "/v1/questions:evaluate", params(ScopeQuery), request_body = EvaluateRequest, responses((status = 200, body = crate::answers::NornQuestionAnswer), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+pub fn evaluate_question<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    request: &EvaluateRequest,
+    runtime: &dyn AdHocQuestions<E>,
+) -> Result<QuestionAnswer, Refusal> {
+    let actor = actor.ok_or_else(read_denied)?;
+    let (plan, key) = admit_ad_hoc(host, scope, actor, &request.question, runtime)?;
+    let _epoch = collection_epoch(host, scope, runtime, actor, &request.question)?;
+    let answer = answer_plan(host, runtime, actor, &request.question.name, &plan, key)?;
+    let buckets = match &answer {
+        QuestionAnswer::Live(result) => result.rows.len(),
+        QuestionAnswer::Historical(historical) => historical.result.rows.len(),
+    };
+    if buckets > runtime.max_buckets() {
+        return Err(bucket_bound_exceeded());
+    }
+    Ok(answer)
+}
+
+/// F2b: trace one bucket of an ad-hoc question's current exact answer, by the
+/// keyed handle that answer returned. Authorized and admitted as `:evaluate`.
+/// # Errors
+/// As [`evaluate_question`], and as [`get_numeric_trace`] for the trace.
+#[utoipa::path(post, path = "/v1/questions:trace", params(ScopeQuery), request_body = AdHocTraceRequest, responses((status = 200, body = crate::trace_contract::NornNumericTrace), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+pub fn trace_ad_hoc<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    request: &AdHocTraceRequest,
+    runtime: &dyn AdHocQuestions<E>,
+) -> Result<NumericTrace, Refusal> {
+    let actor = actor.ok_or_else(read_denied)?;
+    let (plan, key) = admit_ad_hoc(host, scope, actor, &request.question, runtime)?;
+    let _epoch = collection_epoch(host, scope, runtime, actor, &request.question)?;
+    trace_plan(
+        host,
+        runtime,
+        actor,
+        &request.question.name,
+        &plan,
+        key,
+        &request.lineage_ref,
+        &request.bucket,
+    )
+}
+
+/// Hold the definition epoch across evaluation, as a named question does.
+fn collection_epoch<'h, E: SqlEngine>(
+    host: &'h DevHost<E>,
+    scope: &ScopeQuery,
+    runtime: &dyn AdHocQuestions<E>,
+    actor: &str,
+    question: &QuestionIR,
+) -> Result<std::sync::RwLockReadGuard<'h, ()>, Refusal> {
+    let named: &dyn QuestionRuntime<E> = runtime;
+    let access = mapped(host, named, actor, &question.object_set.0, Population, None)?;
+    host.read_access(
+        scope,
+        &ReadRequest {
+            capability: Population,
+            access: &access,
+        },
+    )
 }

@@ -10,7 +10,10 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::host::DevHost;
-use norn_api::question_routes::{QuestionRuntime, TraceQuery, get_answer, get_numeric_trace};
+use norn_api::question_routes::{
+    AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
+    evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
+};
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
 use norn_api::run_routes::{RunsQuery, StartRunRequest, get_run, list_runs, start_run};
@@ -45,10 +48,10 @@ pub struct Request<'a> {
     pub query: &'a str,
     /// The `Authorization` header, if any.
     pub authorization: Option<&'a str>,
-    /// The request body (UTF-8 JSON); empty for reads.
-    pub body: &'a str,
     /// The host's clock (Unix seconds), used to check token lifetimes.
     pub now: u64,
+    /// The request body (`POST` routes), empty when there is none.
+    pub body: &'a str,
 }
 
 /// Dispatch one request against the opened cell.
@@ -60,11 +63,12 @@ pub fn handle<E: SqlEngine>(
     handle_with(host, principals, None, request)
 }
 
-/// Dispatch one request; `questions` serves the cell's admitted questions.
+/// Dispatch one request; `questions` serves the cell's admitted questions
+/// and ad-hoc questions over its declared metrics (F2b).
 pub fn handle_with<E: SqlEngine>(
     host: &DevHost<E>,
     principals: &dyn PrincipalResolver,
-    questions: Option<&dyn QuestionRuntime<E>>,
+    questions: Option<&dyn AdHocQuestions<E>>,
     request: &Request<'_>,
 ) -> Response {
     let Request {
@@ -72,8 +76,8 @@ pub fn handle_with<E: SqlEngine>(
         path,
         query,
         authorization,
-        body,
         now,
+        body,
     } = *request;
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
@@ -86,7 +90,9 @@ pub fn handle_with<E: SqlEngine>(
     let run = path
         .strip_prefix("/v1/runs/")
         .filter(|id| !id.is_empty() && !id.contains('/'));
+    let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
     let known = path == "/v1/definitions"
+        || ad_hoc
         || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
     let result = if path == "/v1/runs" || run.is_some() {
         runs(host, actor, method, query, body, run)
@@ -97,12 +103,14 @@ pub fn handle_with<E: SqlEngine>(
             "no such route",
             "the host serves only its declared read routes",
         ))
+    } else if ad_hoc {
+        ad_hoc_question(host, questions, actor, method, path, query, body)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
             "route.method_not_allowed",
             "the route does not accept this method",
-            "this host is read-only; use GET",
+            "this host's read routes take GET",
         ))
     } else {
         match (question, questions) {
@@ -115,7 +123,7 @@ pub fn handle_with<E: SqlEngine>(
                         org_id: fields.get("orgId").cloned(),
                         environment_id: fields.get("environmentId").cloned(),
                     };
-                    get_answer(host, &scope, actor, name, runtime)
+                    get_answer(host, &scope, actor, name, named(runtime))
                 })
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => {
@@ -127,7 +135,7 @@ pub fn handle_with<E: SqlEngine>(
                             lineage_ref: fields.remove("lineageRef"),
                             bucket: fields.remove("bucket"),
                         };
-                        get_numeric_trace(host, &query, actor, name, runtime)
+                        get_numeric_trace(host, &query, actor, name, named(runtime))
                     })
                     .and_then(|document| document_json(&document))
             }
@@ -218,6 +226,52 @@ fn runs<E: SqlEngine>(
 
 /// Longest accepted request body, in bytes.
 pub const MAX_BODY_BYTES: usize = 4096;
+/// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
+/// string and carrying the `QuestionIR` in a JSON body.
+fn ad_hoc_question<E: SqlEngine>(
+    host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    method: &str,
+    path: &str,
+    query: &str,
+    body: &str,
+) -> Result<String, Refusal> {
+    if method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "ad-hoc questions are submitted with POST",
+        ));
+    }
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    // No runtime, no actor: one denial, before the body is read.
+    let (Some(runtime), Some(_)) = (questions, actor) else {
+        return Err(norn_api::authz::read_denied());
+    };
+    let malformed = |error: serde_json::Error| {
+        Refusal::invalid(format!(
+            "the request body is not a valid submission: {error}"
+        ))
+    };
+    if path == "/v1/questions:evaluate" {
+        let request: EvaluateRequest = serde_json::from_str(body).map_err(malformed)?;
+        document_json(&evaluate_question(host, &scope, actor, &request, runtime)?)
+    } else {
+        let request: AdHocTraceRequest = serde_json::from_str(body).map_err(malformed)?;
+        document_json(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
+    }
+}
+
+/// The named-question view of the cell's question runtime.
+fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
+    runtime
+}
 
 fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
     serde_json::to_string(document).map_err(Refusal::host)

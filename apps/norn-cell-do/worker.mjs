@@ -11,6 +11,8 @@ const PUBLISHED = [["org_demo", "dev"], ["org_demo", "analytics"]];
 const escape = (part) => part.replaceAll("%", "%25").replaceAll("/", "%2F");
 const key = ([org, env]) => `${escape(org)}/${escape(env)}`;
 const CELL_HEADER = "x-norn-cell";
+/** The largest submission a cell accepts (an ad-hoc QuestionIR), in UTF-16 units. */
+const MAX_BODY = 65536;
 
 export class Cell {
   constructor(ctx, env) {
@@ -42,12 +44,15 @@ export class Cell {
   }
   serve(request, body) {
     const url = new URL(request.url);
-    return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, body, Date.now());
+    return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
   }
   async fetch(request) {
-    await this.open(request);
-    // Read once: a JWKS retry serves the same body again.
+    // A submission (an ad-hoc question) is read once, bounded, before the cell sees it.
     const body = request.method === "POST" ? await request.text() : undefined;
+    if (body !== undefined && body.length > MAX_BODY) {
+      return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${MAX_BODY} bytes` }, { status: 413 });
+    }
+    await this.open(request);
     let reply = this.serve(request, body);
     if (reply.refreshJwks) {
       // An unknown key id, at most once per refresh interval: refetch the pinned JWKS and retry once.
