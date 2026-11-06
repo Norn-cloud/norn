@@ -350,7 +350,9 @@ fn definitions<E: SqlEngine>(
                 environment_id: scope.environment_id,
                 version: number("version", fields.remove("version"))?,
             };
-            document_json(&definition_routes::get_definition(host, &query, actor, id)?)
+            document_json(&definition_routes::get_definition(
+                host, &query, actor, kinds, questions, id,
+            )?)
         }
     }
 }

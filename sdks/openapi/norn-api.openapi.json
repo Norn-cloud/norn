@@ -1046,7 +1046,9 @@
         "description": "The admission decision.",
         "required": [
           "admitted",
-          "diagnostics"
+          "diagnostics",
+          "restatement",
+          "restatementSha256"
         ],
         "properties": {
           "admitted": {
@@ -1059,6 +1061,20 @@
               "$ref": "#/components/schemas/RefusalDiagnostic"
             },
             "description": "Every finding, each pointing into the payload."
+          },
+          "restatement": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The plain-words restatement of the admitted payload a signer signs\n(D59); null when not admitted or the kind has no restatement."
+          },
+          "restatementSha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lower-case hex SHA-256 of `restatement`; null with it."
           }
         }
       },
@@ -1072,7 +1088,9 @@
           "lifecycle",
           "payload",
           "receipt",
-          "signoff"
+          "signoff",
+          "restatement",
+          "restatementSha256"
         ],
         "properties": {
           "id": {
@@ -1094,6 +1112,20 @@
           "receipt": {
             "$ref": "#/components/schemas/DefinitionReceipt",
             "description": "The commit that installed this version."
+          },
+          "restatement": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The restatement of this version's payload, recomputed at read time\nagainst the cell's current declarations; null when the kind has none.\nWhen it no longer hashes to `signoff.restatementSha256`, the words the\nsigner read have changed meaning since they signed."
+          },
+          "restatementSha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lower-case hex SHA-256 of `restatement`; null with it."
           },
           "signoff": {
             "oneOf": [

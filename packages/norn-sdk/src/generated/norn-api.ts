@@ -237,6 +237,13 @@ export interface components {
             admitted: boolean;
             /** @description Every finding, each pointing into the payload. */
             diagnostics: components["schemas"]["RefusalDiagnostic"][];
+            /**
+             * @description The plain-words restatement of the admitted payload a signer signs
+             *     (D59); null when not admitted or the kind has no restatement.
+             */
+            restatement: string | null;
+            /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
+            restatementSha256: string | null;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -250,6 +257,15 @@ export interface components {
             payload: Record<string, never>;
             /** @description The commit that installed this version. */
             receipt: components["schemas"]["DefinitionReceipt"];
+            /**
+             * @description The restatement of this version's payload, recomputed at read time
+             *     against the cell's current declarations; null when the kind has none.
+             *     When it no longer hashes to `signoff.restatementSha256`, the words the
+             *     signer read have changed meaning since they signed.
+             */
+            restatement: string | null;
+            /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
+            restatementSha256: string | null;
             signoff: null | components["schemas"]["SignoffDocument"];
             /**
              * Format: int64
