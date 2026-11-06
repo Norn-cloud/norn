@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { Background, BackgroundVariant, Controls, MarkerType, Panel as FlowPanel, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
+import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, useNodesInitialized, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
-import { CircleAlert, Copy, Redo2, Save, Undo2 } from "lucide-react"
+import { CircleAlert, Copy, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
@@ -95,6 +95,13 @@ function Frame(props: CanvasFrameProps) {
   const [notice, setNotice] = useState<{ readonly tone: "refusal" | "info"; readonly text: string } | null>(props.initialNotice
     ?? (restored.current ? { tone: "info", text: `Restored your unsaved draft from ${new Date(restored.current.at).toLocaleString()}.` } : null))
   const flow = useReactFlow()
+  const wide = useWide()
+  const [map, setMap] = useState(true)
+  const [drawer, setDrawer] = useState(false)
+  const closeDrawer = useCallback(() => setDrawer(false), [])
+  const surface = useRef<HTMLDivElement>(null)
+  const initialized = useNodesInitialized()
+  const [framed, setFramed] = useState(false)
   // Whether the canvas is in use: the last pointer-down landed on it, or keyboard focus moved into it
   // (React Flow nodes take focus and selection from the keyboard). Its shortcuts apply only then.
   const canvasActive = useRef(false)
@@ -183,14 +190,33 @@ function Frame(props: CanvasFrameProps) {
   const { issues, status } = useMemo(() => props.issues(graph), [props.issues, graph])
   const on = (key: "node" | "edge", id: string) => issues.filter((issue) => issue[key] === id)
   const jump = (issue: Issue) => {
-    if (issue.node) { setSelection({ nodes: [issue.node], edges: [] }); void flow.fitView({ nodes: [{ id: issue.node }], duration: 300, maxZoom: 1.2 }) }
+    if (issue.node) { setSelection({ nodes: [issue.node], edges: [] }); void flow.fitView({ nodes: [{ id: issue.node }], duration: 300, maxZoom: 1.2, minZoom: READABLE }) }
     else if (issue.edge) {
       const edge = graph.edges.find(({ id }) => id === issue.edge)
       setSelection({ nodes: [], edges: [issue.edge] })
-      if (edge) void flow.fitView({ nodes: [{ id: edge.source }, { id: edge.target }], duration: 300, maxZoom: 1.2 })
+      if (edge) void flow.fitView({ nodes: [{ id: edge.source }, { id: edge.target }], duration: 300, maxZoom: 1.2, minZoom: READABLE })
     }
   }
   const editing: Editing = { graph, selection, edit, select: setSelection }
+  // Below the rail width the inspector is a drawer: selecting something opens it, clearing the selection closes it.
+  const selected = selection.nodes.length + selection.edges.length > 0
+  useEffect(() => { setDrawer(selected) }, [selected, selection])
+  // Open readable: fit the whole graph only when that keeps nodes at READABLE or larger; otherwise frame where it starts and let the user pan.
+  useEffect(() => {
+    if (framed || !initialized) return
+    setFramed(true)
+    const box = surface.current?.getBoundingClientRect()
+    if (!box || graph.nodes.length === 0) return
+    const bounds = flow.getNodesBounds(graph.nodes.map(({ id }) => id))
+    const fits = Math.min(box.width / (bounds.width * (1 + 2 * PADDING)), box.height / (bounds.height * (1 + 2 * PADDING)))
+    if (fits >= READABLE) { void flow.fitView({ padding: PADDING, minZoom: READABLE, maxZoom: 1 }); return }
+    const anchor = graph.nodes.find(({ kind }) => kind === "start") ?? graph.nodes.find(({ config }) => config.initial === "yes")
+      ?? [...graph.nodes].sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y)[0]
+    const at = (anchor && flow.getInternalNode(anchor.id)?.internals.positionAbsolute) ?? anchor?.position ?? { x: 0, y: 0 }
+    const top = 88, free = box.height - top - 24
+    const y = bounds.height * READABLE <= free ? top + (free - bounds.height * READABLE) / 2 - bounds.y * READABLE : box.height / 2 - at.y * READABLE
+    void flow.setViewport({ x: 56 - at.x * READABLE, y, zoom: READABLE })
+  }, [framed, initialized, flow, graph.nodes])
   // The path in focus: selected connections and every connection of a selected node; a finding outranks it.
   const look = (edge: g.CanvasEdge): Edge => {
     const base = props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph)
@@ -201,17 +227,33 @@ function Frame(props: CanvasFrameProps) {
   }
   const Sep = () => <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
 
+  const inspector = props.inspector(editing, issues)
+  const problems = (
+    <Panel label="Problems" action={issues.length === 0 ? "None" : `${issues.length}`}>
+      <Well className="space-y-2 p-3" >
+        {issues.length === 0 && <p className="text-meta text-muted-foreground">No problems in this definition.</p>}
+        {issues.map((issue, index) => (
+          <button key={index} type="button" data-testid="problem" onClick={() => jump(issue)} disabled={!issue.node && !issue.edge}
+            className="block w-full space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-left text-meta enabled:hover:bg-muted">
+            <span className="flex items-center gap-1 font-mono text-xs text-destructive"><CircleAlert className="size-3" />{issue.code}</span>
+            <span className="block">{issue.message}</span>
+            <span className="block text-muted-foreground">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span>
+          </button>
+        ))}
+      </Well>
+    </Panel>
+  )
   return (
-    <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_20rem]">
+    <div className={cn("grid gap-3", wide && "grid-cols-[minmax(0,1fr)_20rem]")}>
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
-          <div data-canvas-surface className="relative h-[38rem] w-full">
+          <div ref={surface} data-canvas-surface className={cn("relative h-[38rem] w-full transition-opacity duration-150", !framed && "opacity-0")}>
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             <ReactFlow
               nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
               edges={graph.edges.map(look)} className="bg-canvas-surface"
-              nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} fitView fitViewOptions={{ padding: 0.14, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
+              nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
               onConnect={(connection) => edit(g.connect(graph, kinds, props.newEdge(connection, graph)))}
@@ -233,7 +275,8 @@ function Frame(props: CanvasFrameProps) {
                 edit(g.remove(graph, removable(nodes.map(({ id }) => id)), cut)); setSelection(NONE)
               }}>
               <Background variant={BackgroundVariant.Dots} gap={18} size={1.25} color="var(--canvas-dot)" />
-              <Controls showInteractive={false} className="canvas-controls" />
+              <Controls showInteractive={false} className="canvas-controls" fitViewOptions={{ padding: PADDING, minZoom: READABLE, maxZoom: 1 }} />
+              {map && <MiniMap pannable zoomable position="bottom-right" className="canvas-minimap" nodeBorderRadius={6} ariaLabel="Where you are on the canvas" />}
               <FlowPanel position="top-left" className="!m-3">
                 <div role="toolbar" aria-label="Canvas actions" className="flex w-max flex-nowrap items-center gap-1 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
                   {props.palette(editing)}
@@ -241,6 +284,7 @@ function Frame(props: CanvasFrameProps) {
                   <Button size="sm" variant="ghost" aria-label="Duplicate" title="Duplicate (⌘D)" disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
                   <Button size="sm" variant="ghost" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
                   <Button size="sm" variant="ghost" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
+                  <Button size="sm" variant="ghost" aria-label="Minimap" aria-pressed={map} title={map ? "Hide the minimap" : "Show the minimap"} className={cn(map && "bg-muted")} onClick={() => setMap((on) => !on)}><MapIcon /></Button>
                   <Sep />
                   <Button size="sm" variant="ghost" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
                   {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
@@ -252,24 +296,8 @@ function Frame(props: CanvasFrameProps) {
         </Well>
         {props.below && <div className="px-1.5 pt-3">{props.below(editing)}</div>}
       </Panel>
-      <div className="space-y-3">
-        <Panel label="Inspector">
-          <Well className="space-y-4 p-4 text-sm">{props.inspector(editing, issues)}</Well>
-        </Panel>
-        <Panel label="Problems" action={issues.length === 0 ? "None" : `${issues.length}`}>
-          <Well className="space-y-2 p-3" >
-            {issues.length === 0 && <p className="text-meta text-muted-foreground">No problems in this definition.</p>}
-            {issues.map((issue, index) => (
-              <button key={index} type="button" data-testid="problem" onClick={() => jump(issue)} disabled={!issue.node && !issue.edge}
-                className="block w-full space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-left text-meta enabled:hover:bg-muted">
-                <span className="flex items-center gap-1 font-mono text-xs text-destructive"><CircleAlert className="size-3" />{issue.code}</span>
-                <span className="block">{issue.message}</span>
-                <span className="block text-muted-foreground">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span>
-              </button>
-            ))}
-          </Well>
-        </Panel>
-      </div>
+      {wide ? <div className="space-y-3"><Panel label="Inspector"><Well className="space-y-4 p-4 text-sm">{inspector}</Well></Panel>{problems}</div> : problems}
+      {!wide && <InspectorDrawer open={drawer} onClose={closeDrawer}>{inspector}</InspectorDrawer>}
     </div>
   )
 }
@@ -283,6 +311,39 @@ export function CanvasFrame(props: CanvasFrameProps) {
  * An action that exists but cannot run yet: drawn dashed and muted so it reads as unavailable, with its reason on
  * hover (on the wrapper, because a disabled button takes no pointer events) and in its accessible name.
  */
+/** Nodes never open smaller than this: titles stay at 12px or more on screen. */
+export const READABLE = 0.85
+const PADDING = 0.14
+/** At this width and wider the inspector is a rail beside the canvas; narrower, it is a drawer. */
+export const RAIL_MIN_WIDTH = 1440
+const WIDE = `(min-width: ${RAIL_MIN_WIDTH}px)`
+const useWide = () => useSyncExternalStore(
+  (change) => { const query = window.matchMedia(WIDE); query.addEventListener("change", change); return () => query.removeEventListener("change", change) },
+  () => window.matchMedia(WIDE).matches,
+  () => true,
+)
+
+/** The inspector as a slide-over: it does not hold the canvas (no overlay, focus stays put); Esc or × closes it. */
+function InspectorDrawer({ open, onClose, children }: { readonly open: boolean; readonly onClose: () => void; readonly children: ReactNode }) {
+  useEffect(() => {
+    if (!open) return
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); onClose() } }
+    window.addEventListener("keydown", key)
+    return () => window.removeEventListener("keydown", key)
+  }, [open, onClose])
+  return (
+    <aside role="dialog" aria-modal="false" aria-label="Inspector" aria-hidden={!open} inert={!open}
+      className={cn("fixed inset-y-3 end-3 z-40 flex w-[min(24rem,calc(100vw-1.5rem))] flex-col rounded-node border border-node-border bg-card shadow-float transition-transform duration-200 ease-out motion-reduce:transition-none",
+        open ? "translate-x-0" : "translate-x-[calc(100%+1.5rem)]")}>
+      <header className="flex items-center justify-between border-b border-node-border px-4 py-3">
+        <h2 className="text-sm font-semibold">Inspector</h2>
+        <Button size="icon" variant="ghost" aria-label="Close inspector" title="Close (Esc)" onClick={onClose}><X /></Button>
+      </header>
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-sm">{children}</div>
+    </aside>
+  )
+}
+
 export function Unavailable({ reason, children, className }: { readonly reason: string; readonly children: string; readonly className?: string }) {
   return (
     <span title={reason} className={cn("inline-flex cursor-not-allowed", className)}>

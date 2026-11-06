@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { clickEdge, drag, edge, node, open, press } from "./canvas.ts"
+import { clickEdge, drag, edge, node, open, press, shown, clear } from "./canvas.ts"
 
 // One test per row of the automation canvas's verb matrix (see the PR body).
 const out = (page: Parameters<typeof node>[0], id: string, port: string) => node(page, id).locator(`.react-flow__handle[data-handleid="${port}"]`)
@@ -15,11 +15,11 @@ test("step: create, view, edit, delete, duplicate, move, undo/redo, validate, sa
   await page.getByLabel("Wait (milliseconds)").fill("5000")
   await page.getByLabel("Wait (milliseconds)").blur()
   await expect(node(page, "sleep")).toContainText("5000 ms")
-  const before = await node(page, "sleep").boundingBox()
-  await node(page, "sleep").hover()
+  const before = await (await shown(page, "sleep")).boundingBox()
+  await (await shown(page, "sleep")).hover()
   await page.mouse.down(); await page.mouse.move((before?.x ?? 0) + 150, (before?.y ?? 0) + 60, { steps: 8 }); await page.mouse.up()
   expect((await node(page, "sleep").boundingBox())?.x).toBeGreaterThan((before?.x ?? 0) + 80)
-  await node(page, "sleep").click()
+  await (await shown(page, "sleep")).click()
   await press(page, "d")
   await expect(node(page, "sleep_copy")).toContainText("5000 ms")
   await page.keyboard.press("Delete")
@@ -29,7 +29,7 @@ test("step: create, view, edit, delete, duplicate, move, undo/redo, validate, sa
   await press(page, "Shift+z")
   await expect(node(page, "sleep_copy")).toHaveCount(0)
   // The start cannot be deleted or copied, and deleting with it selected keeps its connection.
-  await node(page, "start").click()
+  await (await shown(page, "start")).click()
   await page.keyboard.press("Delete")
   await expect(node(page, "start")).toBeVisible()
   await expect(edge(page, "start.next")).toHaveCount(1)
@@ -78,7 +78,7 @@ test("connection: create, view, delete, reconnect, undo/redo, validate, reopen",
 
 test("tool binding: view, edit tool and inputs, undo/redo, validate, reopen", async ({ page }) => {
   await open(page, "Automation")
-  await node(page, "remind").click()
+  await (await shown(page, "remind")).click()
   await expect(page.getByLabel("invoiceId (string)")).toHaveValue("invoice.id")
   await page.getByLabel("invoiceId (string)").fill("invoice.amountMinor")
   await page.getByLabel("invoiceId (string)").blur()
@@ -94,14 +94,14 @@ test("tool binding: view, edit tool and inputs, undo/redo, validate, reopen", as
   await expect(node(page, "remind")).toContainText("billing.load_invoice")
   await page.reload()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
-  await node(page, "remind").click()
+  await (await shown(page, "remind")).click()
   await expect(page.getByLabel("Tool")).toHaveValue("billing.load_invoice")
   await expect(page.getByLabel("Name its result")).toHaveValue("reminder")
 })
 
 test("route branches: create, edit, delete, reorder, undo/redo, validate, reopen", async ({ page }) => {
   await open(page, "Automation")
-  await node(page, "settled").click()
+  await (await shown(page, "settled")).click()
   await expect(page.getByLabel("Branch b0")).toHaveValue("invoice.status == paid")
   // reorder: b1 moves up and its exit follows it.
   await page.getByRole("button", { name: "Move b1 up" }).click()
@@ -126,17 +126,17 @@ test("route branches: create, edit, delete, reorder, undo/redo, validate, reopen
   await expect(node(page, "paid")).not.toContainText("problem")
   await page.reload()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
-  await node(page, "settled").click()
+  await (await shown(page, "settled")).click()
   await expect(page.getByLabel("Branch b2")).toBeVisible()
 })
 
 test("clipboard: states copied on a lifecycle are refused on the automation canvas", async ({ page }) => {
   await open(page)
-  await node(page, "draft").click()
+  await (await shown(page, "draft")).click()
   await press(page, "c")
   await expect(page.getByText("Copied 1 item.")).toBeVisible()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
-  await page.locator(".react-flow__pane").click({ position: { x: 10, y: 10 } })
+  await clear(page)
   await press(page, "v")
   await expect(page.getByText(/copied from another kind of canvas/)).toBeVisible()
   await expect(node(page, "draft_copy")).toHaveCount(0)
@@ -144,14 +144,14 @@ test("clipboard: states copied on a lifecycle are refused on the automation canv
 
 test("selection and problems: multi-select, copy/paste, delete selected, jump to a finding", async ({ page }) => {
   await open(page, "Automation")
-  await node(page, "paid").click()
-  await node(page, "draft").click({ modifiers: ["Shift"] })
+  await (await shown(page, "paid")).click()
+  await (await shown(page, "draft")).click({ modifiers: ["Shift"] })
   await expect(page.getByText("2 steps and 0 connections selected.")).toBeVisible()
   await press(page, "c")
   await press(page, "v")
   await expect(node(page, "paid_copy")).toBeVisible()
   await expect(node(page, "draft_copy")).toBeVisible()
-  await page.locator(".react-flow__pane").click({ position: { x: 10, y: 10 } })
+  await clear(page)
   await page.getByTestId("problem").first().click()
   await expect(page.getByRole("heading", { name: /^Outcome · (paid|draft)_copy$/ })).toBeVisible()
 })
