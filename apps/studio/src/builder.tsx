@@ -73,7 +73,7 @@ export function fieldOf(pointer: string | null): string | null {
 export const issuesOf = (verdict: QuestionVerdict | undefined): readonly Issue[] =>
   verdict === undefined || verdict.admitted ? [] : verdict.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer ?? null) }))
 
-async function readCatalog(): Promise<QuestionCatalog> {
+export async function readCatalog(): Promise<QuestionCatalog> {
   const response = await fetch("/api/questions/catalog", { headers: { accept: "application/json" } })
   if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : "The question catalogue is not available on this deployment.")
   return await response.json() as QuestionCatalog
@@ -102,14 +102,38 @@ function Choice({ label, field, invalid, value, onChange, options }: { readonly 
   )
 }
 
+type QuestionIR = ReturnType<typeof buildQuestion>
+
+/** The draft a stored QuestionIR reopens as, so editing it loses nothing the builder can write. */
+export function draftOf(question: Partial<QuestionIR> & { readonly name?: string }, title?: string): Draft {
+  const day = (iso: unknown) => typeof iso === "string" ? iso.slice(0, 10) : ""
+  const [by] = question.groupBy ?? []
+  return {
+    title: title ?? (question.name ?? "").replace(/^studio\./, "").replaceAll("_", " "),
+    measures: (question.aggregate ?? []).map(({ metric }) => metric),
+    by: by?.path.property ?? "",
+    grain: by && "grain" in by && typeof by.grain === "string" ? by.grain : "week",
+    filters: (question.filter ?? []).map(({ path, operator, value }) => ({ property: path.property, operator, value: String(value) })),
+    start: day(question.window?.start),
+    end: day(question.window?.end),
+  }
+}
+
 export function initialDraft(catalog: QuestionCatalog): Draft {
   const time = catalog.properties.find(({ kind }) => kind === "timestamp")?.name ?? ""
   return { title: "", measures: catalog.metrics[0] ? [catalog.metrics[0].name] : [], by: time, grain: catalog.grains.includes("week") ? "week" : catalog.grains[0] ?? "", filters: [], start: "", end: "" }
 }
 
-export function QuestionBuilder({ catalog, guard }: { readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode }) {
+export function QuestionBuilder({ catalog, guard, initial, onUse }: {
+  readonly catalog: QuestionCatalog
+  readonly guard?: (dirty: boolean) => ReactNode
+  /** The draft to open; a new question otherwise. */
+  readonly initial?: Draft
+  /** Offered once the checker admits the question: hands the admitted QuestionIR to the caller (e.g. a dashboard tile). */
+  readonly onUse?: (question: QuestionIR, title: string) => void
+}) {
   const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog)) })
-  const editor = useEditor<Draft>({ initial: initialDraft(catalog), onRun: (draft) => check.mutate(draft) })
+  const editor = useEditor<Draft>({ initial: initial ?? initialDraft(catalog), onRun: (draft) => check.mutate(draft) })
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const setFilter = (index: number, next: Partial<Condition>) => patch({ filters: draft.filters.map((filter, at) => at === index ? { ...filter, ...next } : filter) })
@@ -166,6 +190,9 @@ export function QuestionBuilder({ catalog, guard }: { readonly catalog: Question
         {check.isError && <p role="alert" className="text-destructive">{check.error.message}</p>}
         {check.data && <ValidationPanel issues={issues} title="The checker refused this question" />}
         {check.data && <QuestionCard verdict={check.data} />}
+        {/* Only the question the checker admitted, and only while the form still shows it. */}
+        {onUse && check.data?.admitted && check.variables && JSON.stringify(check.variables) === JSON.stringify(draft) && <Button type="button" onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
+        {onUse && check.data?.admitted && JSON.stringify(check.variables) !== JSON.stringify(draft) && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
       </div>
     </div>
   )
