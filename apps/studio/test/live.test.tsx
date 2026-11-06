@@ -132,7 +132,7 @@ test("a bucket the server suppressed (D53) reads 'Suppressed: fewer than 3 recor
   expect(rows.slice(1).every(({ suppressed: s, value }) => !s && value !== SUPPRESSED)).toBe(true)
   const frame = chartFrame(rows)
   expect(frame?.unit).toBe("%")
-  expect(frame?.points[0]).toEqual({ label: rows[0]?.label, position: null, shown: SUPPRESSED, exact: SUPPRESSED })
+  expect(frame?.points[0] as unknown).toEqual({ label: rows[0]?.label, position: null, shown: SUPPRESSED, exact: SUPPRESSED })
   expect(frame?.points.slice(1).every(({ position }) => typeof position === "number")).toBe(true)
   const html = await page({ kind: "read", read: readDocument(source, "live") })
   expect(html).toContain(SUPPRESSED)
