@@ -1,9 +1,36 @@
 import type { Envelope, Schemas } from "../transport.ts"
-import { layout } from "../workflows.ts"
 import type { CanvasEdge, CanvasNode, Graph, Kinds } from "./graph.ts"
 
 type Lifecycle = Schemas["NornIrLifecycle"]
 type Transition = Schemas["NornIrTransition"]
+
+function layout(lifecycle: Lifecycle): Map<string, { column: number; row: number }> {
+  const transitions = lifecycle.transitions ?? []
+  const depth = new Map<string, number>(lifecycle.initial.map((state) => [state, 0]))
+  for (let frontier = [...lifecycle.initial]; frontier.length > 0;) {
+    const next: string[] = []
+    for (const state of frontier) {
+      for (const { from, to } of transitions) {
+        if (from.includes(state) && !depth.has(to)) {
+          depth.set(to, (depth.get(state) ?? 0) + 1)
+          next.push(to)
+        }
+      }
+    }
+    frontier = next
+  }
+  const last = Math.max(0, ...depth.values()) + 1
+  for (const state of transitions.flatMap(({ from, to }) => [...from, to])) if (!depth.has(state)) depth.set(state, last)
+  const rows = new Map<number, number>()
+  const positions = new Map<string, { column: number; row: number }>()
+  for (const [state, column] of depth) {
+    const row = rows.get(column) ?? 0
+    rows.set(column, row + 1)
+    positions.set(state, { column, row })
+  }
+  return positions
+}
+
 
 /** Where a drawn node or edge lands in the compiled artifact, so a finding there can point back at it. */
 export interface Origin {
