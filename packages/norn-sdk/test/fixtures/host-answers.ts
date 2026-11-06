@@ -1,8 +1,8 @@
 // Generated from live question-route conformance (NORN_BLESS=1).
 import type { Schemas } from "../../src/index.ts";
 export const live = {
-  "queryPin": "51324a4f3514ec9c3391726891da7f462aaa4c3dba4da741ec1eb32cf7ff81ad",
-  "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+  "queryPin": "7c493c810dff39f5297542cdf95384838df955fc358c658f5469c1d41ce12982",
+  "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
   "engine": "cell",
   "revision": {
     "seq": 0,
@@ -12,7 +12,7 @@ export const live = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "abc3f59383422ebd0b13fef3aa31144560ee9f3fad805f3ac8d4cc7ad9a5013f",
+  "lineageRef": "61546e44902c55d5c9b430daf06409f1ac25375cf37a347306be669d76b92767",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -648,8 +648,8 @@ export const live = {
   "exclusions": {}
 } satisfies Schemas["NornQueryResult"];
 export const fresh = {
-  "queryPin": "51324a4f3514ec9c3391726891da7f462aaa4c3dba4da741ec1eb32cf7ff81ad",
-  "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+  "queryPin": "7c493c810dff39f5297542cdf95384838df955fc358c658f5469c1d41ce12982",
+  "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
   "engine": "cell",
   "revision": {
     "seq": 0,
@@ -659,7 +659,7 @@ export const fresh = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "4002448cec28789c80c303b02c859533d80d2a207751466491f510dd3d4f015a",
+  "lineageRef": "645c52fdff038aabb52662030ad90c6b357a2012242bdd33537bb4ec236b7298",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -1295,8 +1295,8 @@ export const fresh = {
   "exclusions": {}
 } satisfies Schemas["NornQueryResult"];
 export const stale = {
-  "queryPin": "51324a4f3514ec9c3391726891da7f462aaa4c3dba4da741ec1eb32cf7ff81ad",
-  "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+  "queryPin": "7c493c810dff39f5297542cdf95384838df955fc358c658f5469c1d41ce12982",
+  "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
   "engine": "cell",
   "revision": {
     "seq": 0,
@@ -1306,7 +1306,7 @@ export const stale = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "37ff8f3c27af91b9bba4b82df0a425850e4de28cdcbb0f61e393e2cd57167e26",
+  "lineageRef": "8809478ef359d407386bb00a53eb7bdeb5aa03f4c35eb1df0305324210a94693",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -1942,8 +1942,8 @@ export const stale = {
   "exclusions": {}
 } satisfies Schemas["NornQueryResult"];
 export const incomplete = {
-  "queryPin": "51324a4f3514ec9c3391726891da7f462aaa4c3dba4da741ec1eb32cf7ff81ad",
-  "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+  "queryPin": "7c493c810dff39f5297542cdf95384838df955fc358c658f5469c1d41ce12982",
+  "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
   "engine": "cell",
   "revision": {
     "seq": 0,
@@ -1953,7 +1953,7 @@ export const incomplete = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "7e12effb6eaa013f3ac6619a3ae412fb47bb86d79d6e5fb33ca3c4091b7c1b82",
+  "lineageRef": "8b93ec88129f67afd054b3df19b836c28a511773bf9698a80f416f12cd758fdd",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -2528,8 +2528,8 @@ export const incomplete = {
     "\"2026-10-19\"": {
       "bucket": "2026-10-19",
       "totals": [
-        220.5,
-        225
+        294,
+        300
       ],
       "value": 0.98,
       "members": {
@@ -2538,6 +2538,13 @@ export const incomplete = {
           "amounts": [
             58.8,
             60
+          ]
+        },
+        "SYN-MELT-15-1": {
+          "version": 1,
+          "amounts": [
+            73.5,
+            75
           ]
         },
         "SYN-MELT-15-2": {
@@ -2575,24 +2582,22 @@ export const incomplete = {
       "measurements": {
         "observed": "k1/80",
         "heartbeatMs": 1792972800000,
-        "complete": true
+        "complete": false
       }
     }
   },
-  "exclusions": {
-    "SYN-MELT-15-1": "fixture:finding"
-  }
+  "exclusions": {}
 } satisfies Schemas["NornQueryResult"];
 export const historical = {
   "world": {
     "historical": {
-      "commit": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29"
+      "commit": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2"
     }
   },
   "knowledgeTimeMs": 1792972800000,
   "result": {
-    "queryPin": "cb46d34e1fba1ad6fc9c92958053d7214c80dad3e143c6bc436504b1e1b0f466",
-    "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+    "queryPin": "42d6ebca2e0939cb11b0311d8d204d22cf27501384c5cfe9032060a733ffb1c8",
+    "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
     "engine": "cell",
     "revision": {
       "seq": 0,
@@ -2602,7 +2607,7 @@ export const historical = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "78a3a85ac7ddd1334995a1afc8d095ac74e684e5bb95daa062d2c65c30125cbd",
+    "lineageRef": "44bd6ceb2a9f22654caaab35a4b15b53a56c8bc13905ac923015631b4bddae9f",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -3240,8 +3245,8 @@ export const historical = {
 } satisfies Schemas["NornHistoricalQuestionResult"];
 export const restricted_trace = {
   "result": {
-    "queryPin": "51324a4f3514ec9c3391726891da7f462aaa4c3dba4da741ec1eb32cf7ff81ad",
-    "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+    "queryPin": "7c493c810dff39f5297542cdf95384838df955fc358c658f5469c1d41ce12982",
+    "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
     "engine": "cell",
     "revision": {
       "seq": 0,
@@ -3251,7 +3256,7 @@ export const restricted_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "abc3f59383422ebd0b13fef3aa31144560ee9f3fad805f3ac8d4cc7ad9a5013f",
+    "lineageRef": "61546e44902c55d5c9b430daf06409f1ac25375cf37a347306be669d76b92767",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -3898,7 +3903,7 @@ export const restricted_trace = {
         58.8,
         60
       ],
-      "receiptHash": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29",
+      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3918,7 +3923,7 @@ export const restricted_trace = {
         73.5,
         75
       ],
-      "receiptHash": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29",
+      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3938,7 +3943,7 @@ export const restricted_trace = {
         78.4,
         80
       ],
-      "receiptHash": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29",
+      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3958,7 +3963,7 @@ export const restricted_trace = {
         83.3,
         85
       ],
-      "receiptHash": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29",
+      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3972,8 +3977,8 @@ export const restricted_trace = {
 } satisfies Schemas["NornNumericTrace"];
 export const unavailable_trace = {
   "result": {
-    "queryPin": "51324a4f3514ec9c3391726891da7f462aaa4c3dba4da741ec1eb32cf7ff81ad",
-    "definitionPin": "4f984fc33b4b0d90e27c51504c30a7a0487893d1fc42f437280d9a7ea33f1c61",
+    "queryPin": "7c493c810dff39f5297542cdf95384838df955fc358c658f5469c1d41ce12982",
+    "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
     "engine": "cell",
     "revision": {
       "seq": 0,
@@ -3983,7 +3988,7 @@ export const unavailable_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "84f6d62223aa627f5a1e4e6461bee9a9ed0f5f9ac1478183353ad21401e85db8",
+    "lineageRef": "b51e58c78efc9a950acd95c02b294c2aca45640379d1ef86c111560d1a166b53",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -4630,8 +4635,8 @@ export const unavailable_trace = {
         58.8,
         60
       ],
-      "receiptHash": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29",
-      "factDigest": "6327c98378289d7a2473b71283c28fa9b594ea313038cfd24cf0756e5eb06cbd",
+      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "factDigest": "ba60e50f4e68c0875a821c3c8c51888287fd607d6d8cec13a74fae3e2d65c887",
       "source": {
         "status": "unavailable"
       },
@@ -4656,8 +4661,8 @@ export const unavailable_trace = {
         73.5,
         75
       ],
-      "receiptHash": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29",
-      "factDigest": "2fd32eaa4f9b22d0b2af431488d81833db198db4cc0162789ea22328a106936f",
+      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "factDigest": "de0e3a8aad5bbe370a49a877b48ac42e9e2dd1f485bea2dc3884cada2461fa10",
       "source": {
         "status": "unavailable"
       },
@@ -4682,8 +4687,8 @@ export const unavailable_trace = {
         78.4,
         80
       ],
-      "receiptHash": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29",
-      "factDigest": "d58362c9483881d5b4e71d2036dbce45fa856e7da2e6821789a729f0da272852",
+      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "factDigest": "f32d9335d51294b1d13455b7ca0e9fa87ded962da448dc9a81f1acc191870196",
       "source": {
         "status": "unavailable"
       },
@@ -4708,8 +4713,8 @@ export const unavailable_trace = {
         83.3,
         85
       ],
-      "receiptHash": "d39cdc39601c3aae0cd589d6c7ddf9b8b6924683ba7460e777da5136b81e3d29",
-      "factDigest": "114b779f7cf530970d107ee2547352add5be2acbdf76077848602adf4f8bcb5e",
+      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "factDigest": "13293c31f2e0eb695d7899b4e4c7d70e010654f044ab438f62cd84447b220725",
       "source": {
         "status": "unavailable"
       },
@@ -4728,7 +4733,7 @@ export const unavailable_trace = {
 } satisfies Schemas["NornNumericTrace"];
 export const resolved_trace = {
   "result": {
-    "queryPin": "3dd483e1ce3876efb50a99cc88be70a62620ca1b84b67d6ea52357aa52217207",
+    "queryPin": "0ae4a96246cbb2283b919af51e8228bfad4b4f7bafc2adcb494afa372c5adabd",
     "definitionPin": "synthetic-lineage-admission",
     "engine": "cell",
     "revision": {
@@ -4739,7 +4744,7 @@ export const resolved_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 81,
     "grain": "demo.Conversion",
-    "lineageRef": "2ddcdc441a13f699086ac497af6a3aa5ef053773e56b66c012634d12d605ff91",
+    "lineageRef": "33b715933c9584d0a998aff02013c91c0010e0e59f974c624044f0c6983b2788",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -5386,12 +5391,12 @@ export const resolved_trace = {
         58.8,
         60
       ],
-      "receiptHash": "5c8092a3be5b1cfb97459ff8df9b4aeb740b33940b91755747c17d813f427ea3",
-      "factDigest": "99389836d3466e81f1435909fd77ec34cce8268dca55d799844be5eb3030d06d",
+      "receiptHash": "183c5f167123cc83682853ac56a16dd00112e279f7410223b5ea70d12a0d0569",
+      "factDigest": "408bad2e8a0bf13b2de1b7f6b70acb5453a591af664e24f4a3f2f8c0fae99a9e",
       "source": {
         "status": "resolved",
         "provenance": {
-          "bundleDigest": "e6cf0d6777285c87a6ad047c6d80a886e47072ede37b756e398b2042dbf45c15",
+          "bundleDigest": "ffa78415bc40f18e5ef8c71a3d21e68613c3c62b359d4eeca0390bbc1f158872",
           "sourceRecordRef": {
             "system": "synthetic-erpnext",
             "record": "conversions/external-row/75"
@@ -5515,12 +5520,12 @@ export const resolved_trace = {
         73.5,
         75
       ],
-      "receiptHash": "ac5a3641bd27ba3e423b8458682345b157451e0c7b17c91026628c982444b0b4",
-      "factDigest": "9148b34cfa1b14aede1358a25994efcf8339df2d55e3027f4c6e89942c7a4be5",
+      "receiptHash": "c3023e2939fc9094b1bffdce902270d82007b71e146a0610e7728435d8eb45b2",
+      "factDigest": "a05ef17a06495cb47dcf31ea931309aad7261070febc68b86b40f4c3ed7b6fd2",
       "source": {
         "status": "resolved",
         "provenance": {
-          "bundleDigest": "18ba5e658c71c1e6f5ca5e06c7d13a1cb0c0d760332f1512d06b90edc39ca0f3",
+          "bundleDigest": "cf706df6b7d1af2bd569423db9734b081419c08cd7434be06ed5341820b490a3",
           "sourceRecordRef": {
             "system": "synthetic-erpnext",
             "record": "conversions/external-row/76"
@@ -5644,12 +5649,12 @@ export const resolved_trace = {
         78.4,
         80
       ],
-      "receiptHash": "2454436b30937c1e5bc0576648826d8506b854c0a548ff0e62830292c51fe649",
-      "factDigest": "eba6afe340fb0bb6bd7a82aecf909696367c5305dfbe96acd27c4d5c61fabe7b",
+      "receiptHash": "e53e5ebfc022620fec46baaa6e83d8143370103efc64de4b65fff865dfb8dd32",
+      "factDigest": "e42b5e83f7b4a6dcf1b10f7535513fb77e1acffa45ba302b5ce1aa70708b1a22",
       "source": {
         "status": "resolved",
         "provenance": {
-          "bundleDigest": "92b38ea9274f4198d873e4331a383231b5c9da1dc7bad7053ba5bed4e5cba03e",
+          "bundleDigest": "535c7bb67a16d971d15311f5a91c7bed4b29c9ce0f35d592f7121e9863c7498b",
           "sourceRecordRef": {
             "system": "synthetic-erpnext",
             "record": "conversions/external-row/77"
@@ -5773,12 +5778,12 @@ export const resolved_trace = {
         83.3,
         85
       ],
-      "receiptHash": "791db7e6ccf8b5760c23ec4211d7f7f07af41f0597245ef525343a6e8af7c92f",
-      "factDigest": "dfb894d3ac2db1db52961caa92b091f6109e8c4b2e80a371d338bfa30a57a53c",
+      "receiptHash": "0f156dc8687d37ac9eb4c2153aa28cb0742b85e869c13abe48f8cd472d4e1bee",
+      "factDigest": "90b732e23e1c934f6d93fad8827b68e21fe0cdca81cb2e9cd65c79484baf5bde",
       "source": {
         "status": "resolved",
         "provenance": {
-          "bundleDigest": "4224124a3d4b664346142c11a28a5734fe93386e557a240d670de69d3c537dca",
+          "bundleDigest": "8ddd2fe8741719e1f3b871f9373255e88be4a76d1080b7f31dc6f8c615eb1700",
           "sourceRecordRef": {
             "system": "synthetic-erpnext",
             "record": "conversions/external-row/78"
