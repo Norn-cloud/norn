@@ -128,8 +128,9 @@ fn collection<'h, E: SqlEngine>(
 ///
 /// # Errors
 /// A denied gate (one opaque 403), an undeclared type (404), an oversized
-/// page (400) or a host failure. Unreadable rows never refuse a page: a bound
-/// on raw rows would reveal how many exist.
+/// page (400), a commit while the page was read (a retryable 409) or a host
+/// failure. Unreadable rows never refuse a page: a bound on raw rows would
+/// reveal how many exist.
 pub fn get_object_page<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -143,33 +144,67 @@ pub fn get_object_page<E: SqlEngine>(
     if limit == 0 || limit > MAX_PAGE {
         return Err(Refusal::invalid(format!("limit must be 1..={MAX_PAGE}")));
     }
-    let cell = host.cell()?;
-    let reader = cell.store().read();
-    if !reader.model().has_type(object_type) {
-        return Err(not_found());
-    }
     let mut page = NornObjectPage {
         object_type: object_type.to_owned(),
         records: Vec::new(),
         quarantine_count: 0,
         scanned_through: None,
     };
+    // The cell lock is held per batch, never for the whole scan, and row
+    // authorization runs without it. Every acquisition must see the commit head
+    // the page started at, so a page never mixes two snapshots.
+    let mut snapshot = None;
+    let locked = |snapshot: &mut Option<u64>| -> Result<_, Refusal> {
+        let cell = host.cell()?;
+        let head = cell
+            .store()
+            .read()
+            .head_commit_seq()
+            .map_err(Refusal::host)?;
+        if *snapshot.get_or_insert(head) != head {
+            return Err(snapshot_moved());
+        }
+        Ok(cell)
+    };
     let mut cursor = after.map(str::to_owned);
     loop {
-        let batch = reader
-            .list_after(MAIN_WORLD, object_type, cursor.as_deref(), SCAN_BATCH)
-            .map_err(Refusal::host)?;
+        let batch = {
+            let cell = locked(&mut snapshot)?;
+            let reader = cell.store().read();
+            if !reader.model().has_type(object_type) {
+                return Err(not_found());
+            }
+            reader
+                .list_after(MAIN_WORLD, object_type, cursor.as_deref(), SCAN_BATCH)
+                .map_err(Refusal::host)?
+        };
         let exhausted = batch.len() < SCAN_BATCH;
-        for row in batch {
+        let visible: Vec<(bool, ObjectRecord)> = batch
+            .into_iter()
+            .map(|row| (row_visible(host, access, &actor, &row), row))
+            .collect();
+        let quarantined = {
+            let cell = locked(&mut snapshot)?;
+            let reader = cell.store().read();
+            visible
+                .iter()
+                .map(|(seen, row)| {
+                    if *seen {
+                        reader.observation_is_quarantined(MAIN_WORLD, row)
+                    } else {
+                        Ok(false)
+                    }
+                })
+                .collect::<Result<Vec<bool>, _>>()
+                .map_err(Refusal::host)?
+        };
+        for ((seen, row), quarantined) in visible.into_iter().zip(quarantined) {
             cursor = Some(row.id.clone());
-            if !row_visible(host, access, &actor, &row) {
+            if !seen {
                 continue;
             }
             page.scanned_through = Some(row.id.clone());
-            if reader
-                .observation_is_quarantined(MAIN_WORLD, &row)
-                .map_err(Refusal::host)?
-            {
+            if quarantined {
                 page.quarantine_count = page.quarantine_count.saturating_add(1);
             } else {
                 page.records.push(row.into());
@@ -184,6 +219,17 @@ pub fn get_object_page<E: SqlEngine>(
             return Ok(page);
         }
     }
+}
+
+fn snapshot_moved() -> Refusal {
+    let mut refusal = Refusal::new(
+        http::StatusCode::CONFLICT,
+        "object.snapshot_moved",
+        "the cell changed while the page was read",
+        "repeat the read; a page is never assembled from two snapshots",
+    );
+    refusal.retryable = true;
+    refusal
 }
 
 /// One visible, unquarantined object.

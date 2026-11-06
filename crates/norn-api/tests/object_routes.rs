@@ -56,6 +56,19 @@ impl Authorizer for Policy {
             && request.capability == ReadCapability::Values
             && request.access.resource.id == HIDDEN;
         let resource = request.access.resource.id.as_str();
+        // Values without row Population, and Population without the quarantined row's Values.
+        let withheld = match actor {
+            "nopop" => request.capability == ReadCapability::Population && resource == HIDDEN,
+            "noq" => request.capability == ReadCapability::Values && resource == QUARANTINED,
+            _ => false,
+        };
+        if ["nopop", "noq"].contains(&actor) {
+            return if withheld {
+                Err(Refusal::invalid("private policy diagnostic"))
+            } else {
+                Ok(())
+            };
+        }
         if actor == "few" {
             return if resource == TYPE || FEW.contains(&resource) {
                 Ok(())
@@ -120,17 +133,25 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
     host_with(0)
 }
 
-/// [`host`] with `hidden` extra conversions no fixture principal but `reader`
-/// and `partial` may read; their ids sort before every fixture row.
-fn host_with(hidden: usize) -> (DevHost<NativeEngine>, tempfile::TempDir) {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("cell.sqlite");
+/// The conversions' model with the recovery-bound law, and its object type.
+fn quality_model() -> (Model, norn_ir::ObjectTypeDef) {
     let (base, _, _) = fixture();
     let mut object = base.model().object_types().next().unwrap().clone();
     let mut encoded = serde_json::to_value(&object).unwrap();
     encoded["invariants"] = json!([{"id":"recovery_bound","expression":"self.recovered <= self.input","message":"Recovered mass exceeds source input"}]);
     object = serde_json::from_value(encoded).unwrap();
-    let model = Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
+    (
+        Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap(),
+        object,
+    )
+}
+
+/// [`host`] with `hidden` extra conversions no fixture principal but `reader`
+/// and `partial` may read; their ids sort before every fixture row.
+fn host_with(hidden: usize) -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let (model, object) = quality_model();
     let artifact = json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
     let key = physical().key();
     {
@@ -327,4 +348,103 @@ fn pages_do_not_depend_on_how_many_rows_are_unreadable() {
             .sum();
         assert_eq!(ids, FEW.len(), "limit {limit}");
     }
+}
+
+#[test]
+fn values_without_row_population_never_shows_the_row() {
+    let (host, _dir) = host();
+    for limit in [1, 7, 100] {
+        let pages = all_pages(&host, "nopop", limit);
+        assert!(
+            pages
+                .iter()
+                .all(|p| !serde_json::to_string(p).unwrap().contains(HIDDEN)),
+            "limit {limit}"
+        );
+        let total: usize = pages.iter().map(|p| p.records.len()).sum();
+        assert_eq!(
+            total,
+            fixture_writes().len() - 2,
+            "limit {limit}: the hidden and the quarantined rows"
+        );
+    }
+    let refused = get_object(&host, &scope(), Some("nopop"), TYPE, HIDDEN, &Mapping).unwrap_err();
+    assert_eq!(refused.status, 404);
+}
+
+#[test]
+fn an_unreadable_quarantined_row_is_not_counted() {
+    let (host, _dir) = host();
+    let pages = all_pages(&host, "noq", 100);
+    assert_eq!(pages.iter().map(|p| p.quarantine_count).sum::<u64>(), 0);
+    assert!(
+        pages
+            .iter()
+            .all(|p| !serde_json::to_string(p).unwrap().contains(QUARANTINED))
+    );
+}
+
+/// A mapping that commits through a second connection the first time it maps a row.
+struct Committing {
+    path: std::path::PathBuf,
+    model: Model,
+    fired: std::sync::atomic::AtomicBool,
+}
+impl ObjectAccess for Committing {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<PdpRequest, Refusal> {
+        if row.is_some() && !self.fired.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let mut store = CellStore::open(
+                &self.path,
+                self.model.clone(),
+                norn_cell::StoreOptions::default(),
+            )
+            .unwrap();
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: physical().key(),
+                    logical_time: query_support::CLOCK + 10_000_000,
+                    writes: vec![put("SYN-LATE", 1_000, 900, "2026-07-10T12:00:00Z", "gold")],
+                    ..CommitBatch::default()
+                })
+                .unwrap();
+        }
+        Mapping.access(scope, actor, capability, object_type, row)
+    }
+}
+
+/// The scan releases the cell between batches; a commit in between refuses
+/// the page as retryable rather than mixing two snapshots.
+#[test]
+fn a_commit_during_the_scan_refuses_the_page_as_retryable() {
+    let (host, dir) = host();
+    let committing = Committing {
+        path: dir.path().join("cell.sqlite"),
+        model: quality_model().0,
+        fired: std::sync::atomic::AtomicBool::new(false),
+    };
+    let refused = get_object_page(
+        &host,
+        &scope(),
+        Some("reader"),
+        TYPE,
+        None,
+        100,
+        &committing,
+    )
+    .unwrap_err();
+    assert_eq!(
+        (refused.status, refused.code.as_str(), refused.retryable),
+        (409, "object.snapshot_moved", true)
+    );
+    let retried =
+        get_object_page(&host, &scope(), Some("reader"), TYPE, None, 100, &Mapping).unwrap();
+    assert!(retried.records.iter().any(|r| r.id == "SYN-LATE"));
 }
