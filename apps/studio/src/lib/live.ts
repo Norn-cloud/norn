@@ -44,7 +44,7 @@ export interface Trace {
  * and its policy decide what comes back. 401 and 503 (no host bound to this
  * stage) mean live reads are not available, and the page keeps its recording.
  */
-export async function hostRead<T>(path: string, fetcher: Fetch = fetch): Promise<LiveRead<T>> {
+export async function hostRead<T>(path: string, fetcher: Fetch = fetch, isDocument: (value: unknown) => boolean = () => true): Promise<LiveRead<T>> {
   let response: Response
   let text: string
   try {
@@ -56,10 +56,11 @@ export async function hostRead<T>(path: string, fetcher: Fetch = fetch): Promise
   }
   if (response.ok) {
     try {
-      return { kind: "read", read: readDocument<T>(text, "live") }
-    } catch {
-      return { kind: "unavailable", status: response.status }
-    }
+      const read = readDocument<T>(text, "live")
+      // Valid JSON that is not the document asked for (`null`, an error object) is no live read either.
+      if (isDocument(read.document)) return { kind: "read", read }
+    } catch { /* not JSON */ }
+    return { kind: "unavailable", status: response.status }
   }
   if (response.status === 403) {
     try {
@@ -72,8 +73,15 @@ export async function hostRead<T>(path: string, fetcher: Fetch = fetch): Promise
 
 const DEMO = "orgId=org_demo"
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+
+/** The fields of a `NornQueryResult` the question card reads. */
+export const isAnswer = (value: unknown): boolean =>
+  isRecord(value) && isRecord(value.rows) && isRecord(value.watermarks) && typeof value.freshness === "string" &&
+  typeof value.lineageRef === "string" && typeof value.nowMs === "number" && typeof value.knownAsOf === "number"
+
 export const liveAnswer = (question: string, fetcher?: Fetch) =>
-  hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer?${DEMO}&environmentId=analytics`, fetcher)
+  hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer?${DEMO}&environmentId=analytics`, fetcher, isAnswer)
 
 /** One bucket of a live answer; `bucket` is the answer's row key exactly as the server wrote it. */
 export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) =>

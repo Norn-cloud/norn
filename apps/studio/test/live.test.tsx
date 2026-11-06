@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
-import { amountTexts, hostRead, liveTrace, type Trace } from "../src/lib/live.ts"
+import { amountTexts, hostRead, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
@@ -76,4 +76,10 @@ test("a refused live read shows the server's reason over the recorded snapshot",
 test("a network failure or a 200 that is not JSON is no live read, so the page keeps its recording", async () => {
   expect(await hostRead("/v1/x", async () => { throw new TypeError("network") })).toEqual({ kind: "unavailable", status: 0 })
   expect(await hostRead("/v1/x", respond(200, "<html>gateway</html>"))).toEqual({ kind: "unavailable", status: 200 })
+})
+
+test("a 200 that is JSON but not an answer document is no live read, so the page keeps its recording", async () => {
+  expect((await liveAnswer("demo.yield_week", respond(200, answerText))).kind).toBe("read")
+  expect(await liveAnswer("demo.yield_week", respond(200, "null"))).toEqual({ kind: "unavailable", status: 200 })
+  expect(await liveAnswer("demo.yield_week", respond(200, '{"error":"unavailable"}'))).toEqual({ kind: "unavailable", status: 200 })
 })
