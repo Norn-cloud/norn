@@ -383,14 +383,27 @@ fn oversized_exponent(text: &str) -> bool {
 /// not JSON as invalid input rather than a finding. Only UTF-8 and grammar
 /// errors count; duplicate keys, nesting depth, and number range are
 /// [`codes::INVALID_PAYLOAD`] or budget findings of [`check_agent`]. Text
-/// with an exponent above [`MAX_NUMBER_EXPONENT`] is not parsed here; it is an
-/// [`codes::INVALID_PAYLOAD`] finding.
+/// with an exponent above [`MAX_NUMBER_EXPONENT`], or longer than the
+/// `norn.limits/1` payload byte bound, is not parsed here; it is an
+/// [`codes::INVALID_PAYLOAD`] finding of [`decode_agent`], which refuses both
+/// before parsing.
+///
+/// Allocation is therefore bounded before any parse: at most the byte bound
+/// of input, and each number token expands to at most
+/// [`MAX_NUMBER_EXPONENT`] + 1 digits per byte of its spelling, so the parse
+/// allocates a small, fixed multiple of the bound.
 ///
 /// # Errors
 ///
 /// The parser's message when the text is not JSON.
 pub fn agent_payload_syntax(payload: &str) -> Result<(), String> {
-    if oversized_exponent(payload) {
+    let max_bytes = usize::try_from(
+        ResourceLimitProfile::norn_limits_v1()
+            .slice
+            .max_canonical_bytes,
+    )
+    .unwrap_or(usize::MAX);
+    if payload.len() > max_bytes || oversized_exponent(payload) {
         return Ok(());
     }
     match norn_canonical::parse_json_verbatim(payload) {
@@ -855,6 +868,21 @@ mod tests {
             findings_of(&deep_budget),
             one(codes::BUDGET_UNBOUNDED, "/budgets/maxRuns")
         );
+    }
+
+    #[test]
+    fn an_over_long_payload_is_refused_by_length_before_any_parse() {
+        let max = usize::try_from(
+            ResourceLimitProfile::norn_limits_v1()
+                .slice
+                .max_canonical_bytes,
+        )
+        .expect("bound fits");
+        // Many small numbers, each within the exponent cap, past the byte bound.
+        let long = format!("[{}]", vec!["1e64"; max / 4].join(","));
+        assert!(long.len() > max);
+        assert!(agent_payload_syntax(&long).is_ok());
+        assert_eq!(findings_of(&long), one(codes::INVALID_PAYLOAD, ""));
     }
 
     #[test]
