@@ -129,6 +129,13 @@ test("shortcuts: copy and select-all stay the browser's outside the canvas and o
   await node(page, "invoiced").click()
   await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+Shift+c`)
   await expect(page.getByText(/^Copied \d+ items?\.$/)).toHaveCount(0)
+  // A node focused and selected from the keyboard, with no pointer, makes copy the canvas's.
+  await page.locator(".react-flow__pane").click({ position: { x: 10, y: 10 } })
+  await page.getByText(/Draw how a process moves/).click()
+  await node(page, "completed").focus()
+  await page.keyboard.press("Enter")
+  await press(page, "c")
+  await expect(page.getByText("Copied 1 item.")).toBeVisible()
   // Back on the canvas, copy is the canvas's again.
   await node(page, "invoiced").click()
   await press(page, "c")
