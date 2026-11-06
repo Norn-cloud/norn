@@ -436,7 +436,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     }, "trusted-policy: superseded approvals and revocations must share a cancelling group")
     require(" ".join(trusted.get("if", "").split()) == "!cancelled() && ( "
             "github.event_name == 'pull_request_target' || "
-            "(github.event_name == 'issue_comment' && github.event.issue.pull_request && "
+            "(github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.type != 'Bot' && "
             "(contains(github.event.comment.body, '/approve-gates') || contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || "
             "(github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))",
             "trusted-policy: approval and rights creation, editing and deletion must re-evaluate")
