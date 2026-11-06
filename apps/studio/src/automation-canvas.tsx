@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
@@ -12,7 +13,7 @@ import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Conditi
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
-import { RISKS, decisionView, effectOf, nextOptionId, optionsOf, setOptions, type DecisionOption } from "./lib/canvas/decision.ts"
+import { RISKS, decisionView, effectOf, nextOptionId, optionPort, optionsOf, setOptions, type DecisionOption } from "./lib/canvas/decision.ts"
 import { DecisionTree } from "./decision-tree.tsx"
 import { words } from "./lib/format.ts"
 
@@ -20,7 +21,7 @@ const META = { id: "studio.automation", version: "0.1.0" }
 export const STEP_KINDS = { start: "Start", perform: "Tool", decide: "Ask a person", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
 export const RUN_BLOCKED = "Running happens in the cell with receipts; the run route is not live yet."
 
-type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly string[] }, "step">
+type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly { readonly id: string; readonly label: string }[] }, "step">
 
 export function StepBox({ data, selected }: NodeProps<StepNode>) {
   const failing = data.issues.length > 0
@@ -32,13 +33,28 @@ export function StepBox({ data, selected }: NodeProps<StepNode>) {
       {data.detail && <div className="truncate text-meta text-muted-foreground">{data.detail}</div>}
       {failing && <div className="text-meta text-destructive">{data.issues.length} {data.issues.length === 1 ? "problem" : "problems"}</div>}
       {data.outs.map((port, index) => (
-        <Handle key={port} type="source" position={Position.Right} id={port} title={port} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
+        <Handle key={port.id} type="source" position={Position.Right} id={port.id} title={port.label} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
       ))}
     </div>
   )
 }
 
 const NODE_TYPES = { step: StepBox }
+
+/** An edge label: the condition without its result prefix (`status == paid`), cut at 26 characters; the exit's hover has it in full. */
+const short = (text: string, length = 26) => {
+  const bare = text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\.(?=[A-Za-z_])/g, "")
+  return bare.length > length ? `${bare.slice(0, length - 1)}…` : bare
+}
+
+/** What an exit means in words: a route branch's own condition, a decision option's label, or otherwise. */
+export function exitLabel(node: g.CanvasNode | undefined, port: string): string | undefined {
+  if (!node || port === "next") return undefined
+  const branch = /^b(\d+)$/.exec(port)
+  if (branch && node.kind === "route") return formatCondition(branchesOf(node)[Number(branch[1])] ?? []) || "no condition yet"
+  if (port.startsWith("opt:") && node.kind === "decide") return optionsOf(node).find((option) => optionPort(option) === port)?.label ?? port.slice(4)
+  return port
+}
 
 const formatCondition = (all: readonly Condition[]) => all.map(({ left, op, right }) => `${left} ${op} ${right}`).join(" and ")
 const parseCondition = (line: string): Condition[] => line.split(/\s+and\s+/).map((part) => part.trim()).filter(Boolean).map((part) => {
@@ -54,15 +70,21 @@ function Branches({ editing, id, branches }: { readonly editing: Editing; readon
   const swap = (a: number, b: number) => { const order = [...indices]; order[a] = b; order[b] = a; set(order) }
   return (
     <div className="space-y-2">
-      <div className="text-meta text-muted-foreground">Branches, first match wins. Exits b0, b1, … then otherwise, then next (continue after the route).</div>
+      <div className="text-meta text-muted-foreground">Branches, first match wins. Each branch leaves by its own exit; then otherwise, then next (continue after the route).</div>
       {branches.map((all, index) => (
-        <div key={`${id}:${index}:${formatCondition(all)}`} className="flex items-center gap-1">
-          <span className="w-6 font-mono text-xs text-muted-foreground">b{index}</span>
-          <Input aria-label={`Branch b${index}`} className="font-mono text-xs" defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
+        <div key={`${id}:${index}:${formatCondition(all)}`} className="space-y-1 rounded-md border p-2">
+          <div className="flex items-center gap-1">
+            <span className="text-meta font-medium">{index === 0 ? "When" : "Else when"}</span>
+            <span className="font-mono text-[10px] text-muted-foreground" title="This branch's exit on the route">exit b{index}</span>
+            <span className="ms-auto flex">
+              <Button size="icon" variant="ghost" aria-label={`Move b${index} up`} disabled={index === 0} onClick={() => swap(index - 1, index)}><ArrowUp /></Button>
+              <Button size="icon" variant="ghost" aria-label={`Move b${index} down`} disabled={index === branches.length - 1} onClick={() => swap(index, index + 1)}><ArrowDown /></Button>
+              <Button size="icon" variant="ghost" aria-label={`Delete b${index}`} onClick={() => set(indices.filter((at) => at !== index))}><Trash2 /></Button>
+            </span>
+          </div>
+          {/* The whole condition stays readable: it wraps instead of clipping, and hovering shows it in full. */}
+          <Textarea aria-label={`Branch b${index}`} rows={2} className="min-h-0 resize-y font-mono text-xs break-all" title={formatCondition(all) || "No condition yet"} defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
             onBlur={(event) => { const next = branches.map((one, at) => at === index ? parseCondition(event.target.value) : one); if (formatCondition(next[index] ?? []) !== formatCondition(all)) set(indices, next) }} />
-          <Button size="icon" variant="ghost" aria-label={`Move b${index} up`} disabled={index === 0} onClick={() => swap(index - 1, index)}><ArrowUp /></Button>
-          <Button size="icon" variant="ghost" aria-label={`Move b${index} down`} disabled={index === branches.length - 1} onClick={() => swap(index, index + 1)}><ArrowDown /></Button>
-          <Button size="icon" variant="ghost" aria-label={`Delete b${index}`} onClick={() => set(indices.filter((at) => at !== index))}><Trash2 /></Button>
         </div>
       ))}
       <Button size="sm" variant="outline" onClick={() => set([...indices, -1], [...branches, []])}><Plus />Branch</Button>
@@ -81,13 +103,16 @@ function Options({ editing, id, options, pick }: { readonly editing: Editing; re
       {options.map((option, index) => (
         <div key={`${option.id}:${option.label}:${option.scope}:${JSON.stringify(option.effect ?? null)}`} className="space-y-1 rounded-md border p-2">
           <div className="flex items-center gap-1">
-            <span className="w-6 font-mono text-xs text-muted-foreground">{index + 1}</span>
-            <Input aria-label={`Option ${index + 1} label`} defaultValue={option.label} onBlur={(event) => { const label = event.target.value.trim(); if (label && label !== option.label) set(options.map((one) => one.id === option.id ? { ...one, label } : one)) }} />
+            <span className="text-meta font-medium">Option {index + 1}</span>
+            <span className="ms-auto flex">
             <Button size="icon" variant="ghost" aria-label={`Move option ${index + 1} up`} disabled={index === 0} onClick={() => move(index, index - 1)}><ArrowUp /></Button>
             <Button size="icon" variant="ghost" aria-label={`Move option ${index + 1} down`} disabled={index === options.length - 1} onClick={() => move(index, index + 1)}><ArrowDown /></Button>
             <Button size="icon" variant="ghost" aria-label={`Duplicate option ${index + 1}`} onClick={() => set([...options.slice(0, index + 1), { ...option, id: nextOptionId(options), label: `${option.label} (copy)` }, ...options.slice(index + 1)])}><Copy /></Button>
             <Button size="icon" variant="ghost" aria-label={`Delete option ${index + 1}`} onClick={() => set(options.filter((one) => one.id !== option.id))}><Trash2 /></Button>
+            </span>
           </div>
+          {/* The label gets the full width, so it reads whole; hovering shows it too. */}
+          <Input aria-label={`Option ${index + 1} label`} title={option.label} defaultValue={option.label} onBlur={(event) => { const label = event.target.value.trim(); if (label && label !== option.label) set(options.map((one) => one.id === option.id ? { ...one, label } : one)) }} />
           <div className="flex gap-1">
             <select aria-label={`Option ${index + 1} starts`} className="rounded-md border bg-background px-2 py-1 text-xs" value={effectOf(option)?.kind ?? "binding"}
               onChange={(event) => set(options.map((one) => one.id === option.id ? { ...one, effect: event.target.value === "action" ? { action: effectOf(one)?.ref ?? "" } : { binding: effectOf(one)?.ref ?? "" } } : one))}>
@@ -195,12 +220,12 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
       data: {
         kind: node.kind, title: words(node.id), issues: found,
         detail: node.kind === "perform" ? node.config.tool ?? "" : node.kind === "sleep" ? `${node.config.millis ?? 0} ms` : node.kind === "succeed" ? node.config.outcome ?? "" : node.kind === "decide" ? `${optionsOf(node).length} ${optionsOf(node).length === 1 ? "option" : "options"}` : node.kind === "route" ? `${branchesOf(node).length} ${branchesOf(node).length === 1 ? "branch" : "branches"}` : "",
-        outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id }) => id),
+        outs: (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").map(({ id: port }) => ({ id: port, label: exitLabel(node, port) ?? "next (continue after this step)" })),
       },
     }),
-    toEdge: (edge, found, selected): Edge => ({
+    toEdge: (edge, found, selected, graph): Edge => ({
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
-      markerEnd: { type: MarkerType.ArrowClosed }, label: edge.sourcePort === "next" ? undefined : edge.sourcePort.replace(/^opt:/, ""),
+      markerEnd: { type: MarkerType.ArrowClosed }, label: (() => { const text = exitLabel(graph.nodes.find(({ id: node }) => node === edge.source), edge.sourcePort); return text === undefined ? undefined : short(text) })(),
       style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
       labelBgStyle: { fill: "var(--card)" }, labelStyle: { fill: "var(--foreground)", fontSize: 11 },
     }),

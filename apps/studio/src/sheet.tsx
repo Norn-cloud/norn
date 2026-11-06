@@ -14,6 +14,13 @@ import { CanvasPageView, StateBox, lifecycleFrame } from "./canvas.tsx"
 import { StepBox, automationFrame } from "./automation-canvas.tsx"
 import { DECISION_EXAMPLE, EXAMPLE } from "./lib/canvas/tools.ts"
 import { DecisionTree } from "./decision-tree.tsx"
+import { AgentsView, AGENT_RUN_BLOCKED, AGENT_SAVE_BLOCKED } from "./agent-canvas.tsx"
+import { Unavailable } from "./canvas-frame.tsx"
+import { DECIDE_BLOCKED } from "./decision-tree.tsx"
+import { RUN_BLOCKED } from "./automation-canvas.tsx"
+import { NotConnected } from "./lib/definitions.ts"
+import type { KindStore } from "./lib/canvas/store.ts"
+import type { AgentDefinition } from "./lib/canvas/agent.ts"
 import { decisionView } from "./lib/canvas/decision.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { lifecyclesIn } from "./lib/canvas/lifecycle.ts"
@@ -39,6 +46,20 @@ function Step({ id, issues = [] }: { readonly id: string; readonly issues?: read
 
 const automation = (id: string, extra: Partial<Parameters<typeof CanvasFrame>[0]> = {}) =>
   <CanvasFrame {...automationFrame(() => ({ issues: [], status: <Badge variant="outline">Checker: no findings</Badge> }))} draftKey={`sheet:${id}`} {...extra} />
+
+/** The definition routes as a deployment without them answers: every call is NotConnected. */
+const down = async (): Promise<never> => { throw new NotConnected("The cell's definition routes aren't live yet, so agent definitions can't be listed or saved there.") }
+const routesDown: KindStore<AgentDefinition> = { list: down, get: down, admit: down, install: down, retire: down }
+const SAMPLE: AgentDefinition = {
+  name: "support.triage", title: "Support triage", model: "claude-sonnet-5-5", prompt: "Triage new tickets and draft replies.", tools: ["bind_tickets", "bind_gone"],
+  budgets: { maxRuns: 50, maxToolCalls: 400, maxCostUsd: "25.00" }, laws: ["core.analytics.restatement_policy"], decisionPolicy: { approve: "laws", laws: ["core.analytics.restatement_policy"], deciderRoles: ["admin"] },
+}
+const PINNED = { id: "bind_tickets", app: "helpdesk", tool: "list_tickets", label: "Read tickets", inputMapping: {}, runRole: "member" as const, updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"a".repeat(64)}`, connector: { gateway: "executor", origin: "https://gateway.example", app: "helpdesk", tool: "list_tickets", version: "v1" } }
+const oneAgent: KindStore<AgentDefinition> = {
+  list: async () => ({ items: [{ id: "studio.agent.support_triage", title: "Support triage", version: 3, lifecycle: "active", updatedAtMs: 0 }], cursor: null }),
+  get: async () => ({ id: "studio.agent.support_triage", version: 3, payload: SAMPLE }),
+  admit: down, install: down, retire: down,
+}
 
 const problem: Issue = { code: "lifecycle.validation.dead_end_state", message: 'state "invoiced" has no outgoing transition', node: "invoiced" }
 
@@ -78,6 +99,16 @@ const SPECIMENS: Record<string, () => ReactNode> = {
   "decision/default": () => { const view = decisionView(DECISION_EXAMPLE, "chase"); return view && <DecisionTree view={view} /> },
   "decision/path": () => { const view = decisionView(DECISION_EXAMPLE, "chase"); return view && <DecisionTree view={view} initialPath={["o1", "o2"]} /> },
   "automation/ask-selected": () => automation("ask", { initial: DECISION_EXAMPLE, initialSelection: { nodes: ["chase"], edges: [] } }),
+  "agents/routes-down": () => <AgentsView store={routesDown} bindingsSource={async () => [PINNED]} />,
+  "agents/editor": () => <AgentsView store={oneAgent} initialOpen="studio.agent.support_triage" bindingsSource={async () => [PINNED]} />,
+  "action/unavailable": () => (
+    <div className="flex flex-wrap gap-3">
+      <Unavailable reason={AGENT_SAVE_BLOCKED}>Save to server</Unavailable>
+      <Unavailable reason={RUN_BLOCKED}>Run in the cell</Unavailable>
+      <Unavailable reason={AGENT_RUN_BLOCKED}>Run the agent</Unavailable>
+      <Unavailable reason={DECIDE_BLOCKED}>Approve this path</Unavailable>
+    </div>
+  ),
   "page/loading": () => <CanvasPageView definitions={{ isPending: true, error: null, data: undefined }} />,
   "page/error": () => <CanvasPageView definitions={{ isPending: false, error: new Error("The cell did not answer (503)"), data: undefined }} />,
   "page/no-lifecycles": () => <CanvasPageView definitions={{ isPending: false, error: null, data: [] }} />,

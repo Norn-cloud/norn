@@ -40,7 +40,8 @@ export interface CanvasFrameProps {
   readonly nodeTypes: NodeTypes
   readonly issues: (graph: g.Graph) => { readonly issues: readonly Issue[]; readonly status: ReactNode }
   readonly toNode: (node: g.CanvasNode, issues: readonly Issue[], selected: boolean) => Node
-  readonly toEdge: (edge: g.CanvasEdge, issues: readonly Issue[], selected: boolean) => Edge
+  /** Draws one edge; the graph lets a label read its node (a route's condition, a decision's option). */
+  readonly toEdge: (edge: g.CanvasEdge, issues: readonly Issue[], selected: boolean, graph: g.Graph) => Edge
   /** The edge a new connection draws; `undefined` lets the frame refuse it. */
   readonly newEdge: (connection: Connection, graph: g.Graph) => g.CanvasEdge
   /** Copies rename what must stay unique (a lifecycle step id). */
@@ -200,7 +201,7 @@ function Frame(props: CanvasFrameProps) {
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             <ReactFlow
               nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
-              edges={graph.edges.map((edge) => props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id)))}
+              edges={graph.edges.map((edge) => props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph))}
               nodeTypes={props.nodeTypes} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
@@ -257,7 +258,7 @@ export function CanvasFrame(props: CanvasFrameProps) {
 export function Unavailable({ reason, children, className }: { readonly reason: string; readonly children: string; readonly className?: string }) {
   return (
     <span title={reason} className={cn("inline-flex cursor-not-allowed", className)}>
-      <Button size="sm" variant="outline" disabled className="border-dashed text-muted-foreground">{children}<span className="sr-only">: {reason}</span></Button>
+      <Button size="sm" variant="outline" disabled className="border-dashed border-muted-foreground/50 text-muted-foreground disabled:opacity-100">{children}<span className="sr-only">: {reason}</span></Button>
     </span>
   )
 }
