@@ -1,5 +1,6 @@
 import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
 import { QuestionBuilderPage } from "./builder.tsx"
+import { CanvasPage } from "./canvas.tsx"
 import { ConnectionsPage } from "./connections.tsx"
 import { DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
 import { GuaranteesPage } from "./guarantees.tsx"
@@ -25,6 +26,7 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/dashboards/new": DashboardEditorPage,
   "/dashboards/$id": DashboardEditorPage,
   "/workflows": WorkflowsPage,
+  "/canvas": CanvasPage,
   "/guarantees": GuaranteesPage,
   "/connections": ConnectionsWithBindings,
   "/status": StatusPage,
