@@ -251,3 +251,22 @@ fn object_path_segments_keep_a_raw_ampersand() {
     assert_eq!(status("/v1/objects/canon.Party/SYN%2DPARTY-01"), 200);
     assert_eq!(status("/v1/objects/canon.Party/SYN-PARTY-01&x"), 404);
 }
+
+/// The dispatch serves an object's links and lineage, and refuses any other
+/// leaf as an unknown route.
+#[test]
+fn object_links_and_lineage_routes_dispatch() {
+    let demo = host(NativeEngine::open_in_memory().unwrap());
+    let (status, page) = get(&demo, "/v1/objects/canon.Party/SYN-PARTY-01/links", SCOPE, VIEWER);
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(page["id"], "SYN-PARTY-01");
+    assert!(page["items"].as_array().unwrap().is_empty());
+    assert!(page["next"].is_null());
+    // The demo rows were seeded, not mapped from a source: no lineage to show.
+    let (status, lineage) = get(&demo, "/v1/objects/canon.Party/SYN-PARTY-01/lineage", SCOPE, VIEWER);
+    assert_eq!((status, lineage["code"].as_str()), (404, Some("object.not_found")));
+    let (status, other) = get(&demo, "/v1/objects/canon.Party/SYN-PARTY-01/history", SCOPE, VIEWER);
+    assert_eq!((status, other["code"].as_str()), (404, Some("route.not_found")));
+    let (status, _) = get(&demo, "/v1/objects/canon.Party/SYN-PARTY-01/links/x", SCOPE, VIEWER);
+    assert_eq!(status, 404);
+}

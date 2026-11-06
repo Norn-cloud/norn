@@ -32,7 +32,7 @@ pub const MAX_LIMIT: usize = 200;
 const MAX_SORT_KEYS: usize = 3;
 const MAX_CLAUSES: usize = 8;
 const MAX_IN_VALUES: usize = 50;
-const CURSOR_KEY: &[u8] = b"norn.object-cursor/1";
+pub(crate) const CURSOR_KEY: &[u8] = b"norn.object-cursor/1";
 
 /// The raw query string fields of `GET /v1/objects/{type}`.
 #[derive(Debug, Default, Clone)]
@@ -238,6 +238,15 @@ fn invalid(findings: Vec<RefusalDiagnostic>) -> Refusal {
     );
     refusal.diagnostics = findings;
     refusal
+}
+
+/// A 400 listing `violations`, each `(code, message, pointer)`.
+pub(crate) fn refused(violations: Vec<(&str, String, String)>) -> Refusal {
+    let mut findings = Findings(Vec::new());
+    for (code, message, pointer) in violations {
+        findings.push(code, message, pointer);
+    }
+    invalid(findings.0)
 }
 
 /// A 400 for a cursor this query cannot continue from.

@@ -60,7 +60,7 @@ pub trait ObjectAccess: Send + Sync {
     fn within_snapshot(&self) {}
 }
 
-fn not_found() -> Refusal {
+pub(crate) fn not_found() -> Refusal {
     Refusal::new(
         http::StatusCode::NOT_FOUND,
         "object.not_found",
@@ -69,7 +69,7 @@ fn not_found() -> Refusal {
     )
 }
 
-fn mapped(
+pub(crate) fn mapped(
     host_scope: &CellScope,
     access: &dyn ObjectAccess,
     actor: &str,
@@ -118,7 +118,7 @@ fn row_visible<E: SqlEngine>(
 }
 
 /// The collection gate: scope and Population on the collection, under the epoch.
-fn collection<'h, E: SqlEngine>(
+pub(crate) fn collection<'h, E: SqlEngine>(
     host: &'h DevHost<E>,
     scope: &ScopeQuery,
     actor: Option<&str>,
@@ -268,7 +268,7 @@ fn snapshot_unavailable() -> Refusal {
     )
 }
 
-fn snapshot_moved() -> Refusal {
+pub(crate) fn snapshot_moved() -> Refusal {
     let mut refusal = Refusal::new(
         http::StatusCode::CONFLICT,
         "object.snapshot_moved",
@@ -334,7 +334,7 @@ struct Scan {
 }
 
 /// Whether the caller holds `capability` on this exact row.
-fn permitted<E: SqlEngine>(
+pub(crate) fn permitted<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,
@@ -358,7 +358,7 @@ fn permitted<E: SqlEngine>(
 }
 
 /// The cell's version: the receipt head and, when revisioned, the database revision.
-fn version_of<E: SqlEngine>(
+pub(crate) fn version_of<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
 ) -> Result<(u64, Option<(u64, u64)>), Refusal> {
     let revision = match reader.read_isolation() {
@@ -375,7 +375,7 @@ fn version_of<E: SqlEngine>(
 
 /// Read one locked section at `start` (the first section fixes it): the
 /// version before and after the read must both equal it.
-fn locked<E: SqlEngine, T>(
+pub(crate) fn locked<E: SqlEngine, T>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     start: &mut Option<(u64, Option<(u64, u64)>)>,
@@ -491,7 +491,7 @@ fn queried(listed: &Listed) -> NornQueriedRecord {
 }
 
 /// The 413 for a sort or filter over more visible rows than one scan reads.
-fn scan_bound_exceeded() -> Refusal {
+pub(crate) fn scan_bound_exceeded() -> Refusal {
     Refusal::new(
         http::StatusCode::PAYLOAD_TOO_LARGE,
         "object.scan_bound_exceeded",
