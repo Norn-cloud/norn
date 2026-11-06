@@ -816,23 +816,30 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "unrelated", "", True, False),
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
+        *(("pull_request_target", action, "", "", True, True) for action in ("opened", "synchronize", "reopened", "edited")),
     ):
         # A bot-authored comment never re-evaluates; a human one does, whoever edits or
         # deletes it (the condition keys on the author, so the sender is irrelevant).
-        for cancelled, author in itertools.product((False, True), ("User", "Bot", "Organization")):
+        # A pull_request_target event evaluates only for a main-targeted head, and an edit
+        # only when it changed the base (a retarget): stacked heads never take the mutex.
+        for cancelled, author, base, retarget in itertools.product(
+                (False, True), ("User", "Bot", "Organization"), ("main", "feature/base", "Main", ""), (False, True)):
             condition = expression
             for key, value in {
                 "github.event_name": event, "github.event.action": action,
                 "github.event.comment.body": body, "github.event.changes.body.from": previous,
                 "github.event.issue.pull_request": is_pr, "github.event.comment.user.type": author,
+                "github.event.pull_request.base.ref": base, "github.event.repository.default_branch": "main",
+                "github.event.changes.base": retarget,
             }.items():
                 condition = condition.replace(key, repr(value))
             condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
             condition = re.sub(r"!(?!=)", " not ", condition)
             accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
             bot = event == "issue_comment" and author == "Bot"
-            if bool(accepted) != (expected and not cancelled and not bot):
-                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}")
+            stacked = event == "pull_request_target" and (base != "main" or (action == "edited" and not retarget))
+            if bool(accepted) != (expected and not cancelled and not bot and not stacked):
+                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}/{base}/{retarget}")
 
     reporter = next(step for step in job["steps"]
                     if step.get("name") == "Report trusted policy on the exact PR head")
@@ -1029,6 +1036,23 @@ def workflow_context_canaries(source: str) -> None:
                 raise AssertionError(f"trusted-policy bot mutation is a no-op: {label}")
             document["jobs"]["trusted-policy"]["if"] = changed
             rejected(f"trusted-policy bot comment {label}", document)
+        main_only = "github.event.pull_request.base.ref == github.event.repository.default_branch && "
+        retarget = "(github.event.action != 'edited' || github.event.changes.base)"
+        for label, before, after in (
+                ("unfiltered stacked heads", main_only, ""),
+                ("skip main", "base.ref == github.event.repository.default_branch", "base.ref != github.event.repository.default_branch"),
+                ("live base", "github.event.pull_request.base.ref", "github.base_ref || github.event.repository.default_branch"),
+                ("every edit", retarget, "true"),
+                ("no edits", retarget, "github.event.action != 'edited'")):
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["if"].replace(before, after)
+            if changed == document["jobs"]["trusted-policy"]["if"]:
+                raise AssertionError(f"trusted-policy stacked mutation is a no-op: {label}")
+            document["jobs"]["trusted-policy"]["if"] = changed
+            rejected(f"trusted-policy stacked {label}", document)
+        document = copy.deepcopy(workflow)
+        document["on"]["pull_request_target"]["types"].remove("edited")
+        rejected("retarget never re-evaluates", document)
         for change in ("concurrency", "if", "reporter"):
             document = copy.deepcopy(workflow)
             trusted = document["jobs"]["trusted-policy"]
