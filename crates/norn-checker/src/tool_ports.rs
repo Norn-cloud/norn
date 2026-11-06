@@ -19,6 +19,10 @@ use serde_json::{Map, Value, json};
 /// How deeply schemas and `$ref`s may nest before conversion refuses.
 pub const MAX_DEPTH: usize = 32;
 
+/// How many subschemas one conversion may lower, counting each `$ref` expansion
+/// again; bounds fan-out through shared `$defs` that depth alone does not.
+pub const MAX_NODES: usize = 10_000;
+
 /// A Norn port type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortType {
@@ -90,6 +94,8 @@ pub enum Reason {
     UntypedItems,
     /// Nesting beyond [`MAX_DEPTH`].
     TooDeep,
+    /// More than [`MAX_NODES`] subschemas once references are expanded.
+    TooLarge,
     /// The schema is not an object or boolean.
     NotASchema,
 }
@@ -108,6 +114,7 @@ impl Reason {
             Self::UnknownType(_) => "tool_port.unknown_type",
             Self::UntypedItems => "tool_port.untyped_items",
             Self::TooDeep => "tool_port.too_deep",
+            Self::TooLarge => "tool_port.too_large",
             Self::NotASchema => "tool_port.not_a_schema",
         }
     }
@@ -125,6 +132,10 @@ impl fmt::Display for Reason {
             Self::UnknownType(name) => write!(f, "type `{name}` has no port type"),
             Self::UntypedItems => f.write_str("an array needs one `items` schema"),
             Self::TooDeep => write!(f, "nested deeper than {MAX_DEPTH}"),
+            Self::TooLarge => write!(
+                f,
+                "more than {MAX_NODES} subschemas once references are expanded"
+            ),
             Self::NotASchema => f.write_str("not a JSON Schema object"),
         }
     }
@@ -150,6 +161,7 @@ pub fn ports_from_schema(schema: &Value) -> Result<PortType, Unsupported> {
     Lowering {
         root: schema,
         stack: Vec::new(),
+        nodes: 0,
     }
     .lower(schema, "", 0)
 }
@@ -157,6 +169,8 @@ pub fn ports_from_schema(schema: &Value) -> Result<PortType, Unsupported> {
 struct Lowering<'a> {
     root: &'a Value,
     stack: Vec<String>,
+    /// Subschemas lowered so far, across every `$ref` expansion.
+    nodes: usize,
 }
 
 fn refuse<T>(path: &str, reason: Reason) -> Result<T, Unsupported> {
@@ -188,6 +202,10 @@ impl Lowering<'_> {
         if depth > MAX_DEPTH {
             return refuse(path, Reason::TooDeep);
         }
+        self.nodes = self.nodes.saturating_add(1);
+        if self.nodes > MAX_NODES {
+            return refuse(path, Reason::TooLarge);
+        }
         let object = match schema {
             Value::Object(object) => object,
             Value::Bool(_) => return refuse(path, Reason::Untyped),
@@ -213,7 +231,14 @@ impl Lowering<'_> {
             )?));
         }
         if let Some(Value::Array(values)) = object.get("enum") {
-            let nullable = values.iter().any(Value::is_null);
+            // A `null` member counts only where `type` admits null; otherwise the type constraint rejects it.
+            let null_allowed = match object.get("type") {
+                None => true,
+                Some(Value::String(name)) => name == "null",
+                Some(Value::Array(names)) => names.iter().any(|n| n == "null"),
+                Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_)) => false,
+            };
+            let nullable = null_allowed && values.iter().any(Value::is_null);
             let strings: Vec<Value> = values.iter().filter(|v| !v.is_null()).cloned().collect();
             let port = PortType::Enum(string_set(&strings, path)?);
             return Ok(if nullable {

@@ -149,3 +149,39 @@ fn record_edges_check_required_fields_by_path() {
     );
     assert_eq!(edge_refusal(&target, &target), None);
 }
+
+#[test]
+fn a_null_enum_member_counts_only_where_the_type_admits_null() {
+    assert_eq!(
+        port(&json!({"type": "string", "enum": ["a", null]})),
+        PortType::Enum(vec!["a".to_owned()])
+    );
+    assert_eq!(
+        port(&json!({"type": ["string", "null"], "enum": ["a", null]})),
+        PortType::Nullable(Box::new(PortType::Enum(vec!["a".to_owned()])))
+    );
+    assert_eq!(
+        port(&json!({"enum": ["a", null]})),
+        PortType::Nullable(Box::new(PortType::Enum(vec!["a".to_owned()])))
+    );
+}
+
+#[test]
+fn reference_fan_out_is_bounded_by_the_node_budget() {
+    // Four references per level, sixteen levels: 4^16 leaves within the depth limit.
+    let mut defs = serde_json::Map::new();
+    for level in 1_u32..16 {
+        let next = format!("#/$defs/{}", level.saturating_add(1));
+        let properties: serde_json::Map<String, serde_json::Value> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|name| ((*name).to_owned(), json!({ "$ref": next })))
+            .collect();
+        defs.insert(
+            level.to_string(),
+            json!({"type": "object", "properties": properties}),
+        );
+    }
+    defs.insert("16".to_owned(), json!({"type": "string"}));
+    let schema = json!({"$ref": "#/$defs/1", "$defs": defs});
+    assert_eq!(refused(&schema).reason, Reason::TooLarge);
+}
