@@ -502,6 +502,19 @@ fi
 df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
 """}
+    # Disposable Boat VMs drop only image content no Norn job uses, then fail fast
+    # unless the bundle has room to build (b1 needs ~50 GiB at peak).
+    boat_cleanup = {"name": "Reclaim Boat runner disk space",
+                    "if": "${{ runner.environment == 'self-hosted' }}",
+                    "run": """set -euo pipefail
+minimum=$((40 * 1024 * 1024))
+available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+df -h /
+docker system prune --all --force
+rustup toolchain uninstall stable nightly-2025-03-01
+df -h /
+[ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
+"""}
     nextest = {"uses": "taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32",
                "with": {"tool": "nextest@0.9.150"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
@@ -526,6 +539,7 @@ df -h /
             if name == "test":
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
             preparation.insert(0, reclaim)
+            preparation.insert(1, copy.deepcopy(boat_cleanup))
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -535,7 +549,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 2),
+        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 3),
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
@@ -604,6 +618,11 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = (ROOT / "scripts/ci/core.sh").read_text()
+    # Bundles may drop only the cargo target dir, between tasks and when disk is low.
+    prune = ("      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then\n"
+             '        rm -rf -- "${CARGO_TARGET_DIR:-$PWD/target}"\n')
+    require(runner.count(prune) == 1 and runner.count("rm -rf") == 2,
+            "bundle may prune only the cargo target dir, between tasks and when disk is low")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,
             "full workspace tests must run")

@@ -388,8 +388,16 @@ PY
     [[ $# -eq 3 ]] || run_phase usage
     task_lines=$(bundle_plan tasks "$2" "$3")
     [[ $task_lines == phase/test-shards ]] || prepare_inputs
+    pruned=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
+      # Bundle tasks never share build outputs (the planner packs them freely), so
+      # a task may drop the previous task's target dir when disk runs low (#1059).
+      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+        rm -rf -- "${CARGO_TARGET_DIR:-$PWD/target}"
+        printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
+      fi
+      pruned=1
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS
