@@ -80,7 +80,8 @@ proptest! {
         let mut listed: Vec<(&str, &[u8])> = files.iter().map(|(path, bytes)| (path.as_str(), bytes.as_slice())).collect();
         let forward = digest(&listed).unwrap();
         let len = listed.len();
-        listed.rotate_left(usize::try_from(seed % u64::try_from(len).unwrap()).unwrap());
+        let shift = seed.checked_rem(u64::try_from(len).unwrap()).unwrap();
+        listed.rotate_left(usize::try_from(shift).unwrap());
         listed.reverse();
         prop_assert_eq!(digest(&listed).unwrap(), forward);
     }
