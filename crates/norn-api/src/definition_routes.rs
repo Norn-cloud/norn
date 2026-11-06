@@ -199,6 +199,34 @@ pub struct DefinitionKinds {
 /// UTF-8 bytes.
 pub type Restater = fn(&str, &str, &[MetricDefinition]) -> Result<String, String>;
 
+/// The shared generator (`norn_checker::metric::restate`) as a [`Restater`]:
+/// a saved `question` is restated as its QuestionIR, a `dashboard` as its
+/// title line and one line per tile; other kinds have nothing to restate.
+///
+/// # Errors
+/// The payload does not decode, or the generator cannot restate it.
+pub fn checker_restater(
+    kind: &str,
+    payload: &str,
+    metrics: &[MetricDefinition],
+) -> Result<String, String> {
+    use norn_checker::metric::restate::{restate_dashboard, restate_question};
+    match kind {
+        "question" => {
+            let question: QuestionIR =
+                serde_json::from_str(payload).map_err(|error| error.to_string())?;
+            restate_question(&question, metrics)
+        }
+        "dashboard" => {
+            let dashboard: Value =
+                serde_json::from_str(payload).map_err(|error| error.to_string())?;
+            restate_dashboard(&dashboard, metrics)
+        }
+        other => return Err(format!("a {other} has no plain-words restatement")),
+    }
+    .map_err(|error| error.to_string())
+}
+
 impl DefinitionKinds {
     /// Register the restatement generator that verifies sign-offs.
     #[must_use]

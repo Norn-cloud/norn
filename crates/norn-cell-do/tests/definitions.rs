@@ -693,3 +693,79 @@ fn a_saved_question_is_a_bare_question_ir_admitted_as_a_tile_is() {
     let (_, document) = get(&cell, "/v1/definitions/studio.question.yield", "", VIEWER);
     assert_eq!(document["payload"], question());
 }
+
+const CASES: &str = include_str!("../../../fixtures/restatement/cases.json");
+const CASE_METRICS: &str = include_str!("../../../fixtures/demo/answers/scrap-yield.metrics.json");
+
+/// The registered adapter reproduces every golden restatement and digest.
+#[test]
+fn the_checker_restater_reproduces_the_golden_restatements() {
+    use norn_api::definition_routes::checker_restater;
+    let cases: Value = serde_json::from_str(CASES).unwrap();
+    let metrics: Vec<MetricDefinition> = serde_json::from_str(CASE_METRICS).unwrap();
+    let mut seen = 0;
+    for (kind, list, payload) in [
+        ("question", "questions", "question"),
+        ("dashboard", "dashboards", "payload"),
+    ] {
+        for case in cases[list].as_array().unwrap() {
+            let restated = checker_restater(kind, &case[payload].to_string(), &metrics)
+                .unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
+            assert_eq!(
+                restated,
+                case["restatement"].as_str().unwrap(),
+                "{}",
+                case["name"]
+            );
+            assert_eq!(
+                sha256(&restated),
+                case["restatementSha256"].as_str().unwrap()
+            );
+            seen += 1;
+        }
+    }
+    assert!(seen >= 9, "{seen} golden cases");
+    assert!(checker_restater("agent", "{}", &metrics).is_err());
+}
+
+/// The cell restates against its own admitted declarations; they must say
+/// what the golden fixture's declarations say, or a Studio sign-off and the
+/// cell's recomputation would disagree.
+#[test]
+fn the_analytics_cells_declarations_restate_as_the_golden_ones() {
+    use norn_api::definition_routes::checker_restater;
+    use norn_api::question_routes::AdHocQuestions;
+    let cell = cell(DefinitionKinds::default());
+    let declared = AdHocQuestions::<NativeEngine>::definitions(&cell.questions);
+    let cases: Value = serde_json::from_str(CASES).unwrap();
+    for case in cases["questions"].as_array().unwrap() {
+        assert_eq!(
+            checker_restater("question", &case["question"].to_string(), declared).unwrap(),
+            case["restatement"].as_str().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+}
+
+/// End to end with the real generator: a Studio sign-off of the golden
+/// restatement installs, and its digest is what the cell recorded.
+#[test]
+fn a_saved_question_signed_with_the_golden_digest_installs() {
+    use norn_api::definition_routes::checker_restater;
+    let cell = cell(DefinitionKinds::default().with_restater(checker_restater));
+    let cases: Value = serde_json::from_str(CASES).unwrap();
+    let case = &cases["questions"][0];
+    let body = json!({
+        "kind": "question", "id": "studio.question.signed", "payload": case["question"],
+        "signoff": { "restatementSha256": case["restatementSha256"] },
+    });
+    let (status, installed) = post(&cell, "/v1/definitions:install", ADMIN, &body);
+    assert_eq!(status, 200, "{installed}");
+    let (_, document) = get(&cell, "/v1/definitions/studio.question.signed", "", VIEWER);
+    assert_eq!(
+        document["signoff"]["restatementSha256"],
+        case["restatementSha256"]
+    );
+    assert_eq!(document["signoff"]["signer"], json!("viewer@demo"));
+}

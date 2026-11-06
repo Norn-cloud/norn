@@ -10,7 +10,7 @@
 
 use std::cell::Cell;
 
-use norn_api::definition_routes::DefinitionKinds;
+use norn_api::definition_routes::{self, DefinitionKinds};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::scope::CellScope;
@@ -163,8 +163,9 @@ impl NornCell {
             last_refresh_ms: Cell::new(f64::NEG_INFINITY),
             caller,
             object_types,
-            // Dashboards are built in; agents wait for lane CANVAS's checker.
-            kinds: DefinitionKinds::default(),
+            // Dashboards and questions are built in, their sign-offs verified
+            // by the shared restatement generator; agents wait for CANVAS's checker.
+            kinds: DefinitionKinds::default().with_restater(definition_routes::checker_restater),
         })
     }
 
