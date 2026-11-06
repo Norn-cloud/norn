@@ -33,7 +33,10 @@ fn cell(engine: NativeEngine) -> Cell {
     })
     .unwrap()
     .with_authorizer(policy);
-    (host, DemoQuestions::new(opened.plan, scope).with_handle_key(&SECRET), principals)
+    let runtime = DemoQuestions::new(opened.plan, scope)
+        .with_handle_key(&SECRET)
+        .with_metrics(opened.definitions, opened.catalog);
+    (host, runtime, principals)
 }
 
 fn call(
@@ -49,6 +52,7 @@ fn call(
         query,
         authorization,
         now: 0,
+        body: "",
     };
     server::handle_with(&cell.0, &cell.2, Some(&cell.1), &request)
 }

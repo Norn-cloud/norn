@@ -67,6 +67,10 @@ pub struct Analytics<E: SqlEngine> {
     pub store: CellStore<E>,
     /// The admitted question.
     pub plan: QuestionPlan,
+    /// The cell's declared metrics, which ad-hoc questions may name (F2b).
+    pub definitions: Vec<MetricDefinition>,
+    /// The catalog questions are admitted against.
+    pub catalog: EffectiveCatalog,
 }
 
 /// Open the analytics cell, loading the K1 conversions on a fresh engine.
@@ -95,9 +99,12 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics
             })
             .map_err(|e| fail("K1 conversions", e))?;
     }
+    let (plan, definitions, catalog) = plan(&object)?;
     Ok(Analytics {
         store,
-        plan: plan(&object)?,
+        plan,
+        definitions,
+        catalog,
     })
 }
 
@@ -131,7 +138,9 @@ fn conversions() -> Result<Vec<FactWriteRow>, SeedError> {
 }
 
 /// Admit the weekly yield question: recovered over input, gold only, by week.
-fn plan(object: &ObjectTypeDef) -> Result<QuestionPlan, SeedError> {
+fn plan(
+    object: &ObjectTypeDef,
+) -> Result<(QuestionPlan, Vec<MetricDefinition>, EffectiveCatalog), SeedError> {
     let mut artifact: Value = serde_json::from_str::<Vec<Value>>(include_str!(
         "../../../fixtures/ir/metrics/ontology.json"
     ))
@@ -209,8 +218,10 @@ fn plan(object: &ObjectTypeDef) -> Result<QuestionPlan, SeedError> {
     question.freshness = FreshnessPolicy::Live {
         max_age_ms: norn_ir::WholeNumber(5_000),
     };
-    admit(&[recovered, input, ratio], &question, &catalog, 100)
-        .map_err(|e| fail("admission", format!("{e:?}")))
+    let definitions = vec![recovered, input, ratio];
+    let plan = admit(&definitions, &question, &catalog, 100)
+        .map_err(|e| fail("admission", format!("{e:?}")))?;
+    Ok((plan, definitions, catalog))
 }
 
 /// Server-owned resolution for the analytics cell's admitted question.
@@ -218,18 +229,31 @@ pub struct DemoQuestions {
     plan: QuestionPlan,
     scope: CellScope,
     handle_key: Vec<u8>,
+    definitions: Vec<MetricDefinition>,
+    catalog: EffectiveCatalog,
 }
 
 impl DemoQuestions {
     /// The runtime for one opened analytics cell. Until a lineage handle key
     /// is set ([`Self::with_handle_key`]) every answer and trace refuses.
     #[must_use]
-    pub const fn new(plan: QuestionPlan, scope: CellScope) -> Self {
+    pub fn new(plan: QuestionPlan, scope: CellScope) -> Self {
         Self {
             plan,
             scope,
             handle_key: Vec::new(),
+            definitions: Vec::new(),
+            catalog: EffectiveCatalog::from_artifacts(&[]),
         }
+    }
+
+    /// F2b: answer ad-hoc questions over these declared metrics and catalog.
+    /// Without them every ad-hoc question names an undeclared metric.
+    #[must_use]
+    pub fn with_metrics(mut self, definitions: Vec<MetricDefinition>, catalog: EffectiveCatalog) -> Self {
+        self.definitions = definitions;
+        self.catalog = catalog;
+        self
     }
 
     /// D53: key this cell's lineage handles with the host's secret (the
@@ -336,4 +360,27 @@ impl<E: SqlEngine> QuestionRuntime<E> for DemoQuestions {
 
 fn shape<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, SeedError> {
     serde_json::from_value(value).map_err(|e| fail("question shape", e))
+}
+
+/// Rows an ad-hoc question may read per evaluation (F2b).
+pub const AD_HOC_MAX_ROWS: u32 = 1_000;
+/// Buckets an ad-hoc answer may hold (F2b): two years of weeks.
+pub const AD_HOC_MAX_BUCKETS: usize = 104;
+
+impl<E: SqlEngine> norn_api::question_routes::AdHocQuestions<E> for DemoQuestions {
+    fn definitions(&self) -> &[MetricDefinition] {
+        &self.definitions
+    }
+
+    fn catalog(&self) -> &EffectiveCatalog {
+        &self.catalog
+    }
+
+    fn max_rows(&self) -> u32 {
+        AD_HOC_MAX_ROWS
+    }
+
+    fn max_buckets(&self) -> usize {
+        AD_HOC_MAX_BUCKETS
+    }
 }
