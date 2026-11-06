@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { CARD, EDGE_PILL, InspectorHead, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { cn } from "@/lib/utils"
-import { LANE, laneRoute, railsOf, type Rail } from "./lib/canvas/routes.ts"
+import { LANE, laneRoute, placeLabels, railsOf, type Rail } from "./lib/canvas/routes.ts"
+import { labelWidth } from "./lib/canvas/exits.ts"
 import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
@@ -47,8 +48,14 @@ const railCache = new WeakMap<g.Graph, ReadonlyMap<string, Rail>>()
 const railOf = (graph: g.Graph, id: string): Rail | undefined => {
   let rails = railCache.get(graph)
   if (!rails) {
+    // Each step between its handles: a state's right edge out, its left edge in, at the card's middle.
     const at = new Map(graph.nodes.map(({ id: node, position }) => [node, position]))
-    rails = railsOf(graph.edges.flatMap((edge) => { const source = at.get(edge.source), target = at.get(edge.target); return source && target ? [{ id: edge.id, source, target }] : [] }))
+    const middle = cardHeight({}) / 2
+    const steps = graph.edges.flatMap((edge) => {
+      const source = at.get(edge.source), target = at.get(edge.target)
+      return source && target ? [{ id: edge.id, source: { x: source.x + CARD.state, y: source.y + middle }, target: { x: target.x, y: target.y + middle }, width: labelWidth(words(edge.config.transition || edge.id)) }] : []
+    })
+    rails = placeLabels(steps, railsOf(steps))
     railCache.set(graph, rails)
   }
   return rails.get(id)

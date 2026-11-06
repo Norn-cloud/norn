@@ -40,7 +40,11 @@ export function rounded(points: readonly Point[], radius: number = LANE.radius):
  * lands (`port`, a vertical offset from the handle). Steps sharing a lane, a source or a target each get their own,
  * RAIL_GAP apart, so every step can be traced from its source to its target.
  */
-export interface Rail { readonly offset: number; readonly out: number; readonly into: number; readonly port: number }
+export interface Rail {
+  readonly offset: number; readonly out: number; readonly into: number; readonly port: number
+  /** Where its label's centre sits along its run, from the turn at `out` toward the target; placed so no two labels overlap. */
+  readonly along?: number
+}
 export const RAIL_GAP = 8
 const NO_RAIL: Rail = { offset: 0, out: 0, into: 0, port: 0 }
 
@@ -85,5 +89,37 @@ export function laneRoute(source: Point, target: Point, lane: { readonly pitch: 
   const landing = { x: target.x, y: target.y + rail.port }
   const points = [source, { x: out, y: source.y }, { x: out, y }, { x: into, y }, { x: into, y: landing.y }, landing]
   const forward = into >= out
+  if (rail.along !== undefined) return { path: rounded(points, lane.radius), label: { x: out + (forward ? rail.along : -rail.along), y, anchor: "middle" }, straight: false }
   return { path: rounded(points, lane.radius), label: { x: out + (forward ? 10 : -10), y, anchor: forward ? "start" : "end" }, straight: false }
+}
+
+/** A label's height on the canvas (the edge pill), and the room kept between two labels. */
+const LABEL_HEIGHT = 18, LABEL_CLEAR = 6
+
+/**
+ * Where each lane step's label sits along its run so that no two labels overlap: in order along each lane, each
+ * label takes the first place on its own run (from its turn toward its target) clear of every label placed before
+ * it (past the run's end only when the run is full). `width` is each label's drawn width.
+ */
+export function placeLabels(steps: readonly { readonly id: string; readonly source: Point; readonly target: Point; readonly width: number }[], rails: ReadonlyMap<string, Rail>, lane = LANE): ReadonlyMap<string, Rail> {
+  const placed: { x1: number; x2: number; y: number }[] = []
+  const clear = (x1: number, x2: number, y: number) => placed.every((box) => x2 + LABEL_CLEAR <= box.x1 || x1 >= box.x2 + LABEL_CLEAR || Math.abs(y - box.y) >= LABEL_HEIGHT)
+  const runs = steps.flatMap((step) => {
+    const rail = rails.get(step.id)
+    if (!rail) return []
+    const sameRow = Math.abs(step.source.y - step.target.y) < 2
+    const y = (sameRow ? step.source.y - lane.pitch / 2 : Math.max(step.source.y, step.target.y) - lane.pitch / 2) + rail.offset
+    const out = step.source.x + lane.stub + rail.out, into = step.target.x - lane.stub - rail.into
+    return [{ step, rail, y, out, into, forward: into >= out }]
+  }).sort((a, b) => a.y - b.y || Math.min(a.out, a.into) - Math.min(b.out, b.into))
+  const result = new Map(rails)
+  for (const { step, rail, y, out, into, forward } of runs) {
+    const half = step.width / 2
+    let along = half + 8
+    for (let tries = 0; tries < 200 && !clear(...(forward ? [out + along - half, out + along + half] : [out - along - half, out - along + half]) as [number, number], y); tries += 1) along += 4
+    const center = forward ? out + along : out - along
+    placed.push({ x1: center - half, x2: center + half, y })
+    result.set(step.id, { ...rail, along })
+  }
+  return result
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { LANE, RAIL_GAP, laneRoute, railsOf, rounded } from "../src/lib/canvas/routes.ts"
+import { LANE, RAIL_GAP, laneRoute, placeLabels, railsOf, rounded } from "../src/lib/canvas/routes.ts"
 
 test("a step along the row goes straight across, its label mid-gap", () => {
   expect(laneRoute({ x: 144, y: 29 }, { x: 240, y: 29 })).toEqual({ path: "M 144 29 L 240 29", label: { x: 192, y: 29, anchor: "middle" }, straight: true })
@@ -57,4 +57,20 @@ test("a rail moves the lane, the turns and the landing point", () => {
   const routed = laneRoute({ x: 144, y: 29 }, { x: 424, y: 139 }, LANE, { offset: 8, out: 8, into: 16, port: -8 })
   expect(routed.label).toEqual({ x: 144 + LANE.stub + 8 + 10, y: 139 - LANE.pitch / 2 + 8, anchor: "start" })
   expect(routed.path.endsWith("L 424 131")).toBe(true)
+})
+
+test("lane labels never overlap: each slides along its own run until clear of the others", () => {
+  const handles = steps.map(({ id, source, target }) => ({ id, source: { x: source.x + 168, y: source.y + 29 }, target: { x: target.x, y: target.y + 29 }, width: 52 }))
+  const placed = placeLabels(handles, railsOf(handles))
+  const boxes = handles.flatMap((step) => {
+    const rail = placed.get(step.id)
+    if (!rail || rail.along === undefined) return []
+    const { label } = laneRoute(step.source, step.target, LANE, rail)
+    return [{ id: step.id, x1: label.x - 26, x2: label.x + 26, y: label.y }]
+  })
+  expect(boxes.length).toBe(6)
+  for (const [i, a] of boxes.entries()) for (const b of boxes.slice(i + 1)) {
+    const overlap = a.x1 < b.x2 && b.x1 < a.x2 && Math.abs(a.y - b.y) < 18
+    expect(overlap, `${a.id} and ${b.id}`).toBe(false)
+  }
 })

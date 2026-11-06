@@ -77,3 +77,16 @@ test("sheet: sibling exit labels are distinct and drawn whole", async ({ page })
     for (const { text, cut } of siblings) expect(cut, `"${text}" is cut short`).toBe(false)
   }
 })
+
+// Lifecycle step labels never overlap one another or a state at the default view, however many steps share a lane.
+test("sheet: lifecycle step labels are clear of each other and of every state", async ({ page }) => {
+  await page.goto("/sheet.html?state=frame%2Fdefault")
+  await expect(page.locator("[data-edge-label]").first()).toBeVisible()
+  const boxes = (selector: string) => page.locator(selector).evaluateAll((all) => all.map((one) => ({ id: one.getAttribute("data-edge-label") ?? one.getAttribute("data-id") ?? "", ...one.getBoundingClientRect().toJSON() as DOMRect })))
+  const [labels, nodes] = await Promise.all([boxes("[data-edge-label]"), boxes(".react-flow__node")])
+  const overlap = (a: DOMRect, b: DOMRect) => a.x < b.x + b.width - 0.5 && a.x + a.width > b.x + 0.5 && a.y < b.y + b.height - 0.5 && a.y + a.height > b.y + 0.5
+  labels.forEach((label, index) => {
+    for (const other of labels.slice(index + 1)) expect(overlap(label, other), `${label.id} over ${other.id}`).toBe(false)
+    for (const state of nodes) expect(overlap(label, state), `${label.id} over ${state.id}`).toBe(false)
+  })
+})
