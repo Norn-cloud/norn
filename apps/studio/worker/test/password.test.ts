@@ -8,6 +8,9 @@ import { authOptions } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 import { hashPassword, passwordScrypt, verifyPassword } from "../password.ts"
 
+// The Worker takes an execution context on this line (the assistant spends through ctx.waitUntil).
+const CONTEXT = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
+
 // A fixed vector (Python hashlib.scrypt, same parameters); the password is NFKC-normalized first.
 const VECTOR = {
   password: "Ｃorrect horse battery staple",
@@ -59,7 +62,7 @@ test("an account stored on Cloudflare signs in on a pure-JS deployment", async (
   const env = (database: Database, scrypt?: string): Env => ({ ASSETS: assets, AUTH_DB: database as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, ...scrypt === undefined ? {} : { AUTH_SCRYPT: scrypt } })
   const post = (target: Env, path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, {
     method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": "198.51.100.7" },
-  }) as Parameters<typeof worker.fetch>[0], target)
+  }) as Parameters<typeof worker.fetch>[0], target, CONTEXT)
   const email = "moved@example.com"
   expect((await post(env(db), "/api/auth/sign-up/email", { email, password: "a native password", name: "Moved" })).status).toBe(200)
   // The row as Cloudflare stored it, read by a pure-JS deployment of the same database.
