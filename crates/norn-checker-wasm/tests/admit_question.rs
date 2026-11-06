@@ -1,3 +1,10 @@
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    missing_docs,
+    reason = "integration-test crate"
+)]
+
 //! `admit_question_json`: the cell's question admission over the demo
 //! analytics world, as the Studio assistant calls it.
 
