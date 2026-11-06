@@ -70,10 +70,19 @@ const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
  * GET /api/questions/catalog and POST /api/questions/check: a question built
  * in Studio, admitted or refused by the server's checker. Nothing is evaluated.
  */
+/** Every question route the Worker serves; the Worker's gate covers exactly these. */
+export const QUESTION_ROUTES = ["/api/questions/catalog", "/api/questions/recommendations", "/api/questions/check"] as const
+export const isQuestionRoute = (pathname: string) => (QUESTION_ROUTES as readonly string[]).includes(pathname)
+
 export async function questionsRoute(request: Request, pathname: string, checker: () => Promise<Admit>): Promise<Response> {
   if (pathname === "/api/questions/catalog") {
     if (request.method !== "GET") return refuse(405, "Use GET.", { allow: "GET" })
     return Response.json(questionCatalog(), { headers: { "cache-control": "no-store" } })
+  }
+  if (pathname === "/api/questions/recommendations") {
+    if (request.method !== "GET") return refuse(405, "Use GET.", { allow: "GET" })
+    const { questionRecommendations } = await import("./question-tree.ts")
+    return Response.json(questionRecommendations(await checker()), { headers: { "cache-control": "no-store" } })
   }
   if (request.method !== "POST") return refuse(405, "Use POST.", { allow: "POST" })
   const text = await request.text()
@@ -86,5 +95,7 @@ export async function questionsRoute(request: Request, pathname: string, checker
   }
   const question = body !== null && typeof body === "object" ? (body as { question?: unknown }).question : undefined
   if (question === null || typeof question !== "object") return refuse(400, "Expected {question}.")
-  return Response.json(questionVerdict(question, await checker()), { headers: { "cache-control": "no-store" } })
+  // The verdict with the question in plain words (generated from the IR by code) and its hash, for sign-off.
+  const { restatement } = await import("./question-tree.ts")
+  return Response.json({ ...questionVerdict(question, await checker()), restatement: await restatement(question as never) }, { headers: { "cache-control": "no-store" } })
 }

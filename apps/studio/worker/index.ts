@@ -66,9 +66,10 @@ export default {
     const { pathname } = new URL(request.url)
     if (pathname === "/api/agent") return agent(request, env, ctx)
     if (pathname === "/api/agent/example") return example(request)
-    if (pathname === "/api/questions/catalog" || pathname === "/api/questions/check") {
+    if (pathname.startsWith("/api/questions/")) {
       // Loaded on first use, like the assistant: the checker's WebAssembly is not needed elsewhere.
-      const { questionsRoute } = await import("./questions.ts")
+      const { isQuestionRoute, questionsRoute } = await import("./questions.ts")
+      if (!isQuestionRoute(pathname)) return refuse(404, "No such endpoint.")
       return questionsRoute(request, pathname, async () => (await import("./checker.ts")).admitQuestion)
     }
     if (pathname.startsWith("/api/")) return refuse(404, "No such endpoint.")
