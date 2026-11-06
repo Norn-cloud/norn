@@ -280,7 +280,7 @@ class ReceiptTest(unittest.TestCase):
         original = copy.deepcopy(self.claims)
         receipts.implementation_claims = lambda root: original if root == base else self.claims
         self.assertFalse(receipts.in_scope(self.root, base))
-        for path, expected in (("unrelated.md", False), ("test-only/Cargo.toml", False), ("dep/src/lib.rs", True),
+        for path, expected in (("unrelated.md", False), ("test-only/Cargo.toml", True), ("dep/src/lib.rs", True),
                                ("src/lib.rs", True), ("fst/Proof.fst", True), ("Cargo.lock", True)):
             with (self.root / path).open("a") as handle:
                 handle.write("\n// changed\n")
@@ -290,30 +290,55 @@ class ReceiptTest(unittest.TestCase):
         self.claims["INV-EXTRACT"]["extractionBinding"] = BINDING | {"items": ["lib::g"]}
         self.assertTrue(receipts.in_scope(self.root, base))
         self.claims = {}
+        self.assertTrue(receipts.in_scope(self.root, base))
+
+    def assert_outside_rust_change_in_scope(self, source: str) -> None:
+        (self.root / "src/lib.rs").write_text(source)
+        (self.root / "outside.rs").write_text("pub fn external() {}\n")
+        self.commit()
+        base = self.tmp / "base"
+        subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
+        self.assertFalse(receipts.in_scope(self.root, base))
+        (self.root / "outside.rs").write_text("pub fn external() { }\n")
+        self.commit()
+        self.assertTrue(receipts.in_scope(self.root, base))
+
+    def test_scope_covers_commented_path_attribute(self) -> None:
+        self.assert_outside_rust_change_in_scope('#[/*gap*/path = "../../outside.rs"] mod external;\n')
+
+    def test_scope_covers_commented_include_macro(self) -> None:
+        self.assert_outside_rust_change_in_scope('include /*gap*/ !("../../outside.rs");\n')
+
+    def test_scope_covers_commented_out_cfg_attr(self) -> None:
+        self.assert_outside_rust_change_in_scope('// #[cfg_attr(all(), path = "../../outside.rs")]\n')
+
+    def test_scope_covers_macro_generated_path_attribute(self) -> None:
+        self.assert_outside_rust_change_in_scope(
+            'macro_rules! m { ($a:ident) => { #[$a = "../../outside.rs"] mod external; } }\n'
+            'm!(path);\n')
+
+    def test_scope_ignores_docs_and_non_rust_files(self) -> None:
+        base = self.tmp / "base"
+        subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
+        (self.root / "README.md").write_text("Documentation change\n")
+        (self.root / "settings.json").write_text('{"changed": true}\n')
+        self.commit()
         self.assertFalse(receipts.in_scope(self.root, base))
 
-    def test_scope_refuses_sources_outside_the_package(self) -> None:
-        # Sol S3: scope compares package directories, so a layout whose library
-        # inputs it cannot bound is refused; path values are never parsed.
-        base_files = {"Cargo.toml": '[workspace]\nmembers = ["lib"]\n', "lib/Cargo.toml": '[package]\nname = "lib"\n',
-                      "lib/src/lib.rs": "pub fn f() {}\n",
-                      "lib/tests/t.rs": 'const X: &str = include_str!("../../outside.rs");\n', "outside.rs": ""}
-        for name, text in base_files.items():
-            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
-            (self.root / name).write_text(text)
-        claims = {"INV-EXTRACT": self.claims["INV-EXTRACT"]}
-        # Test-only targets are not read.
-        self.assertIn("lib", receipts.scope_inputs(self.root, claims))
-        for name, text, fragment in (
-                ("lib/Cargo.toml", '[package]\nname = "lib"\n[lib]\npath = "../outside.rs"\n', "lib.path"),
-                ("lib/src/lib.rs", '#[path = r"../../outside.rs"] mod outside;\n', "cannot be scoped"),
-                ("lib/src/lib.rs", '#[cfg_attr(\n    all(),\n    path = "../../outside.rs"\n)] mod outside;\n',
-                 "cannot be scoped")):
-            original = (self.root / name).read_text()
-            (self.root / name).write_text(text)
-            with self.subTest(text=text), self.assertRaisesRegex(receipts.Refused, fragment):
-                receipts.scope_inputs(self.root, claims)
-            (self.root / name).write_text(original)
+    def test_scope_covers_added_and_deleted_build_inputs_without_claims(self) -> None:
+        self.claims = {}
+        base = self.tmp / "base"
+        subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
+        for path in ("external/new.rs", "external/Cargo.toml", "external/Cargo.lock",
+                     "rust-toolchain-custom", ".cargo/custom.json", "external/build.rs"):
+            with self.subTest(path=path):
+                target = self.root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("new input\n")
+                self.commit()
+                self.assertTrue(receipts.in_scope(self.root, base))
+                self.assertTrue(receipts.in_scope(base, self.root))
+                subprocess.run(["git", "-C", str(self.root), "reset", "-q", "--hard", "HEAD~1"], check=True)
 
     def test_unchanged_claims_are_labelled_but_never_admitted(self) -> None:
         errors, verdicts = receipts.verify(self.root, self.out, self.expected, None, scoped=False)
