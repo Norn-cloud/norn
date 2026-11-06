@@ -49,8 +49,9 @@ impl RequirementView {
 
     // LAW-WORDING-LOCALE-1 applies to every declared locale before either view.
     fn wording(&self) -> Result<&LocalizedRequirement, &'static str> {
+        let wording = self.requirement.wording.locale(&self.locale)?;
         self.requirement.validate_wording()?;
-        self.requirement.wording.locale(&self.locale)
+        Ok(wording)
     }
 
     /// All locales expose identical semantic slots in identical order.

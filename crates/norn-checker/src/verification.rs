@@ -103,13 +103,7 @@ fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
         ));
     }
     if let Some(LawTiming::Within { millis }) = &law.timing
-        && millis
-            .parse::<u64>()
-            .ok()
-            .filter(|value| *value > 0)
-            .map(|value| value.to_string())
-            .as_ref()
-            != Some(millis)
+        && norn_ir::canonical_positive_millis(millis).is_none()
     {
         out.push(finding(
             codes::INVALID_DOCUMENT,

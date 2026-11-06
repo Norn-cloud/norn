@@ -256,7 +256,7 @@ pub mod canonical {
 pub mod verification;
 pub use verification::{
     LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity, LawStateScope,
-    LawTiming,
+    LawTiming, canonical_positive_millis,
 };
 
 pub const SUPPORTED_IR_VERSION: &str = "0.1";

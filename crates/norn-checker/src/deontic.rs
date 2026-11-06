@@ -18,6 +18,8 @@ pub enum LawLoweringRefusal {
     InvalidSource,
     /// L1 v1 supports only untimed always/never, never progress claims.
     UnsupportedProofFragment,
+    /// A LAW-WITHIN-1 trigger, retrigger and cancel policy has no `LawIR` form.
+    ActivationTiming,
 }
 
 /// Exact law plus the source link consumed by a later proof bridge.
@@ -34,8 +36,11 @@ pub struct LoweredDeonticLaw {
 }
 
 /// Lower only unconditional-in-the-defeasibility-sense obligations/prohibitions.
-/// Existing `LawIR` conditions and deadlines are preserved verbatim. The result
-/// must still pass ordinary `LawIR` admission; no assurance label is issued here.
+/// Existing `LawIR` conditions and deadlines are preserved verbatim. A
+/// `StructuredRequirement` must go through [`lower_requirement`] instead, which
+/// refuses `within` rather than drop its trigger, retrigger and cancel policy.
+/// The result must still pass ordinary `LawIR` admission; no assurance label
+/// is issued here.
 ///
 /// # Errors
 /// Returns a typed refusal rather than silently weakening unsupported semantics.
@@ -71,6 +76,26 @@ pub fn lower_deontic_law(rule: &DeonticRule) -> Result<LoweredDeonticLaw, LawLow
         authority_id: rule.authority_id.clone(),
         authority_version: rule.authority_version.clone(),
     })
+}
+
+/// Lower a structured requirement. A `DeonticRule` carries no trigger,
+/// retrigger or cancel policy, so this is the only lowering entry for a
+/// `StructuredRequirement`: a `within` requirement refuses rather than lose
+/// its activation semantics in plain `LawIR`.
+///
+/// # Errors
+/// [`LawLoweringRefusal::ActivationTiming`] for `within`, else as
+/// [`lower_deontic_law`].
+pub fn lower_requirement(
+    requirement: &norn_ir::deontic::StructuredRequirement,
+) -> Result<LoweredDeonticLaw, LawLoweringRefusal> {
+    if matches!(
+        requirement.timing,
+        norn_ir::deontic::RequirementTiming::Within(_)
+    ) {
+        return Err(LawLoweringRefusal::ActivationTiming);
+    }
+    lower_deontic_law(&requirement.norm)
 }
 
 /// Select a candidate for L1's `norn.theorem-input/0.1` closed fragment.
@@ -186,7 +211,8 @@ pub fn check_requirement(
         if within.calendar.is_some() {
             return Err(R::UnsupportedCalendar);
         }
-        // Gating, scoping or defeating an activation has no admitted meaning yet.
+        // A pointwise condition, lifecycle/commitment scope filter, exception
+        // or defeat edge on an activation has no admitted semantics yet.
         if law.condition.is_some()
             || !law.scope.lifecycle_states.is_empty()
             || !law.scope.commitments.is_empty()

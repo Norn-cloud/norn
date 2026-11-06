@@ -1276,8 +1276,12 @@ fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
         locale: "en".into(),
     };
     assert_eq!(view.slots().err(), Some("law.wording.incomplete_locale"));
-    // A timed safety wrapper never becomes a deadline, and lowering stays closed.
+    // Lowering never drops the activation policy; theorem lowering stays closed.
     let ok = within_requirement();
+    assert_eq!(
+        norn_checker::deontic::lower_requirement(&ok),
+        Err(LawLoweringRefusal::ActivationTiming)
+    );
     assert_eq!(
         norn_checker::deontic::lower_theorem_candidate(&ok.norm),
         Err(LawLoweringRefusal::UnsupportedProofFragment)
@@ -1290,12 +1294,68 @@ type WithinCase = (
 );
 
 /// Every variation of the LAW-WITHIN-1 shape refuses with a typed reason.
+#[allow(clippy::too_many_lines, reason = "one table row per refusal case")]
 #[test]
 fn within_refuses_every_variation_with_a_typed_reason() {
     use norn_checker::deontic::RequirementRefusal as R;
     use norn_ir::deontic::{CalendarPin, RequirementTiming};
     let env = requirement_env();
-    let cases: [WithinCase; 14] = [
+    let cases: [WithinCase; 22] = [
+        (
+            |r| set_millis(r, &((1u64 << 63) + 1).to_string()),
+            R::InvalidDuration,
+        ),
+        (|r| set_millis(r, &u64::MAX.to_string()), R::InvalidDuration),
+        (
+            |r| r.norm.modality = DeonticModality::Prohibition,
+            R::ModalityMismatch,
+        ),
+        (
+            |r| {
+                r.norm.exceptions.push(norn_ir::deontic::RuleException {
+                    id: "waived".into(),
+                    condition: norn_ir::ZenExpression("input.active".into()),
+                    source: r.norm.source.clone(),
+                });
+            },
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| {
+                r.norm
+                    .law
+                    .scope
+                    .lifecycle_states
+                    .push(norn_ir::LawStateScope {
+                        object_type: r.norm.law.subject.clone(),
+                        property: "status".into(),
+                        states: vec!["posted".into()],
+                    });
+            },
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| r.norm.law.scope.commitments.push("billing".into()),
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| {
+                r.norm.law.response = norn_ir::LawResponse::Action {
+                    artifact_id: "pay".into(),
+                }
+            },
+            R::UnsupportedResponse,
+        ),
+        (
+            |r| {
+                r.norm.law.response = norn_ir::LawResponse::Transition {
+                    object_type: "t".into(),
+                    property: "status".into(),
+                    transition_id: "pay".into(),
+                }
+            },
+            R::UnsupportedResponse,
+        ),
         (|r| set_millis(r, "0"), R::InvalidDuration),
         (|r| set_millis(r, "030"), R::InvalidDuration),
         (
@@ -1368,9 +1428,51 @@ fn within_refuses_every_variation_with_a_typed_reason() {
             R::PredicateType,
         ),
     ];
+    // The cap itself is admitted: 2^63 − 1 + 2^63 = u64::MAX never overflows.
+    let mut boundary = within_requirement();
+    set_millis(
+        &mut boundary,
+        &norn_ir::deontic::MAX_WITHIN_MILLIS.to_string(),
+    );
+    check_requirement(&boundary, &env).expect("largest admitted window");
+    assert!(norn_checker::deontic::lower_requirement(&requirement()).is_ok());
     for (index, (mutate, refusal)) in cases.into_iter().enumerate() {
         let mut r = within_requirement();
         mutate(&mut r);
         assert_eq!(check_requirement(&r, &env), Err(refusal), "case {index}");
     }
+}
+
+/// Activation identity is a canonical digest of the whole key, and recorded
+/// events decode strictly.
+#[test]
+fn activation_identity_is_canonical_and_events_are_closed() {
+    use norn_ir::deontic::{ActivationEvent, ActivationKey};
+    let key = ActivationKey {
+        law_id: "a:b".into(),
+        law_digest: "0".repeat(64),
+        origin: "billing.app".into(),
+        subject_id: "c".into(),
+        trigger_seq: 7,
+    };
+    let id = key.id().expect("canonical");
+    assert_eq!((id.len(), key.id().expect("canonical")), (64, id.clone()));
+    // Moving a separator between fields must change the identity.
+    let shifted = ActivationKey {
+        law_id: "a".into(),
+        subject_id: "b:c".into(),
+        ..key.clone()
+    };
+    let other_origin = ActivationKey {
+        origin: "other.app".into(),
+        ..key.clone()
+    };
+    for other in [shifted, other_origin] {
+        assert_ne!(other.id().expect("canonical"), id);
+    }
+    let event = json!({"kind":"retrigger_ignored","activationId":id,"atSeq":8});
+    assert!(serde_json::from_value::<ActivationEvent>(event.clone()).is_ok());
+    let mut extra = event;
+    extra["silentPass"] = json!(true);
+    assert!(serde_json::from_value::<ActivationEvent>(extra).is_err());
 }

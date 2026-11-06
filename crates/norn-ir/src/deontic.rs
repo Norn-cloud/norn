@@ -102,6 +102,12 @@ pub enum RequirementTiming {
     Within(WithinTiming),
 }
 
+/// Largest admitted `within` window: 2^63 ms. The cell's committed clock is a
+/// nonnegative SQLite INTEGER, so `t ≤ 2^63 − 1` and `t + millis ≤ u64::MAX`:
+/// opening an activation can never overflow, so no deadline law can refuse a
+/// business commit.
+pub const MAX_WITHIN_MILLIS: u64 = 1 << 63;
+
 /// Why a structured requirement's timing has no admitted shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimingShapeError {
@@ -109,7 +115,8 @@ pub enum TimingShapeError {
     Unsupported,
     /// The normative grade contradicts its temporal wrapper.
     GradeMismatch,
-    /// `law.timing.millis` is not positive canonical u64 decimal text.
+    /// `law.timing.millis` is not positive canonical u64 decimal text, or it
+    /// exceeds [`MAX_WITHIN_MILLIS`].
     InvalidDuration,
 }
 
@@ -162,11 +169,9 @@ impl StructuredRequirement {
                 if self.norm.modality != DeonticModality::Obligation {
                     return Err(E::GradeMismatch);
                 }
-                // Same rule as ordinary LawIR admission: positive canonical u64.
-                let value = millis
-                    .parse::<u64>()
-                    .ok()
-                    .filter(|v| *v > 0 && v.to_string() == *millis)
+                // The ordinary LawIR text rule, plus the no-overflow cap.
+                let value = crate::canonical_positive_millis(millis)
+                    .filter(|v| *v <= MAX_WITHIN_MILLIS)
                     .ok_or(E::InvalidDuration)?;
                 Ok(Some((within, value)))
             }
@@ -189,7 +194,9 @@ impl StructuredRequirement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WithinTiming {
-    /// Exact lifecycle transition identity on the subject that opens an activation.
+    /// Lifecycle transition identity on the subject that opens an activation.
+    /// `check_requirement` checks only that it is nonblank; resolving it
+    /// against the subject's lifecycle is catalog admission (TARGET).
     pub trigger: String,
     /// What a trigger does while an activation is already open.
     pub retrigger: RetriggerPolicy,
@@ -222,21 +229,44 @@ pub enum RetriggerPolicy {
     Restart,
 }
 
+/// Canonical identity of one activation: the effective law instance, the
+/// subject and the opening commit. Never a string concatenation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActivationKey {
+    /// Governing law identity.
+    pub law_id: String,
+    /// SHA-256 of the effective instance's canonical `LawIR`.
+    pub law_digest: String,
+    /// Attachment origin of the effective law instance.
+    pub origin: String,
+    /// Subject record identity.
+    pub subject_id: String,
+    /// Ledger position of the commit that opened (or restarted) it.
+    pub trigger_seq: u64,
+}
+
+impl ActivationKey {
+    /// `sha256(canonical_json(["norn.activation/1", key]))`, lowercase hex.
+    ///
+    /// # Errors
+    /// Canonical encoding failure.
+    pub fn id(&self) -> Result<String, norn_canonical::CanonicalJsonError> {
+        use sha2::Digest as _;
+        let bytes = norn_canonical::canonical_json_of(&("norn.activation/1", self))?;
+        Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
+    }
+}
+
 /// One open duty for a law instance and subject. Times are cell clock millis.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Activation {
-    /// `law_id` + `subject_id` + `trigger_seq`; unique per cell ledger.
-    pub id: String,
-    /// Governing law identity.
-    pub law_id: String,
-    /// Subject record identity.
-    pub subject_id: String,
+    /// Canonical identity; events name it by [`ActivationKey::id`].
+    pub key: ActivationKey,
     /// Trigger transition identity.
     pub trigger: String,
-    /// Ledger position of the commit that opened (or last restarted) it.
-    pub trigger_seq: u64,
-    /// Committed clock of that commit.
+    /// Committed clock of the opening commit.
     pub start_millis: u64,
     /// Exclusive: a commit at `deadline_millis` no longer discharges.
     pub deadline_millis: u64,
@@ -251,7 +281,8 @@ pub struct Activation {
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub enum ActivationEvent {
     /// A trigger opened an activation.
@@ -275,8 +306,14 @@ pub enum ActivationEvent {
         at_seq: u64,
         at_millis: u64,
     },
-    /// The deadline passed undischarged; stamped at `deadline_millis`.
-    Violated { activation: Activation },
+    /// The deadline passed undischarged. Recorded in the first ledger commit,
+    /// at `at_seq`/`at_millis ≥ deadline_millis`, that is either this
+    /// activation's deadline timer or a commit touching its subject.
+    Violated {
+        activation: Activation,
+        at_seq: u64,
+        at_millis: u64,
+    },
 }
 
 /// LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
