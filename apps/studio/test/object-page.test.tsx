@@ -8,15 +8,9 @@ import { readDocument } from "../src/lib/exact.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-<<<<<<< HEAD
-const { ObjectPage } = await import("../src/objects.tsx")
-const { ViewProvider } = await import("../src/lib/view.tsx")
-||||||| 33c29eef4f
-const { ObjectPage } = await import("../src/objects.tsx")
-=======
 const { ObjectPage, SourcesItemPage } = await import("../src/objects.tsx")
 const { ObjectTypePage } = await import("../src/sources.tsx")
->>>>>>> studio/elite-object
+const { ViewProvider } = await import("../src/lib/view.tsx")
 
 const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
