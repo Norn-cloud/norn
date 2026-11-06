@@ -153,7 +153,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
           </DropdownMenu>
           <label className="flex items-center gap-1 text-meta text-muted-foreground">
             Per page
-            <select className="h-8 rounded-md border bg-background px-2 text-sm text-foreground" value={limit} disabled={!canQuery} title={off}
+            <select className="h-8 rounded-md border bg-background px-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery} title={off}
               onChange={(event) => changeQuery({ limit: Number(event.target.value) })}>
               {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
             </select>

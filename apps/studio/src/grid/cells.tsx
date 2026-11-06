@@ -43,7 +43,7 @@ export function Cell({ field, row }: { readonly field: Field; readonly row: Grid
   if (value === null || value === undefined) return <span className="text-muted-foreground" aria-label="No value">—</span>
   const text = cellText(field, row)
   switch (field.scalar.kind) {
-    case "enum": return <Badge variant="secondary" className="font-normal">{text}</Badge>
+    case "enum": return <Badge variant="secondary" className="max-w-full truncate font-normal" title={text}>{text}</Badge>
     case "boolean": return <span>{text}</span>
     case "date":
     case "timestamp":

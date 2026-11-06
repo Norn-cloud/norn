@@ -121,6 +121,7 @@ test("validate: the cell's refusal shows under the condition it points at; fixin
   await expect(page.getByRole("alert").filter({ hasText: "The cell refused this query." })).toBeVisible()
   await page.getByRole("button", { name: /Filter/ }).click()
   await expect(page.getByRole("alert").filter({ hasText: "12,5 is not an exact decimal number" })).toBeVisible()
+  await expect(page.getByLabel("Condition 1 value")).toHaveAttribute("aria-invalid", "true")
   await shoot(page, "refused")
   await page.getByLabel("Condition 1 value").fill("12.5")
   await page.getByRole("button", { name: "Apply" }).click()

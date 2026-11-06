@@ -53,26 +53,27 @@ export const sameDraft = (a: readonly DraftClause[], b: readonly DraftClause[]) 
 
 const select = "h-8 rounded-md border bg-background px-2 text-sm"
 
-function ValueInput({ field, clause, onChange, label }: { readonly field: Field; readonly clause: DraftClause; readonly onChange: (next: DraftClause) => void; readonly label: string }) {
+function ValueInput({ field, clause, onChange, label, problem }: { readonly field: Field; readonly clause: DraftClause; readonly onChange: (next: DraftClause) => void; readonly label: string; readonly problem: string | undefined }) {
   const kind = field.scalar.kind
+  const invalid = problem === undefined ? {} : { "aria-invalid": true, "aria-describedby": problem }
   if (clause.op === "empty" || clause.op === "present") return null
   if (clause.op === "in") {
     if (field.scalar.kind === "enum") {
       return (
-        <select multiple aria-label={label} className={`${select} h-auto min-h-16`} value={[...clause.values]}
+        <select multiple {...invalid} aria-label={label} className={`${select} h-auto min-h-16`} value={[...clause.values]}
           onChange={(event) => onChange({ ...clause, values: [...event.target.selectedOptions].map(({ value }) => value) })}>
           {field.scalar.values.map((value) => <option key={value} value={value}>{value}</option>)}
         </select>
       )
     }
     return (
-      <textarea aria-label={label} placeholder="One value per line" className="min-h-16 rounded-md border bg-background px-2 py-1 text-sm"
+      <textarea {...invalid} aria-label={label} placeholder="One value per line" className="min-h-16 rounded-md border bg-background px-2 py-1 text-sm"
         value={clause.values.join("\n")} onChange={(event) => onChange({ ...clause, values: event.target.value.split("\n").map((v) => v.trim()).filter(Boolean).slice(0, LIMITS.inValues) })} />
     )
   }
   if (kind === "enum" && field.scalar.kind === "enum") {
     return (
-      <select aria-label={label} className={select} value={clause.value} onChange={(event) => onChange({ ...clause, value: event.target.value })}>
+      <select {...invalid} aria-label={label} className={select} value={clause.value} onChange={(event) => onChange({ ...clause, value: event.target.value })}>
         <option value="" disabled>Choose…</option>
         {field.scalar.values.map((value) => <option key={value} value={value}>{value}</option>)}
       </select>
@@ -88,7 +89,7 @@ function ValueInput({ field, clause, onChange, label }: { readonly field: Field;
   const typed = kind === "date" ? { type: "date" } : kind === "decimal" || kind === "integer" ? { inputMode: "decimal" as const } : {}
   const placeholder = kind === "timestamp" ? "2026-11-06T09:00:00Z" : kind === "duration" ? "P1D" : kind === "decimal" ? "Exact number" : undefined
   const one = (key: "value" | "high", aria: string) => (
-    <Input {...typed} aria-label={aria} placeholder={placeholder} className="h-8 w-40" value={clause[key]} onChange={(event) => onChange({ ...clause, [key]: event.target.value })} />
+    <Input {...typed} {...invalid} aria-label={aria} placeholder={placeholder} className="h-8 w-40" value={clause[key]} onChange={(event) => onChange({ ...clause, [key]: event.target.value })} />
   )
   return clause.op === "between" ? <span className="flex items-center gap-1">{one("value", `${label}, from`)}<span className="text-meta text-muted-foreground">and</span>{one("high", `${label}, to`)}</span> : one("value", label)
 }
@@ -127,10 +128,10 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
                 <select aria-label={`${label} test`} className={select} value={clause.op} onChange={(event) => set(index, { ...clause, op: event.target.value as Op })}>
                   {opsFor(field.scalar).map((op) => <option key={op} value={op}>{OP_LABEL[op]}</option>)}
                 </select>
-                <ValueInput field={field} clause={clause} label={`${label} value`} onChange={(next) => set(index, next)} />
+                <ValueInput field={field} clause={clause} label={`${label} value`} problem={problems.length > 0 ? `${id}-${index}` : undefined} onChange={(next) => set(index, next)} />
                 <Button type="button" variant="ghost" size="icon" aria-label={`Remove condition ${index + 1}`} onClick={() => onDraft(draft.filter((_, i) => i !== index))}><X /></Button>
               </div>
-              {problems.map((problem) => <p key={`${problem.pointer}:${problem.code}`} id={`${id}-${index}`} role="alert" className="text-meta text-destructive">{problem.message}</p>)}
+              {problems.length > 0 && <div id={`${id}-${index}`} role="alert" className="grid text-meta text-destructive">{problems.map((problem) => <span key={`${problem.pointer}:${problem.code}`}>{problem.message}</span>)}</div>}
             </li>
           )
         })}
