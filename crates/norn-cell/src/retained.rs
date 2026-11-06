@@ -28,6 +28,7 @@ const RETAINED_DDL: &[&str] = &[
   "title" TEXT NOT NULL,
   "payload" TEXT NOT NULL,
   "payload_sha256" TEXT NOT NULL,
+  "signoff" TEXT,
   "definitions_version" INTEGER NOT NULL,
   "commit_seq" INTEGER NOT NULL,
   "recorded_at" INTEGER NOT NULL,
@@ -95,6 +96,22 @@ pub struct RetainedDefinition {
     pub payload: String,
     /// Lower-case hex SHA-256 of `payload`.
     pub payload_sha256: String,
+    /// The host-verified sign-off of this revision's plain-words restatement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signoff: Option<RetainedSignoff>,
+}
+
+/// A sign-off the host verified: the installing principal, the install
+/// time, and the restatement digest the host recomputed. Never from a client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetainedSignoff {
+    /// The installing principal's subject id.
+    pub signer: String,
+    /// Host time of the install, in milliseconds.
+    pub signed_at: u64,
+    /// Lower-case hex SHA-256 of the recomputed restatement.
+    pub restatement_sha256: String,
 }
 
 /// A retained-definition revision to install, compare-and-set on the id's
@@ -165,9 +182,15 @@ pub(crate) fn insert(
     commit_seq: u64,
     recorded_at: u64,
 ) -> Result<(), CellError> {
+    let signoff = definition
+        .signoff
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(CellError::Json)?;
     engine.execute(
         &format!(
-            "INSERT INTO \"{RETAINED_DEFINITION}\" (\"id\", \"revision\", \"kind\", \"lifecycle\", \"title\", \"payload\", \"payload_sha256\", \"definitions_version\", \"commit_seq\", \"recorded_at\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+            "INSERT INTO \"{RETAINED_DEFINITION}\" (\"id\", \"revision\", \"kind\", \"lifecycle\", \"title\", \"payload\", \"payload_sha256\", \"definitions_version\", \"commit_seq\", \"recorded_at\", \"signoff\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
         ),
         params![
             definition.id,
@@ -180,6 +203,7 @@ pub(crate) fn insert(
             to_i64(definitions_version)?,
             to_i64(commit_seq)?,
             to_i64(recorded_at)?,
+            signoff,
         ],
     )?;
     Ok(())
@@ -216,7 +240,7 @@ fn current_revision(engine: &impl SqlEngine, id: &str) -> Result<Option<u64>, Ce
     revision.flatten().map(to_u64).transpose()
 }
 
-const COLUMNS: &str = "\"id\", \"revision\", \"kind\", \"lifecycle\", \"title\", \"payload\", \"payload_sha256\", \"definitions_version\", \"commit_seq\", \"recorded_at\"";
+const COLUMNS: &str = "\"id\", \"revision\", \"kind\", \"lifecycle\", \"title\", \"payload\", \"payload_sha256\", \"definitions_version\", \"commit_seq\", \"recorded_at\", \"signoff\"";
 
 type Row = (
     String,
@@ -229,10 +253,17 @@ type Row = (
     i64,
     i64,
     i64,
+    Option<String>,
 );
 
 fn record(row: Row) -> Result<RetainedDefinitionRecord, CellError> {
-    let (id, revision, kind, lifecycle, title, payload, payload_sha256, version, seq, at) = row;
+    let (id, revision, kind, lifecycle, title, payload, payload_sha256, version, seq, at, signoff) =
+        row;
+    let signoff = signoff
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(CellError::Json)?;
     Ok(RetainedDefinitionRecord {
         definition: RetainedDefinition {
             kind,
@@ -242,6 +273,7 @@ fn record(row: Row) -> Result<RetainedDefinitionRecord, CellError> {
             title,
             payload,
             payload_sha256,
+            signoff,
         },
         definitions_version: to_u64(version)?,
         commit_seq: to_u64(seq)?,
@@ -262,6 +294,7 @@ macro_rules! row {
             $row.get(7)?,
             $row.get(8)?,
             $row.get(9)?,
+            $row.get(10)?,
         ))
     };
 }

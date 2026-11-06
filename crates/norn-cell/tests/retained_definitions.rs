@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 
 use norn_cell::export::Exporter;
 use norn_cell::retained::{
-    RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle, payload_sha256,
+    RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle, RetainedSignoff,
+    payload_sha256,
 };
 use norn_cell::{CellError, CellStore, InstalledDefinitionInput, Model, StoreOptions};
 use norn_ir::{ObjectTypeDef, RuntimeValue};
@@ -68,6 +69,7 @@ fn change(
             title: title.to_owned(),
             payload_sha256: payload_sha256(&payload),
             payload,
+            signoff: None,
         },
         expected_revision: expected,
     }
@@ -83,13 +85,18 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         .install_definitions(model.clone(), input(&canonical, 10), Some(0), SCOPE)
         .expect("kernel definitions");
 
-    let first = change(
+    let mut first = change(
         "studio.dashboard.a",
         1,
         RetainedLifecycle::Active,
         "A",
         None,
     );
+    first.definition.signoff = Some(RetainedSignoff {
+        signer: "user:u1".to_owned(),
+        signed_at: 20,
+        restatement_sha256: "b".repeat(64),
+    });
     let installed = store
         .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &first)
         .expect("first revision");

@@ -560,3 +560,86 @@ fn tool_bindings_follow_the_connector_naming_contract() {
         .is_err()
     );
 }
+
+/// A stand-in for the shared restatement generator: deterministic in the
+/// admitted payload.
+fn stub_restate(kind: &str, payload: &str) -> Result<String, String> {
+    let payload: Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+    Ok(format!("A {kind} titled {}", payload["title"]))
+}
+
+fn sha256(text: &str) -> String {
+    norn_cell::retained::payload_sha256(text)
+}
+
+#[test]
+fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_host() {
+    let signed = |cell: &Cell, digest: &str, expected: Option<u64>| {
+        let mut body = json!({
+            "kind": "dashboard", "id": "studio.dashboard.signed", "payload": dashboard("Signed"),
+            "signoff": { "restatementSha256": digest },
+        });
+        if let Some(expected) = expected {
+            body["expectedVersion"] = json!(expected);
+        }
+        post(cell, "/v1/definitions:install", ADMIN, &body)
+    };
+    let right = sha256(r#"A dashboard titled "Signed""#);
+
+    // Without a generator the cell cannot verify a sign-off, so it refuses.
+    let unverifiable = cell(DefinitionKinds::default());
+    let (status, refused) = signed(&unverifiable, &right, None);
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(refused["code"], json!("definition.signoff_unavailable"));
+
+    let cell = cell(DefinitionKinds::default().with_restater(stub_restate));
+    let (status, refused) = signed(&cell, &sha256("something else"), None);
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(refused["code"], json!("definition.signoff_mismatch"));
+    assert_eq!(
+        get(&cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER).0,
+        404
+    );
+
+    let (status, installed) = signed(&cell, &right, None);
+    assert_eq!(status, 200, "{installed}");
+    let (_, document) = get(&cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER);
+    // Signer and time are the host's: the installing principal and the commit.
+    assert_eq!(
+        document["signoff"],
+        json!({
+            "signer": "viewer@demo",
+            "signedAtMs": installed["receipt"]["recordedAtMs"],
+            "restatementSha256": right,
+        })
+    );
+    // A client cannot name a signer or a time.
+    let forged = json!({
+        "kind": "dashboard", "id": "studio.dashboard.signed", "payload": dashboard("Signed"),
+        "expectedVersion": 1, "signoff": { "restatementSha256": right, "signer": "ceo@demo" },
+    });
+    assert_eq!(
+        post(&cell, "/v1/definitions:install", ADMIN, &forged).0,
+        400
+    );
+    // An unsigned next version and a retirement carry no sign-off; history keeps it.
+    assert_eq!(
+        install(
+            &cell,
+            "studio.dashboard.signed",
+            &dashboard("Signed"),
+            Some(1)
+        )
+        .0,
+        200
+    );
+    let (_, unsigned) = get(&cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER);
+    assert_eq!(unsigned["signoff"], Value::Null);
+    let (_, first) = get(
+        &cell,
+        "/v1/definitions/studio.dashboard.signed",
+        "&version=1",
+        VIEWER,
+    );
+    assert_eq!(first["signoff"]["restatementSha256"], json!(right));
+}

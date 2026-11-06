@@ -20,7 +20,7 @@ use http::StatusCode;
 use norn_cell::engine::SqlEngine;
 use norn_cell::retained::{
     RetainedDefinition, RetainedDefinitionChange, RetainedDefinitionRecord, RetainedLifecycle,
-    payload_sha256,
+    RetainedSignoff, payload_sha256,
 };
 use norn_cell::{CellError, InstalledDefinitionInput};
 use norn_ir::{QuestionIR, ResourceLimitProfile, RuntimeValue};
@@ -78,6 +78,10 @@ pub mod codes {
     pub const ID_IN_USE: &str = "definition.id_in_use";
     /// The definition is already retired.
     pub const ALREADY_RETIRED: &str = "definition.already_retired";
+    /// The sign-off's restatement digest is not the host-recomputed one (422).
+    pub const SIGNOFF_MISMATCH: &str = "definition.signoff_mismatch";
+    /// This cell cannot restate the payload, so it cannot verify a sign-off (422).
+    pub const SIGNOFF_UNAVAILABLE: &str = "definition.signoff_unavailable";
 }
 
 /// One tool binding the host resolved for the org from CONNECT's stored
@@ -184,9 +188,23 @@ pub type AgentChecker = fn(&str, &AgentAdmissionContext) -> Vec<norn_checker::Di
 #[derive(Debug, Default)]
 pub struct DefinitionKinds {
     agent: Option<(AgentChecker, AgentAdmissionContext)>,
+    restater: Option<Restater>,
 }
 
+/// The deterministic plain-words restatement generator (D59), shared with
+/// Studio through the checker: a kind and its admitted canonical payload in,
+/// the restatement a signer read out. `Err` when the payload has nothing to
+/// restate. A sign-off is the SHA-256 of these UTF-8 bytes.
+pub type Restater = fn(&str, &str) -> Result<String, String>;
+
 impl DefinitionKinds {
+    /// Register the restatement generator that verifies sign-offs.
+    #[must_use]
+    pub fn with_restater(mut self, restate: Restater) -> Self {
+        self.restater = Some(restate);
+        self
+    }
+
     /// Register the agent checker with its host context.
     #[must_use]
     pub fn with_agent(mut self, check: AgentChecker, context: AgentAdmissionContext) -> Self {
@@ -221,6 +239,29 @@ pub struct InstallDefinitionRequest {
     pub payload: Box<RawValue>,
     /// The id's current version; absent requires that the id is unused.
     pub expected_version: Option<u64>,
+    /// A sign-off of the payload's plain-words restatement (D59). The host
+    /// recomputes the restatement and records the installing principal.
+    pub signoff: Option<SignoffRequest>,
+}
+
+/// What a signer claims to have read.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SignoffRequest {
+    /// Lower-case hex SHA-256 of the UTF-8 restatement.
+    pub restatement_sha256: String,
+}
+
+/// A recorded sign-off: every field set by the host.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SignoffDocument {
+    /// The installing principal.
+    pub signer: String,
+    /// When the signed version was installed, in Unix milliseconds.
+    pub signed_at_ms: u64,
+    /// Lower-case hex SHA-256 of the host-recomputed restatement.
+    pub restatement_sha256: String,
 }
 
 /// `POST /v1/definitions/{id}:retire`.
@@ -344,6 +385,9 @@ pub struct DefinitionDocument {
     pub payload: Box<RawValue>,
     /// The commit that installed this version.
     pub receipt: DefinitionReceipt,
+    /// This version's sign-off; null when it was installed unsigned.
+    #[schema(required = true, nullable = true)]
+    pub signoff: Option<SignoffDocument>,
 }
 
 /// Whether `id` matches `^[a-z][a-z0-9._-]{0,127}$`.
@@ -736,8 +780,9 @@ fn receipt<E: SqlEngine>(
 /// definitions install, at host time `now_ms`.
 fn append<E: SqlEngine>(
     host: &DevHost<E>,
-    definition: RetainedDefinition,
+    mut definition: RetainedDefinition,
     expected: Option<u64>,
+    signed: Option<(&str, String)>,
     now_ms: u64,
 ) -> Result<InstallDefinitionResponse, Refusal> {
     let _epoch = host.definition_write()?;
@@ -769,6 +814,11 @@ fn append<E: SqlEngine>(
             }]));
         }
         let installed_at = now_ms.max(cell.now().as_millis());
+        definition.signoff = signed.map(|(signer, restatement_sha256)| RetainedSignoff {
+            signer: signer.to_owned(),
+            signed_at: installed_at,
+            restatement_sha256,
+        });
         let input = InstalledDefinitionInput {
             canonical_set: active.canonical_set,
             registry: active.registry,
@@ -783,6 +833,10 @@ fn append<E: SqlEngine>(
                     "revision": definition.revision,
                     "lifecycle": definition.lifecycle.as_str(),
                     "payloadSha256": definition.payload_sha256,
+                    "signoff": definition.signoff.as_ref().map(|signoff| serde_json::json!({
+                        "signer": signoff.signer,
+                        "restatementSha256": signoff.restatement_sha256,
+                    })),
                 },
             }),
             installed_at,
@@ -847,6 +901,12 @@ pub fn install_definition<E: SqlEngine>(
     if !admitted(&diagnostics) {
         return Err(refused(diagnostics));
     }
+    let signed = request
+        .signoff
+        .as_ref()
+        .map(|claimed| verify_signoff(kinds, &request.kind, &payload.canonical, claimed))
+        .transpose()?
+        .map(|restatement_sha256| (actor, restatement_sha256));
     let revision = request
         .expected_version
         .unwrap_or(0)
@@ -862,10 +922,44 @@ pub fn install_definition<E: SqlEngine>(
             title: payload.title,
             payload_sha256: payload_sha256(&payload.canonical),
             payload: payload.canonical,
+            signoff: None,
         },
         request.expected_version,
+        signed,
         now_ms,
     )
+}
+
+/// Recompute the restatement of an admitted payload and check the signer's
+/// claimed digest against it; returns the recomputed digest.
+fn verify_signoff(
+    kinds: &DefinitionKinds,
+    kind: &str,
+    canonical: &str,
+    claimed: &SignoffRequest,
+) -> Result<String, Refusal> {
+    let unavailable = |detail: String| {
+        Refusal::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            codes::SIGNOFF_UNAVAILABLE,
+            "the sign-off cannot be verified",
+            detail,
+        )
+    };
+    let restate = kinds
+        .restater
+        .ok_or_else(|| unavailable("this cell has no restatement generator".to_owned()))?;
+    let restatement = restate(kind, canonical).map_err(unavailable)?;
+    let recomputed = payload_sha256(&restatement);
+    if recomputed != claimed.restatement_sha256 {
+        return Err(Refusal::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            codes::SIGNOFF_MISMATCH,
+            "the sign-off does not match the definition",
+            "the restatement the signer read is not the one this definition restates to; reread it and sign again",
+        ));
+    }
+    Ok(recomputed)
 }
 
 /// `POST /v1/definitions/{id}:retire`: record a retired version; history
@@ -910,7 +1004,14 @@ pub fn retire_definition<E: SqlEngine>(
         .checked_add(1)
         .ok_or_else(version_conflict)?;
     definition.lifecycle = RetainedLifecycle::Retired;
-    append(host, definition, Some(request.expected_version), now_ms)
+    definition.signoff = None;
+    append(
+        host,
+        definition,
+        Some(request.expected_version),
+        None,
+        now_ms,
+    )
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1055,6 +1156,11 @@ pub fn get_definition<E: SqlEngine>(
         kind: record.definition.kind,
         version: record.definition.revision,
         lifecycle: record.definition.lifecycle.as_str().to_owned(),
+        signoff: record.definition.signoff.map(|signoff| SignoffDocument {
+            signer: signoff.signer,
+            signed_at_ms: signoff.signed_at,
+            restatement_sha256: signoff.restatement_sha256,
+        }),
         payload: RawValue::from_string(record.definition.payload).map_err(Refusal::host)?,
         receipt,
     })
