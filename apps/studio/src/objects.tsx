@@ -5,7 +5,7 @@ import {
   type ColumnDef, type SortingState, flexRender, getCoreRowModel, getFilteredRowModel,
   getPaginationRowModel, getSortedRowModel, useReactTable,
 } from "@tanstack/react-table"
-import { ArrowDown, ArrowUp, ArrowUpDown, Database, GitBranch, History, KeyRound, Link2, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, Braces, Database, GitBranch, History, KeyRound, Link2, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,13 +15,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyId } from "@/components/copy-id"
 import { ProvenanceChain, ProvenanceValue } from "@/components/provenance"
 import { useInspector } from "@/lib/inspector"
-import { KINDS } from "@/lib/kinds"
+import { KINDS, STATUS } from "@/lib/kinds"
+import { ViewToggle, useCardView, useView } from "@/lib/view"
+import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
 import { member } from "./lib/exact.ts"
-import { collect, compareDecimals, factText, nextAfter, readProblem, recordName, shouldReadNext, type PageRow } from "./lib/objects.ts"
-import { transport, type LinkPage, type SourceLineage } from "./lib/transport.ts"
+import { collect, compareDecimals, exactPretty, factText, nextAfter, readProblem, recordName, shouldReadNext, type PageRow } from "./lib/objects.ts"
+import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { DenseTable, RECORDED_HINT, useCatalog } from "./sources.tsx"
 
 /** Pages read per concept before the list is shown as incomplete. */
@@ -178,6 +180,7 @@ export function ObjectPage() {
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
   const [tab, setTab] = useState("overview")
+  const { view } = useView()
   const data = reads.data
   const lineage = data?.source?.document
   const problem = readProblem(catalogRead, reads)
@@ -218,16 +221,8 @@ export function ObjectPage() {
                 <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
               </Panel>
             ))}
-            <Panel icon={Rows3} label="Facts" action={lineage && "Select a value to see where it came from"}><Well className="p-3">
-              <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Value</TableHead></TableRow>}>
-                {concept.fields.map((field) => (
-                  <TableRow key={field.id}>
-                    <TableCell className="font-medium">{field.id.replaceAll("_", " ")}</TableCell>
-                    <TableCell className={field.decimal ? "tabular-nums" : undefined}><ProvenanceValue lineage={lineage} fact={field.id}>{factText(field, data.object.document, data.object.numbers, "")}</ProvenanceValue></TableCell>
-                  </TableRow>
-                ))}
-              </DenseTable>
-            </Well></Panel>
+            <Facts concept={concept} reads={data} />
+            {view === "technical" && <Technical name={name} lineage={lineage} />}
           </TabsContent>
           <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} /></TabsContent>
           <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} /></TabsContent>
@@ -320,4 +315,74 @@ function Lineage({ lineage }: { readonly lineage: SourceLineage | undefined }) {
       </>}
     </Well></Panel>
   )
+}
+
+/** The record's facts in words, or, in the technical view, the exact document the server sent. */
+function Facts({ concept, reads }: { readonly concept: Concept; readonly reads: ObjectReads }) {
+  const card = useCardView()
+  const lineage = reads.source?.document
+  const toggle = <ViewToggle view={card.view} onChange={card.setView} label="View of this card" />
+  if (card.view === "technical") {
+    return <Panel icon={Braces} label="Record document" action={toggle}><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
+  }
+  return (
+    <Panel icon={Rows3} label="Facts" action={toggle}><Well className="space-y-2 p-3">
+      {lineage && <p className="text-meta text-muted-foreground">Select a value to see where it came from.</p>}
+      <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Value</TableHead></TableRow>}>
+        {concept.fields.map((field) => (
+          <TableRow key={field.id}>
+            <TableCell className="font-medium">{field.id.replaceAll("_", " ")}</TableCell>
+            <TableCell className={field.decimal ? "tabular-nums" : undefined}><ProvenanceValue lineage={lineage} fact={field.id}>{factText(field, reads.object.document, reads.object.numbers, "")}</ProvenanceValue></TableCell>
+          </TableRow>
+        ))}
+      </DenseTable>
+    </Well></Panel>
+  )
+}
+
+/** A labelled id row. */
+const Id = ({ label, value, short }: { readonly label: string; readonly value: string; readonly short?: number }) => (
+  <div className="flex min-w-0 items-baseline gap-3"><dt className="w-32 shrink-0 text-meta text-muted-foreground">{label}</dt><dd className="min-w-0"><CopyId value={value} short={short} /></dd></div>
+)
+
+/** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what this read lacks. */
+function Technical({ name, lineage }: { readonly name: string; readonly lineage: SourceLineage | undefined }) {
+  const { read } = useCatalog()
+  const artifacts = read.data?.document ?? []
+  const index = artifacts.findIndex((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name)
+  const entity = artifacts[index]
+  const laws = artifacts.filter((artifact) => artifact.kind === "law" && artifact.payload.scope.objectTypes.includes(name))
+  return <>
+    {entity && "objectType" in entity.payload && (
+      <Panel icon={KINDS.objectType.icon} label="Definition"><Well className="space-y-3 p-3">
+        <dl className="space-y-1">
+          <Id label="Artefact" value={`${entity.artifactId}@${entity.version}`} />
+          {laws.map((law) => <Id key={law.artifactId} label="Law" value={`${law.artifactId}@${law.version}`} />)}
+        </dl>
+        <Code code={exactPretty(entity.payload.objectType, read.data?.numbers ?? new Map(), `/${index}/payload/objectType`)} />
+      </Well></Panel>
+    )}
+    {lineage && (
+      <Panel icon={KINDS.mapping.icon} label="Mapping and lineage"><Well className="space-y-3 p-3">
+        <dl className="space-y-1">
+          <Id label="Mapping" value={`${lineage.mappingPin.artifactId}@${lineage.mappingPin.version}`} />
+          <Id label="Mapping sha256" value={lineage.mappingPin.sha256} short={16} />
+          <Id label="Source record" value={lineage.sourceRecordRef.record} />
+          <Id label="Bundle" value={lineage.bundleDigest} short={16} />
+          <Id label="Document" value={lineage.documentDigest} short={16} />
+        </dl>
+        <DenseTable head={<TableRow><TableHead>Property</TableHead><TableHead>Rule</TableHead><TableHead>Source fields</TableHead></TableRow>}>
+          {Object.entries(lineage.fieldProvenance).map(([fact, provenance]) => (
+            <TableRow key={fact}><TableCell className="font-mono text-xs">{fact}</TableCell><TableCell className="font-mono text-xs">{provenance.transform}</TableCell><TableCell className="font-mono text-xs">{(provenance.sourceFields ?? []).join(", ")}</TableCell></TableRow>
+          ))}
+        </DenseTable>
+      </Well></Panel>
+    )}
+    <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="p-3">
+      <dl className="space-y-1 text-sm">
+        <div className="flex gap-3"><dt className="w-32 shrink-0 text-meta text-muted-foreground">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None recorded: the demo read has no signed-in principal</dd></div>
+        <div className="flex gap-3"><dt className="w-32 shrink-0 text-meta text-muted-foreground">Receipt</dt><dd className="flex items-center gap-2"><span className={cn("size-2 rounded-full", STATUS.unknown.dot)} />None in this recording</dd></div>
+      </dl>
+    </Well></Panel>
+  </>
 }
