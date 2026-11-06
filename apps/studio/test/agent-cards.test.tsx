@@ -55,10 +55,19 @@ test("a verdict leads with the law in words; ids, pointers and codes are folded 
   const admitted = verdictOf({ proposal, admitted: true, stage: "admitted", receiptSha256: "eef45040c171aa", refusals: [] })
   if (refused === undefined || admitted === undefined) throw new Error("verdicts")
   for (const html of [renderToStaticMarkup(<VerdictCard verdict={refused} />), renderToStaticMarkup(<VerdictCard verdict={admitted} />)]) {
-    const [shown = "", folded = ""] = html.split("<details")
+    const at = html.indexOf("<details")
+    const [shown, folded] = [html.slice(0, at), html.slice(at)]
     expect(shown).not.toContain("/payload/")
     expect(shown).not.toContain("law.model.")
     expect(folded).toContain("/payload/response/expression")
   }
   expect(renderToStaticMarkup(<VerdictCard verdict={refused} />)).toContain("Stopped at: what the law means")
+})
+
+test("a refusal with no findings still names the proposal's location under Details", () => {
+  const verdict = verdictOf({ ...refusal, refusals: [] })
+  if (verdict === undefined) throw new Error("a verdict")
+  const html = renderToStaticMarkup(<VerdictCard verdict={verdict} />)
+  expect(html).toContain("Refused by the checker")
+  expect(html.slice(html.indexOf("<details"))).toContain("stress.purchase_positive.law /payload/response/expression")
 })
