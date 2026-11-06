@@ -81,9 +81,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 /** Amounts as the host sends them; `null` is a row whose values the server withheld from the reader's role. */
 const isAmounts = (value: unknown): boolean => value === null || (Array.isArray(value) && value.every((amount) => amount === null || typeof amount === "number"))
 
-/** One answer row as `buckets` reads it: a bucket key, its totals, and each member's version and amounts. */
+/** One answer row as `buckets` reads it: a bucket key, its value (a number, or null), its totals, and each member's version and amounts. */
 const isRow = (row: unknown): boolean =>
-  isRecord(row) && "bucket" in row && Array.isArray(row.totals) && isRecord(row.members) &&
+  isRecord(row) && "bucket" in row && (row.value === null || typeof row.value === "number") && Array.isArray(row.totals) && isRecord(row.members) &&
   Object.values(row.members).every((member) => isRecord(member) && typeof member.version === "number" && isAmounts(member.amounts))
 
 /** The fields of a `NornQueryResult` the question card reads, down to each row and watermark partition. */
