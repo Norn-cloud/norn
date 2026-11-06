@@ -70,6 +70,28 @@ test("a listed second origin may sign in while an unlisted origin is refused", a
   expect((await post(env, "/api/auth/sign-in/email", credentials, { origin: "https://evil.example" })).status).toBe(403)
 })
 
+test("magic links stay on the trusted origin that requested them", async () => {
+  const second = "https://studio-demo.norn.cloud"
+  const sent: string[] = []
+  const env = { ...stage(), BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify([ORIGIN, second]), EMAIL_FROM: "studio@norn.cloud", EMAIL: { send: async (message: { text: string }) => { sent.push(message.text) } } }
+  await post(env, "/api/auth/sign-up/email", { email: "magic@example.com", password: "correct horse battery", name: "Magic" })
+  const magic = (origin: string) => worker.fetch(new Request(`${origin}/api/auth/sign-in/magic-link`, { method: "POST", headers: { "content-type": "application/json", origin, "cf-connecting-ip": `198.51.100.${++address % 250}` }, body: JSON.stringify({ email: "magic@example.com" }) }) as Parameters<typeof worker.fetch>[0], env)
+  expect((await magic("https://evil.example")).status).toBe(403)
+  expect(sent).toHaveLength(0)
+  for (const [source, other] of [[second, ORIGIN], [ORIGIN, second]] as const) {
+    expect((await magic(source)).status).toBe(200)
+    const url = sent.at(-1)?.match(/https:\/\/[^\s]+/)?.[0]
+    expect(url).toBeDefined()
+    const link = new URL(url ?? "")
+    expect(link.origin).toBe(source)
+    const moved = new URL(link); moved.host = new URL(other).host
+    expect((await worker.fetch(new Request(moved, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)).status).toBe(403)
+    const verified = await worker.fetch(new Request(link, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)
+    expect(verified.status).toBe(302)
+    expect(verified.headers.getSetCookie().some((cookie) => cookie.startsWith("__Secure-norn.session_token="))).toBe(true)
+  }
+})
+
 test("repeated password guesses from one address are rate limited", async () => {
   const env = stage()
   await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" })

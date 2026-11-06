@@ -48,6 +48,27 @@ export interface AuthConfig {
 
 const MINUTE = 60
 
+/** Bind the one-time Better Auth token to the origin that requested it. */
+async function originProof(secret: string, token: string, origin: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(`studio-magic-link\n${origin}\n${token}`))
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+/** Refuse a verification URL moved to another host before Better Auth consumes its token. */
+export async function verifyMagicLinkOrigin(request: Request, secret: string, trustedOrigins: readonly string[]): Promise<boolean> {
+  const url = new URL(request.url)
+  const token = url.searchParams.get("token")
+  const proof = url.searchParams.get("studioOriginProof")
+  if (!trustedOrigins.includes(url.origin) || !token || !proof || !/^[0-9a-f]{64}$/.test(proof)) return false
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"])
+  const bytes = Uint8Array.from(proof.match(/../g) ?? [], (hex) => Number.parseInt(hex, 16))
+  return crypto.subtle.verify("HMAC", key, bytes, encoder.encode(`studio-magic-link\n${url.origin}\n${token}`))
+}
+
+
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
 
@@ -115,9 +136,15 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       magicLink({
         expiresIn: 10 * MINUTE,
         disableSignUp: true,
-        sendMagicLink: async ({ email, url }) => {
+        sendMagicLink: async ({ email, url, token }, ctx) => {
           if (config.sendMagicLink === undefined) throw new APIError("SERVICE_UNAVAILABLE", { message: "Email sign-in is not available on this deployment." })
-          await config.sendMagicLink({ to: email, url })
+          const origin = ctx?.headers?.get("origin") ?? ctx?.request?.headers.get("origin")
+          if (!origin || !(config.trustedOrigins ?? [config.baseURL]).includes(origin)) throw new APIError("FORBIDDEN", { message: "Untrusted sign-in origin." })
+          const link = new URL(url)
+          const requested = new URL(origin)
+          link.protocol = requested.protocol; link.host = requested.host
+          link.searchParams.set("studioOriginProof", await originProof(config.secret, token, origin))
+          await config.sendMagicLink({ to: email, url: link.toString() })
         },
       }),
       // Short-lived tokens the Worker mints for the Norn host (#817); the host verifies them against /api/auth/jwks.
