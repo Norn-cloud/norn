@@ -350,7 +350,7 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ")
   const call = async (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers); headers.set("cookie", cookie()); headers.set("origin", ORIGIN); headers.set("cf-connecting-ip", "198.51.100.77")
-    return keep(await worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers, redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env))
+    return keep(await worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers, redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env, CONTEXT))
   }
   const json = (value: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
   await call("/api/auth/sign-up/email", json({ email: "ada@example.com", password: "correct horse battery", name: "Ada" }))
