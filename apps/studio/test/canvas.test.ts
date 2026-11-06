@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { place, type CheckResult, type Finding } from "../src/lib/canvas/diagnostics.ts"
+import { introduced, place, type CheckResult, type Finding } from "../src/lib/canvas/diagnostics.ts"
 import * as g from "../src/lib/canvas/graph.ts"
 import { compile, decompile, lifecycleKinds, lifecyclesIn } from "../src/lib/canvas/lifecycle.ts"
 import type { Envelope } from "../src/lib/transport.ts"
@@ -68,6 +68,14 @@ test("findings land on the node or edge they point into", () => {
   expect(placed.map(({ node, edge }) => node ?? edge ?? null)).toEqual(["approve:on_hold", "invoiced", null, null])
 })
 
+test("findings the loaded definitions already had are kept apart from those an edit introduced", () => {
+  const old = finding("property_type.validation.unknown_ref", "/payload", "ref names no property type")
+  const fresh = finding("lifecycle.validation.dead_end_state", "/payload", 'state "invoiced" has no outgoing transition')
+  const { added, standing } = introduced([{ finding: old }, { finding: old }, { finding: fresh }], [old])
+  expect(added.map(({ finding: { code } }) => code)).toEqual([old.code, fresh.code])
+  expect(standing).toHaveLength(1)
+})
+
 // The real checker, when its package is built into src/checker/ (Boat and the build do; CI's Studio job does not yet).
 const pkg = join(import.meta.dir, "../src/checker")
 test.skipIf(!existsSync(join(pkg, "norn_checker_wasm_bg.wasm")))("the checker finds the stuck state a deleted step leaves", async () => {
@@ -79,6 +87,6 @@ test.skipIf(!existsSync(join(pkg, "norn_checker_wasm_bg.wasm")))("the checker fi
   const edited = compile(orderEnvelope, order, g.remove(graph, [], ["complete:invoiced"]))
   const result = check(definitions.map((envelope) => envelope.artifactId === order.artifactId ? edited.envelope : envelope))
   const placed = place(result.diagnostics.diagnostics, order.artifactId, edited.origins, new Set(graph.nodes.map(({ id }) => id)))
-  const added = placed.filter(({ finding: { code } }) => !clean.diagnostics.diagnostics.some((before) => before.code === code))
+  const { added } = introduced(placed, clean.diagnostics.diagnostics)
   expect(added.map(({ finding, node }) => `${finding.code}@${node}`).sort()).toEqual(["lifecycle.validation.dead_end_state@invoiced", "lifecycle.validation.unreachable_state@completed"])
 })

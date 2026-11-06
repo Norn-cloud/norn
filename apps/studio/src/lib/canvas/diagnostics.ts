@@ -44,3 +44,22 @@ export function place(findings: readonly Finding[], artifactId: string, origins:
     return { finding, ...(best?.node ? { node: best.node } : {}), ...(best?.edge ? { edge: best.edge } : {}) }
   })
 }
+
+const keyOf = ({ code, artifactId, message }: Finding) => `${code}\u0000${artifactId ?? ""}\u0000${message}`
+
+/**
+ * Split findings into those the edit introduced and those the loaded
+ * definitions already had, counting repeats, so the canvas leads with what
+ * the user changed and still shows the rest.
+ */
+export function introduced<T extends { readonly finding: Finding }>(current: readonly T[], baseline: readonly Finding[]): { readonly added: T[]; readonly standing: T[] } {
+  const remaining = new Map<string, number>()
+  for (const finding of baseline) remaining.set(keyOf(finding), (remaining.get(keyOf(finding)) ?? 0) + 1)
+  const added: T[] = []
+  const standing: T[] = []
+  for (const item of current) {
+    const left = remaining.get(keyOf(item.finding)) ?? 0
+    if (left > 0) { remaining.set(keyOf(item.finding), left - 1); standing.push(item) } else added.push(item)
+  }
+  return { added, standing }
+}

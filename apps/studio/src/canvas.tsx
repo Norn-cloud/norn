@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { loadChecker } from "./lib/canvas/checker.ts"
-import { place, type Placed } from "./lib/canvas/diagnostics.ts"
+import { introduced, place, type Placed } from "./lib/canvas/diagnostics.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { words } from "./lib/format.ts"
@@ -45,13 +45,15 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
   const edit = (next: g.Graph) => { setRefusal(null); setState((current) => g.commit(current, next)) }
 
   const compiled = useMemo(() => compile(envelope, lifecycle, graph), [envelope, lifecycle, graph])
+  // What the loaded definitions already fail on, so the canvas leads with what this edit changed.
+  const baseline = useMemo(() => checker.data?.(definitions).diagnostics.diagnostics, [checker.data, definitions])
   const findings = useMemo(() => {
-    if (!checker.data) return undefined
+    if (!checker.data || !baseline) return undefined
     const set = definitions.map((other) => other.artifactId === envelope.artifactId ? compiled.envelope : other)
-    const result = checker.data(set)
-    return { admitted: result.admitted, placed: place(result.diagnostics.diagnostics, envelope.artifactId, compiled.origins, new Set(graph.nodes.map(({ id }) => id))) }
-  }, [checker.data, definitions, envelope.artifactId, compiled, graph.nodes])
-  const on = (key: "node" | "edge", id: string) => findings?.placed.filter((placed) => placed[key] === id) ?? []
+    const placed = place(checker.data(set).diagnostics.diagnostics, envelope.artifactId, compiled.origins, new Set(graph.nodes.map(({ id }) => id)))
+    return introduced(placed, baseline)
+  }, [checker.data, baseline, definitions, envelope.artifactId, compiled, graph.nodes])
+  const on = (key: "node" | "edge", id: string) => findings?.added.filter((placed) => placed[key] === id) ?? []
 
   useEffect(() => {
     const keys = (event: KeyboardEvent) => {
@@ -86,14 +88,14 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
   const node = graph.nodes.find(({ id }) => id === selected.node)
   const edge = graph.edges.find(({ id }) => id === selected.edge)
   const siblings = edge ? graph.edges.filter(({ config }) => config.transition === edge.config.transition).map(({ id }) => id) : []
-  const unplaced = findings?.placed.filter((placed) => !placed.node && !placed.edge) ?? []
+  const unplaced = findings?.added.filter((placed) => !placed.node && !placed.edge) ?? []
 
   return (
     <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_22rem]">
       <Panel label={`${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`} action={
         checker.isError ? <span className="text-destructive">Checker not loaded: no diagnostics</span>
           : !findings ? "Loading the checker…"
-            : findings.admitted ? <Badge variant="outline">Checker: admitted</Badge> : <Badge variant="secondary">Checker: {findings.placed.length} findings</Badge>
+            : findings.added.length === 0 ? <Badge variant="outline">Checker: no new findings</Badge> : <Badge variant="destructive">Checker: {findings.added.length} new {findings.added.length === 1 ? "finding" : "findings"}</Badge>
       }>
         <div className="flex flex-wrap gap-1.5 px-2.5 pb-2">
           <Button size="sm" variant="outline" onClick={() => edit(g.addNode(graph, { id: g.freshId(graph, "new_state"), kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} }))}><Plus />State</Button>
@@ -103,7 +105,7 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
           {refusal && <span className="self-center text-meta text-destructive">{refusal.message}</span>}
         </div>
         <Well>
-          <div className="h-[32rem] w-full">
+          <div className="h-[36rem] w-full">
             <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { id: "probe", source: connection.source, target: connection.target, sourcePort: connection.sourceHandle ?? "out", targetPort: connection.targetHandle ?? "in", config: {} }))}
               onConnect={onConnect}
@@ -139,6 +141,16 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
           </Well>
         </Panel>
         {unplaced.length > 0 && <Panel label="Whole definition"><Well className="space-y-2 p-3">{unplaced.map((placed, index) => <Problem key={index} placed={placed} />)}</Well></Panel>}
+        {findings && findings.standing.length > 0 && (
+          <Panel label="Already in the loaded definitions">
+            <Well className="p-3 text-meta text-muted-foreground">
+              <details>
+                <summary className="cursor-pointer select-none">{findings.standing.length} findings the definitions had before this edit</summary>
+                <div className="space-y-2 pt-2">{findings.standing.map((placed, index) => <Problem key={index} placed={placed} />)}</div>
+              </details>
+            </Well>
+          </Panel>
+        )}
       </div>
     </div>
   )
