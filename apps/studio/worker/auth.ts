@@ -5,6 +5,7 @@ import { createAccessControl } from "better-auth/plugins/access"
 import { jwt } from "better-auth/plugins/jwt"
 import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
+import { hashPassword, verifyPassword } from "./password.ts"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
 
 /**
@@ -66,6 +67,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       autoSignIn: false,
       minPasswordLength: 12,
       maxPasswordLength: 128,
+      // CONTINGENCY (#817): PBKDF2 for a Workers plan whose CPU limit scrypt exceeds; scrypt hashes still verify.
+      password: { hash: (password: string) => hashPassword(password), verify: verifyPassword },
       // A registered address skips the four writes a new account makes (user, credential,
       // organization, member); make the same number of database writes so latency does not tell them apart.
       onExistingUserSignUp: async () => {
