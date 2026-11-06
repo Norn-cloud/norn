@@ -12,12 +12,12 @@ type Page = {
   getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator
   getByLabel(text: string | RegExp, options?: { exact?: boolean }): Locator
   getByText(text: string | RegExp, options?: { exact?: boolean }): Locator
-  locator(selector: string): Locator
+  locator(selector: string, options?: { hasText?: string | RegExp }): Locator
   on(event: "dialog", listener: (dialog: { accept(): Promise<void> }) => void): void
   route(url: string, handler: (route: { fulfill(response: { status: number; contentType: string; body: string }): Promise<void> }) => unknown): Promise<void>
   unroute(url: string): Promise<void>
 }
-type Locator = { click(): Promise<void>; press(key: string): Promise<void>; fill(value: string): Promise<void>; check(): Promise<void>; selectOption(value: string): Promise<unknown>; getByLabel: Page["getByLabel"]; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
+type Locator = { locator(selector: string, options?: { hasText?: string | RegExp }): Locator; all(): Promise<Locator[]>; click(): Promise<void>; press(key: string): Promise<void>; fill(value: string): Promise<void>; check(): Promise<void>; selectOption(value: string): Promise<unknown>; getByLabel: Page["getByLabel"]; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
 
 const env = (name: string) => {
   const value = process.env[name]
@@ -186,9 +186,14 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     await row.getByRole("button", { name: "Edit" }).click()
     await page.getByRole("form", { name: `Edit ${name}` }).getByLabel("Who may run it").selectOption("admin")
     await page.getByRole("form", { name: `Edit ${name}` }).getByRole("button", { name: "Save binding" }).click()
-    await row.getByText("Admins only").waitFor(); did("edit")
+    // The row's run-role badge (not the editor's option of the same name), and the editor closed.
+    await row.locator('[data-slot="badge"]', { hasText: "Admins only" }).waitFor()
+    await page.getByRole("form", { name: `Edit ${name}` }).waitFor({ state: "detached" }); did("edit")
     await row.getByRole("button", { name: "Test run" }).click()
-    await page.getByRole("form", { name: `Test run ${name}` }).getByRole("button", { name: "Run" }).click()
+    // The fields the binding leaves open, whatever the tool's schema marks required.
+    const run = page.getByRole("form", { name: `Test run ${name}` })
+    for (const input of await run.locator('input[type="text"]').all()) await input.fill("e2e")
+    await run.getByRole("button", { name: "Run" }).click()
     await row.getByLabel("Result").waitFor({ timeout: 30_000 }); did("test-run")
     await row.getByRole("button", { name: "Remove" }).click()
     await row.waitFor({ state: "detached" }); did("remove")
