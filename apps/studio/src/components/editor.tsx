@@ -36,7 +36,7 @@ export function useEditor<T>({ initial, onSave, onRun }: { readonly initial: T; 
     globalThis.addEventListener?.("keydown", onKey)
     return () => globalThis.removeEventListener?.("keydown", onKey)
   }, [undo, redo])
-  return { value, set, undo, redo, open, markSaved, canUndo: state.past.length > 0, canRedo: state.future.length > 0, dirty: JSON.stringify(value) !== JSON.stringify(saved) }
+  return { value, revision: state, set, undo, redo, open, markSaved, canUndo: state.past.length > 0, canRedo: state.future.length > 0, dirty: JSON.stringify(value) !== JSON.stringify(saved) }
 }
 
 /** Asks before leaving an editor with unsaved changes, in the app and when closing the tab. */
