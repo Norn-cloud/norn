@@ -13,7 +13,7 @@ export interface Locator {
   waitFor(options?: { timeout?: number; state?: "attached" | "detached" | "visible" | "hidden" }): Promise<void>
   first(): Locator
   nth(index: number): Locator
-  getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator
+  getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean; level?: number }): Locator
   getByText(text: string | RegExp, options?: { exact?: boolean }): Locator
   getByLabel(text: string | RegExp, options?: { exact?: boolean }): Locator
 }
