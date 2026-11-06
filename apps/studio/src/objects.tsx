@@ -282,7 +282,7 @@ function Relations({ concept, id, links }: { readonly concept: Concept; readonly
         ? <p className="text-sm text-muted-foreground">This concept declares no relationships.</p>
         : <ul className="space-y-2 text-sm">
           {concept.relationships.map((relationship) => {
-            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id)
+            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id && edge.sourceType === concept.name)
             return (
               <li key={relationship.id}>
                 <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} ({relationship.count}) → </span>
@@ -411,7 +411,8 @@ const incomingOf = (concept: Concept, concepts: readonly Concept[]) =>
 /** One plain sentence from what the server sent: the record, its type, where it was read from and what its stored links say. */
 export function summaryOf(concept: Concept, reads: ObjectReads, concepts: readonly Concept[]): string {
   const source = reads.source?.document
-  const stored = reads.links.document.items.length
+  const { id, objectType } = reads.object.document
+  const stored = reads.links.document.items.filter((edge) => (edge.source === id && edge.sourceType === objectType) || (edge.target === id && edge.targetType === objectType)).length
   const declared = concept.relationships.length + incomingOf(concept, concepts).length
   const from = source ? `, read from ${systemName(source.sourceRecordRef.system)} by mapping ${source.mappingPin.artifactId}` : ""
   const links = declared === 0 ? "Its type declares no relations." : stored === 0 ? (declared === 1 ? "Its one declared relation has no stored link in this snapshot." : `None of the ${declared} relations its type declares has a stored link in this snapshot.`) : `${stored} stored ${stored === 1 ? "link connects" : "links connect"} it to other records.`
@@ -423,17 +424,23 @@ function RelatedInline({ concept, id, links, concepts }: { readonly concept: Con
   const incoming = incomingOf(concept, concepts)
   if (concept.relationships.length === 0 && incoming.length === 0) return null
   const none = <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none in this snapshot"}</span>
-  const record = (type: string, target: string) => <Link key={`${type}/${target}`} to="/sources/$concept/$" params={{ concept: type, _splat: target }} className="me-2 font-medium underline-offset-4 hover:underline">{target}</Link>
+  // One stored link's other end. Contested links (sources disagree, nothing added) never reach `items`, so nothing is shown for them.
+  const record = (edge: LinkPage["items"][number], type: string, target: string) => (
+    <span key={`${edge.link}/${type}/${target}`} className="me-3 inline-flex items-center gap-1">
+      <Link to="/sources/$concept/$" params={{ concept: type, _splat: target }} className="font-medium underline-offset-4 hover:underline">{target}</Link>
+      {/* Slot: the link's per-claim source lineage (observed_link_provenance) goes here once the server records it. */}
+    </span>
+  )
   return (
     <Panel icon={Link2} label="Related"><Well className="p-3">
       <dl className="space-y-2 text-sm">
         {concept.relationships.map((relationship) => {
-          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id)
-          return <div key={`out/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{relationship.id.replaceAll("_", " ")} → {relationship.count} {conceptTitle(relationship.target)}</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge.targetType, edge.target))}</dd></div>
+          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id && edge.sourceType === concept.name)
+          return <div key={`out/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{relationship.id.replaceAll("_", " ")} → {relationship.count} {conceptTitle(relationship.target)}</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge, edge.targetType, edge.target))}</dd></div>
         })}
         {incoming.map(({ from, relationship }) => {
-          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.sourceType === from.name)
-          return <div key={`in/${from.name}/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{from.title} records ({relationship.id.replaceAll("_", " ")})</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge.sourceType, edge.source))}</dd></div>
+          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.targetType === concept.name && edge.sourceType === from.name)
+          return <div key={`in/${from.name}/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{from.title} records ({relationship.id.replaceAll("_", " ")})</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge, edge.sourceType, edge.source))}</dd></div>
         })}
       </dl>
     </Well></Panel>
