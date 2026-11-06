@@ -53,8 +53,10 @@ export function sessionId(storage: Pick<Storage, "getItem" | "setItem"> | undefi
  * worded as an economist would ask; the checker should refuse each one.
  */
 export const SUGGESTIONS = [
-  "Make the positive-quantity law check a field called unseen instead",
-  "Let the order quantity law just be the ordered amount, not a yes/no test",
-  "Let Receive start from a shipped state",
-  "Let Receive start straight from draft",
+  // Each is recorded with its change and the checker's decision in fixtures/demo/jewelry-proposals.json:
+  // the first two are admitted, the last two refused, naming the fine-mass law.
+  "Record each melt's purity in parts per thousand",
+  "Make the fine-mass law a yield floor: output at least 95% of input",
+  "Subtract a refining loss in the fine-mass law",
+  "Let a melt post straight from measured, skipping approval",
 ] as const
