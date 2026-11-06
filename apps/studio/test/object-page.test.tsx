@@ -22,8 +22,8 @@ async function page(concept: string, id: string, view = "business") {
   client.setQueryData(["object", concept, id], { object: file("object"), links: file("links"), source: file("source") })
   const root = createRootRoute()
   const router = createRouter({
-    routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage })]),
-    history: createMemoryHistory({ initialEntries: [`/sources/${concept}/${encodeURIComponent(id)}`] }),
+    routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: ObjectPage })]),
+    history: createMemoryHistory({ initialEntries: [`/sources/${concept}/${id}`] }),
   })
   await router.load()
   return renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><RouterProvider router={router} /></ViewProvider></QueryClientProvider>)
@@ -49,4 +49,10 @@ test("the technical view shows only Norn artefacts: the definition, the mapping 
   expect(html).toContain("Copy 6ec08e5b9fc6375526a98b96eeff65f402fbad558e4df418ed603f32b3017980")
   expect(html).toContain("None recorded: the demo read has no signed-in principal")
   expect(html).toContain("&quot;objectType&quot;: &quot;canon.Item&quot;")
+})
+
+test("a record id with slashes is the rest of the path, so a reload finds it without an encoded %2F", async () => {
+  const html = await page("canon.Item", "demo/item/gold")
+  expect(html).toContain("Gold scrap")
+  expect(html).not.toContain("Not Found")
 })

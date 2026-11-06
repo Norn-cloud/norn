@@ -46,7 +46,7 @@ const router = createRouter({
       component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
-    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: ObjectPage }),
     createRoute({ getParentRoute: () => root, path: "/questions/$name", component: QuestionPage }),
   ]),
 })
