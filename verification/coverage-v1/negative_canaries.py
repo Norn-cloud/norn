@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -671,6 +672,73 @@ context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:
     return json.loads(result.stdout)
 
 
+def workflow_superseded_canaries(source: str) -> None:
+    """A superseded pull_request_target evaluation writes nothing; comment events never skip."""
+    workflow = yaml.safe_load(source)
+    steps = workflow["jobs"]["trusted-policy"]["steps"]
+    resolve = next(step for step in steps if step.get("name") == "Resolve the pull request")
+
+    def outputs(script: str, event: str, payload: str, live: str) -> dict[str, str]:
+        harness = ("const out={};const core={setOutput:(k,v)=>{out[k]=v},notice:()=>{}};"
+                   f"const context={{eventName:{json.dumps(event)},repo:{{owner:'o',repo:'r'}},payload:{payload}}};"
+                   "const github={rest:{pulls:{get:async()=>({data:{number:7,base:{sha:'b'.repeat(40)},"
+                   "head:{sha:" + json.dumps(live) + ",repo:{full_name:'Norn-cloud/norn'}}}})}}};"
+                   "(async()=>{\n" + script + "\nconsole.log(JSON.stringify(out))})()"
+                   ".catch(error=>{console.error(error);process.exit(1)});")
+        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10, check=True)
+        return json.loads(result.stdout)
+
+    old, new = "a" * 40, "c" * 40
+    target = lambda head: "{pull_request:{number:7,head:{sha:'" + head + "'}}}"
+    for event, payload, live, expected in (
+            ("pull_request_target", target(old), new, "true"),
+            ("pull_request_target", target(new), new, "false"),
+            # Comment events re-evaluate the live head: approvals and revocations never skip.
+            ("issue_comment", "{issue:{number:7,pull_request:{}}}", new, "false"),
+            ("issue_comment", "{issue:{number:7,pull_request:{}},pull_request:{head:{sha:'" + old + "'}}}", new, "false")):
+        value = outputs(resolve["with"]["script"], event, payload, live)
+        if value.get("superseded") != expected or value.get("head_sha") != live:
+            raise AssertionError(f"superseded resolution drift: {event}/{payload}/{live}: {value}")
+
+    validator = load_module("norn_superseded_canaries", VALIDATOR)
+    guard = "steps.pr.outputs.superseded != 'true'"
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+
+        def rejected(label: str, document: dict[str, Any]) -> None:
+            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate)
+            except validator.InvalidCoverage:
+                return
+            raise AssertionError(f"superseded mutation passed: {label}")
+
+        for index, step in enumerate(steps[1:-1], start=1):
+            label = step.get("name") or step.get("uses")
+            for value in (None, "always()", "!cancelled()", guard.replace("!=", "=="),
+                          guard.replace("superseded", "head_sha")):
+                if value == step.get("if"):
+                    continue
+                document = copy.deepcopy(workflow)
+                if value is None:
+                    document["jobs"]["trusted-policy"]["steps"][index].pop("if", None)
+                else:
+                    document["jobs"]["trusted-policy"]["steps"][index]["if"] = value
+                rejected(f"unguarded {label} after a superseded resolution: {value}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["trusted-policy"]["steps"].insert(2, {"name": "extra", "run": "true"})
+        rejected("unguarded step inserted after Resolve", document)
+        for before, after in (("context.eventName === 'pull_request_target' && ", ""),
+                              ("event.head.sha !== data.head.sha", "true"),
+                              ("String(superseded)", "'false'")):
+            if before not in resolve["with"]["script"]:
+                raise AssertionError(f"superseded canary target drifted: {before}")
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["steps"][0]
+            changed["with"]["script"] = changed["with"]["script"].replace(before, after)
+            rejected(f"superseded resolution mutation {before}", document)
+
+
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -932,6 +1000,14 @@ def workflow_context_canaries(source: str) -> None:
         document["jobs"]["core"]["steps"][0]["run"] = document["jobs"]["core"]["steps"][0]["run"].replace(
             'if [ "$(available)" -lt "$minimum" ]; then', "if true; then")
         rejected("unconditional core cleanup", document)
+        for name in ("core", "test"):
+            # A Boat pull-request VM is self-hosted: cleanup keys on the hosted image alone.
+            for condition in ("${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
+                              "${{ runner.environment != 'self-hosted' }}",
+                              "${{ github.event_name != 'merge_group' }}"):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["steps"][0]["if"] = condition
+                rejected(f"{name} cleanup keyed off the hosted image", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["test"]["steps"][0]["run"] = workflow["jobs"]["core"]["steps"][0]["run"]
         rejected("threshold-only hosted bundle cleanup", document)
@@ -940,30 +1016,69 @@ def workflow_context_canaries(source: str) -> None:
             return next(step for step in document["jobs"][job]["steps"]
                         if step.get("uses", "").startswith(action + "@"))
 
-        runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+        same_repo = "github.event.pull_request.head.repo.full_name == github.repository && "
         legacy = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
         expression = runner.removeprefix("${{ ").removesuffix(" }}")
+        boat_users = ("Youssef-Tarek-Ali-26", "dependabot[bot]", "other-maintainer")
         for event in ("merge_group", "pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
-            for variable in ("", "boat", "self-hosted", "other"):
-                concrete = expression.replace("github.event_name", repr(event)).replace(
-                    "vars.NORN_MERGE_RUNNER", repr(variable)).replace("&&", " and ").replace("||", " or ")
-                expected = "boat" if event == "merge_group" and variable == "boat" else "ubuntu-24.04"
+            # Boat CI runs public-repository jobs only for its allowlisted user: any
+            # other PR author, actor or re-runner (Dependabot included) stays hosted.
+            for merge_variable, pr_variable, head_repository, author, actor, rerunner in itertools.product(
+                    ("", "boat", "self-hosted", "other"), ("", "boat", "self-hosted", "other"),
+                    ("Norn-cloud/norn", "attacker/norn", ""), *[boat_users] * 3):
+                concrete = (expression.replace("github.event_name", repr(event))
+                            .replace("vars.NORN_MERGE_RUNNER", repr(merge_variable))
+                            .replace("vars.NORN_PR_RUNNER", repr(pr_variable))
+                            .replace("github.event.pull_request.head.repo.full_name", repr(head_repository))
+                            .replace("github.event.pull_request.user.login", repr(author))
+                            .replace("github.triggering_actor", repr(rerunner))
+                            .replace("github.actor", repr(actor))
+                            .replace("github.repository", repr("Norn-cloud/norn"))
+                            .replace("&&", " and ").replace("||", " or "))
+                expected = ("boat" if (event == "merge_group" and merge_variable == "boat")
+                            or (event == "pull_request" and pr_variable == "boat"
+                                and head_repository == "Norn-cloud/norn"
+                                and author == actor == rerunner == "Youssef-Tarek-Ali-26") else "ubuntu-24.04")
                 if eval(concrete, {"__builtins__": {}}, {}) != expected:
-                    raise AssertionError(f"Boat runner evaluation drift: {event}/{variable}")
-        for name in ("core", "plan", "test", "full", "trusted-policy"):
+                    raise AssertionError("Boat runner evaluation drift: " + "/".join(
+                        (event, merge_variable, pr_variable, head_repository, author, actor, rerunner)))
+        for name in ("core", "plan", "test", "full", "trusted-policy", "rights-capture", "rights-revocation"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
+                      "${{ vars.NORN_PR_RUNNER || 'ubuntu-24.04' }}",
                       runner.replace("github.event_name == 'merge_group' && ", ""),
-                      runner.replace("vars.NORN_MERGE_RUNNER == 'boat' && ", ""),
+                      runner.replace("github.event_name == 'pull_request' && ", ""),
+                      runner.replace(" && vars.NORN_MERGE_RUNNER == 'boat'", ""),
+                      runner.replace(" && vars.NORN_PR_RUNNER == 'boat'", ""),
+                      # Fork pull requests must never reach a Boat VM.
+                      runner.replace(same_repo, ""),
+                      runner.replace(same_repo, "github.event.pull_request.head.repo.fork == false && "),
+                      runner.replace("== github.repository", "!= ''"),
+                      runner.replace("vars.NORN_PR_RUNNER", "vars.NORN_MERGE_RUNNER"),
+                      # Bot- or other-user-triggered pull requests would queue forever on Boat.
+                      runner.replace(" && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace(" && github.actor == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace(" && github.triggering_actor == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace("github.actor == 'Youssef-Tarek-Ali-26'", "github.actor != 'dependabot[bot]'"),
+                      runner.replace("github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                                     "github.event.pull_request.user.type != 'Bot'"),
+                      runner.replace("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
                       runner.replace("== 'boat'", "== 'self-hosted'"),
                       runner.replace("|| 'ubuntu-24.04'", "|| 'boat'")]
             for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
+            for event in ("pull_request_target", "issue_comment", "push", "workflow_dispatch"):
+                unsafe.append(runner.replace("'pull_request'", repr(event)))
             if name in ("core", "test"):
-                unsafe.append("ubuntu-24.04")
+                unsafe += ["ubuntu-24.04", merge_only]
             else:
-                unsafe.append(runner)
+                # Rights authority and control jobs stay on hosted runners in every form.
+                unsafe += [runner, merge_only]
             for value in unsafe:
+                if value == workflow["jobs"][name]["runs-on"]:
+                    raise AssertionError(f"{name}: runner mutation is a no-op: {value}")
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
@@ -1953,6 +2068,51 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     history.find(s=>s.context.startsWith('rights-ledger/')).context=
       history.find(s=>s.context.startsWith('rights-ledger/')).context.toUpperCase();
     await snapshot(prefix+'case');
+    // Runs created in the same second can list (newest id first) in an order that
+    // disagrees with run_number. The walk accepts any order but no missing number.
+    const swapA=nextRun++,swapB=nextRun++;
+    await record(swapA,payload(comment(14,'ordinary text',clock)));
+    await record(swapB,payload(comment(15,'ordinary text',clock)));
+    assert.deepEqual(runs.slice(0,2).map(r=>r.id),[swapB,swapA]);
+    [runs[0],runs[1]]=[runs[1],runs[0]];
+    const swapped=runs.find(r=>r.id===swapA);
+    runs=runs.filter(r=>r!==swapped);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights history checkpoint unavailable/);assert(!fs.existsSync(path))}
+    runs.splice(0,0,swapped);
+    await snapshot(prefix+'inverted');
+    // A run numbered above the cursor can also list after the cursor run itself (here
+    // a revocation whose ledger has not run). Each collector starts below its own one.
+    for(const [index,kind] of ['pr','group'].entries()){
+      const cursorRun=runs.reduce((a,b)=>b.run_number>a.run_number?b:a), straddle=nextRun++;
+      await record(straddle,payload(comment(16+index,'/revoke-rights '+head,clock)),1,true);
+      assert.equal(runs[0].id,straddle);
+      const moved=runs.shift();runs.splice(runs.indexOf(cursorRun)+1,0,moved);
+      // Its id sorts below the cursor run's id, as in a real id-ordered listing
+      // (harness ids start at 100, so 50 and 49 are unused).
+      const low=50-index;assert(low<cursorRun.id&&!runs.some(r=>r.id===low));jobs.set(low,jobs.get(moved.id));moved.id=low;
+      assert(pending(await collect(kind)).includes(low),'a run listed after the cursor run must be read');
+    }
+    await snapshot(prefix+'straddle');
+    // A complete first page is no upper bound: a run numbered above every run seen so
+    // far (here a revocation whose ledger has not run) can list on a later page.
+    paging=true;shifted=true;
+    for(const [index,kind] of ['pr','group'].entries()){
+      const lowA=nextRun++,lowB=nextRun++,high=nextRun++,ids=20+index*3;
+      await record(lowA,payload(comment(ids,'ordinary text',clock)));
+      await record(lowB,payload(comment(ids+1,'ordinary text',clock)));
+      await record(high,payload(comment(ids+2,'/revoke-rights '+head,clock)),1,true);
+      assert.deepEqual(runs.slice(0,3).map(r=>r.id),[high,lowB,lowA]);
+      runs.splice(2,0,runs.shift());
+      assert(pending(await collect(kind)).includes(high),'a later-page run above the first page must be read');
+    }
+    paging=false;
+    // A repeated run_number must not stand in for a missing one.
+    const n=Math.max(...runs.map(r=>r.run_number));
+    const dupes=[makeRun(nextRun++,'push'),makeRun(nextRun++,'push'),makeRun(nextRun++,'push')];
+    dupes[0].run_number=dupes[1].run_number=n+1;dupes[2].run_number=n+3;
+    runs.unshift(dupes[2],dupes[1],dupes[0]);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Incomplete rights event history/);assert(!fs.existsSync(path))}
+    runs=runs.filter(r=>!dupes.includes(r));nextRun-=3;
     const complete=[...runs];
     for(const id of [revokeRun,admission,firstRun]){
       runs=complete.filter(r=>r.id!==id);
@@ -2068,6 +2228,7 @@ def main() -> int:
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
         workflow_trusted_policy_canaries(source)
+        workflow_superseded_canaries(source)
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
         rights_workflow_canaries()
