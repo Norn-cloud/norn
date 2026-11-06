@@ -9,7 +9,7 @@
 import type { Expr } from "../../../../../tools/norn-ts/src/builder/expr.ts"
 import { X, lowerFlow, type BuildDiagnostic, type EnvelopeOptions, type FlowDef, type FnRef, type Step } from "../../../../../tools/norn-ts/src/builder/index.ts"
 import type { CanvasEdge, CanvasNode, Graph, Kinds, Port } from "./graph.ts"
-import { decisionPorts, decisionSteps, effectOf, optionPort, optionsOf, rolesOf } from "./decision.ts"
+import { DECISION_BOUNDS, decisionPorts, decisionSteps, effectOf, expiresOf, optionPort, optionsOf, rolesOf } from "./decision.ts"
 
 /** Control flow: every step hands on to the next. What a step reads is typed by its tool's schemas, which lowering checks. */
 const FLOW = "flow"
@@ -135,6 +135,10 @@ export function toFlow(graph: Graph, tools: readonly FnRef[], meta: { readonly i
     if (!(node.config.question ?? "").trim()) problems.push({ code: "canvas.decision.no_question", message: "Say what the person is deciding", node: node.id })
     if (options.length === 0) problems.push({ code: "canvas.decision.no_options", message: "A decision needs at least one option", node: node.id })
     if (rolesOf(node).length === 0) problems.push({ code: "canvas.decision.no_decider", message: "Name the roles that may decide", node: node.id })
+    if ((node.config.question ?? "").length > DECISION_BOUNDS.maxQuestion) problems.push({ code: "canvas.decision.question_too_long", message: `The question is ${(node.config.question ?? "").length} characters; the cell takes at most ${DECISION_BOUNDS.maxQuestion}`, node: node.id })
+    if (options.length > DECISION_BOUNDS.maxOptions) problems.push({ code: "canvas.decision.too_many_options", message: `${options.length} options; a decision offers at most ${DECISION_BOUNDS.maxOptions}`, node: node.id })
+    const expires = expiresOf(node)
+    if (expires !== undefined && expires > DECISION_BOUNDS.maxExpiresInMs) problems.push({ code: "canvas.decision.expiry_too_long", message: "A decision expires within seven days at most", node: node.id })
     for (const option of options) if (!effectOf(option)?.ref) problems.push({ code: "canvas.decision.option_without_effect", message: `Option ${option.id} (${option.label}) does not say what it starts: an action or a tool binding`, node: node.id })
     const continues = graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === "next")
     for (const option of options) if (!continues && !graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === optionPort(option)))
