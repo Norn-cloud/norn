@@ -1,9 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { ChartLine, Plus, X } from "lucide-react"
-import { useState, type ReactNode } from "react"
+import { ChartLine, Plus } from "lucide-react"
+import { type ReactNode } from "react"
+import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { list, modKey, type Issue } from "@/lib/editor"
 import { QuestionCard, questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
 
 /** What a question can be built from, as the Worker serves it (`GET /api/questions/catalog`). */
@@ -17,12 +19,13 @@ export interface QuestionCatalog {
   readonly example: { readonly irVersion: string; readonly calendar: string; readonly freshness: unknown }
 }
 
+export interface Condition { readonly property: string; readonly operator: string; readonly value: string }
 export interface Draft {
   readonly title: string
-  readonly metric: string
+  readonly measures: readonly string[]
   readonly by: string
   readonly grain: string
-  readonly filters: readonly { readonly property: string; readonly operator: string; readonly value: string }[]
+  readonly filters: readonly Condition[]
   readonly start: string
   readonly end: string
 }
@@ -43,7 +46,7 @@ export function buildQuestion(draft: Draft, catalog: QuestionCatalog) {
     irVersion: catalog.example.irVersion,
     name: `studio.${slug(draft.title)}`,
     objectSet: catalog.objectSet,
-    aggregate: [{ metric: draft.metric }],
+    aggregate: draft.measures.map((metric) => ({ metric })),
     groupBy: draft.by === "" ? [] : [{ path: { property: draft.by }, ...kind(draft.by) === "timestamp" && draft.grain !== "" ? { grain: draft.grain } : {} }],
     filter: draft.filters.map(({ property, operator, value: text }) => ({ path: { property }, operator, value: value(property, text) })),
     window: { start: `${draft.start}T00:00:00Z`, end: `${draft.end}T00:00:00Z` },
@@ -51,6 +54,24 @@ export function buildQuestion(draft: Draft, catalog: QuestionCatalog) {
     freshness: catalog.example.freshness,
   }
 }
+
+/**
+ * Where a checker finding belongs in the form, from its JSON pointer into the
+ * checked document (`/questions/0/...`). Both the wire names (aggregate,
+ * groupBy, filter) and the checker's own (metrics, dimensions, filters) place.
+ */
+export function fieldOf(pointer: string | null): string | null {
+  const [, , , section, index] = (pointer ?? "").split("/")
+  if (section === "aggregate" || section === "metrics") return index === undefined ? "measures" : `measure.${index}`
+  if (section === "groupBy" || section === "dimensions") return "by"
+  if (section === "filter" || section === "filters") return index === undefined ? "filters" : `filter.${index}`
+  if (section === "window") return "window"
+  if (section === "name") return "title"
+  return null
+}
+
+export const issuesOf = (verdict: QuestionVerdict | undefined): readonly Issue[] =>
+  verdict === undefined || verdict.admitted ? [] : verdict.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer ?? null) }))
 
 async function readCatalog(): Promise<QuestionCatalog> {
   const response = await fetch("/api/questions/catalog", { headers: { accept: "application/json" } })
@@ -65,16 +86,16 @@ async function checkQuestion(question: unknown): Promise<QuestionVerdict> {
   return verdict
 }
 
-const fieldClass = "h-9 w-full rounded-3xl border border-transparent bg-input/50 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+const fieldClass = "h-9 w-full rounded-3xl border border-transparent bg-input/50 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive"
 
-function Field({ label, children }: { readonly label: string; readonly children: ReactNode }) {
-  return <label className="grid gap-1.5 text-sm"><span className="text-muted-foreground">{label}</span>{children}</label>
+function Field({ label, field, invalid, children }: { readonly label: string; readonly field?: string; readonly invalid?: boolean; readonly children: ReactNode }) {
+  return <label className="grid gap-1.5 text-sm" data-field={field} data-invalid={invalid || undefined}><span className={invalid ? "text-destructive" : "text-muted-foreground"}>{label}</span>{children}</label>
 }
 
-function Choice({ label, value, onChange, options }: { readonly label: string; readonly value: string; readonly onChange: (value: string) => void; readonly options: readonly (readonly [string, string])[] }) {
+function Choice({ label, field, invalid, value, onChange, options }: { readonly label: string; readonly field?: string; readonly invalid?: boolean; readonly value: string; readonly onChange: (value: string) => void; readonly options: readonly (readonly [string, string])[] }) {
   return (
-    <Field label={label}>
-      <select className={fieldClass} value={value} onChange={(event) => onChange(event.target.value)}>
+    <Field label={label} field={field} invalid={invalid}>
+      <select className={fieldClass} aria-invalid={invalid || undefined} value={value} onChange={(event) => onChange(event.target.value)}>
         {options.map(([option, text]) => <option key={option} value={option}>{text}</option>)}
       </select>
     </Field>
@@ -83,49 +104,67 @@ function Choice({ label, value, onChange, options }: { readonly label: string; r
 
 export function initialDraft(catalog: QuestionCatalog): Draft {
   const time = catalog.properties.find(({ kind }) => kind === "timestamp")?.name ?? ""
-  return { title: "", metric: catalog.metrics[0]?.name ?? "", by: time, grain: catalog.grains.includes("week") ? "week" : catalog.grains[0] ?? "", filters: [], start: "", end: "" }
+  return { title: "", measures: catalog.metrics[0] ? [catalog.metrics[0].name] : [], by: time, grain: catalog.grains.includes("week") ? "week" : catalog.grains[0] ?? "", filters: [], start: "", end: "" }
 }
 
-export function QuestionBuilder({ catalog }: { readonly catalog: QuestionCatalog }) {
-  const [draft, setDraft] = useState<Draft>(() => initialDraft(catalog))
-  const check = useMutation({ mutationFn: () => checkQuestion(buildQuestion(draft, catalog)) })
-  const set = (patch: Partial<Draft>) => setDraft((current) => ({ ...current, ...patch }))
-  const setFilter = (index: number, patch: Partial<Draft["filters"][number]>) => set({ filters: draft.filters.map((filter, at) => at === index ? { ...filter, ...patch } : filter) })
+export function QuestionBuilder({ catalog, guard }: { readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode }) {
+  const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog)) })
+  const editor = useEditor<Draft>({ initial: initialDraft(catalog), onRun: (draft) => check.mutate(draft) })
+  const { value: draft, set } = editor
+  const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
+  const setFilter = (index: number, next: Partial<Condition>) => patch({ filters: draft.filters.map((filter, at) => at === index ? { ...filter, ...next } : filter) })
+  const issues = issuesOf(check.data)
+  const invalid = (field: string) => issues.some((issue) => issue.field === field)
   const property = catalog.properties.find(({ name }) => name === draft.by)
   const propertyOptions = catalog.properties.map(({ name }) => [name, words(name)] as const)
+  const metricOptions = catalog.metrics.map(({ name, label }) => [name, label] as const)
+  const record = words(catalog.objectSet?.split(".").pop() ?? "record")
+  if (catalog.metrics.length === 0) return <EmptyState icon={ChartLine}>This world declares no measures yet, so there is nothing to build a question from.</EmptyState>
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <Panel icon={ChartLine} label="Question">
-        <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); check.mutate() }}>
-          <Field label="Name"><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => set({ title: event.target.value })} /></Field>
-          <Choice label="Measure" value={draft.metric} onChange={(metric) => set({ metric })} options={catalog.metrics.map(({ name, label }) => [name, label] as const)} />
-          <div className="grid grid-cols-2 gap-3">
-            <Choice label="By" value={draft.by} onChange={(by) => set({ by })} options={[["", "Nothing (one total)"], ...propertyOptions]} />
-            {property?.kind === "timestamp" && <Choice label="Every" value={draft.grain} onChange={(grain) => set({ grain })} options={catalog.grains.map((grain) => [grain, grain[0]?.toUpperCase() + grain.slice(1)] as const)} />}
-          </div>
-          <div className="grid gap-2">
-            <span className="text-sm text-muted-foreground">Only where</span>
-            {draft.filters.length === 0 && <p className="text-sm text-muted-foreground">Every {words(catalog.objectSet?.split(".").pop() ?? "record")} record.</p>}
-            {draft.filters.map((filter, index) => (
-              <div key={index} className="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2">
-                <Choice label="Field" value={filter.property} onChange={(value) => setFilter(index, { property: value })} options={propertyOptions} />
-                <Choice label="Condition" value={filter.operator} onChange={(value) => setFilter(index, { operator: value })} options={catalog.operators.map((operator) => [operator, OPERATOR_WORDS[operator] ?? operator] as const)} />
-                <Field label="Value"><Input value={filter.value} onChange={(event) => setFilter(index, { value: event.target.value })} /></Field>
-                <Button type="button" variant="ghost" size="icon" aria-label="Remove condition" onClick={() => set({ filters: draft.filters.filter((_, at) => at !== index) })}><X /></Button>
+      {guard?.(editor.dirty)}
+      <Panel icon={ChartLine} label="Question" action={<EditorToolbar editor={editor} />}>
+        <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); check.mutate(draft) }}>
+          <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
+          <div className="grid gap-2" data-field="measures">
+            <span className={invalid("measures") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Measures</span>
+            {draft.measures.length === 0 && <p className="text-sm text-muted-foreground">No measure yet.</p>}
+            {draft.measures.map((metric, index) => (
+              <div key={index} className="grid grid-cols-[1fr_auto] items-end gap-2">
+                <Choice label={`Measure ${index + 1}`} field={`measure.${index}`} invalid={invalid(`measure.${index}`)} value={metric} onChange={(next) => patch({ measures: draft.measures.map((m, at) => at === index ? next : m) })} options={metricOptions} />
+                <RowActions index={index} count={draft.measures.length} label={`measure ${index + 1}`} onDuplicate={() => patch({ measures: list.duplicate(draft.measures, index) })} onMove={(to) => patch({ measures: list.move(draft.measures, index, to) })} onRemove={() => patch({ measures: list.remove(draft.measures, index) })} />
               </div>
             ))}
-            <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => set({ filters: [...draft.filters, { property: catalog.properties.find(({ kind }) => kind === "text")?.name ?? catalog.properties[0]?.name ?? "", operator: catalog.operators[0] ?? "eq", value: "" }] })}><Plus />Add condition</Button>
+            <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => patch({ measures: [...draft.measures, catalog.metrics[0]?.name ?? ""] })}><Plus />Add measure</Button>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="From"><Input type="date" value={draft.start} onChange={(event) => set({ start: event.target.value })} /></Field>
-            <Field label="Until"><Input type="date" value={draft.end} onChange={(event) => set({ end: event.target.value })} /></Field>
+            <Choice label="By" field="by" invalid={invalid("by")} value={draft.by} onChange={(by) => patch({ by })} options={[["", "Nothing (one total)"], ...propertyOptions]} />
+            {property?.kind === "timestamp" && <Choice label="Every" field="grain" invalid={invalid("by")} value={draft.grain} onChange={(grain) => patch({ grain })} options={catalog.grains.map((grain) => [grain, grain[0]?.toUpperCase() + grain.slice(1)] as const)} />}
           </div>
-          <Button type="submit" className="justify-self-start" disabled={check.isPending}>{check.isPending ? "Checking…" : "Check with the server"}</Button>
+          <div className="grid gap-2" data-field="filters">
+            <span className={invalid("filters") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Only where</span>
+            {draft.filters.length === 0 && <p className="text-sm text-muted-foreground">Every {record} record.</p>}
+            {draft.filters.map((filter, index) => (
+              <div key={index} className="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2" data-field={`filter.${index}`}>
+                <Choice label={`Field ${index + 1}`} invalid={invalid(`filter.${index}`)} value={filter.property} onChange={(next) => setFilter(index, { property: next })} options={propertyOptions} />
+                <Choice label="Condition" invalid={invalid(`filter.${index}`)} value={filter.operator} onChange={(next) => setFilter(index, { operator: next })} options={catalog.operators.map((operator) => [operator, OPERATOR_WORDS[operator] ?? operator] as const)} />
+                <Field label="Value" invalid={invalid(`filter.${index}`)}><Input value={filter.value} aria-invalid={invalid(`filter.${index}`) || undefined} onChange={(event) => setFilter(index, { value: event.target.value })} /></Field>
+                <RowActions index={index} count={draft.filters.length} label={`condition ${index + 1}`} onDuplicate={() => patch({ filters: list.duplicate(draft.filters, index) })} onMove={(to) => patch({ filters: list.move(draft.filters, index, to) })} onRemove={() => patch({ filters: list.remove(draft.filters, index) })} />
+              </div>
+            ))}
+            <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => patch({ filters: [...draft.filters, { property: catalog.properties.find(({ kind }) => kind === "text")?.name ?? catalog.properties[0]?.name ?? "", operator: catalog.operators[0] ?? "eq", value: "" }] })}><Plus />Add condition</Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3" data-field="window">
+            <Field label="From" invalid={invalid("window")}><Input type="date" value={draft.start} aria-invalid={invalid("window") || undefined} onChange={(event) => patch({ start: event.target.value })} /></Field>
+            <Field label="Until" invalid={invalid("window")}><Input type="date" value={draft.end} aria-invalid={invalid("window") || undefined} onChange={(event) => patch({ end: event.target.value })} /></Field>
+          </div>
+          <Button type="submit" className="justify-self-start" title={`Check (${modKey()}Enter)`} disabled={check.isPending}>{check.isPending ? "Checking…" : "Check with the server"}</Button>
         </form>
       </Panel>
       <div className="space-y-3">
         {check.isIdle && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
-        {check.isError && <p className="text-destructive">{check.error.message}</p>}
+        {check.isError && <p role="alert" className="text-destructive">{check.error.message}</p>}
+        {check.data && <ValidationPanel issues={issues} title="The checker refused this question" />}
         {check.data && <QuestionCard verdict={check.data} />}
       </div>
     </div>
@@ -142,7 +181,7 @@ export function QuestionBuilderPage() {
       </div>
       {catalog.isPending && <p className="text-muted-foreground">Reading the catalogue…</p>}
       {catalog.isError && <EmptyState icon={ChartLine}>{catalog.error.message}</EmptyState>}
-      {catalog.data && <QuestionBuilder catalog={catalog.data} />}
+      {catalog.data && <QuestionBuilder catalog={catalog.data} guard={(dirty) => <DirtyGuard dirty={dirty} />} />}
     </section>
   )
 }
