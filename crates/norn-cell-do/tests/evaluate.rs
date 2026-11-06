@@ -147,7 +147,7 @@ fn json_of(response: &Response) -> Value {
     serde_json::from_str(&response.body).unwrap()
 }
 
-/// The weekly yield question, as an ad-hoc QuestionIR for `metal`.
+/// The weekly yield question, as an ad-hoc `QuestionIR` for `metal`.
 fn question(metal: &str) -> Value {
     let mut question: Value = serde_json::from_str(include_str!(
         "../../../fixtures/ir/metrics/sales-by-store-day.question.json"
