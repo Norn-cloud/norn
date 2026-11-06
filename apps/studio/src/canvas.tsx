@@ -1,13 +1,15 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo, useState } from "react"
-import { Handle, Position, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { BaseEdge, EdgeLabelRenderer, Handle, Position, type EdgeProps, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import { Network, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
-import { CARD, InspectorHead, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
+import { CARD, EDGE_PILL, InspectorHead, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
+import { cn } from "@/lib/utils"
+import { laneRoute } from "./lib/canvas/routes.ts"
 import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
@@ -28,7 +30,7 @@ const recordedDefinitions = async () => (await import("./lib/transport.ts")).rec
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
   return (
     <div title={data.issues.map(({ message }) => message).join("\n")}>
-      <NodeCard testId={`node-${data.label}`} kind="state" kindLabel={data.flags || "State"} title={data.label} problems={data.issues.length} selected={selected} className="w-[144px]">
+      <NodeCard testId={`node-${data.label}`} kind={data.flags.includes("initial") ? "initial" : data.flags.includes("terminal") ? "terminal" : "state"} kindLabel={data.flags || "State"} title={data.label} problems={data.issues.length} selected={selected} className="w-[168px]">
         <Handle className="canvas-pill" type="target" position={Position.Left} id="in" />
         <Handle className="canvas-pill" type="source" position={Position.Right} id="out" />
       </NodeCard>
@@ -37,6 +39,29 @@ export function StateBox({ data, selected }: NodeProps<StateNode>) {
 }
 
 const NODE_TYPES = { state: StateBox }
+
+type StepEdgeData = { readonly label: string; readonly failing: boolean }
+
+/** A lifecycle step: straight along the main row, else in a lane with rounded corners (lib/canvas/routes); its label a pill. */
+export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, data }: EdgeProps<Edge<StepEdgeData, "step">>) {
+  const routed = laneRoute({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })
+  const shift = routed.label.anchor === "middle" ? "-50%" : routed.label.anchor === "end" ? "-100%" : "0"
+  // A straight step's label stays inside the gap, clear of both ports.
+  const room = routed.straight ? Math.max(0, targetX - sourceX - 24) : 160
+  return (
+    <>
+      <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
+      {data?.label && room >= 28 && (
+        <EdgeLabelRenderer>
+          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, data.failing && "text-destructive")}
+            style={{ maxWidth: room, transform: `translate(${shift}, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  )
+}
+
+const EDGE_TYPES = { step: StepEdge }
 const FLAGS = ["initial", "terminal", "immutable"] as const
 
 /** Selected states and steps: rename, flags, rules, or delete. */
@@ -102,15 +127,14 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
   return {
     draftKey: `lifecycle:${lifecycle.artifactId}:${lifecycle.index}`,
     label: `${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`,
-    initial: decompile(envelope, lifecycle), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
+    initial: decompile(envelope, lifecycle), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
     empty: "This lifecycle has no states. Add one to start.",
     nodeSize: () => ({ width: CARD.state, height: cardHeight({}) }),
     tidy: (graph) => tidy(graph, STATE_SPACING),
     toNode: (node, found, selected): StateNode => ({ id: node.id, type: "state", position: node.position, selected, data: { label: words(node.id), flags: FLAGS.filter((flag) => node.config[flag] === "yes").join(" · "), issues: found } }),
     toEdge: (edge, found, selected): Edge => ({
-      id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,
-      label: words(edge.config.transition || edge.id), labelBgPadding: [6, 3], labelBgBorderRadius: 999,
-      ...found.length > 0 ? { labelStyle: { fill: "var(--destructive)" } } : {},
+      id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected, type: "step",
+      data: { label: words(edge.config.transition || edge.id), failing: found.length > 0 },
     }),
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) => {
       const transition = g.freshName(graph.edges.map(({ config }) => config.transition ?? ""), `${source}_to_${target}`)

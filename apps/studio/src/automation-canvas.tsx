@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { CARD, InspectorHead, InspectorSection, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
+import { CARD, EDGE_PILL, InspectorHead, InspectorSection, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
 import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
@@ -27,8 +27,8 @@ type StepNode = Node<{ kind: string; title: string; detail: string; issues: read
 
 /** Exits sit this far apart down a step's right edge, so their labels (18px tall) never touch. */
 const EXIT_PITCH = 22
-/** The height a step needs for its exits: one pitch per exit plus one, when it has several. */
-const exitsHeight = (outs: number) => outs > 1 ? (outs + 1) * EXIT_PITCH : undefined
+/** The height a step needs for its exits stacked a pitch apart with a margin; a step grows only when that is taller than its content. */
+const exitsHeight = (outs: number) => outs > 1 ? (outs - 1) * EXIT_PITCH + 2 * 12 : undefined
 const outsOf = (node: g.CanvasNode) => (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").length
 
 export function StepBox({ data, selected }: NodeProps<StepNode>) {
@@ -63,7 +63,7 @@ export function ExitEdge({ id, source, sourceX, sourceY, targetX, targetY, sourc
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {data?.label && room >= LABEL_MIN && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} data-exit-source={source} title={data.full} className="nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-0 text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
+          <div data-exit-label={id} data-exit-source={source} title={data.full} className={EDGE_PILL}
             style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}

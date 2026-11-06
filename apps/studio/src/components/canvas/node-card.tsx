@@ -1,11 +1,11 @@
 import type { CSSProperties, ReactNode } from "react"
-import { Bot, ChartLine, Circle, Flag, GitFork, Hourglass, Play, Scale, Table2, UserRound, Wrench, type LucideIcon } from "lucide-react"
+import { Bot, ChartLine, Circle, CirclePlay, CircleStop, Flag, GitFork, Hourglass, Play, Scale, Table2, UserRound, Wrench, type LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { CARD } from "@/lib/canvas/viewport"
 
 /** Each kind of thing on a canvas: its icon, its name and its tint token (`--tint-*` in the theme). */
 export const NODE_KINDS: Readonly<Record<string, { readonly icon: LucideIcon; readonly label: string; readonly tint: string }>> = {
-  state: { icon: Circle, label: "State", tint: "--tint-state" },
+  state: { icon: Circle, label: "State", tint: "--tint-tool" },
   start: { icon: Play, label: "Start", tint: "--tint-start" },
   perform: { icon: Wrench, label: "Tool", tint: "--tint-tool" },
   decide: { icon: UserRound, label: "Ask a person", tint: "--tint-ask" },
@@ -15,6 +15,8 @@ export const NODE_KINDS: Readonly<Record<string, { readonly icon: LucideIcon; re
   agent: { icon: Bot, label: "Agent", tint: "--tint-agent" },
   tool: { icon: Wrench, label: "Tool binding", tint: "--tint-tool" },
   law: { icon: Scale, label: "Law", tint: "--tint-law" },
+  initial: { icon: CirclePlay, label: "Initial", tint: "--tint-outcome" },
+  terminal: { icon: CircleStop, label: "Terminal", tint: "--tint-state" },
   chart: { icon: ChartLine, label: "Chart", tint: "--tint-tool" },
   table: { icon: Table2, label: "Table", tint: "--tint-state" },
 }
@@ -23,6 +25,9 @@ export const NODE_KINDS: Readonly<Record<string, { readonly icon: LucideIcon; re
 export { CARD }
 export const cardHeight = ({ kindLine = true, subtitle = false }: { readonly kindLine?: boolean; readonly subtitle?: boolean }) =>
   22 + (kindLine ? 16 : 0) + 20 + (subtitle ? 16 : 0)
+
+/** An edge's label: a small pill on the canvas surface, the same on every canvas (exits, lifecycle steps). */
+export const EDGE_PILL = "nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-0 text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
 
 /** A small tinted icon chip for a kind; the tint is mixed into a pale fill so it reads as a hint. */
 export function KindChip({ kind, className }: { readonly kind: string; readonly className?: string }) {

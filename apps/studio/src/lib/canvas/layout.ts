@@ -9,7 +9,7 @@ import type { Graph } from "./graph.ts"
 export interface Spacing { readonly width: number; readonly gap: number; readonly row: number }
 /** Columns and rows for each canvas: a card's width, the gap after it, and the row pitch. */
 export const STEP_SPACING: Spacing = { width: 208, gap: 64, row: 110 }
-export const STATE_SPACING: Spacing = { width: 144, gap: 56, row: 110 }
+export const STATE_SPACING: Spacing = { width: 168, gap: 96, row: 110 }
 
 export function tidy(graph: Graph, spacing: Spacing): Graph {
   if (graph.nodes.length === 0) return graph

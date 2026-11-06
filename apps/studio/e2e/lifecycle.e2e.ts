@@ -66,7 +66,7 @@ test("step: create, view, edit, delete, reconnect, undo/redo, validate, reopen",
   await clickEdge(page, "invoiced_to_completed:invoiced")
   await page.getByLabel("Step id").fill("finish")
   await page.getByLabel("Step id").blur()
-  await expect(edge(page, "invoiced_to_completed:invoiced")).toContainText("Finish")
+  await expect(page.locator('[data-edge-label="invoiced_to_completed:invoiced"]')).toHaveText("Finish")
   // edit the step's rule: a guard that does not parse is a typed finding on the step; clearing it clears the finding.
   await page.getByLabel("Guards").fill("self.total >")
   await page.getByLabel("Guards").blur()
