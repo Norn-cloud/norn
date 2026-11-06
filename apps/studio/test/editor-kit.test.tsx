@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { EditorToolbar, RowActions, ValidationPanel } from "../src/components/editor.tsx"
 import { VERBS, history, list, modKey, verbTable } from "../src/lib/editor.ts"
 import { SUITES } from "./e2e/suites.ts"
-import { defineVerbs, supported } from "./e2e/verbs.ts"
+import { defineVerbs, exitStatus, supported } from "./e2e/verbs.ts"
 
 test("history undoes and redoes whole states, forgets the redo branch on a new edit, and keeps at most 100 steps", () => {
   let h = history.start(0)
@@ -70,4 +70,10 @@ test("the validation panel links each placed finding to its field and states the
   expect(html).toMatch(/<button[^>]*>No metric demo.purity<\/button>/)
   expect(html).toMatch(/<span>The engine evaluates weekly questions only<\/span>/)
   expect(renderToStaticMarkup(<ValidationPanel issues={[]} />)).toBe("")
+})
+
+test("the e2e runner fails when no verb ran, as well as when one failed", () => {
+  expect(exitStatus(0, 0)).toBe(1)
+  expect(exitStatus(3, 1)).toBe(1)
+  expect(exitStatus(3, 0)).toBe(0)
 })
