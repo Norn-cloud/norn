@@ -215,6 +215,7 @@ impl ObjectQuery {
 struct Findings(Vec<RefusalDiagnostic>);
 
 impl Findings {
+    /// Record one violation at `pointer`.
     fn push(&mut self, code: &str, message: impl Into<String>, pointer: impl Into<String>) {
         self.0.push(RefusalDiagnostic {
             code: code.to_owned(),
@@ -251,6 +252,7 @@ pub(crate) fn cursor_invalid() -> Refusal {
     }])
 }
 
+/// Whether `text` is a property name, `[a-z][a-z0-9_]*`.
 fn is_name(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|first| first.is_ascii_lowercase())
@@ -312,6 +314,7 @@ pub(crate) fn parse(
     }
 }
 
+/// The sort keys of `sort=prop:dir[,…]`, each violation recorded at its pointer.
 fn parse_sort(
     text: Option<&str>,
     kinds: &BTreeMap<&str, Kind>,
@@ -386,6 +389,7 @@ fn parse_sort(
     keys
 }
 
+/// The clauses of `filter={"all":[…]}`, each violation recorded at its pointer.
 fn parse_filter(
     text: Option<&str>,
     kinds: &BTreeMap<&str, Kind>,
@@ -438,6 +442,7 @@ fn parse_filter(
         .collect()
 }
 
+/// One clause at `at`, typed against its property's kind.
 fn parse_clause(
     clause: &Value,
     at: &str,
@@ -936,10 +941,12 @@ pub(crate) struct Cursor {
 }
 
 impl Cursor {
+    /// The opaque wire form: base64url of the cursor's JSON.
     pub(crate) fn encode(&self) -> String {
         URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).unwrap_or_default())
     }
 
+    /// The cursor `text` encodes, if it is a version-1 cursor.
     pub(crate) fn decode(text: &str) -> Option<Self> {
         let bytes = URL_SAFE_NO_PAD.decode(text).ok()?;
         serde_json::from_slice::<Self>(&bytes)

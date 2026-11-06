@@ -224,12 +224,12 @@ fn objects<E: SqlEngine>(
     id: Option<&str>,
     query: &str,
 ) -> Result<String, Refusal> {
-    // Path segments decode percent escapes only; `+` is literal in a path.
+    // Path segments decode percent escapes only: `&`, `=` and `+` are literal
+    // in a path, never query syntax.
     let decoded = |text: &str| {
-        form_urlencoded::parse(format!("x={}", text.replace('+', "%2B")).as_bytes())
-            .next()
-            .map(|(_, value)| value.into_owned())
-            .unwrap_or_default()
+        percent_encoding::percent_decode_str(text)
+            .decode_utf8_lossy()
+            .into_owned()
     };
     let object_type = decoded(object_type);
     if let Some(id) = id {

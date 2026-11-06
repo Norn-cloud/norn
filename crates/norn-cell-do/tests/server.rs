@@ -237,3 +237,17 @@ fn a_restarted_demo_cell_replays_its_rows_without_writing() {
     drop(again);
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+/// Object path segments are percent-decoded only: a raw `&` is part of the
+/// segment, never a query separator that truncates it.
+#[test]
+fn object_path_segments_keep_a_raw_ampersand() {
+    let demo = host(NativeEngine::open_in_memory().unwrap());
+    let status = |path| get(&demo, path, SCOPE, VIEWER).0;
+    assert_eq!(status("/v1/objects/canon.Party"), 200);
+    assert_eq!(status("/v1/objects/canon%2EParty"), 200);
+    assert_ne!(status("/v1/objects/canon.Party&x=1"), 200);
+    assert_eq!(status("/v1/objects/canon.Party/SYN-PARTY-01"), 200);
+    assert_eq!(status("/v1/objects/canon.Party/SYN%2DPARTY-01"), 200);
+    assert_eq!(status("/v1/objects/canon.Party/SYN-PARTY-01&x"), 404);
+}

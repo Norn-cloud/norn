@@ -332,6 +332,7 @@ struct Scan {
     version: (u64, Option<(u64, u64)>),
 }
 
+/// Whether the caller holds `capability` on this exact row.
 fn permitted<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
@@ -355,6 +356,7 @@ fn permitted<E: SqlEngine>(
     })
 }
 
+/// The cell's version: the receipt head and, when revisioned, the database revision.
 fn version_of<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
 ) -> Result<(u64, Option<(u64, u64)>), Refusal> {
@@ -472,6 +474,7 @@ fn values(listed: &Listed) -> object_query::RowValues<'_> {
     listed.readable.then_some(&listed.row.values)
 }
 
+/// A listed row as the grid shows it: values only when readable.
 fn queried(listed: &Listed) -> NornQueriedRecord {
     NornQueriedRecord {
         object_type: listed.row.object_type.clone(),
@@ -484,6 +487,7 @@ fn queried(listed: &Listed) -> NornQueriedRecord {
     }
 }
 
+/// The 413 for a sort or filter over more rows than one scan reads.
 fn scan_bound_exceeded() -> Refusal {
     Refusal::new(
         http::StatusCode::PAYLOAD_TOO_LARGE,

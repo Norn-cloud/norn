@@ -144,6 +144,7 @@ pub const SEED_PARTIES: [(&str, &str, &str); 4] = [
     ("SYN-PARTY-04", "Synthetic Ledger Feed", "system"),
 ];
 
+/// Commit the demo rows once; a restarted cell replays the commit.
 fn seed_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &CellScope) -> Result<(), SeedError> {
     let text = |value: &str| RuntimeValue::from(value);
     let items = SEED_ITEMS
