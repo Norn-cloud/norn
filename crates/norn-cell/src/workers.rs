@@ -103,11 +103,12 @@ impl Drop for Active<'_> {
 }
 
 impl SqlEngine for WorkersEngine {
-    /// The DO platform's own tables (`_cf_*`, reserved by the Durable Objects
-    /// storage API) and celld's Litestream replication tables share the
-    /// database and are visible in `sqlite_master`.
+    /// Tables the runtime keeps in the DO's own database, visible in
+    /// `sqlite_master`: `_cf_*` (reserved by the Durable Objects storage API),
+    /// celld's Litestream replication tables, and Wrangler/Miniflare's local
+    /// `__miniflare_do_name`.
     fn platform_table_globs(&self) -> &'static [&'static str] {
-        &["_cf_*", "_litestream_*"]
+        &["_cf_*", "_litestream_*", "__miniflare_*"]
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
