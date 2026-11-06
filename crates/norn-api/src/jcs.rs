@@ -93,29 +93,31 @@ fn number_text(double: f64) -> Result<String, String> {
         .parse()
         .map_err(|_unparsed| format!("unexpected exponent in {scientific}"))?;
     let k = i64::try_from(digits.len()).map_err(|_overflow| "too many digits".to_owned())?;
-    // value = 0.d1…dk × 10^n
-    let n = exponent + 1;
+    // value = 0.d1…dk × 10^n. A double's exponent is within ±324 and it has
+    // at most 17 digits, so no operation below saturates.
+    let n = exponent.saturating_add(1);
     let zeros = |count: i64| "0".repeat(usize::try_from(count).unwrap_or(0));
     let split = |at: i64| {
         let at = usize::try_from(at).unwrap_or(0).min(digits.len());
         digits.split_at(at)
     };
     let body = if k <= n && n <= 21 {
-        format!("{digits}{}", zeros(n - k))
+        format!("{digits}{}", zeros(n.saturating_sub(k)))
     } else if 0 < n && n <= 21 {
         let (whole, fraction) = split(n);
         format!("{whole}.{fraction}")
     } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", zeros(-n))
+        format!("0.{}{digits}", zeros(n.saturating_neg()))
     } else {
         let (first, rest) = split(1);
-        let sign = if n - 1 < 0 { '-' } else { '+' };
+        let shown = n.saturating_sub(1);
+        let sign = if shown < 0 { '-' } else { '+' };
         let fraction = if rest.is_empty() {
             String::new()
         } else {
             format!(".{rest}")
         };
-        format!("{first}{fraction}e{sign}{}", (n - 1).abs())
+        format!("{first}{fraction}e{sign}{}", shown.unsigned_abs())
     };
     Ok(if double < 0.0 {
         format!("-{body}")

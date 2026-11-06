@@ -263,13 +263,13 @@ fn mapping(
 }
 
 fn fits(property: &Value, value: &Value) -> bool {
-    let types: BTreeSet<&str> = match property.get("type") {
+    let declared: BTreeSet<&str> = match property.get("type") {
         Some(Value::String(one)) => BTreeSet::from([one.as_str()]),
         Some(Value::Array(many)) => many.iter().filter_map(Value::as_str).collect(),
         _ => BTreeSet::new(),
     };
-    let typed = types.is_empty()
-        || types.iter().any(|kind| match *kind {
+    let typed = declared.is_empty()
+        || declared.iter().any(|kind| match *kind {
             "string" => value.is_string(),
             "number" => value.is_number(),
             "integer" => {
