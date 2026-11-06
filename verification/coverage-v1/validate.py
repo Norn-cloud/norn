@@ -443,7 +443,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Complete reporter byte/execution pins are enforced by validate_rights_contract above.
     boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        expected_runner = boat_runner if name in {"core", "test"} else "ubuntu-24.04"
+        expected_runner = boat_runner if name in {"core", "plan", "test", "full"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
