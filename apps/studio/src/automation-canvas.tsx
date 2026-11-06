@@ -103,13 +103,16 @@ function Options({ editing, id, options, pick }: { readonly editing: Editing; re
       {options.map((option, index) => (
         <div key={`${option.id}:${option.label}:${option.scope}:${JSON.stringify(option.effect ?? null)}`} className="space-y-1 rounded-md border p-2">
           <div className="flex items-center gap-1">
-            <span className="w-6 font-mono text-xs text-muted-foreground">{index + 1}</span>
-            <Input aria-label={`Option ${index + 1} label`} defaultValue={option.label} onBlur={(event) => { const label = event.target.value.trim(); if (label && label !== option.label) set(options.map((one) => one.id === option.id ? { ...one, label } : one)) }} />
+            <span className="text-meta font-medium">Option {index + 1}</span>
+            <span className="ms-auto flex">
             <Button size="icon" variant="ghost" aria-label={`Move option ${index + 1} up`} disabled={index === 0} onClick={() => move(index, index - 1)}><ArrowUp /></Button>
             <Button size="icon" variant="ghost" aria-label={`Move option ${index + 1} down`} disabled={index === options.length - 1} onClick={() => move(index, index + 1)}><ArrowDown /></Button>
             <Button size="icon" variant="ghost" aria-label={`Duplicate option ${index + 1}`} onClick={() => set([...options.slice(0, index + 1), { ...option, id: nextOptionId(options), label: `${option.label} (copy)` }, ...options.slice(index + 1)])}><Copy /></Button>
             <Button size="icon" variant="ghost" aria-label={`Delete option ${index + 1}`} onClick={() => set(options.filter((one) => one.id !== option.id))}><Trash2 /></Button>
+            </span>
           </div>
+          {/* The label gets the full width, so it reads whole; hovering shows it too. */}
+          <Input aria-label={`Option ${index + 1} label`} title={option.label} defaultValue={option.label} onBlur={(event) => { const label = event.target.value.trim(); if (label && label !== option.label) set(options.map((one) => one.id === option.id ? { ...one, label } : one)) }} />
           <div className="flex gap-1">
             <select aria-label={`Option ${index + 1} starts`} className="rounded-md border bg-background px-2 py-1 text-xs" value={effectOf(option)?.kind ?? "binding"}
               onChange={(event) => set(options.map((one) => one.id === option.id ? { ...one, effect: event.target.value === "action" ? { action: effectOf(one)?.ref ?? "" } : { binding: effectOf(one)?.ref ?? "" } } : one))}>
