@@ -19,6 +19,8 @@ const catalog = catalogOf(readDocument<readonly Artifact[]>(explorer("three-syst
 const item = catalog.byName.get("canon.Item")
 if (item === undefined) throw new Error("canon.Item is not in the recorded catalog")
 const concept = item
+/** Text as React writes it into markup. */
+const inHtml = (text: string) => text.replaceAll("'", "&#x27;")
 
 /** The grid with its first page already answered, rendered to markup. */
 async function grid(first: RecordsRead) {
@@ -47,7 +49,7 @@ test("a recorded page shows its records, says it is recorded, and keeps server s
   const html = await grid(recorded())
   expect(html).toContain("Gold scrap")
   expect(html).toContain(">Recorded<")
-  expect(html).toContain(SERVER_QUERY_UNAVAILABLE)
+  expect(html).toContain(inHtml(SERVER_QUERY_UNAVAILABLE))
   const filterButton = html.match(/<button[^>]*>(?:(?!<\/button>).)*?Filter(?:(?!<\/button>).)*<\/button>/)?.[0] ?? ""
   expect(filterButton).toContain('disabled=""')
   expect(filterButton).toContain("sort or filter records on the server yet")
@@ -60,7 +62,7 @@ test("a live page that echoes its query turns sorting on and shows the server's 
     { objectType: "canon.Item", id: "a", scope: "s", version: 1, values: { code: "A", label: "Alpha" }, withheld: false },
     { objectType: "canon.Item", id: "b", scope: "s", version: 3, values: null, withheld: true },
   ]))
-  expect(html).not.toContain(SERVER_QUERY_UNAVAILABLE)
+  expect(html).not.toContain(inHtml(SERVER_QUERY_UNAVAILABLE))
   expect(html).toContain("Sort (Shift adds a key)")
   expect(html).toContain("2 records")
   expect(html).toContain("Alpha")
