@@ -171,9 +171,12 @@ impl RefusalDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RefusalRestatement {
-    /// The plain-words restatement the host recomputed.
+    /// The plain-words restatement the host recomputed. Present, with its
+    /// digest, only on `definition.signoff_mismatch`.
+    #[schema(required = false)]
     pub restatement: String,
     /// Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes.
+    #[schema(required = false)]
     pub restatement_sha256: String,
 }
 
