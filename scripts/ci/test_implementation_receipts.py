@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 HERE = Path(__file__).resolve().parent
@@ -528,8 +529,10 @@ class ReceiptTest(unittest.TestCase):
     def test_extraction_guard_keys_build_time_packages_on_their_source(self) -> None:
         guard = importlib.util.module_from_spec(SPEC)
         SPEC.loader.exec_module(guard)
-        trusted = guard.lock_identities(guard.TRUSTED / "Cargo.lock")
-        name, version, source, checksum = next(e for e in trusted if e[0] == "serde" and e[2])
+        # Read the trusted lock directly: the same packages lock_identities parses.
+        packages = tomllib.loads((guard.TRUSTED / "Cargo.lock").read_text())["package"]
+        name, version, source, lock_digest = next((p["name"], p["version"], p.get("source"), p.get("checksum"))
+                                                  for p in packages if p["name"] == "serde" and p.get("source"))
         evil = f'git+https://example.invalid/serde#{"0" * 40}'
         metadata = {"packages": [{"id": "a", "name": "lib", "version": "0.1.0", "source": None,
                                   "targets": [{"kind": ["lib"]}]},
@@ -553,7 +556,7 @@ class ReceiptTest(unittest.TestCase):
         with self.assertRaisesRegex(guard.Refused, "more than one source"):
             guard.guard_cargo(self.root, "lib")
         # The git package alone, in place of the registry one.
-        registry = f'name = "{name}"\nversion = "{version}"\nsource = "{source}"\nchecksum = "{checksum}"\n'
+        registry = f'name = "{name}"\nversion = "{version}"\nsource = "{source}"\nchecksum = "{lock_digest}"\n'
         self.assertIn(registry, lock)
         (self.root / "Cargo.lock").write_text(lock.replace(registry, f'name = "{name}"\nversion = "{version}"\n'
                                                                     f'source = "{evil}"\n'))
