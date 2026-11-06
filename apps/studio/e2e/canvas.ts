@@ -6,9 +6,16 @@ export const mod = process.platform === "darwin" ? "Meta" : "Control"
 export const node = (page: Page, id: string) => page.locator(`.react-flow__node[data-id="${id}"]`)
 export const edge = (page: Page, id: string) => page.locator(`.react-flow__edge[data-id="${id}"]`)
 
+/** Against a local preview there is no Worker: the session read is answered as a signed-in viewer. */
+export async function session(page: Page) {
+  if (process.env.E2E_BASE) return
+  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" } } }))
+}
+
 export async function open(page: Page, tab?: string) {
   // Leaving with unsaved changes asks first; the tests always mean to leave.
   page.on("dialog", (dialog) => void dialog.accept())
+  await session(page)
   await page.goto("/canvas")
   if (tab) await page.getByRole("button", { name: tab, exact: true }).click()
   await expect(page.getByText(/Checker: |Checker not loaded/).first()).toBeVisible({ timeout: 30_000 })
