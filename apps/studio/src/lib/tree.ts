@@ -9,7 +9,7 @@ export type TreeNode =
   | { readonly kind: "step"; readonly id: string; readonly transition: Transition; readonly from: string; readonly column: number; readonly row: number; readonly order: number }
 
 export interface Tree {
-  /** The happy path: start to a declared terminal along the longest simple path (else the longest simple path). */
+  /** The happy path: the shortest path from the start to the declared terminal furthest from it (else the longest simple path). */
   readonly spine: readonly string[]
   readonly nodes: readonly TreeNode[]
   /** Connectors between placed elements: state → step and step → state. */

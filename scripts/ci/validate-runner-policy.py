@@ -34,7 +34,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", help="the pull request checkout, checked as data by this checkout's gates")
     parser.add_argument("--maintainer-evidence", help="API evidence of an admin approval of the exact head")
+    parser.add_argument("--rights-evidence", help="live API evidence of exact-head rights acknowledgment")
+    parser.add_argument("--head", help="exact event candidate commit")
+    parser.add_argument("--repository", help="repository from trusted event context")
     args = parser.parse_args()
+    if args.root is None and any((args.maintainer_evidence, args.rights_evidence, args.head, args.repository)):
+        parser.error("binding and review inputs require trusted --root mode")
+    if args.root and not all((args.rights_evidence, args.head, args.repository)):
+        parser.error("trusted mode requires rights-evidence, head and repository")
     env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}
     subprocess.run(["rustup", "toolchain", "install", TOOLCHAIN, "--profile", "minimal", "--no-self-update"], check=True, env=env)
     if args.root is None:
@@ -43,6 +50,8 @@ def main() -> int:
         command = ["cargo", "run", "--locked", "--quiet", "--manifest-path", str(REPO / "Cargo.toml"),
                    "-p", "norn-skeleton-guard", "--bin", "xtask", "--", "ci", "trusted",
                    "--root", str(Path(args.root).resolve()), "--base-root", str(REPO)]
+        command += ["--rights-evidence", str(Path(args.rights_evidence).resolve()),
+                    "--head", args.head, "--repository", args.repository]
         if args.maintainer_evidence is not None:
             command += ["--maintainer-evidence", str(Path(args.maintainer_evidence).resolve())]
     result = subprocess.run(command, cwd=REPO, env=env).returncode

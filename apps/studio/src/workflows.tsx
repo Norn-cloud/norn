@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
-import { useMemo, useRef, useState, type KeyboardEvent } from "react"
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import { Background, Handle, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,10 @@ type MoreData = { count: number; onExpand: () => void }
 
 const tile = (faded: boolean, lit: boolean) => cn("rounded-xl border bg-card text-card-foreground transition-opacity duration-200", faded && "opacity-30", lit && "border-primary ring-2 ring-primary/20")
 const hidden = "!opacity-0 !border-0 !bg-transparent"
+
+/** The tree's fixed zoom and padding: readable at any width, scrolled sideways when wider than the page. */
+const ZOOM = 0.85
+const PAD = 24
 
 /**
  * Activate on pointer down for a mouse (hover re-renders the cards, which can swallow a later click)
@@ -92,21 +96,24 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const [hover, setHover] = useState<string>()
   const [expanded, setExpanded] = useState(false)
   const active = hover ?? pinned
-  // Pinning remounts the canvas; keep keyboard focus on it when the pin came from inside.
+  // Keep keyboard focus on the canvas when a pin came from inside it.
   const frame = useRef<HTMLDivElement>(null)
   const pin: Pick = (id) => {
     const inside = frame.current?.contains(document.activeElement) ?? false
     onPin(id)
     if (inside) requestAnimationFrame(() => frame.current?.focus())
   }
+  // Scroll the pinned card (a step back's source state) into view inside the sideways-scrolling frame.
+  useEffect(() => {
+    if (pinned === undefined) return
+    const card = frame.current?.querySelector(`[data-id="${CSS.escape(anchorOf(tree, pinned))}"]`)
+    card?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" })
+  }, [pinned, tree])
   // A step back is a chip on its source state: light the path to that state.
   const back = backOf(tree, active)
   const route = active === undefined ? undefined : pathTo(tree, back?.from ?? active)
   const lit = route && new Set([...route.path, ...route.next, ...back ? [back.from, back.to] : []])
   const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
-  // The first view: the start and the first steps along the spine, at a readable size.
-  const start = tree.nodes.filter((node) => node.column <= 4 && shown.has(node.id)).map(({ id }) => id)
-  const focusIds = pinned === undefined ? start : pathTo(tree, anchorOf(tree, pinned)).path.filter((id) => shown.has(id))
   const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
     const position = { x: (node.column >> 1) * 420 + (node.column % 2) * 230, y: node.row * 120 }
     const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active || node.id === back?.from, pinned, onPick: pin, onHover: setHover }
@@ -137,17 +144,20 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     const next = moveFrom(tree, anchorOf(tree, active ?? tree.spine[0] ?? ""), event.key)
     if (next) { setHover(next); pin(next) }
   }
+  // The tree at one readable zoom, as wide as it needs: the page scrolls it sideways instead of cutting it off or shrinking it.
+  const width = Math.max(...nodes.map(({ position }) => position.x)) + 280 + 2 * PAD
+  const height = Math.max(...nodes.map(({ position }) => position.y)) + 200 + 2 * PAD
   return (
-    <div ref={frame} role="group" className="h-[26rem] w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
-      {/* Remounted per pin: React Flow fits reliably on mount, which keeps the start or the pinned path in view. */}
-      <ReactFlow key={pinned ?? "start"} nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
-        // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
-        onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
-        colorMode="system" fitView fitViewOptions={{ padding: 0.2, maxZoom: 1, nodes: focusIds.map((id) => ({ id })) }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} nodesFocusable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
-        <Background />
-        <Controls showInteractive={false} />
-        {tree.nodes.filter(({ kind }) => kind === "state").length > 8 && <MiniMap pannable zoomable className="!bg-card" maskColor="color-mix(in oklab, var(--background) 70%, transparent)" nodeColor="var(--muted-foreground)" />}
-      </ReactFlow>
+    <div ref={frame} role="group" className="w-full overflow-x-auto rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
+      <div style={{ width: width * ZOOM, height: height * ZOOM, minWidth: "100%" }}>
+        <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
+          // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
+          onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
+          colorMode="system" defaultViewport={{ x: PAD * ZOOM, y: PAD * ZOOM, zoom: ZOOM }} panOnDrag={false} panOnScroll={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}
+          nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} nodesFocusable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
+          <Background />
+        </ReactFlow>
+      </div>
     </div>
   )
 }

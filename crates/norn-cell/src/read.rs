@@ -1153,6 +1153,8 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     pub(crate) source_disputes_transaction: bool,
     pub(crate) source_disputes:
         Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
+    pub(crate) mapping_plans:
+        Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1230,6 +1232,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             quantity_boundary: None,
             pending_digests: None,
             source_disputes: None,
+            mapping_plans: None,
             source_disputes_transaction: false,
         }
     }
@@ -1249,6 +1252,14 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     ) -> Self {
         self.source_disputes = Some(index);
+        self
+    }
+
+    pub(crate) const fn with_mapping_plans(
+        mut self,
+        plans: &'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>,
+    ) -> Self {
+        self.mapping_plans = Some(plans);
         self
     }
 

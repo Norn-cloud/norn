@@ -1,0 +1,32 @@
+{
+  "format": "norn-bench/mapping-trial-prices@1",
+  "source": "https://ai-gateway.vercel.sh/v1/models (public catalogue, base global tier: pricing.input and pricing.output, USD per token)",
+  "fetched": "2026-11-05",
+  "note": "Snapshot of the public Vercel AI Gateway catalogue, which lists these gateway model ids, taken on 2026-11-05, the day of the #531 trials. The #531 run's own price copy was not retained, so its $0.26 estimate reproduces only if these prices were in force then. Estimates only, not an invoice. Haiku's base tier applies below 100,001 prompt tokens, which covers every trial prompt.",
+  "models": {
+    "google/gemini-3.8-flash": {
+      "input": "0.00000075",
+      "output": "0.00000375"
+    },
+    "anthropic/claude-haiku-5.5": {
+      "input": "0.0000001",
+      "output": "0.0000005"
+    },
+    "anthropic/claude-sonnet-5.5": {
+      "input": "0.000002",
+      "output": "0.00001"
+    },
+    "openai/gpt-5.4-mini": {
+      "input": "0.00000075",
+      "output": "0.0000045"
+    },
+    "deepseek/deepseek-v4.1-flash": {
+      "input": "0.0000003",
+      "output": "0.0000012"
+    },
+    "meta/llama-3.3-70b": {
+      "input": "0.00000072",
+      "output": "0.00000072"
+    }
+  }
+}

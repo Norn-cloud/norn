@@ -14,7 +14,7 @@
     {
       "area": "Safety & authz",
       "percent": 65,
-      "detail": "Cedar, default-deny, writer authz, structured laws, refusals with reasons, identical on UI/API/MCP/CLI."
+      "detail": "Cedar, default-deny, writer authz, structured laws, refusals with reasons, identical on API/MCP/CLI. Studio shows recorded refusals; it has no live action path yet."
     },
     {
       "area": "Proofs",
@@ -44,7 +44,7 @@
     {
       "area": "Agent + canvas",
       "percent": 20,
-      "detail": "Live: propose a definition change → the server-side checker admits it or refuses it with the law and reason → you decide. Canvas editing and NornQL answers not built yet."
+      "detail": "On the demo deployment only: propose a definition change to a synthetic world → the server-side checker admits it or refuses it with the law and reason → you decide; its code is in review (#948, #949), not on main. Canvas editing and NornQL answers not built yet."
     }
   ],
   "footnote": "Estimates of alpha scope from merged PRs vs open issues, 2026-11-04."

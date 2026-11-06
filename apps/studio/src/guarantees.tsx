@@ -93,8 +93,12 @@ function Document({ name, document }: { readonly name: string; readonly document
           </TableBody>
         </Table></TableCard>
       </Panel>
-      {document.goals.filter(({ scenario }) => scenario?.kind === "counterexample").map((goal) => goal.scenario && (
-        <Panel key={goal.index} icon={CircleX} label={`Counterexample to ${field(goal.goalKind)}`}><Well><Story scenario={goal.scenario} /></Well></Panel>
+      {/* Every recorded trace: a counterexample that breaks the law, or a witness that shows it is not vacuous. */}
+      {document.goals.map((goal) => goal.scenario && (
+        <Panel key={goal.index} icon={goal.scenario.kind === "counterexample" ? CircleX : CircleCheck}
+          label={`${goal.scenario.kind === "counterexample" ? "Counterexample to" : "A case allowed by"} ${field(goal.goalKind)}`}>
+          <Well><Story scenario={goal.scenario} /></Well>
+        </Panel>
       ))}
       <Panel icon={ShieldCheck} label="How strongly it is checked">
         <Well className="divide-y">
@@ -199,7 +203,7 @@ export function GuaranteesPage() {
     <section className="space-y-8">
       <div className="space-y-2">
         <h1 className="text-title font-medium">Guarantees</h1>
-        <p className="max-w-2xl text-muted-foreground">Each law, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake.</p>
+        <p className="max-w-2xl text-muted-foreground">The recorded law, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake.</p>
       </div>
       {read.isPending && <p className="text-muted-foreground">Reading guarantees…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
