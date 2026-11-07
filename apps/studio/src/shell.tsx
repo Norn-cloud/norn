@@ -234,10 +234,11 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
   )
 }
 
-/** The page bar's right-hand buttons: notifications and keyboard shortcuts. */
-function BarButtons() {
+/** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
+function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   return (
     <div className="flex items-center justify-end gap-1">
+      {tools}
       <DropdownMenu>
         <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="rounded-full text-muted-foreground"><Keyboard className="size-5" /><span className="sr-only">Keyboard shortcuts</span></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -260,7 +261,7 @@ function BarButtons() {
  * Two islands on a grey page: the active section's submenu card and the page
  * card, with a thin rail of square tiles on the grey to their left.
  */
-export function Shell({ sections, account, onSignOut }: { sections: readonly Section[]; account: Account; onSignOut: () => void }) {
+export function Shell({ sections, tools, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
   const main = sections.filter(({ foot }) => foot !== true)
@@ -299,7 +300,7 @@ export function Shell({ sections, account, onSignOut }: { sections: readonly Sec
           <header className="grid h-16 grid-cols-[1fr_minmax(0,28rem)_1fr] items-center gap-3 px-4">
             <div><SidebarTrigger /></div>
             <CommandMenu sections={sections} />
-            <BarButtons />
+            <BarButtons tools={tools} />
           </header>
           <div className="mx-auto w-full max-w-6xl px-4 pb-8 md:px-8"><Outlet /></div>
         </SidebarInset>
