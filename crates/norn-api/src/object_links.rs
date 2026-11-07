@@ -4,9 +4,10 @@
 //! It is listed only when the caller holds Population on both endpoints (and
 //! on each endpoint's collection); a link to a row the caller cannot see is
 //! skipped and never counted, so a page and its `next` are the ones the caller
-//! would get if those rows did not exist. The cursor carries only identities
-//! the caller already saw (the last listed link's endpoints), bound to the
-//! object, the query, the scope, the caller and the snapshot; the cell's
+//! would get if those rows did not exist. The cursor is fixed-size: digests
+//! of the object and query and of the last listed link, the scope, the caller
+//! and the snapshot, so it fits the host's query bound whatever the ids'
+//! length. It carries no value and no raw id, and the cell's
 //! physical keyset position never leaves the server.
 //!
 //! Lineage is value-level: it needs Values and Sources on the row. A withheld,
@@ -76,18 +77,28 @@ fn identity(edge: &LinkRef) -> Identity {
     )
 }
 
-/// What a links cursor binds: identities the caller saw, and no value.
+/// A keyed digest of one link's identity: a cursor's fixed-size handle on
+/// the last listed link, whatever the length of its ids.
+fn edge_digest(edge: &LinkRef) -> String {
+    norn_cell::compute::lineage::keyed_lineage_handle(
+        CURSOR_KEY,
+        &serde_json::to_string(&identity(edge)).unwrap_or_default(),
+    )
+}
+
+/// What a links cursor binds, all fixed-size: the object and query (`q`, a
+/// digest of both), the scope, the caller, the snapshot, and a digest of the
+/// last listed link. No value and no raw id, so every cursor fits the host's
+/// query bound whatever the length of the ids.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct LinkCursor {
     v: u8,
-    t: String,
-    i: String,
     q: String,
     s: String,
     a: String,
     c: u64,
     r: Option<(u64, u64)>,
-    e: Identity,
+    e: String,
 }
 
 impl LinkCursor {
@@ -205,7 +216,7 @@ fn endpoint_listed<E: SqlEngine>(
 /// The state of one links scan under one snapshot.
 struct LinkScan<'q> {
     query: &'q LinkQuery,
-    resume: Option<&'q Identity>,
+    resume: Option<&'q str>,
     start: Option<(u64, Option<(u64, u64)>)>,
     collections: BTreeMap<String, bool>,
     listed: Vec<LinkEdgeRecord>,
@@ -299,7 +310,7 @@ fn scan_links<E: SqlEngine>(
                 return Err(scan_bound_exceeded());
             }
             if !resumed {
-                resumed = scan.resume == Some(&identity(&edge.edge));
+                resumed = scan.resume == Some(edge_digest(&edge.edge).as_str());
                 continue;
             }
             scan.listed.push(edge);
@@ -348,10 +359,8 @@ pub fn get_object_links<E: SqlEngine>(
         .to_string(),
     );
     let bound = |cursor: &LinkCursor| {
-        [&*cursor.t, &*cursor.i, &*cursor.q, &*cursor.s, &*cursor.a]
+        [&*cursor.q, &*cursor.s, &*cursor.a]
             == [
-                object_type,
-                id,
                 digest.as_str(),
                 host.scope().key().as_str(),
                 Cursor::actor_digest(&actor).as_str(),
@@ -368,7 +377,7 @@ pub fn get_object_links<E: SqlEngine>(
         .transpose()?;
     let mut scan = LinkScan {
         query: &query,
-        resume: cursor.as_ref().map(|cursor| &cursor.e),
+        resume: cursor.as_ref().map(|cursor| cursor.e.as_str()),
         start: None,
         collections: BTreeMap::new(),
         listed: Vec::new(),
@@ -386,14 +395,12 @@ pub fn get_object_links<E: SqlEngine>(
     let next = scan.listed.last().filter(|_| more).map(|last| {
         LinkCursor {
             v: 1,
-            t: object_type.to_owned(),
-            i: id.to_owned(),
             q: digest,
             s: host.scope().key(),
             a: Cursor::actor_digest(&actor),
             c: version.0,
             r: version.1,
-            e: identity(&last.edge),
+            e: edge_digest(&last.edge),
         }
         .encode()
     });

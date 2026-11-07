@@ -379,3 +379,51 @@ fn lineage_refuses_opaquely_without_values_sources_or_a_bundle() {
         );
     }
 }
+
+/// A links cursor has a fixed size whatever its ids' length, so every `next`
+/// fits the host's query bound: here, beside a link to a 4 000-byte id.
+#[test]
+fn a_links_cursor_has_a_fixed_size_whatever_the_ids() {
+    let (_, dir) = host();
+    let long = "x".repeat(4_000);
+    {
+        let mut store = CellStore::open(
+            &dir.path().join("cell.sqlite"),
+            model(),
+            norn_cell::StoreOptions::default(),
+        )
+        .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.to_owned(),
+                scope: physical().key(),
+                logical_time: 2,
+                facts: vec![create(&long)],
+                links: vec![link("a", &long), link(&long, "a")],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(
+        &dir.path().join("cell.sqlite"),
+        model(),
+        norn_cell::StoreOptions::default(),
+    )
+    .unwrap();
+    let host = DevHost::from_store(store, physical(), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy);
+    let all = pages(&host, "full", &params(None, Some("1")));
+    assert_eq!(edges(&all).len(), 9);
+    let cursors: Vec<usize> = all
+        .iter()
+        .filter_map(|page| page.next.as_ref().map(String::len))
+        .collect();
+    assert_eq!(cursors.len(), 8);
+    assert!(
+        cursors
+            .iter()
+            .all(|length| *length == cursors[0] && *length < 1_024),
+        "{cursors:?}"
+    );
+}
