@@ -32,7 +32,7 @@ use norn_ir::{
 use crate::cell_host::{
     CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion,
     FactWrite, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite,
-    OwnedRowsCommitProof, WrittenLinkVersion, WrittenVersion,
+    OwnedRowsCommitProof, PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
 };
 
 /// Maximum complete outgoing link targets a turn may bind as one adjacency
@@ -274,6 +274,25 @@ pub trait CommitView {
         Ok(None)
     }
 
+    /// Every live object matching `predicate`, as members in canonical key
+    /// order, at most `limit` of them ([`crate::predicate_read`]). Hosts
+    /// enumerate the queried type and apply [`PredicateQuery::matches`].
+    /// `None` means enumeration is incomplete or this host cannot prove the
+    /// set complete (for example, the type spans owners); a commit
+    /// containing a predicate read is then refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host read failure.
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Self::Error> {
+        let _ = (predicate, limit);
+        Ok(None)
+    }
+
     /// Whether a live outgoing target survives the excluded removals.
     /// A bounded existence proof need not enumerate a large complete adjacency.
     /// `None` means the host cannot complete the proof within its read limits.
@@ -378,6 +397,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
         // cannot remove or alter any read sealed by kernel preparation.
         || proof.reads().iter().any(|read| !commit.reads.contains(read))
         || proof.link_reads() != commit.link_reads.as_slice()
+        || proof.predicate_reads() != commit.predicate_reads.as_slice()
         || proof.writes().len() != commit.writes.len()
         || proof.links().len() != commit.links.len()
     {
@@ -1331,6 +1351,7 @@ fn check_shape<E, C, T, V: CommitView + ?Sized>(
         }
     }
     check_link_read_shapes(&commit.link_reads, model)?;
+    crate::predicate_read::check_predicate_read_shapes(&commit.predicate_reads, model)?;
     for write in &commit.links {
         let admitted = model
             .link(&write.key.source.object_type, &write.key.link)
@@ -1522,6 +1543,17 @@ pub fn check_commit_identifiers<E, C, T, X>(
             });
         }
     }
+    for read in &commit.predicate_reads {
+        if read.members.len() > crate::predicate_read::MAX_PREDICATE_MEMBERS {
+            return Err(CommitError::InvalidPredicateRead {
+                object_type: read.predicate.object_type.clone(),
+                reason: "too many members",
+            });
+        }
+        for member in &read.members {
+            check_fact_key_identity(&member.key)?;
+        }
+    }
     Ok(())
 }
 
@@ -1676,6 +1708,7 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
+    crate::predicate_read::recheck_predicate_reads(&commit.predicate_reads, model, view)?;
     Ok(())
 }
 
