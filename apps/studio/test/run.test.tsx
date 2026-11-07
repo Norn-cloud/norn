@@ -14,6 +14,7 @@ const answerText = readFileSync(join(import.meta.dir, "../../../fixtures/demo/an
 test("a run with no answer says why: the route not there yet, signed out, the cell's own refusal, never an empty chart", () => {
   expect(notRun({ kind: "unavailable", status: 404 })).toBe("Not run: the evaluate route isn't connected yet.")
   expect(notRun({ kind: "unavailable", status: 0 })).toBe("Not run: the evaluate route isn't connected yet.")
+  expect(notRun({ kind: "unavailable", status: 0, reason: "no-cell" })).toBe("This workspace has no data cell yet.")
   expect(notRun({ kind: "unavailable", status: 401 })).toBe("Not run: sign in again.")
   expect(notRun({ kind: "unavailable", status: 502 })).toBe("Not run: the cell did not answer (502).")
   expect(notRun({ kind: "refused", refusal: { code: "authz.denied", message: "the read request is not authorized" } })).toBe("the read request is not authorized")

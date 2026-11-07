@@ -1,4 +1,6 @@
 import { createContext, use } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { z } from "zod"
 
 /**
  * Dashboards are definitions in the cell: an ordered list of admitted
@@ -71,6 +73,40 @@ const isDashboard = (value: unknown): value is Dashboard =>
 
 const KIND = "dashboard"
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+export interface StudioScope { readonly orgId: string; readonly environmentId: string }
+export type ScopeProvider = () => Promise<StudioScope | null>
+export const NO_DATA_CELL = "This workspace has no data cell yet."
+export class StudioScopeError extends Error {}
+const accountScope = z.object({ organization: z.object({ id: z.string().min(1) }).nullable(), environmentId: z.string().min(1).nullable() })
+
+/** Read the active workspace and its cell from the signed-in server session. */
+export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<StudioScope | null> {
+  let response: Response
+  try { response = await fetcher("/api/me", { headers: { accept: "application/json" } }) }
+  catch { throw new CellUnavailable(0) }
+  if (!response.ok) throw new CellUnavailable(response.status)
+  const parsed = accountScope.safeParse(await response.json().catch(() => null))
+  if (!parsed.success) throw new StudioScopeError("The server did not report the active workspace scope.")
+  const { organization, environmentId } = parsed.data
+  return organization === null || environmentId === null ? null : { orgId: organization.id, environmentId }
+}
+
+export function useStudioScope() {
+  return useQuery({ queryKey: ["studio-scope"], queryFn: () => readStudioScope(), retry: false })
+}
+
+/** Every scoped host call uses a fresh server-reported scope. The host still authorizes the request. */
+export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): Fetch {
+  return async (path, init) => {
+    const active = await scope()
+    if (active === null) throw new StudioScopeError(NO_DATA_CELL)
+    const [pathname, search] = path.split("?", 2)
+    const query = new URLSearchParams(search)
+    query.set("orgId", active.orgId)
+    query.set("environmentId", active.environmentId)
+    return fetcher(`${base}${pathname}?${query}`, init)
+  }
+}
 const findingsOf = (body: unknown): readonly Finding[] => {
   const diagnostics = (body as { diagnostics?: unknown } | null)?.diagnostics
   return Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; law?: unknown; span?: { pointer?: unknown } | null }) => ({ code: String(d.code ?? ""), message: String(d.message ?? ""), law: typeof d.law === "string" ? d.law : null, pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null })) : []
@@ -78,7 +114,7 @@ const findingsOf = (body: unknown): readonly Finding[] => {
 
 /** Thrown when the cell answered with neither a decision nor a refusal it documents: nothing was saved. */
 export class CellUnavailable extends Error {
-  constructor(status: number, message?: string) {
+  constructor(readonly status: number, message?: string) {
     // A 404 is a cell without the definition route yet; anything else is a cell that did not answer. Neither saved nor read anything.
     super(message ?? (status === 401 ? "Sign in again." : status === 403 ? "Your role may not read or change these definitions." : status === 404 ? "The cell's definition route isn't connected yet; nothing was read or saved." : `The cell did not answer (${status || "network"}); nothing was read or saved.`))
   }
@@ -91,12 +127,15 @@ export class CellUnavailable extends Error {
  * GET /v1/definitions:list?kind= (paged) and /v1/definitions/{id} read them
  * back; reading needs Population, so viewers can open dashboards.
  */
-export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host"): DefinitionStore {
+export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host", scope?: ScopeProvider): DefinitionStore {
+  const scoped = scopedHostFetch(fetcher, base, scope)
   const post = async (path: string, body: unknown) => {
     let response: Response
     try {
-      response = await fetcher(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-    } catch {
+      response = await scoped(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+    } catch (error) {
+      if (error instanceof StudioScopeError) throw error
+      if (error instanceof CellUnavailable) throw error
       throw new CellUnavailable(0)
     }
     return { status: response.status, body: await response.json().catch(() => null) as unknown }
@@ -104,8 +143,10 @@ export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host"): Def
   const read = async (path: string) => {
     let response: Response
     try {
-      response = await fetcher(`${base}${path}`, { headers: { accept: "application/json" } })
-    } catch {
+      response = await scoped(path, { headers: { accept: "application/json" } })
+    } catch (error) {
+      if (error instanceof StudioScopeError) throw error
+      if (error instanceof CellUnavailable) throw error
       throw new CellUnavailable(0)
     }
     return { status: response.status, body: await response.json().catch(() => null) as unknown }
