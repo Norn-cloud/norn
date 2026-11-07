@@ -10,7 +10,7 @@
 
 use std::cell::Cell;
 
-use norn_api::definition_routes::DefinitionKinds;
+use norn_api::definition_routes::{self, DefinitionKinds};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::scope::CellScope;
@@ -171,7 +171,9 @@ impl NornCell {
                         .entries
                         .iter()
                         .map(|(role, _)| *role),
-                ),
+                )
+                // D59: a flow is installed by signing the server's words for it.
+                .with_restater(definition_routes::flow_restater),
         })
     }
 

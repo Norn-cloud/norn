@@ -1,15 +1,15 @@
 //! Retained definitions: Studio dashboards and agents saved in the cell.
 //!
 //! These are not kernel artifacts (the IR has no kind for them). Each kind
-//! has a host validator ([`DefinitionKinds`]) whose context comes only from
+//! has a host validator ([`DefinitionKinds`](crate::definition_routes::DefinitionKinds)) whose context comes only from
 //! the host. `:admit` runs it without side effects; `:install` and `:retire`
 //! re-admit, then append one revision through the governed definitions
 //! install ([`norn_cell::SqliteCell::install_retained_definition`]), which
 //! creates a new definitions version, its ledger event and commit receipt
 //! atomically, with the kernel set and its checker receipt unchanged.
 //!
-//! Reads need [`Operation::ReadDefinitions`]; writes need
-//! [`Operation::WriteDefinitions`]. Every denied or out-of-scope request gets
+//! Reads need [`Operation::ReadDefinitions`](crate::authz::Operation::ReadDefinitions); writes need
+//! [`Operation::WriteDefinitions`](crate::authz::Operation::WriteDefinitions). Every denied or out-of-scope request gets
 //! the one opaque 403, decided before the body is interpreted.
 
 use std::collections::BTreeSet;
@@ -202,6 +202,23 @@ pub struct DefinitionKinds {
 /// the payload has nothing to restate. A sign-off is the SHA-256 of these
 /// UTF-8 bytes.
 pub type Restater = fn(&str, &str, &[MetricDefinition]) -> Result<String, String>;
+
+/// The flow restatement as a [`Restater`]: flows restate from their IR
+/// ([`crate::flow_definitions::restate`]); other kinds have none here.
+///
+/// # Errors
+/// A non-flow kind, or a payload that does not restate.
+pub fn flow_restater(
+    kind: &str,
+    payload: &str,
+    _metrics: &[MetricDefinition],
+) -> Result<String, String> {
+    if kind == "flow" {
+        crate::flow_definitions::restate(payload)
+    } else {
+        Err(format!("a {kind} has no plain-words restatement here"))
+    }
+}
 
 impl DefinitionKinds {
     /// Declare the roles a binding's `runRole` may name: the cell's own role
