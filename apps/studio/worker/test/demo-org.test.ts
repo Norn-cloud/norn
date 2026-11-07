@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements, waitForWorker, seedWhenReady } from "../../scripts/seed-demo-org.ts"
+import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements, waitForWorker, seedWhenReady, withWrangler, SeedFailure, SEED_EXIT } from "../../scripts/seed-demo-org.ts"
 import { hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
@@ -131,7 +131,7 @@ test("a later membership write failure rolls back all earlier grants", async () 
 
 test("provisioning fails promptly when Wrangler exits", async () => {
   const process = Bun.spawn([globalThis.process.execPath, "-e", "process.exit(27)"], { stdout: "ignore", stderr: "ignore" })
-  await expect(waitForWorker(process.exited, "http://127.0.0.1:1/ready", "test")).rejects.toThrow("exit 27")
+  await expect(waitForWorker(process.exited, "http://127.0.0.1:1/ready", "test")).rejects.toMatchObject({ exitCode: SEED_EXIT.wranglerExited, message: "Wrangler exited (exit 27)" })
 })
 
 
@@ -149,4 +149,34 @@ test("readiness retries never seed and the seed request is sent once", async () 
     expect(response.status).toBe(200)
     expect(calls).toEqual(["GET /ready", "GET /ready", "POST /seed"])
   } finally { server.stop(true) }
+})
+
+
+test("readiness and seed deadlines report timeout, and refusals report refusal", async () => {
+  await expect(waitForWorker(new Promise<number>(() => {}), "http://127.0.0.1:1/ready", "test", 40)).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout })
+  let mode: "hang" | "refuse" = "hang"
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    if (new URL(request.url).pathname === "/ready") return new Response(null, { status: 204 })
+    return mode === "refuse" ? new Response("not allowed", { status: 403 }) : new Promise<Response>(() => {})
+  } })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    await expect(seedWhenReady(new Promise<number>(() => {}), base, "test", [], { readiness: 1000, seed: 40 })).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout })
+    mode = "refuse"
+    await expect(seedWhenReady(new Promise<number>(() => {}), base, "test", [], { readiness: 1000, seed: 1000 })).rejects.toMatchObject({ exitCode: SEED_EXIT.refused })
+  } finally { server.stop(true) }
+})
+
+test("Wrangler is reaped after success and each failure exit", async () => {
+  for (const code of [undefined, SEED_EXIT.timeout, SEED_EXIT.refused, SEED_EXIT.wranglerExited]) {
+    const child = Bun.spawn([globalThis.process.execPath, "-e", "setTimeout(() => {}, 60000)"], { stdout: "ignore", stderr: "ignore" })
+    const run = withWrangler(child, async () => { if (code !== undefined) throw new SeedFailure("test", code); return "ok" })
+    if (code === undefined) expect(await run).toBe("ok")
+    else await expect(run).rejects.toMatchObject({ exitCode: code })
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
+  }
+  const alreadyExited = Bun.spawn([globalThis.process.execPath, "-e", "setTimeout(() => {}, 60000)"], { stdout: "ignore", stderr: "ignore" })
+  alreadyExited.kill()
+  await alreadyExited.exited
+  await expect(withWrangler(alreadyExited, async () => { throw new SeedFailure("original", SEED_EXIT.wranglerExited) })).rejects.toThrow("original")
 })
