@@ -15,12 +15,12 @@ const { ViewProvider } = await import("../src/lib/view.tsx")
 const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
 /** The record page at its route, with the recorded reads already answered. */
-async function page(concept: string, id: string, view = "business") {
+async function page(concept: string, id: string, view = "business", links?: unknown) {
   globalThis.localStorage = { getItem: () => view, setItem: () => {} } as unknown as Storage
   const client = new QueryClient()
   const file = (read: string) => fixture(`objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`)
   client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
-  client.setQueryData(["object", concept, id], { object: file("object"), links: file("links"), source: file("source") })
+  client.setQueryData(["object", concept, id], { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") })
   const root = createRootRoute()
   const router = createRouter({
     routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: ObjectPage })]),
@@ -85,6 +85,27 @@ test("the overview says in one sentence what the record is and what its stored l
   expect(html).toContain("Holding records (item)")
   expect(html).toContain('href="/sources/canon.Holding/demo/holding/owner/north/gold"')
   expect(html).toContain('href="/sources/canon.Holding/demo/holding/owner/south/gold"')
+})
+
+test("stored links show on the overview in both directions; a link that is not stored shows nothing", async () => {
+  // The shape of the recording once mapped link claims resolve (#877): one page of live links touching the object.
+  const links = {
+    objectType: "canon.Item", id: "demo/item/gold", hasMore: false,
+    items: [
+      { sourceType: "canon.Holding", link: "item", source: "demo/holding/vault-1", targetType: "canon.Item", target: "demo/item/gold", version: 1 },
+      { sourceType: "canon.Holding", link: "item", source: "demo/holding/vault-2", targetType: "canon.Item", target: "demo/item/gold", version: 1 },
+      // Not this object: never shown against it.
+      { sourceType: "canon.Holding", link: "item", source: "demo/holding/other", targetType: "canon.Item", target: "demo/item/silver", version: 1 },
+      // The same id under another type is another record: never shown against this one.
+      { sourceType: "canon.Holding", link: "item", source: "demo/holding/elsewhere", targetType: "canon.Party", target: "demo/item/gold", version: 1 },
+    ],
+  }
+  const html = await page("canon.Item", "demo/item/gold", "business", links)
+  expect(html).toContain('href="/sources/canon.Holding/demo/holding/vault-1"')
+  expect(html).toContain('href="/sources/canon.Holding/demo/holding/vault-2"')
+  expect(html).not.toContain("demo/holding/other")
+  expect(html).not.toContain("demo/holding/elsewhere")
+  expect(html).toContain("2 stored links connect it to other records.")
 })
 
 test("when the server returned only the first page of links, the summary does not claim the snapshot has none", () => {
