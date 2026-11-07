@@ -26,3 +26,20 @@ test("tidy starts a lifecycle at its initial state; unreached states follow in a
   expect(at.get("lost")?.x).toBe(2 * (STATE_SPACING.width + STATE_SPACING.gap))
   expect(tidy({ nodes: [], edges: [] }, STATE_SPACING)).toEqual({ nodes: [], edges: [] })
 })
+
+test("tidy pushes the next row down below a card taller than the row pitch, so cards in a column never overlap", () => {
+  const graph = {
+    nodes: [
+      { id: "s", kind: "start", position: { x: 0, y: 0 }, config: {} },
+      { id: "tall", kind: "route", position: { x: 0, y: 0 }, config: {} },
+      { id: "after", kind: "tool", position: { x: 0, y: 0 }, config: {} },
+    ],
+    edges: [{ id: "e1", source: "s", sourcePort: "next", target: "tall", targetPort: "in", config: {} }, { id: "e2", source: "s", sourcePort: "other", target: "after", targetPort: "in", config: {} }],
+  } as unknown as Parameters<typeof tidy>[0]
+  const at = new Map(tidy(graph, STEP_SPACING, (node) => node.id === "tall" ? 134 : 74).nodes.map(({ id, position }) => [id, position]))
+  expect(at.get("after")!.x).toBe(at.get("tall")!.x)
+  expect(at.get("after")!.y - at.get("tall")!.y).toBeGreaterThanOrEqual(134 + 24)
+  // Without heights, the pitch stays the row pitch.
+  const plain = new Map(tidy(graph, STEP_SPACING).nodes.map(({ id, position }) => [id, position]))
+  expect(plain.get("after")!.y - plain.get("tall")!.y).toBe(STEP_SPACING.row)
+})

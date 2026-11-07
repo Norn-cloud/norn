@@ -47,3 +47,15 @@ test("two bundles through one lane run on rails of their own", () => {
   const [cancel, hold] = ["bundle:cancel:cancelled", "bundle:hold:on_hold"].map((id) => bundles.find((bundle) => bundle.id === id)!)
   expect(cancel!.offset).not.toBe(hold!.offset)
 })
+
+test("two bundles of one step into one target that differ by guard keep distinct ids, and each keeps its own members", () => {
+  const guarded = (transition: string, source: string, guards: string) => ({ ...step(transition, source, "cancelled"), id: `${transition}:${source}:${guards || "none"}`, config: { transition, guards, description: "" } })
+  const graph: Graph = {
+    nodes: [state("a", 0, 0), state("b", 280, 0), state("c", 560, 0), state("d", 840, 0), state("cancelled", 280, 150)],
+    edges: [guarded("cancel", "a", ""), guarded("cancel", "b", ""), guarded("cancel", "c", "x > 1"), guarded("cancel", "d", "x > 1")],
+  }
+  const { bundles } = drawingOf(graph)
+  expect(bundles).toHaveLength(2)
+  expect(new Set(bundles.map(({ id }) => id)).size).toBe(2)
+  expect(new Set(bundles.flatMap(({ members }) => members)).size).toBe(4)
+})

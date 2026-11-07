@@ -74,3 +74,13 @@ test("lane labels never overlap: each slides along its own run until clear of th
     expect(overlap, `${a.id} and ${b.id}`).toBe(false)
   }
 })
+
+test("a step back along a row and a step down into that row share the lane, so each gets its own rail", () => {
+  // on_hold → cancelled runs back along row 1; approved → cancelled runs down into it: both in the lane at y 75.
+  const steps = [
+    { id: "back", source: { x: 560, y: 150 }, target: { x: 280, y: 150 } },
+    { id: "down", source: { x: 560, y: 0 }, target: { x: 280, y: 150 } },
+  ]
+  const rails = railsOf(steps)
+  expect(rails.get("back")!.offset).not.toBe(rails.get("down")!.offset)
+})
