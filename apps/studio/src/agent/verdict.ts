@@ -65,14 +65,15 @@ export function tabStorage(): Pick<Storage, "getItem" | "setItem"> | undefined {
   try { return globalThis.sessionStorage } catch { return undefined }
 }
 
-/** The id this tab uses when its storage is missing or fails, so the id still holds for the page's lifetime. */
+/** The id this page uses, fixed at its first call: from storage when it holds one, else new; written back whenever storage works. */
 let memoryId: string | undefined
 
 /** One id per browser tab, for the server's per-session budget. */
 export function sessionId(storage: Pick<Storage, "getItem" | "setItem"> | undefined): string {
+  // The page keeps the first id it used, even if storage later starts working with another one.
   try {
     const existing = storage?.getItem("norn-agent-session")
-    if (existing && /^[0-9a-f-]{36}$/.test(existing)) return existing
+    if (memoryId === undefined && existing && /^[0-9a-f-]{36}$/.test(existing)) memoryId = existing
   } catch { /* storage blocked: fall back to the in-memory id */ }
   memoryId ??= crypto.randomUUID()
   try { storage?.setItem("norn-agent-session", memoryId) } catch { /* storage blocked or full: keep the in-memory id */ }
