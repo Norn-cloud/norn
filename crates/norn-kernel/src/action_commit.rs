@@ -1135,8 +1135,7 @@ where
         catalog,
         action,
         &preparation.effective_input,
-        &slice.values,
-        &slice.aggregates,
+        &slice,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -1490,8 +1489,7 @@ where
         catalog,
         action,
         &preparation.effective_input,
-        &slice.values,
-        &slice.aggregates,
+        &slice,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -2711,8 +2709,7 @@ where
         catalog,
         call.action,
         &preparation.effective_input,
-        &action_slice.values,
-        &action_slice.aggregates,
+        &action_slice,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -3525,8 +3522,7 @@ where
             catalog,
             call.action,
             &generated_input,
-            &slice.values,
-            &slice.aggregates,
+            &slice,
             &mut preparation.remaining_fuel,
             &mut receipt_evidence_bytes,
             usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -3658,8 +3654,7 @@ fn validate_generated_replay_input<H: CellHost + ?Sized>(
         catalog,
         call.action,
         &input,
-        &slice.values,
-        &slice.aggregates,
+        &slice,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -6105,22 +6100,22 @@ fn check_action_preconditions<X>(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
     input: &JsonObject,
-    slice: &JsonObject,
-    aggregates: &JsonObject,
+    slice: &LoadedActionSlice,
     remaining_fuel: &mut u64,
     receipt_evidence_bytes: &mut usize,
     max_receipt_bytes: usize,
 ) -> Result<Vec<ActionPreconditionOutcome>, ActionRefusal<X>> {
-    let aggregates = (!action.aggregates.is_empty()).then_some(aggregates);
-    let context = action_expression_context(input, slice, aggregates).map_err(|reason| {
-        ActionRefusal::PreconditionFailed {
-            precondition: action
-                .preconditions
-                .first()
-                .map_or_else(String::new, |expression| expression.as_str().to_owned()),
-            reason: Some(reason),
-        }
-    })?;
+    let aggregates = (!action.aggregates.is_empty()).then_some(&slice.aggregates);
+    let context =
+        action_expression_context(input, &slice.values, aggregates).map_err(|reason| {
+            ActionRefusal::PreconditionFailed {
+                precondition: action
+                    .preconditions
+                    .first()
+                    .map_or_else(String::new, |expression| expression.as_str().to_owned()),
+                reason: Some(reason),
+            }
+        })?;
     let catalog_env = action
         .slice
         .first()
