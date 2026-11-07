@@ -163,7 +163,8 @@ test("/api/me gives the active workspace's server-configured environment, and no
   expect((await meOf({ ...env, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_demo: "warehouse" }) }, cookie)).environmentId).toBe("warehouse")
   expect((await meOf({ ...env, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_other: "warehouse" }) }, cookie)).environmentId).toBeNull()
   // A Worker deployed without the binding has no default: no environment.
-  expect((await meOf(stage(), cookie)).environmentId).toBeNull()
+  const { STUDIO_WORKSPACE_ENVIRONMENTS: _bound, ...unbound } = env
+  expect(await meOf(unbound, cookie)).toMatchObject({ organization: { id: "org_demo" }, environmentId: null })
 })
 
 test("/api/me never takes the environment from the client, and gives none for a workspace the caller is not a member of", async () => {
