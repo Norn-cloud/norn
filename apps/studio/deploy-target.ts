@@ -33,6 +33,25 @@ export function deployTarget(env: Readonly<Record<string, string | undefined>>):
   return { stage, worker: production ? "norn-studio-recorded" : `norn-studio-recorded-${stage}`, domains }
 }
 
+/** Better Auth's deploy-time inputs. Every stage signs users in; there is no unauthenticated Studio. */
+export interface AuthDeploy {
+  /** The Worker secret Better Auth signs sessions with; never written to state in plain text. */
+  readonly secret: string
+  /** The origin users sign in on: the stage's first domain. */
+  readonly url: string
+  /** Optional Cloudflare Email Service sender for magic links. */
+  readonly emailFrom?: string
+}
+
+export function authDeploy(env: Readonly<Record<string, string | undefined>>, target: DeployTarget): AuthDeploy {
+  const secret = env.BETTER_AUTH_SECRET
+  if (secret === undefined || secret.length < 32) throw new Error("BETTER_AUTH_SECRET (at least 32 characters) is required: every stage requires sign-in")
+  if (!env.ALCHEMY_PASSWORD?.trim()) throw new Error("ALCHEMY_PASSWORD is required to encrypt the Worker secrets in state")
+  const emailFrom = env.STUDIO_EMAIL_FROM
+  if (emailFrom !== undefined && !/^[^@\s]+@[a-z0-9.-]+$/.test(emailFrom)) throw new Error("STUDIO_EMAIL_FROM must be an email address")
+  return { secret, url: `https://${target.domains[0]}`, ...emailFrom === undefined ? {} : { emailFrom } }
+}
+
 /** Environment variable names whose values are credentials. */
 // Not a bare AUTH: AUTH_URL or AUTH_MODE hold plain settings that would fail deploys falsely.
 export const SECRET_NAME = /TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|PRIVATE|AUTH_CONFIG/i
