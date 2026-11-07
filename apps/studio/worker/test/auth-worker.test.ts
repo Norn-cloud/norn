@@ -150,8 +150,10 @@ const demoMember = async (env: Env, email: string) => {
 const meOf = async (env: Env, cookie: string, extra: HeadersInit = {}, query = "") =>
   await (await call(env, `/api/me${query}`, { headers: { cookie, ...extra } })).json() as { organization: { id: string } | null; environmentId: string | null }
 
+const PREVIEW = JSON.stringify({ org_demo: "analytics" })
+
 test("/api/me gives the active workspace's server-configured environment, and none for a workspace without one", async () => {
-  const env = stage()
+  const env = { ...stage(), STUDIO_WORKSPACE_ENVIRONMENTS: PREVIEW }
   const { cookie, user, db } = await demoMember(env, "scope@example.com")
   // Their own workspace (the active one after sign-in) has no data cell.
   expect((await meOf(env, cookie)).environmentId).toBeNull()
@@ -160,10 +162,12 @@ test("/api/me gives the active workspace's server-configured environment, and no
   // The deployment's own map decides; a map without this workspace gives none.
   expect((await meOf({ ...env, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_demo: "warehouse" }) }, cookie)).environmentId).toBe("warehouse")
   expect((await meOf({ ...env, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_other: "warehouse" }) }, cookie)).environmentId).toBeNull()
+  // A Worker deployed without the binding has no default: no environment.
+  expect((await meOf(stage(), cookie)).environmentId).toBeNull()
 })
 
 test("/api/me never takes the environment from the client, and gives none for a workspace the caller is not a member of", async () => {
-  const env = stage()
+  const env = { ...stage(), STUDIO_WORKSPACE_ENVIRONMENTS: PREVIEW }
   const { cookie, user, db } = await demoMember(env, "member@example.com")
   db.run("update session set activeOrganizationId = 'org_demo' where userId = ?", [user])
   // Whatever the request claims, the answer is the server's.

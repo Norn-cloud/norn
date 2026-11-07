@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { deployTarget, leakedSecrets, scanState } from "../deploy-target.ts"
+import { SECRET_NAME, deployTarget, leakedSecrets, scanState, workspaceEnvironments } from "../deploy-target.ts"
 
 test("production keeps the live Worker and both demo domains", () => {
   expect(deployTarget({})).toEqual({ stage: "prod", worker: "norn-studio-recorded", domains: ["studio.norn.cloud", "studio-demo.norn.cloud"] })
@@ -66,4 +66,19 @@ test("registry, credential and private-key variables are scanned too, plain auth
   const env = { DOCKER_AUTH_CONFIG: "eyJhdXRocyI6eyJyZWdpc3RyeSI6e319fQ==", GOOGLE_CREDENTIALS: "service-account-json", SSH_PRIVATE: "-----BEGIN KEY-----", AUTH_URL: "https://auth.example.test" }
   const state = JSON.stringify({ props: { env } })
   expect(leakedSecrets(state, env)).toEqual({ DOCKER_AUTH_CONFIG: 1, GOOGLE_CREDENTIALS: 1, SSH_PRIVATE: 1 })
+})
+
+test("production never gets the preview workspace map; other stages do unless the operator sets one", () => {
+  const prod = deployTarget({})
+  const preview = deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud" })
+  expect(JSON.parse(workspaceEnvironments({}, prod))).toEqual({})
+  expect(JSON.parse(workspaceEnvironments({}, preview))).toEqual({ org_demo: "analytics" })
+  // The operator's map wins on any stage, production included.
+  expect(JSON.parse(workspaceEnvironments({ STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_acme: "warehouse" }) }, prod))).toEqual({ org_acme: "warehouse" })
+  // A malformed map fails the deploy instead of reaching the Worker.
+  for (const bad of ["not-json", "[]", "null", JSON.stringify({ org_acme: "" }), JSON.stringify({ org_acme: 1 })]) {
+    expect(() => workspaceEnvironments({ STUDIO_WORKSPACE_ENVIRONMENTS: bad }, preview)).toThrow("STUDIO_WORKSPACE_ENVIRONMENTS")
+  }
+  // A plain setting, not a credential: the post-deploy state scan does not treat it as one.
+  expect(SECRET_NAME.test("STUDIO_WORKSPACE_ENVIRONMENTS")).toBe(false)
 })
