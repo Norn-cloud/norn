@@ -10324,8 +10324,7 @@
         {
           "properties": {
             "value": {
-              "type": "number",
-              "format": "double"
+              "$ref": "#/$defs/DecimalLiteral"
             },
             "valueType": {
               "const": "number"
@@ -10419,7 +10418,7 @@
       ]
     },
     "SettingValueType": {
-      "description": "The JSON type of a setting's `value`.",
+      "description": "The setting value kind; numbers use exact decimal-string literals.",
       "type": "string",
       "enum": [
         "text",
