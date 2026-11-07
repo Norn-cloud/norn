@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { CircleAlert, Copy, LayoutGrid, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
+import { focusCss, type Bundle } from "./lib/canvas/focus.ts"
 import { INSET, MINIMAP, READABLE, WITH_MINIMAP, clearOfMinimap, fitsReadable, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
@@ -49,6 +50,12 @@ export interface CanvasFrameProps {
   readonly toNode: (node: g.CanvasNode, issues: readonly Issue[], selected: boolean) => Node
   /** Draws one edge; the graph lets a label read its node (a route's condition, a decision's option). */
   readonly toEdge: (edge: g.CanvasEdge, issues: readonly Issue[], selected: boolean, graph: g.Graph) => Edge
+  /**
+   * Steps drawn as one edge, and the drawing with them: the frame selects, deletes and focuses a bundle as its steps.
+   * `draw` turns the per-step edges into what is drawn (members hidden, one edge per bundle).
+   */
+  readonly bundles?: (graph: g.Graph) => readonly Bundle[]
+  readonly draw?: (edges: readonly Edge[], graph: g.Graph, selection: Selection) => Edge[]
   /** The edge a new connection draws; `undefined` lets the frame refuse it. */
   readonly newEdge: (connection: Connection, graph: g.Graph) => g.CanvasEdge
   /** Copies rename what must stay unique (a lifecycle step id). */
@@ -235,6 +242,32 @@ function Frame(props: CanvasFrameProps) {
     const tone = failing ? "var(--destructive)" : active ? "var(--edge-active)" : "var(--edge)"
     return { ...base, className: cn(base.className, failing ? "canvas-edge-failing" : active && "canvas-edge-active"), markerEnd: { type: MarkerType.ArrowClosed, color: tone, width: 14, height: 14 } }
   }
+  // Focus (selection, and what the pointer is over) dims everything not connected to it. The pointer's part is
+  // never React state: it is written straight into this canvas's stylesheet, so hovering re-renders nothing and
+  // no edge is rebuilt under the pointer (its end grabbers stay put for a reconnect).
+  const canvasId = useId()
+  const focusSheet = useRef<HTMLStyleElement>(null)
+  const pointer = useRef<{ readonly node?: string; readonly edge?: string }>({})
+  const bundlesOf = useRef((drawn: g.Graph) => props.bundles?.(drawn) ?? [])
+  const membersOf = (id: string): readonly string[] => props.bundles?.(graph).find((bundle) => bundle.id === id)?.members ?? [id]
+  const current = useRef({ graph, selection })
+  // Committed values only: a discarded render never reaches the refs the pointer handlers paint from.
+  useLayoutEffect(() => {
+    bundlesOf.current = (drawn: g.Graph) => props.bundles?.(drawn) ?? []
+    current.current = { graph, selection }
+  })
+  const paintFocus = useCallback(() => {
+    const { graph: drawn, selection: chosen } = current.current
+    // What the pointer was over may be gone (deleted or undone under it, with no leave event): drop it, so the canvas is not left dimmed.
+    const bundleIds = new Set(bundlesOf.current(drawn).map(({ id }) => id))
+    const over = {
+      ...pointer.current.node && drawn.nodes.some(({ id }) => id === pointer.current.node) ? { node: pointer.current.node } : {},
+      ...pointer.current.edge && (bundleIds.has(pointer.current.edge) || drawn.edges.some(({ id }) => id === pointer.current.edge)) ? { edge: pointer.current.edge } : {},
+    }
+    if (focusSheet.current) focusSheet.current.textContent = focusCss(drawn, { nodes: [...chosen.nodes, ...over.node ? [over.node] : []], edges: [...chosen.edges, ...over.edge ? [over.edge] : []] }, canvasId, bundlesOf.current(drawn))
+  }, [canvasId])
+  useEffect(paintFocus, [graph, selection, paintFocus])
+  const point = (next: { readonly node?: string; readonly edge?: string }) => { pointer.current = next; paintFocus() }
   const Sep = () => <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
 
   const inspector = props.inspector(editing, issues)
@@ -258,7 +291,8 @@ function Frame(props: CanvasFrameProps) {
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
-          <div ref={surface} data-canvas-surface className="relative h-[38rem] w-full">
+          <div ref={surface} data-canvas-surface data-canvas-id={canvasId} className="relative h-[38rem] w-full">
+            <style ref={focusSheet} />
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             {opening && <ReactFlow defaultViewport={opening}
               nodes={graph.nodes.map((node) => {
@@ -266,13 +300,15 @@ function Frame(props: CanvasFrameProps) {
                 const size = props.nodeSize?.(node) ?? DEFAULT_SIZE
                 return { ...props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)), initialWidth: size.width, initialHeight: size.height }
               })}
-              edges={graph.edges.map(look)} className="bg-canvas-surface"
+              edges={props.draw ? props.draw(graph.edges.map(look), graph, selection) : graph.edges.map(look)} className="bg-canvas-surface"
               nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
               onConnect={(connection) => edit(g.connect(graph, kinds, props.newEdge(connection, graph)))}
               onReconnect={(old, connection) => edit(g.reconnect(graph, kinds, old.id, { source: connection.source, target: connection.target, sourcePort: connection.sourceHandle ?? old.sourceHandle ?? "", targetPort: connection.targetHandle ?? old.targetHandle ?? "" }))}
               onNodeDragStart={() => setState(g.checkpoint)}
+              onNodeMouseEnter={(_, node) => point({ node: node.id })} onNodeMouseLeave={() => point({})}
+              onEdgeMouseEnter={(_, edge) => point({ edge: edge.id })} onEdgeMouseLeave={() => point({})}
               onNodesChange={(changes) => {
                 for (const change of changes) {
                   if (change.type === "position" && change.position) setState((current) => g.replace(current, g.moveNode(current.present, change.id, change.position as g.CanvasNode["position"])))
@@ -280,9 +316,15 @@ function Frame(props: CanvasFrameProps) {
                 }
               }}
               onEdgesChange={(changes) => {
-                for (const change of changes) if (change.type === "select") setSelection((current) => ({ ...current, edges: change.selected ? [...new Set([...current.edges, change.id])] : current.edges.filter((id) => id !== change.id) }))
+                // A bundle is selected as the steps it holds.
+                for (const change of changes) if (change.type === "select") {
+                  const ids = membersOf(change.id)
+                  setSelection((current) => ({ ...current, edges: change.selected ? [...new Set([...current.edges, ...ids])] : current.edges.filter((id) => !ids.includes(id)) }))
+                }
               }}
-              onDelete={({ nodes, edges }) => {
+              onDelete={({ nodes, edges: drawn }) => {
+                // A bundle deletes the steps it holds.
+                const edges = drawn.flatMap(({ id }) => membersOf(id)).flatMap((id) => graph.edges.filter((edge) => edge.id === id))
                 // A fixed node (an automation's start) stays, and so do its connections unless they were selected themselves.
                 const kept = new Set(nodes.map(({ id }) => id).filter((id) => !removable([id]).length))
                 const cut = edges.filter(({ id, source, target }) => selection.edges.includes(id) || !(kept.has(source) || kept.has(target))).map(({ id }) => id)

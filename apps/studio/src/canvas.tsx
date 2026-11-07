@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo, useState } from "react"
-import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStoreApi, type EdgeProps, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStore, useStoreApi, type EdgeProps, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import { Network, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { CARD, EDGE_PILL, InspectorHead, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { cn } from "@/lib/utils"
-import { laneRoute } from "./lib/canvas/routes.ts"
+import { LANE, bundleRoute, laneRoute, laneYOf, placeLabels, railsOf, type Rail } from "./lib/canvas/routes.ts"
+import type { Bundle } from "./lib/canvas/focus.ts"
+import { labelWidth } from "./lib/canvas/exits.ts"
 import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
@@ -40,12 +42,98 @@ export function StateBox({ data, selected }: NodeProps<StateNode>) {
 
 const NODE_TYPES = { state: StateBox }
 
-type StepEdgeData = { readonly label: string; readonly failing: boolean }
+type StepEdgeData = { readonly label: string; readonly failing: boolean; readonly rail?: Rail }
+
+/**
+ * How the steps are drawn, worked out once per drawing from where the states sit: steps of one lifecycle step into
+ * one state through one lane draw as a bundle (one rail, one pill, a tick per source); every other lane step gets its
+ * own rail; labels are placed clear of each other and of the states.
+ */
+interface Drawing {
+  readonly rails: ReadonlyMap<string, Rail>
+  readonly bundles: readonly (Bundle & { readonly label: string; readonly offset: number })[]
+}
+const drawings = new WeakMap<g.Graph, Drawing>()
+export function drawingOf(graph: g.Graph): Drawing {
+  const cached = drawings.get(graph)
+  if (cached) return cached
+  // Each step between its handles: a state's right edge out, its left edge in, at the card's middle.
+  const at = new Map(graph.nodes.map(({ id: node, position }) => [node, position]))
+  const middle = cardHeight({}) / 2
+  const handles = new Map(graph.edges.flatMap((edge) => {
+    const source = at.get(edge.source), target = at.get(edge.target)
+    return source && target ? [[edge.id, { source: { x: source.x + CARD.state, y: source.y + middle }, target: { x: target.x, y: target.y + middle } }] as const] : []
+  }))
+  const straight = (id: string) => { const h = handles.get(id)!; return Math.abs(h.source.y - h.target.y) < 2 && h.target.x > h.source.x }
+  const groups = new Map<string, g.CanvasEdge[]>()
+  for (const edge of graph.edges) {
+    const h = handles.get(edge.id)
+    if (!h || straight(edge.id)) continue
+    const key = `${stepKey(edge)}|${edge.target}|${laneYOf(h.source, h.target)}`
+    groups.set(key, [...groups.get(key) ?? [], edge])
+  }
+  // A bundle's id is its step and target; two bundles that share both (different guards or lanes) keep distinct ids.
+  const ids = new Set<string>()
+  const bundles = [...groups.values()].filter((members) => members.length > 1).map((members) => {
+    const first = members[0]!
+    const sorted = [...members].sort((a, b) => handles.get(a.id)!.source.x - handles.get(b.id)!.source.x)
+    const base = `bundle:${first.config.transition || first.id}:${first.target}`
+    const id = ids.has(base) ? `${base}:${sorted[0]!.id}` : base
+    ids.add(id)
+    return { id, members: sorted.map(({ id }) => id), sources: sorted.map(({ source }) => source), target: first.target, label: `${words(first.config.transition || first.id)} · from ${members.length} states` }
+  })
+  const bundled = new Set(bundles.flatMap(({ members }) => members))
+  // A bundle holds the middle of its lane; the other steps take rails around it.
+  const steps = [
+    ...graph.edges.filter(({ id }) => handles.has(id) && !bundled.has(id)).map((edge) => ({ id: edge.id, ...handles.get(edge.id)!, width: labelWidth(words(edge.config.transition || edge.id)) })),
+    ...bundles.map((bundle) => ({ id: bundle.id, ...handles.get(bundle.members[0]!)!, width: 0 })),
+  ]
+  const assigned = railsOf(steps)
+  const placedBundles = bundles.map((bundle) => ({ ...bundle, offset: assigned.get(bundle.id)?.offset ?? 0 }))
+  const taken = placedBundles.map((bundle) => {
+    const width = labelWidth(bundle.label)
+    const { label } = bundleRoute(bundle.members.map((id) => handles.get(id)!.source), handles.get(bundle.members[0]!)!.target, width, LANE, bundle.offset)
+    return { x1: label.x - width / 2, x2: label.x + width / 2, y: label.y }
+  })
+  const rails = placeLabels(steps.filter(({ id }) => !ids.has(id)), assigned, LANE, graph.nodes.map(({ position }) => ({ ...position, width: CARD.state, height: middle * 2 })), taken)
+  const drawing = { rails, bundles: placedBundles }
+  drawings.set(graph, drawing)
+  return drawing
+}
+const railOf = (graph: g.Graph, id: string): Rail | undefined => drawingOf(graph).rails.get(id)
+
+type BundleEdgeData = { readonly label: string; readonly sources: readonly string[]; readonly failing: boolean; readonly offset: number }
+
+/** A bundle: each source turns into one rail (a tick where it joins), the rail drops into the target; one pill. */
+export function BundleEdge({ id, targetX, targetY, markerEnd, data }: EdgeProps<Edge<BundleEdgeData, "bundle">>) {
+  const store = useStoreApi()
+  // Each source's right-hand handle, from React Flow's own measured nodes (a string, so the selector stays stable).
+  const sourcesKey = useStore((state) => (data?.sources ?? []).map((source) => {
+    const node = state.nodeLookup.get(source)
+    if (!node) return ""
+    const { x, y } = node.internals.positionAbsolute
+    return `${x + (node.measured.width ?? CARD.state)},${y + (node.measured.height ?? cardHeight({})) / 2}`
+  }).join(";"))
+  const sources = sourcesKey.split(";").filter(Boolean).map((pair) => { const [x, y] = pair.split(",").map(Number); return { x: x!, y: y! } })
+  if (!data || sources.length === 0) return null
+  const width = labelWidth(data.label)
+  const routed = bundleRoute(sources, { x: targetX, y: targetY }, width, LANE, data.offset)
+  return (
+    <>
+      <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
+      {routed.ticks.map((tick, index) => <circle key={index} cx={tick.x} cy={tick.y} r={3} className="canvas-bundle-tick" />)}
+      <EdgeLabelRenderer>
+        <div data-edge-label={id} title={`${data.label}: ${data.sources.map(words).join(", ")}`} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive")} onClick={() => store.getState().addSelectedEdges([id])}
+          style={{ maxWidth: 220, transform: `translate(-50%, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
+      </EdgeLabelRenderer>
+    </>
+  )
+}
 
 /** A lifecycle step: straight along the main row, else in a lane with rounded corners (lib/canvas/routes); its label a pill. */
 export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, data }: EdgeProps<Edge<StepEdgeData, "step">>) {
   const store = useStoreApi()
-  const routed = laneRoute({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })
+  const routed = laneRoute({ x: sourceX, y: sourceY }, { x: targetX, y: targetY }, LANE, data?.rail)
   const shift = routed.label.anchor === "middle" ? "-50%" : routed.label.anchor === "end" ? "-100%" : "0"
   // A straight step's label stays inside the gap, clear of both ports.
   const room = routed.straight ? Math.max(0, targetX - sourceX - 20) : 160
@@ -62,11 +150,11 @@ export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, da
   )
 }
 
-const EDGE_TYPES = { step: StepEdge }
+const EDGE_TYPES = { step: StepEdge, bundle: BundleEdge }
 const FLAGS = ["initial", "terminal", "immutable"] as const
 
 /** Selected states and steps: rename, flags, rules, or delete. */
-function Inspector({ editing, issues, standing }: { readonly editing: Editing; readonly issues: readonly Issue[]; readonly standing: readonly Finding[] }) {
+function Inspector({ editing, issues, standing, kinds }: { readonly editing: Editing; readonly issues: readonly Issue[]; readonly standing: readonly Finding[]; readonly kinds: g.Kinds }) {
   const { graph, selection, edit, select } = editing
   const count = selection.nodes.length + selection.edges.length
   const remove = () => { edit(g.remove(graph, selection.nodes, selection.edges)); select({ nodes: [], edges: [] }) }
@@ -82,7 +170,10 @@ function Inspector({ editing, issues, standing }: { readonly editing: Editing; r
       )}
     </>
   )
-  if (count > 1) return (
+  // A bundle (or any selection of one step's edges) is that one step: show it, with the states it comes from.
+  const chosen = selection.edges.map((id) => graph.edges.find((one) => one.id === id))
+  const oneStep = selection.nodes.length === 0 && chosen.length > 1 && chosen.every(Boolean) && new Set(chosen.map((one) => stepKey(one!))).size === 1
+  if (count > 1 && !oneStep) return (
     <>
       <p>{selection.nodes.length} states and {selection.edges.length} steps selected.</p>
       <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete selected</Button>
@@ -110,6 +201,32 @@ function Inspector({ editing, issues, standing }: { readonly editing: Editing; r
           <label key={flag} className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={words(flag)} checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
         ))}
       </>}
+      {edge && siblings.length > 1 && (
+        <section className="space-y-2" data-testid="step-sources">
+          <h3 className="text-xs font-semibold text-muted-foreground">From {siblings.length} states</h3>
+          <ul className="space-y-1.5">
+            {siblings.map((id) => { const one = graph.edges.find((other) => other.id === id)!; return (
+              <li key={id} className="flex items-center justify-between gap-2 rounded-lg border border-node-border bg-card px-2.5 py-1.5 text-sm">
+                <span>{words(one.source)} → {words(one.target)}</span>
+                <span className="flex items-center gap-1">
+                  {/* Reconnect, for a step drawn inside a bundle: point this one step at another state (undoable). */}
+                  <select aria-label={`Change target of the step from ${words(one.source)}`} className="h-8 rounded-3xl bg-input/50 px-2 text-xs" value=""
+                    onChange={(event) => {
+                      const target = event.target.value
+                      if (!target) return
+                      edit(g.reconnect(graph, kinds, id, { source: one.source, sourcePort: one.sourcePort, target, targetPort: one.targetPort }))
+                      select({ nodes: [], edges: [id] })
+                    }}>
+                    <option value="">Change target…</option>
+                    {graph.nodes.filter(({ id: state }) => state !== one.target && state !== one.source).map(({ id: state }) => <option key={state} value={state}>{words(state)}</option>)}
+                  </select>
+                  <Button size="sm" variant="ghost" aria-label={`Remove the step from ${words(one.source)}`} onClick={() => { edit(g.remove(graph, [], [id])); select({ nodes: [], edges: siblings.filter((other) => other !== id) }) }}><Trash2 /></Button>
+                </span>
+              </li>
+            ) })}
+          </ul>
+        </section>
+      )}
       {edge && <>
         <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Step id</span>
           <Input aria-label="Step id" defaultValue={edge.config.transition} key={`${edge.id}:id:${edge.config.transition}`} onBlur={(event) => { const id = event.target.value.trim(); if (id) edit(g.configureEdges(graph, siblings, { transition: id })) }} /></label>
@@ -133,9 +250,29 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     nodeSize: () => ({ width: CARD.state, height: cardHeight({}) }),
     tidy: (graph) => tidy(graph, STATE_SPACING),
     toNode: (node, found, selected): StateNode => ({ id: node.id, type: "state", position: node.position, selected, data: { label: words(node.id), flags: FLAGS.filter((flag) => node.config[flag] === "yes").join(" · "), issues: found } }),
-    toEdge: (edge, found, selected): Edge => ({
+    bundles: (graph) => drawingOf(graph).bundles,
+    // Bundled steps are drawn by their bundle: hidden one by one, drawn once, selected and focused as one.
+    draw: (edges, graph, selection) => {
+      const { bundles } = drawingOf(graph)
+      const hidden = new Set(bundles.flatMap(({ members }) => members))
+      return [
+        ...edges.map((edge) => hidden.has(edge.id) ? { ...edge, hidden: true } : edge),
+        ...bundles.map((bundle): Edge => {
+          const parts = edges.filter(({ id }) => bundle.members.includes(id))
+          const active = parts.some(({ className }) => className?.includes("canvas-edge-active"))
+          const failing = parts.some(({ className }) => className?.includes("canvas-edge-failing"))
+          return {
+            id: bundle.id, source: bundle.sources[0]!, target: bundle.target, sourceHandle: "out", targetHandle: "in", type: "bundle", reconnectable: false,
+            selected: bundle.members.every((member) => selection.edges.includes(member)),
+            className: failing ? "canvas-edge-failing" : active ? "canvas-edge-active" : undefined, markerEnd: parts[0]?.markerEnd,
+            data: { label: bundle.label, sources: bundle.sources, failing, offset: bundle.offset },
+          }
+        }),
+      ]
+    },
+    toEdge: (edge, found, selected, graph): Edge => ({
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected, type: "step",
-      data: { label: words(edge.config.transition || edge.id), failing: found.length > 0 },
+      data: { label: words(edge.config.transition || edge.id), failing: found.length > 0, ...railOf(graph, edge.id) ? { rail: railOf(graph, edge.id) } : {} },
     }),
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) => {
       const transition = g.freshName(graph.edges.map(({ config }) => config.transition ?? ""), `${source}_to_${target}`)
@@ -145,7 +282,7 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     palette: ({ graph, edit, select }) => (
       <Button size="sm" variant="ghost" className="gap-1.5 pl-1.5" onClick={() => { const id = g.freshId(graph, "new_state"); edit(g.addNode(graph, { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} })); select({ nodes: [id], edges: [] }) }}><KindChip kind="state" className="size-5 rounded-md" />State</Button>
     ),
-    inspector: (editing, found) => <Inspector editing={editing} issues={found} standing={standing} />,
+    inspector: (editing, found) => <Inspector editing={editing} issues={found} standing={standing} kinds={lifecycleKinds(lifecycle)} />,
   }
 }
 

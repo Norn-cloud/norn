@@ -9,7 +9,7 @@ import type { Graph } from "./graph.ts"
 export interface Spacing { readonly width: number; readonly gap: number; readonly row: number }
 /** Columns and rows for each canvas: a card's width, the gap after it, and the row pitch. */
 export const STEP_SPACING: Spacing = { width: 208, gap: 64, row: 110 }
-export const STATE_SPACING: Spacing = { width: 168, gap: 112, row: 110 }
+export const STATE_SPACING: Spacing = { width: 168, gap: 112, row: 150 }
 
 /** The clear space under a card in a column; the row pitch is a card's height plus this, at least `spacing.row`. */
 const ROW_GAP = 36

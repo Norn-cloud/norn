@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { clear, clickEdge, drag, edge, edgeEnds, handle, lefts, node, open, placed, press, reveal, shown } from "./canvas.ts"
+import { clear, clickEdge, drag, edge, edgeEnds, handle, hoverEdge, lefts, node, open, placed, press, reveal, shown } from "./canvas.ts"
 
 // One test per row of the lifecycle canvas's verb matrix (see the PR body). Each test exercises every ✓ verb of its row.
 
@@ -187,4 +187,66 @@ test("step label: clicking a step's label selects the step, as clicking its line
   await label.click()
   await expect(edge(page, "complete:invoiced")).toHaveClass(/selected/)
   await expect(page.getByLabel("Step id")).toHaveValue("complete")
+})
+
+test("focus: hovering or selecting a state lights its steps and dims the rest, without rebuilding any step", async ({ page }) => {
+  await open(page)
+  const opacity = (selector: string) => page.locator(selector).first().evaluate((element) => getComputedStyle(element).opacity)
+  const approved = await shown(page, "approved")
+  // Hovering must not rebuild a step: the same element is there before and after.
+  await page.locator('.react-flow__edge[data-id="invoice:approved"]').evaluate((element) => { (element as HTMLElement & { marker?: number }).marker = 1 })
+  await approved.hover()
+  await expect.poll(() => opacity('.react-flow__edge[data-id="submit:draft"]')).toBe("0.35")
+  await expect.poll(() => opacity('[data-edge-label="submit:draft"]')).toBe("0.35")
+  await expect.poll(() => opacity('.react-flow__edge[data-id="invoice:approved"]')).toBe("1")
+  expect(await page.locator('.react-flow__edge[data-id="invoice:approved"]').evaluate((element) => (element as HTMLElement & { marker?: number }).marker)).toBe(1)
+  // Moving away clears it.
+  await page.mouse.move(5, 5)
+  await expect.poll(() => opacity('.react-flow__edge[data-id="submit:draft"]')).toBe("1")
+  // Selecting holds the same focus.
+  await approved.click()
+  await page.mouse.move(5, 5)
+  await expect(edge(page, "invoice:approved")).toHaveClass(/canvas-edge-active/)
+  await expect.poll(() => opacity('.react-flow__edge[data-id="submit:draft"]')).toBe("0.35")
+})
+
+test("bundle: steps of one step into one state draw as one; hover lights its sources; select lists them; remove one, undo", async ({ page }) => {
+  await open(page)
+  const bundle = page.locator('[data-edge-label^="bundle:cancel:"]')
+  await reveal(page, bundle)
+  await expect(bundle).toHaveText(/^Cancel · from \d+ states$/)
+  const count = Number((await bundle.textContent())?.match(/from (\d+)/)?.[1])
+  // Its steps are not drawn one by one.
+  await expect(page.locator('.react-flow__edge[data-id^="cancel:"]')).toHaveCount(0)
+  // Hovering it lights its sources (an accent ring on each source card).
+  // Read before any click, so the ring comes from hover alone; the card's shadow eases in (200ms), so poll until it settles.
+  const ring = () => page.locator('.react-flow__node[data-id="draft"] .canvas-node').evaluate((element) => getComputedStyle(element).boxShadow)
+  // On the bundle's line, not its box's centre (a bundle's box is mostly empty canvas).
+  await hoverEdge(page, (await page.locator('.react-flow__edge[data-id^="bundle:cancel:"]').first().getAttribute("data-id"))!)
+  await expect.poll(ring).toContain("0px 0px 0px 4px")
+  // Hovering centred the bundle's line, which can leave its pill outside the canvas: bring the pill in before clicking it.
+  await reveal(page, bundle)
+  await bundle.click()
+  await expect(page.getByTestId("step-sources").locator("li")).toHaveCount(count)
+  await expect(page.getByTestId("step-sources")).toContainText("Draft → Cancelled")
+  // Removing one step leaves the bundle one source smaller; undo brings it back.
+  await page.getByRole("button", { name: "Remove the step from Draft" }).click()
+  await expect(bundle).toHaveText(`Cancel · from ${count - 1} states`)
+  await press(page, "z")
+  await expect(bundle).toHaveText(`Cancel · from ${count} states`)
+})
+
+test("bundle reconnect: re-point one step of a bundle to another state; the bundle shrinks, the step draws on its own; undo", async ({ page }) => {
+  await open(page)
+  const bundle = page.locator('[data-edge-label^="bundle:cancel:"]')
+  await reveal(page, bundle)
+  const count = Number((await bundle.textContent())?.match(/from (\d+)/)?.[1])
+  await bundle.click()
+  await page.getByLabel("Change target of the step from Approved").selectOption("on_hold")
+  await expect(bundle).toHaveText(`Cancel · from ${count - 1} states`)
+  await expect(page.locator('.react-flow__edge[data-id="cancel:approved"]')).toHaveCount(1)
+  await expect(page.getByText(/Approved → On hold/).first()).toBeVisible()
+  await press(page, "z")
+  await expect(bundle).toHaveText(`Cancel · from ${count} states`)
+  await expect(page.locator('.react-flow__edge[data-id="cancel:approved"]')).toHaveCount(0)
 })
