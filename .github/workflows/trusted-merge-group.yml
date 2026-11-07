@@ -195,6 +195,8 @@ jobs:
                     {owner,repo,run_id:run.id,attempt_number:run.run_attempt,per_page:100});
                   const captures=jobs.filter(j=>/^Capture immutable rights event (pull|issue) (none|possible)$/.test(j.name));
                   const journals=jobs.filter(j=>j.name.startsWith('Rights ledger '));
+                  const raw=jobs.filter(j=>j.name.startsWith('Capture immutable rights event '));
+                  if(!captures.length&&raw.length===1&&raw[0].conclusion==='skipped'&&/^issue_comment bot \d+$/.test(run.display_title||''))return {jobs,plain:true};
                   if(captures.length===1&&(/ event issue /.test(captures[0].name)||captures[0].name.endsWith(' none')))return {jobs,plain:true};
                   const stamp=captures[0]?.steps?.find(step=>step.name.startsWith('Rights event '));
                   const tag=stamp?.name.match(/^Rights event (none|[0-9a-f]{40}(?:,[0-9a-f]{40})?) comment (\d+)$/);
