@@ -28,8 +28,8 @@ export interface Section {
   readonly kind?: Kind
   /** The section's own items (each object type, question or workflow), listed under it. */
   readonly useMenu?: () => readonly MenuEntry[] | undefined
-  /** A count that needs attention, shown on the section. */
-  readonly useBadge?: () => number | undefined
+  /** A count that needs attention, shown on the section; text (e.g. "500+") is shown as the server's lower bound. */
+  readonly useBadge?: () => number | string | undefined
   /** The sidebar group the section is listed under. */
   readonly group?: string
   /** Listed at the foot of the sidebar instead of with the sections. */
@@ -119,7 +119,7 @@ function NavSection({ section, pathname }: { readonly section: Section; readonly
         <SidebarMenuButton asChild isActive={active && pathname === section.path} tooltip={section.label} className={section.kind && KINDS[section.kind].svg}>
           <Link to={section.path} onClick={() => setOpenMobile(false)}>
             <Icon /><span>{section.label}</span>
-            {badge !== undefined && badge > 0 && <span className="ms-auto me-5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-destructive-foreground tabular-nums">{badge > 99 ? "99+" : badge}</span>}
+            {badge !== undefined && badge !== 0 && badge !== "" && badge !== "0" && <span className="ms-auto me-5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-destructive-foreground tabular-nums">{typeof badge === "string" ? badge : badge > 99 ? "99+" : badge}</span>}
           </Link>
         </SidebarMenuButton>
         {entries.length > 0 && <>
