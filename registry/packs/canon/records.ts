@@ -84,3 +84,32 @@ export const SettlementObservation = Norn.type({
     { id: "event", target: "core.EconomicEvent", cardinality: { to: "one", from: "many" } },
   ],
 })
+
+/**
+ * A keyed stock valuation policy (D66 demo): an upsert sets its enum
+ * `valuation_method`, so a generated form shows labels, groups and a choice
+ * the checker proves fits the property it writes.
+ */
+export const ValuationPolicy = Norn.type({
+  name: "canon.ValuationPolicy", title: "Stock valuation policy", version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String, label: Schema.String, valuation_method: Schema.Literals(["fifo", "moving_average"]) }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+export const SetValuationPolicy = Norn.action({
+  id: "canon.valuation_policy.set", title: "Set stock valuation policy", version: "0.1.0",
+  description: "Create or update a stock valuation policy.",
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  input: Schema.Struct({ id: Schema.String, label: Schema.String, valuation_method: Schema.Literals(["fifo", "moving_average"]) }),
+  output: Schema.Struct({ id: Schema.String }),
+  inputLabels: {
+    id: { title: "Policy code" },
+    label: { title: "Name", description: "How the policy appears in reports." },
+    valuation_method: { title: "Valuation method", description: "How stock on hand is valued: first in, first out, or a moving average." },
+  },
+  inputGroups: [
+    { id: "policy", title: "Policy", fields: ["/id", "/label"] },
+    { id: "valuation", title: "Valuation", fields: ["/valuation_method"] },
+  ],
+  writes: [{ type: ValuationPolicy, change: "created" }, { type: ValuationPolicy, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: ValuationPolicy, objectIdField: "id" },
+})

@@ -10,7 +10,7 @@ import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
 import type { ObjectTypeDef } from "./entity.ts"
 import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
-import type { ObjectSchema } from "./schema.ts"
+import type { InputGroup, Labels, ObjectSchema } from "./schema.ts"
 import type { SliceDecl } from "./rule.ts"
 
 /** One ordered, deterministic ZEN transformation of the action input. */
@@ -82,6 +82,10 @@ export interface ActionDef {
   readonly ledgerCategory?: string
   readonly input: ObjectSchema
   readonly output: ObjectSchema
+  /** D66: display-only labels for top-level input fields. */
+  readonly inputLabels?: Readonly<Record<string, Labels>>
+  /** D66: wizard steps over the input, emitted as `inputSchema["x-norn"].groups`. */
+  readonly inputGroups?: ReadonlyArray<InputGroup>
   /** Ordered read slice, with property keys rooted at `from: "input"`. */
   readonly slice: ReadonlyArray<SliceDecl>
   /** Ordered ZEN expressions applied before input validation and preconditions. */
@@ -139,6 +143,20 @@ export type ActionBuildResult =
 const ACTION_ID = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
 const omitEmpty = <T>(list: ReadonlyArray<T>): ReadonlyArray<T> | undefined => (list.length === 0 ? undefined : list)
 
+/**
+ * The input schema with its D66 display data: each labelled field's title
+ * and description, and the groups on the root. The checker owns every rule
+ * over them (bounds, pointers, uniqueness); nothing here judges them.
+ */
+function labelledInput(def: ActionDef): ObjectSchema {
+  const labels = def.inputLabels ?? {}
+  const properties = Object.fromEntries(
+    Object.entries(def.input.properties).map(([field, schema]) => [field, { ...schema, ...(labels[field] ?? {}) }]),
+  )
+  const groups = def.inputGroups ?? []
+  return { ...def.input, properties, ...(groups.length > 0 ? { "x-norn": { groups: groups.map((group) => ({ ...group, fields: [...group.fields] })) } } : {}) }
+}
+
 /** Lower one action to its `action` artifact (`<id>.action`). */
 export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBuildResult {
   const diagnostics = new Diagnostics()
@@ -152,7 +170,7 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     idempotent: def.idempotent,
     ledgered: def.ledgered,
     ledgerCategory: def.ledgerCategory,
-    inputSchema: def.input,
+    inputSchema: labelledInput(def),
     outputSchema: def.output,
     slice: omitEmpty(def.slice.map(({ optional, ...entry }) => (optional === true ? { ...entry, optional } : entry))),
     derive: omitEmpty(def.derive.map(({ inputRequired, ...entry }) => (inputRequired === false ? { ...entry, inputRequired } : entry))),

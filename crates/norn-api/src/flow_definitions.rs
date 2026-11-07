@@ -41,6 +41,8 @@ pub mod codes {
     pub const COMMAND_UNVERIFIABLE: &str = "definition.flow_command_unverifiable";
     /// An artifact id another definition already owns.
     pub const ARTIFACT_CONFLICT: &str = "definition.flow_artifact_conflict";
+    /// A flow title or step label is not a bounded display string.
+    pub const LABEL_INVALID: &str = "definition.flow_label_invalid";
     /// Retiring a flow while a run may still be live.
     pub const RUNS_LIVE: &str = "definition.flow_runs_live";
 }
@@ -53,6 +55,9 @@ pub struct FlowSummary {
     pub flow_id: String,
     /// The flow's authored version.
     pub version: String,
+    /// Its display title (the canvas flow title), when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// The `decide` rule's artifact id.
     pub rule_artifact_id: String,
     /// The Run object type.
@@ -191,6 +196,7 @@ pub fn check(
             "/flow/version",
         ));
     }
+    let title = display(value.get("flow"), &mut findings);
     let Some(RuntimeValue::Array(sources)) = exact.get("artifacts") else {
         findings.push(error(
             codes::SHAPE_INVALID,
@@ -334,11 +340,80 @@ pub fn check(
         summary: FlowSummary {
             flow_id: flow_id.to_owned(),
             version: version.to_owned(),
+            title,
             rule_artifact_id: rule_id,
             run_type: run_type(flow_id),
         },
     };
     (findings, Some(flow))
+}
+
+/// The longest flow title or step label, in characters after trimming.
+pub const MAX_LABEL_CHARS: usize = 120;
+
+fn label_ok(text: Option<&str>) -> bool {
+    text.map(str::trim).is_some_and(|text| {
+        (1..=MAX_LABEL_CHARS).contains(&text.chars().count()) && !text.chars().any(char::is_control)
+    })
+}
+
+/// `payload.flow`'s display data, as `lowerFlow` reports it: an optional
+/// `title` and `steps: [{id, label}]`, each a bounded display string, step
+/// ids unique. Display-only: nothing that runs reads them. Returns the title.
+fn display(flow: Option<&Value>, findings: &mut Vec<RefusalDiagnostic>) -> Option<String> {
+    let object = flow?.as_object()?;
+    for key in object
+        .keys()
+        .filter(|key| !["id", "version", "title", "steps"].contains(&key.as_str()))
+    {
+        findings.push(error(
+            codes::SHAPE_INVALID,
+            format!("flow has id, version, title and steps, not {key:?}"),
+            format!("/flow/{key}"),
+        ));
+    }
+    let title = object.get("title").map(|title| {
+        if !label_ok(title.as_str()) {
+            findings.push(error(
+                codes::LABEL_INVALID,
+                format!("a flow title is 1 to {MAX_LABEL_CHARS} characters after trimming, without control characters"),
+                "/flow/title",
+            ));
+        }
+        title.as_str().unwrap_or_default().trim().to_owned()
+    });
+    if let Some(steps) = object.get("steps") {
+        let Some(steps) = steps.as_array() else {
+            findings.push(error(
+                codes::SHAPE_INVALID,
+                "flow.steps is a list of {id, label}",
+                "/flow/steps",
+            ));
+            return title;
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for (index, step) in steps.iter().enumerate() {
+            let at = format!("/flow/steps/{index}");
+            let id = step.get("id").and_then(Value::as_str);
+            let well_formed = step.as_object().is_some_and(|step| step.len() == 2)
+                && id.is_some_and(|id| !id.is_empty() && seen.insert(id.to_owned()));
+            if !well_formed {
+                findings.push(error(
+                    codes::SHAPE_INVALID,
+                    "a step is {id, label} with a unique id",
+                    at.clone(),
+                ));
+            }
+            if !label_ok(step.get("label").and_then(Value::as_str)) {
+                findings.push(error(
+                    codes::LABEL_INVALID,
+                    format!("a step label is 1 to {MAX_LABEL_CHARS} characters after trimming, without control characters"),
+                    format!("{at}/label"),
+                ));
+            }
+        }
+    }
+    title
 }
 
 /// Whether `(function, version)` is a registered built-in or an installed,
