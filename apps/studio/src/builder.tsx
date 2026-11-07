@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { list, modKey, sameValue, type Issue } from "@/lib/editor"
 import { QuestionCard, questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
+import { RunQuestion } from "./run.tsx"
 
 /** What a question can be built from, as the Worker serves it (`GET /api/questions/catalog`). */
 export interface QuestionCatalog {
@@ -17,6 +18,8 @@ export interface QuestionCatalog {
   readonly operators: readonly string[]
   /** The cell's admitted question: its IR version, calendar and freshness are reused as they are. */
   readonly example: { readonly irVersion: string; readonly calendar: string; readonly freshness: unknown }
+  /** The declarations an answer to a built question is read with (units, ratios, labels). */
+  readonly declarations: { readonly metrics: readonly unknown[]; readonly objectType: unknown }
 }
 
 export interface Condition { readonly property: string; readonly operator: string; readonly value: string }
@@ -61,7 +64,9 @@ export function buildQuestion(draft: Draft, catalog: QuestionCatalog) {
  * groupBy, filter) and the checker's own (metrics, dimensions, filters) place.
  */
 export function fieldOf(pointer: string | null): string | null {
-  const [, , , section, index] = (pointer ?? "").split("/")
+  const parts = (pointer ?? "").split("/").slice(1)
+  // The checker's pointers start at the checked document (/questions/0/...), the cell's evaluate route at /question.
+  const [section, index] = parts[0] === "questions" ? parts.slice(2) : parts[0] === "question" ? parts.slice(1) : parts
   if (section === "aggregate" || section === "metrics") return index === undefined ? "measures" : `measure.${index}`
   if (section === "groupBy" || section === "dimensions") return "by"
   if (section === "filter" || section === "filters") return index === undefined ? "filters" : `filter.${index}`
@@ -265,9 +270,12 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
         {unsupported && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{unsupported}</p>}
         {checked.data === undefined && checked.error === null && !(check.isPending && check.variables === draft) && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
         {checked.error && <p role="alert" className="text-destructive">{checked.error.message}</p>}
-        {checked.data && <ValidationPanel issues={issues} title="The checker refused this question" />}
-        {checked.data && <QuestionCard verdict={checked.data} />}
+        {/* One place for a refusal: the panel links each finding to its field; its codes are under Details. */}
+        {checked.data && !checked.data.admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{checked.data.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
+        {checked.data?.admitted && <QuestionCard verdict={checked.data} />}
         {/* Only the question the checker admitted, and only while the form still shows it. */}
+        {/* Run: the question exactly as the checker admitted it, while the form still shows it. */}
+        {checked.data?.admitted && check.variables && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
         {onUse && checked.data?.admitted && check.variables && <Button type="button" disabled={unsupported !== undefined} onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
         {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
       </div>
