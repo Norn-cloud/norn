@@ -1,7 +1,7 @@
 import { expect, jest, spyOn, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
-import { sessionId, verdictOf } from "../src/agent/verdict.ts"
+import { sessionId, stepOf, verdictOf } from "../src/agent/verdict.ts"
 import { Chat } from "@ai-sdk/react"
 import type { UIMessage } from "ai"
 import { AGENT_UNSERVED, AgentPanel, agentServedBy, PROBE_DEADLINE_MS, canSend, probeAgentRoute, sendsOnEnter, type AgentState } from "../src/agent/panel.tsx"
@@ -21,6 +21,7 @@ test("a refusal shows the law in its own words and the checker's reason", () => 
   expect(html).toContain("Order quantity must be positive")
   expect(html).toContain("A purchase promises a positive quantity.")
   expect(html).toContain("law.model.predicate_type")
+  expect(html).toContain("self.ordered &gt; 0")
 })
 
 test("only the Worker's verdict shapes are read as verdicts", () => {
@@ -210,4 +211,12 @@ test("aborting clears the deadline timer, even when the fetch ignores the abort"
     set.mockRestore()
     clear.mockRestore()
   }
+})
+
+test("the progress steps follow the stream: drafting, then checking, then the answer", () => {
+  const turn = (parts: unknown[]) => ({ id: "m", role: "assistant", parts }) as never
+  expect(stepOf(undefined)).toBe(0)
+  expect(stepOf(turn([{ type: "text", text: "Let me look." }]))).toBe(0)
+  expect(stepOf(turn([{ type: "tool-propose", toolCallId: "t", state: "input-available", input: {} }]))).toBe(1)
+  expect(stepOf(turn([{ type: "tool-propose", toolCallId: "t", state: "output-available", input: {}, output: refusal }]))).toBe(2)
 })
