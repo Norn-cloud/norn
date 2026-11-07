@@ -1588,9 +1588,17 @@ where
                     }
                 }
                 for member in commit.predicate_reads.iter().flat_map(|read| &read.members) {
-                    reader
-                        .refuse_disputed_subject(&member.key)
-                        .map_err(CommitError::Host)?;
+                    // A member of no stored type holds no subject to dispute;
+                    // the kernel's shape check refuses it.
+                    if reader
+                        .model()
+                        .object_types()
+                        .any(|defined| defined.name == member.key.object_type)
+                    {
+                        reader
+                            .refuse_disputed_subject(&member.key)
+                            .map_err(CommitError::Host)?;
+                    }
                 }
             }
             let model = reader.model();
