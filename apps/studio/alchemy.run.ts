@@ -1,7 +1,7 @@
 import alchemy from "alchemy"
 import { D1Database, EmailSender, Vite } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, deployTarget, scanState, workspaceEnvironments } from "./deploy-target.ts"
+import { authDeploy, deployTarget, scanState } from "./deploy-target.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
@@ -20,8 +20,6 @@ import { authDeploy, deployTarget, scanState, workspaceEnvironments } from "./de
 // (path /auth: NORN_STUDIO_<STAGE>_BETTER_AUTH_SECRET, NORN_STUDIO_<STAGE>_ALCHEMY_PASSWORD).
 const target = deployTarget(process.env)
 const auth = authDeploy(process.env, target)
-// Which cell each workspace reads: the operator's map, the preview map off production, none on production by default.
-const environments = workspaceEnvironments(process.env, target)
 // The scan below must see the secret's value, so keep a copy before taking it out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
@@ -52,7 +50,6 @@ export const studio = await Vite("studio", {
     AUTH_DB: authDb,
     BETTER_AUTH_SECRET: alchemy.secret(auth.secret),
     BETTER_AUTH_URL: auth.url,
-    STUDIO_WORKSPACE_ENVIRONMENTS: environments,
     // Magic links need a Cloudflare Email Service sender on the domain; without one they refuse.
     ...auth.emailFrom === undefined ? {} : { EMAIL: EmailSender({ allowedSenderAddresses: [auth.emailFrom] }), EMAIL_FROM: auth.emailFrom },
   },

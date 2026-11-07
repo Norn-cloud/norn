@@ -1,21 +1,6 @@
 import { activeMembership, type Auth } from "./auth.ts"
 
 /**
- * The data environment (cell) a workspace's data lives in, from the Worker's deploy-time binding only: a JSON map from
- * organization id to environment id (`STUDIO_WORKSPACE_ENVIRONMENTS`, set per stage by alchemy.run.ts). Nothing the
- * client sends is read, and the Worker has no default of its own. An unset or malformed map, an unmapped workspace or
- * an empty value fails closed: no environment.
- */
-export function workspaceEnvironment(orgId: string, configured?: string): string | null {
-  if (configured === undefined) return null
-  let mapping: unknown
-  try { mapping = JSON.parse(configured) } catch { return null }
-  if (typeof mapping !== "object" || mapping === null || Array.isArray(mapping) || !Object.hasOwn(mapping, orgId)) return null
-  const value = (mapping as Record<string, unknown>)[orgId]
-  return typeof value === "string" && value.trim() !== "" ? value : null
-}
-
-/**
  * Who a request acts as, resolved on the server from the verified session or
  * API key, never from anything the client asserts. The Norn host turns this
  * into a principal through its declared role table (norn-api `principal`);

@@ -1997,7 +1997,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
   process.env.GITHUB_WORKFLOW_SHA='e'.repeat(40);
   const path=process.env.RUNNER_TEMP+'/maintainer-approval.json', evidence={};
   let runs,jobs,history,live,payloads,clock,nextRun,modeShared,unavailable=false,readFailure=false,paging=false,shifted=false;
-  let outputs={}, admission=0, groupAdmission=0, virtualNow=0;
+  let outputs={}, admission=0, groupAdmission=0, virtualNow=0, lagMs=0, injectFailure=false, flickerArm=null, flicker=null;
   let objects,retained,objectCounter,jobReads=0,largeHistory=false,releasing=0,releaseReads=0;
   Date.now=()=>virtualNow;
   globalThis.setTimeout=(callback,ms)=>{virtualNow+=ms;queueMicrotask(callback);return 0};
@@ -2012,7 +2012,12 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     getCollaboratorPermissionLevel:async({username})=>({data:{permission:username==='owner'?'admin':'read'}}),
     createCommitStatus:async value=>{
       if(unavailable)throw {status:503};
-      history.push({...value,id:history.length+1,created_at:clock,creator:{login:'github-actions[bot]'}});
+      history.push({...value,id:history.length+1,created_at:clock,at:virtualNow,creator:{login:'github-actions[bot]'}});
+      // Arm a one-read flicker: the next listing shows one extra row that later listings omit.
+      if(flickerArm&&value.sha===groupHead&&value.context.startsWith('rights-checkpoint/publication/')){flicker={kind:flickerArm,tree:value.context.split('/').slice(0,3).join('/')};flickerArm=null}
+      // A concurrent verdict lands right after the evaluation fixed its publication checkpoint.
+      if(injectFailure&&value.sha===groupHead&&value.context.startsWith('rights-checkpoint/publication/')){injectFailure=false;
+        history.push({sha:groupHead,state:'failure',context:'trusted-policy',description:'{}',target_url:'concurrent',id:history.length+1,created_at:clock,at:virtualNow,creator:{login:'github-actions[bot]'}})}
     },
     listCommitStatusesForRef:async({ref,page=1})=>({data:history.filter(row=>row.sha===ref).slice().reverse().slice((page-1)*100,page*100)}),
     getContent:async({ref,path})=>{
@@ -2049,7 +2054,13 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     listJobsForWorkflowRunAttempt:function attemptJobs(){}
   }},
   paginate:async(method,args)=>{
-    if(method===github.rest.repos.listCommitStatusesForRef)return history.filter(row=>row.sha===args.ref).slice().reverse();
+    if(method===github.rest.repos.listCommitStatusesForRef){
+      const listed=history.filter(row=>row.sha===args.ref&&!(lagMs&&row.context.startsWith('rights-checkpoint/publication/')&&virtualNow-row.at<lagMs)).slice().reverse();
+      if(flicker&&args.ref===groupHead){const {kind,tree}=flicker;flicker=null;
+        listed.unshift(kind==='failure'?{sha:groupHead,state:'failure',context:'trusted-policy',description:'{}',target_url:'flicker',id:1e6+history.length,creator:{login:'github-actions[bot]'}}
+          :{sha:groupHead,state:'success',context:tree+'/999/1',description:JSON.stringify({v:4,d:'f'.repeat(64),f:0}),id:1e6+history.length,creator:{login:'github-actions[bot]'}})}
+      return listed;
+    }
     if(method===github.rest.actions.listJobsForWorkflowRunAttempt){
       jobReads++;
       if(args.run_id===releasing&&++releaseReads===2){
@@ -2174,6 +2185,45 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
       const verdicts=history.slice(start).filter(row=>row.sha===groupHead&&row.context==='trusted-policy').map(row=>row.state);
       assert(verdicts.length>=2&&verdicts.slice(0,-1).every(state=>state==='pending'),'lone group must only see pending before its verdict: '+verdicts);
       assert.equal(verdicts.at(-1),'success','a clean lone group must publish success');
+    }
+    // A publication checkpoint that lists late is re-read, at most three times with backoff:
+    // the same lone group still publishes success.
+    {
+      lagMs=3000;const start=history.length;
+      await collect('group');
+      context.runId=admission;context.payload={workflow_run:{id:groupAdmission}};process.env.GITHUB_RUN_ATTEMPT='1';
+      await execute(programs.groupSuccess);lagMs=0;
+      const verdicts=history.slice(start).filter(row=>row.sha===groupHead&&row.context==='trusted-policy').map(row=>row.state);
+      assert.equal(verdicts.at(-1),'success','a lagging checkpoint read must recover within the bounded retry');
+      assert(verdicts.slice(0,-1).every(state=>state==='pending'));
+    }
+    // A checkpoint that never lists within the bound fails closed after exactly the bounded wait.
+    {
+      lagMs=60000;const before=virtualNow;
+      await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);lagMs=0;
+      assert(virtualNow-before>=6000&&virtualNow-before<60000,'probe must retry with backoff, then stop');
+    }
+    // What the probe observes is sticky. While its own checkpoint has not listed yet (3 s
+    // lag), a failure verdict or another run's newer checkpoint lists once and is omitted by
+    // every later listing. The probe still refuses: a later, staler listing can never turn
+    // an observed change back into success.
+    for(const kind of ['failure','newer']){
+      flickerArm=kind;lagMs=3000;const before=virtualNow;
+      await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);lagMs=0;
+      assert(!flickerArm&&!flicker,'the flicker must have been listed once');
+      if(kind==='failure')assert.equal(virtualNow,before,'an observed failure-version change refuses at once');
+    }
+    // A real change between evaluation and publication (here a new failure verdict) is never
+    // retried into success: the probe refuses, and the final reporter publishes failure.
+    {
+      injectFailure=true;
+      await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);
+      assert(!injectFailure,'the change must have been injected');
+      const start=history.length;
+      context.runId=admission;context.payload={workflow_run:{id:groupAdmission}};process.env.GITHUB_RUN_ATTEMPT='1';
+      await execute(programs.groupSuccess);
+      const verdicts=history.slice(start).filter(row=>row.sha===groupHead&&row.context==='trusted-policy').map(row=>row.state);
+      assert.equal(verdicts.at(-1),'failure','a changed checkpoint must never publish success');
     }
     clock='2026-11-03T03:03:00Z';
     const fresh=comment(4,'/ack-rights '+head,clock);live.set(4,fresh);await record(nextRun++,payload(fresh,'created',true,undefined,modeShared?8:7));
