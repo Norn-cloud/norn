@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { DEMO_ORG, parseMembers, seedDemoOrg } from "../../scripts/seed-demo-org-core.ts"
 
 test("D1 binding rolls back an injected second grant failure and then provisions both members", async () => {
-  const mf = new Miniflare({ modules: true, script: "export default { fetch() { return new Response('ok') } }", compatibilityDate: "2026-10-20", d1Databases: { DB: "00000000-0000-0000-0000-000000000001" } })
+  const mf = new Miniflare({ modules: true, script: "export default { fetch() { return new Response('ok') } }", compatibilityDate: "2026-07-01", d1Databases: { DB: "00000000-0000-0000-0000-000000000001" } })
   try {
     const db = await mf.getD1Database("DB") as unknown as D1Database
     await db.exec(readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8"))
