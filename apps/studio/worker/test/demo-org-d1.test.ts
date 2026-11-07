@@ -8,7 +8,7 @@ test("D1 binding rolls back an injected second grant failure and then provisions
   const mf = new Miniflare({ modules: true, script: "export default { fetch() { return new Response('ok') } }", compatibilityDate: "2026-07-01", d1Databases: { DB: "00000000-0000-0000-0000-000000000001" } })
   try {
     const db = await mf.getD1Database("DB") as unknown as D1Database
-    await db.exec(readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8"))
+    await db.exec(readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8").split("\n").filter((line) => line.trim() && !line.trim().startsWith("--")).join("\n"))
     for (const [id, email] of [["a", "analyst@example.com"], ["v", "viewer@example.com"]] as const) {
       await db.prepare(`insert into "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") values (?, ?, ?, 1, ?, ?)`).bind(id, id, email, "2026-01-01", "2026-01-01").run()
     }
