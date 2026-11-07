@@ -55,6 +55,8 @@ describe("Effect-profile business expressions through Rust admission and eval", 
     ["membership", '["ready", "open"].includes("open") && "norn".includes("or")'],
     ["nullable", '((true ? null : "value") ?? "fallback") === "fallback"'],
     ["date comparison", 'Norn.dateBefore("2026-11-06", "2026-11-08")'],
+    ["negated date comparison", '!Norn.dateBefore("2026-11-08", "2026-11-06")'],
+    ["compared date comparison", 'Norn.dateBefore("2026-11-08", "2026-11-06") === false'],
     ["conditional", 'input.event.kind === "start" ? true : false'],
   ] as const
   for (const [name, expression] of examples) test(name, () => {
@@ -176,6 +178,14 @@ test("TXN-ATOMIC-1 authoring retains explicit proposal link sources", () => {
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind: "action", payload: expect.objectContaining({createLinks: [expect.objectContaining({source: {objectType: "demo.Order", idField: "number"}})]})}))
 })
 
+
+test("#1109: dateBefore renders as a comparison, so a negated or compared one is parenthesised", () => {
+  const scope = new Map()
+  const before = E.call("dateBefore", E.lit("2026-11-08"), E.lit("2026-11-06"))
+  expect(E.render(before, scope)).toBe("date('2026-11-08') < date('2026-11-06')")
+  expect(E.render(E.not(before), scope)).toBe("not (date('2026-11-08') < date('2026-11-06'))")
+  expect(E.render(E.eq(before, E.lit(false)), scope)).toBe("(date('2026-11-08') < date('2026-11-06')) == false")
+})
 
 test("declared array indexes refuse while bounded inline lists retain item typing", () => {
   const schema = S.record({rows: S.array(S.record({value: S.number}))})

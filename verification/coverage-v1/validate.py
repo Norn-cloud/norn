@@ -624,19 +624,49 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
 SUPERSEDED_GUARD = "steps.pr.outputs.superseded != 'true'"
 
 
+# GitHub compiles a `script:` containing `${{ }}` into one format() expression: literal text has
+# every `'`, `{` and `}` doubled, each interpolation becomes `{N}` plus a `, <expr>` argument, and
+# the whole must stay under 21,000 characters or GitHub rejects the workflow file, silently
+# for workflow_run triggers (#1067 reached 21,034 and stalled the merge queue). Keep a margin.
+EXPRESSION_CAP = 20_500
+
+
+def actions_expression_length(script: str) -> int:
+    """Length of the format() expression GitHub builds from an interpolated script."""
+    parts = re.split(r"\$\{\{(.*?)\}\}", script, flags=re.S)
+    literal, expressions = "".join(parts[0::2]), [part.strip() for part in parts[1::2]]
+    escaped = len(literal) + literal.count("'") + literal.count("{") + literal.count("}")
+    placeholders = sum(len(f"{{{index}}}") for index in range(len(expressions)))
+    return len("format('')") + escaped + placeholders + sum(len(", ") + len(expression) for expression in expressions)
+
+
+def validate_expression_lengths(sources: dict[str, str]) -> None:
+    for path, text in sources.items():
+        for name, job in yaml.load(text, Loader=WorkflowLoader).get("jobs", {}).items():
+            for step in job.get("steps", []):
+                script = step.get("with", {}).get("script", "")
+                if "${{" in script:
+                    length = actions_expression_length(script)
+                    require(length <= EXPRESSION_CAP,
+                            f"{path}::{name}::{step.get('name', step.get('uses'))}: interpolated script is a "
+                            f"{length}-character expression, over the {EXPRESSION_CAP} cap (GitHub rejects 21,000)")
+
+
 def validate_rights_contract(source: str, merge_source: str | None = None) -> None:
     """The API collector and binary invocation remain base-owned and head-bound."""
     if merge_source is None:
         merge_source = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text()
+    validate_expression_lengths({".github/workflows/ci-policy.yml": source,
+                                 ".github/workflows/trusted-merge-group.yml": merge_source})
     # Pin complete base-owned API programs, including append-only history reads
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
         'Resolve the pull request': ('ddaf2a910172cfbad41ea7aa5e247d3893e89c7682f173ec3925f64619026d67', ['script', 'retries'], False, None),
         'Capture the saved rights payload': ('748661200b99a0ebf6859d5638816d6ba7b60af7fb1818d2aabe9d14ff46883d', ['script'], False, None),
         'Persist the target rights ledger': ('8b60fe98a60613841c5a345cb5860f8879635d37bede68583d372720c24e30cd', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('acae005141be56809dfd78f692a0b26c1b3771de1eef3270345d5e3969c06fb4', ['script'], False, SUPERSEDED_GUARD),
+        'Record admin approvals of the exact PR head': ('96ea6e24de27317da49d4f4e560c65e8bcdb1d2906df26b4e9315ca3fd01db28', ['script'], False, SUPERSEDED_GUARD),
         'Report trusted policy on the exact PR head': ('223c0970b6a8f6493fcca9e8a3964528a23908cd6fa9db55c373a9db8b52985d', ['script', 'retries'], False, 'always() && ' + SUPERSEDED_GUARD),
-        'Record admin approvals of the queued heads': ('a430262dd43dd665a39e69a549bd087de085cf7b81deea7547810f8f46d28967', ['script', 'retries'], False, None),
+        'Record admin approvals of the queued heads': ('790d6b9e3096f2c970693289a157874ff22f515da41aa665baaa10241d2fca2d', ['script', 'retries'], False, None),
         'Report trusted policy on the group head': ('ec9e3099f381b8c71706ab6b1bd0b6c56cc3a280d67f66c956988f30650199c2', ['script', 'retries'], False, 'always()'),
     }
     def api_step(step: dict) -> None:
