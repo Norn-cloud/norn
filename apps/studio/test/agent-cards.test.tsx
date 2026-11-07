@@ -1,10 +1,10 @@
-import { expect, test } from "bun:test"
+import { expect, jest, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, verdictOf } from "../src/agent/verdict.ts"
 import { Chat } from "@ai-sdk/react"
 import type { UIMessage } from "ai"
-import { AGENT_UNSERVED, AgentPanel, agentServedBy, canSend, probeAgentRoute, sendsOnEnter, type AgentState } from "../src/agent/panel.tsx"
+import { AGENT_UNSERVED, AgentPanel, agentServedBy, PROBE_DEADLINE_MS, canSend, probeAgentRoute, sendsOnEnter, type AgentState } from "../src/agent/panel.tsx"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
 const refusal = {
@@ -146,4 +146,37 @@ test("sending stays closed while the agent probe is pending, and after it fails 
   const html = renderToStaticMarkup(<AgentPanel state={pending} />)
   expect(html).toMatch(/<fieldset disabled=""/)
   expect(html).toContain("Checking the agent service…")
+})
+
+// Lets pending promise callbacks run (the probe's .finally adds hops) without advancing fake time.
+const settle = async () => { for (let hop = 0; hop < 10; hop += 1) await Promise.resolve() }
+
+test("a probe whose request never answers settles as not served at the deadline, and aborts the request", async () => {
+  jest.useFakeTimers()
+  try {
+    let request: AbortSignal | undefined
+    let answer: boolean | undefined
+    void probeAgentRoute((_input, init) => { request = init?.signal ?? undefined; return new Promise<Response>(() => {}) }).then((served) => { answer = served })
+    jest.advanceTimersByTime(PROBE_DEADLINE_MS - 1)
+    await settle()
+    expect(answer).toBeUndefined()
+    jest.advanceTimersByTime(1)
+    await settle()
+    expect(answer).toBe(false)
+    expect(request?.aborted).toBe(true)
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
+test("unmounting aborts the probe's request, and the probe settles as not served", async () => {
+  const unmounted = new AbortController()
+  let request: AbortSignal | undefined
+  const probe = probeAgentRoute((_input, init) => {
+    request = init?.signal ?? undefined
+    return new Promise<Response>((_resolve, reject) => request?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))))
+  }, { signal: unmounted.signal })
+  unmounted.abort()
+  expect(request?.aborted).toBe(true)
+  expect(await probe).toBe(false)
 })

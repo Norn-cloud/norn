@@ -66,10 +66,29 @@ export const agentServedBy = (status: number | "unreachable"): boolean => status
 
 export const AGENT_UNSERVED = "The assistant needs the agent service, which this deployment does not serve yet."
 
-/** The one probe: what the agent route answers, or "unreachable" when the request fails. */
-export const probeAgentRoute = (fetcher: (input: string, init?: RequestInit) => Promise<Response> = fetch): Promise<boolean> =>
-  fetcher("/api/agent", { method: "GET", headers: { accept: "application/json" } })
-    .then((response) => agentServedBy(response.status), () => agentServedBy("unreachable"))
+/** How long the probe waits before the route counts as not served. */
+export const PROBE_DEADLINE_MS = 5_000
+
+/**
+ * The one probe: whether the agent route is served. It always settles, and
+ * fails closed: a failed request, an abort (the panel unmounted) or no answer
+ * within the deadline all mean not served.
+ */
+export function probeAgentRoute(
+  fetcher: (input: string, init?: RequestInit) => Promise<Response> = fetch,
+  { signal, timeoutMs = PROBE_DEADLINE_MS }: { readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
+): Promise<boolean> {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  signal?.addEventListener("abort", abort, { once: true })
+  return new Promise<boolean>((resolve) => {
+    // A timer, not AbortSignal.timeout, so the deadline also runs under fake timers.
+    const deadline = setTimeout(() => { controller.abort(); resolve(false) }, timeoutMs)
+    fetcher("/api/agent", { method: "GET", headers: { accept: "application/json" }, signal: controller.signal })
+      .then((response) => agentServedBy(response.status), () => agentServedBy("unreachable"))
+      .then((served) => { clearTimeout(deadline); resolve(served) })
+  }).finally(() => signal?.removeEventListener("abort", abort))
+}
 
 /** Sending is open only once the probe has said the route is served: never while it is pending or after it failed. */
 export const canSend = (agentServed: boolean | undefined, text: string, busy: boolean): boolean =>
@@ -82,9 +101,9 @@ export function useAgentState(): AgentState {
   const [agentServed, setAgentServed] = useState<boolean>()
   // Probe the agent route once per page; it takes only POST, so any answer but 404 or 503 means it is served.
   useEffect(() => {
-    let current = true
-    void probeAgentRoute().then((served) => { if (current) setAgentServed(served) })
-    return () => { current = false }
+    const unmounted = new AbortController()
+    void probeAgentRoute(fetch, { signal: unmounted.signal }).then((served) => { if (!unmounted.signal.aborted) setAgentServed(served) })
+    return () => unmounted.abort()
   }, [])
   return { chat, input, setInput, stopped, setStopped, agentServed }
 }
