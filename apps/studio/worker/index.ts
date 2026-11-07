@@ -2,6 +2,7 @@ import { cellScope } from "./scope.ts"
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
 import { connectors } from "./connectors.ts"
+import { passwordScrypt } from "./password.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -13,6 +14,8 @@ export interface Env {
   /** Cloudflare Email Service binding and sender; both absent until a sender is enabled. */
   readonly EMAIL?: { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> }
   readonly EMAIL_FROM?: string
+  /** "js" selects the pure-JS scrypt (set by the celld config); Cloudflare leaves it unset. */
+  readonly AUTH_SCRYPT?: string
   /** The Norn cell host (service binding); absent until a host is connected to this stage. */
   readonly NORN_HOST?: Fetcher
   /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
@@ -42,7 +45,7 @@ function auth(env: Env): Auth {
   }
   const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...gateway === undefined ? {} : { gateway } })
+  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...gateway === undefined ? {} : { gateway } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
