@@ -296,3 +296,18 @@ fn object_links_and_lineage_routes_dispatch() {
     );
     assert_eq!(status, 404);
 }
+
+/// A path segment that is not UTF-8 once decoded names nothing: it refuses
+/// rather than alias another id through the replacement character.
+#[test]
+fn a_non_utf8_object_path_segment_refuses() {
+    let demo = host(NativeEngine::open_in_memory().unwrap());
+    for path in [
+        "/v1/objects/canon.Party/%FF",
+        "/v1/objects/canon.Party/%FE",
+        "/v1/objects/canon%FF",
+    ] {
+        let (status, body) = get(&demo, path, SCOPE, VIEWER);
+        assert_eq!(status, 400, "{path}: {body}");
+    }
+}

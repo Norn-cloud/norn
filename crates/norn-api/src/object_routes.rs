@@ -655,9 +655,12 @@ pub fn get_object_query_within<E: SqlEngine>(
 
 /// HOST-READ-3: one object as a grid shows it (D67): withheld under
 /// Population alone; absent, invisible and quarantined objects refuse alike.
+/// Row authorization runs outside the cell lock; the row and its quarantine
+/// are read under one snapshot.
 ///
 /// # Errors
-/// As [`get_object`].
+/// As [`get_object`], and a commit between the two locked reads (409
+/// `object.snapshot_moved`, `retryable`).
 pub fn get_queried_object<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -667,23 +670,26 @@ pub fn get_queried_object<E: SqlEngine>(
     access: &dyn ObjectAccess,
 ) -> Result<NornQueriedRecord, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
-    let cell = host.cell()?;
-    let reader = cell.store().read();
-    if !reader.model().has_type(object_type) {
-        return Err(not_found());
-    }
-    let row = reader
-        .object(MAIN_WORLD, object_type, id)
-        .map_err(Refusal::host)?
-        .ok_or_else(not_found)?;
+    let mut start = None;
+    let row = locked(host, access, &mut start, |reader| {
+        if !reader.model().has_type(object_type) {
+            return Err(not_found());
+        }
+        reader
+            .object(MAIN_WORLD, object_type, id)
+            .map_err(Refusal::host)
+    })?
+    .ok_or_else(not_found)?;
     if !permitted(host, access, &actor, &row, Population) {
         return Err(not_found());
     }
     let readable = permitted(host, access, &actor, &row, Values);
     if readable
-        && reader
-            .observation_is_quarantined(MAIN_WORLD, &row)
-            .map_err(Refusal::host)?
+        && locked(host, access, &mut start, |reader| {
+            reader
+                .observation_is_quarantined(MAIN_WORLD, &row)
+                .map_err(Refusal::host)
+        })?
     {
         return Err(not_found());
     }

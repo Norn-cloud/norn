@@ -234,13 +234,15 @@ fn objects<E: SqlEngine>(
     query: &str,
 ) -> Result<String, Refusal> {
     // Path segments decode percent escapes only: `&`, `=` and `+` are literal
-    // in a path, never query syntax.
+    // in a path, never query syntax. A segment that is not UTF-8 once decoded
+    // names nothing: it refuses rather than alias another id.
     let decoded = |text: &str| {
         percent_encoding::percent_decode_str(text)
-            .decode_utf8_lossy()
-            .into_owned()
+            .decode_utf8()
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
     };
-    let object_type = decoded(object_type);
+    let object_type = decoded(object_type)?;
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
             query,
@@ -268,7 +270,7 @@ fn objects<E: SqlEngine>(
             &scope,
             actor,
             &object_type,
-            &decoded(id),
+            &decoded(id)?,
             &params,
             &CellObjectAccess,
         )?);
@@ -284,7 +286,7 @@ fn objects<E: SqlEngine>(
             &scope,
             actor,
             &object_type,
-            &decoded(id),
+            &decoded(id)?,
             &CellObjectAccess,
         )?);
     }
@@ -299,7 +301,7 @@ fn objects<E: SqlEngine>(
             &scope,
             actor,
             &object_type,
-            &decoded(id),
+            &decoded(id)?,
             &CellObjectAccess,
         )?;
         return document_json(&record);

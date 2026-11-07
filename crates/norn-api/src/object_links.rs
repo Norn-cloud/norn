@@ -443,6 +443,7 @@ fn requested_row<E: SqlEngine>(
 /// # Errors
 /// A denied gate (the opaque 403); an absent, quarantined, withheld or
 /// source-withheld object, or one without a retained source bundle (one 404);
+/// a commit between the row and provenance reads (409 `object.snapshot_moved`);
 /// or a host failure.
 pub fn get_object_lineage<E: SqlEngine>(
     host: &DevHost<E>,
@@ -453,31 +454,38 @@ pub fn get_object_lineage<E: SqlEngine>(
     access: &dyn ObjectAccess,
 ) -> Result<InstanceSourceProvenance, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
-    let cell = host.cell()?;
-    let reader = cell.store().read();
-    if !reader.model().has_type(object_type) {
-        return Err(not_found());
-    }
-    let row = reader
-        .object(MAIN_WORLD, object_type, id)
-        .map_err(Refusal::host)?
-        .ok_or_else(not_found)?;
+    let mut start = None;
+    let row = locked(host, access, &mut start, |reader| {
+        if !reader.model().has_type(object_type) {
+            return Err(not_found());
+        }
+        reader
+            .object(MAIN_WORLD, object_type, id)
+            .map_err(Refusal::host)
+    })?
+    .ok_or_else(not_found)?;
+    // Authorization runs outside the cell lock; the provenance is read under
+    // the same snapshot as the row.
     let disclosed = [Population, Values, Sources]
         .into_iter()
         .all(|capability| permitted(host, access, &actor, &row, capability));
-    if !disclosed
-        || reader
-            .observation_is_quarantined(MAIN_WORLD, &row)
-            .map_err(Refusal::host)?
-    {
+    if !disclosed {
         return Err(not_found());
     }
-    let mut budget = DecodeBudget::new(&ReactiveLimits::from_profile(
-        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
-    ));
     let fact = norn_ir::FactRef::new(row.object_type.as_str(), id, row.version);
-    reader
-        .instance_source_provenance(MAIN_WORLD, &fact, &mut budget, |_| Ok(true))
-        .map_err(Refusal::host)?
-        .ok_or_else(not_found)
+    locked(host, access, &mut start, |reader| {
+        if reader
+            .observation_is_quarantined(MAIN_WORLD, &row)
+            .map_err(Refusal::host)?
+        {
+            return Err(not_found());
+        }
+        let mut budget = DecodeBudget::new(&ReactiveLimits::from_profile(
+            &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+        ));
+        reader
+            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget, |_| Ok(true))
+            .map_err(Refusal::host)?
+            .ok_or_else(not_found)
+    })
 }
