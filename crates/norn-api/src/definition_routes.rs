@@ -189,6 +189,7 @@ pub type AgentChecker = fn(&str, &AgentAdmissionContext) -> Vec<norn_checker::Di
 pub struct DefinitionKinds {
     agent: Option<(AgentChecker, AgentAdmissionContext)>,
     restater: Option<Restater>,
+    roles: Vec<String>,
 }
 
 /// The deterministic plain-words restatement generator (D59), shared with
@@ -200,6 +201,14 @@ pub struct DefinitionKinds {
 pub type Restater = fn(&str, &str, &[MetricDefinition]) -> Result<String, String>;
 
 impl DefinitionKinds {
+    /// Declare the roles a binding's `runRole` may name: the cell's own role
+    /// table, never the request. Without any, every binding is refused.
+    #[must_use]
+    pub fn with_roles(mut self, roles: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.roles = roles.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Register the restatement generator that verifies sign-offs.
     #[must_use]
     pub fn with_restater(mut self, restate: Restater) -> Self {
@@ -219,7 +228,7 @@ impl DefinitionKinds {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdmitDefinitionRequest {
-    /// `dashboard`, `question` or `agent`.
+    /// `dashboard`, `question`, `agent` or `binding`.
     pub kind: String,
     /// The definition id.
     pub id: String,
@@ -232,7 +241,7 @@ pub struct AdmitDefinitionRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstallDefinitionRequest {
-    /// `dashboard`, `question` or `agent`.
+    /// `dashboard`, `question`, `agent` or `binding`.
     pub kind: String,
     /// The definition id.
     pub id: String,
@@ -547,21 +556,62 @@ fn validate<E: SqlEngine>(
         }
         "agent" => {
             let (check, context) = kinds.agent.as_ref().ok_or_else(|| kind_unknown(kind))?;
+            // The tools an agent may name are the cell's installed, active
+            // bindings, resolved now; never the request's.
+            let context = AgentAdmissionContext {
+                bindings: installed_bindings(host)?,
+                ..context.clone()
+            };
             findings.extend(RefusalDiagnostic::from_checker(
-                &check(&canonical, context),
+                &check(&canonical, &context),
                 "",
             ));
         }
+        "binding" => {
+            let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
+            findings.extend(crate::binding_definitions::check(payload.get(), &roles));
+        }
         other => return Err(kind_unknown(other)),
     }
-    // A saved question's title is its QuestionIR name.
-    let title_member = if kind == "question" { "name" } else { "title" };
+    // A saved question's title is its QuestionIR name; a binding's its label.
+    let title_member = match kind {
+        "question" => "name",
+        "binding" => "label",
+        _ => "title",
+    };
     let title = value
         .get(title_member)
         .and_then(Value::as_str)
         .map(|title| title.trim().to_owned())
         .unwrap_or_default();
     Ok((Admitted { title, canonical }, findings))
+}
+
+/// The cell's installed, non-retired binding definitions as agent tool
+/// bindings.
+fn installed_bindings<E: SqlEngine>(host: &DevHost<E>) -> Result<Vec<AgentToolBinding>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    let mut bindings = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let page = reader
+            .retained_definitions("binding", false, after.as_deref(), MAX_LIST_LIMIT)
+            .map_err(Refusal::host)?;
+        for record in &page {
+            bindings.push(
+                crate::binding_definitions::agent_binding(
+                    &record.definition.id,
+                    &record.definition.payload,
+                )
+                .map_err(Refusal::host)?,
+            );
+        }
+        if page.len() < usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX) {
+            return Ok(bindings);
+        }
+        after = page.last().map(|record| record.definition.id.clone());
+    }
 }
 
 fn admitted(findings: &[RefusalDiagnostic]) -> bool {

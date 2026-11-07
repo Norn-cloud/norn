@@ -1032,7 +1032,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`dashboard`, `question` or `agent`."
+            "description": "`dashboard`, `question`, `agent` or `binding`."
           },
           "payload": {
             "type": "object",
@@ -1276,7 +1276,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`dashboard`, `question` or `agent`."
+            "description": "`dashboard`, `question`, `agent` or `binding`."
           },
           "payload": {
             "type": "object",
