@@ -1380,6 +1380,9 @@ fn bind_flat_input_aliases(mut environment: ZenTypeEnv) -> Option<ZenTypeEnv> {
         .fields
         .iter()
         .filter(|(name, _)| name.as_str() != "input" && name.as_str() != "slice")
+        // A declared operand (`aggregates` when the action declares any)
+        // keeps its name; the input field stays reachable as `input.<name>`.
+        .filter(|(name, _)| !environment.variables().contains_key(name.as_str()))
         .map(|(name, field)| (name.clone(), field.ty.clone()))
         .collect();
     for (name, ty) in aliases {

@@ -519,7 +519,18 @@ fn action_slice_findings(
 ) -> Vec<Diagnostic> {
     let mut findings = Vec::new();
     if !root.slice.is_empty() || !root.aggregates.is_empty() {
-        let slice = action_slice_types(artifact, root, model);
+        // An aggregate-only action has no slice to type; its aggregates report
+        // their own findings.
+        let slice = if root.slice.is_empty() {
+            ActionSliceTypes {
+                findings: Vec::new(),
+                records: BTreeMap::new(),
+                fields: BTreeMap::new(),
+                typed_slice: true,
+            }
+        } else {
+            action_slice_types(artifact, root, model)
+        };
         findings.extend(slice.findings);
         let aggregates = action_aggregate_types(artifact, root, model);
         findings.extend(aggregates.findings);

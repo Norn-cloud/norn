@@ -260,3 +260,44 @@ fn window_edges_must_declare_their_inclusivity() {
         );
     }
 }
+
+#[test]
+fn aggregate_only_actions_report_no_slice_findings_when_types_cannot_resolve() {
+    let mut documents = documents();
+    documents[0]["payload"]["objectType"]["properties"][0]["type"] =
+        json!({"kind": "ref", "name": "books.missing_type"});
+    let found = findings(documents);
+    assert!(
+        !found
+            .iter()
+            .any(|finding| finding.code == "artifact_set.action.invalid_slice"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn an_input_field_named_aggregates_stays_reachable_beside_the_operand() {
+    let with_aggregates = with_action(|action| {
+        action["inputSchema"]["properties"]["aggregates"] = json!({"type": "string"});
+        action["inputSchema"]["required"]
+            .as_array_mut()
+            .expect("required")
+            .push(json!("aggregates"));
+        action["preconditions"] = json!([
+            "aggregates.entries < input.limit",
+            "input.aggregates == \"x\""
+        ]);
+    });
+    assert_eq!(with_aggregates, []);
+
+    let without_aggregates = with_action(|action| {
+        action["inputSchema"]["properties"]["aggregates"] = json!({"type": "string"});
+        action["inputSchema"]["required"]
+            .as_array_mut()
+            .expect("required")
+            .push(json!("aggregates"));
+        action.as_object_mut().expect("action").remove("aggregates");
+        action["preconditions"] = json!(["aggregates == \"x\""]);
+    });
+    assert_eq!(without_aggregates, []);
+}
