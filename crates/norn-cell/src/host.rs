@@ -1579,6 +1579,11 @@ where
                             .map_err(CommitError::Host)?;
                     }
                 }
+                for member in commit.predicate_reads.iter().flat_map(|read| &read.members) {
+                    reader
+                        .refuse_disputed_subject(&member.key)
+                        .map_err(CommitError::Host)?;
+                }
             }
             let model = reader.model();
             let catalog = TypeCatalog::new(model.object_types())
