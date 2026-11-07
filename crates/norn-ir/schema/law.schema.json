@@ -259,6 +259,38 @@
             "property",
             "transitionId"
           ]
+        },
+        {
+          "description": "TRANSLATION-PRESERVES-1: the subject is the source contract, the law's\ncondition is admission, and `self` in each assignment is the source record.",
+          "type": "object",
+          "properties": {
+            "assignments": {
+              "description": "Total executable map from target property id to ZEN over the source.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ZenExpression"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "translation_preserves"
+            },
+            "observation": {
+              "description": "The named observation this law protects.",
+              "$ref": "#/$defs/TranslationObservation"
+            },
+            "targetType": {
+              "description": "Exact target object type, the target contract.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "targetType",
+            "assignments",
+            "observation"
+          ]
         }
       ]
     },
@@ -486,6 +518,30 @@
         "migration",
         "import",
         "system"
+      ]
+    },
+    "TranslationObservation": {
+      "description": "One named observation, read on each side of a translation and compared exactly.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable observation identity.",
+          "type": "string"
+        },
+        "source": {
+          "description": "ZEN over the source record.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "target": {
+          "description": "ZEN over the translated target record.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "target"
       ]
     },
     "ZenExpression": {

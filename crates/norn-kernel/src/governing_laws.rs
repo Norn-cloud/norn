@@ -134,7 +134,9 @@ fn supported(law: &LawIR) -> bool {
             LawResponse::Invariant { .. } => {
                 matches!(law.modality, LawModality::Always {}) && law.condition.is_none()
             }
-            LawResponse::Action { .. } | LawResponse::Transition { .. } => false,
+            LawResponse::Action { .. }
+            | LawResponse::Transition { .. }
+            | LawResponse::TranslationPreserves { .. } => false,
         }
 }
 
@@ -331,7 +333,9 @@ pub fn evaluate(
                         Ok(())
                     }
                 }
-                LawResponse::Action { .. } | LawResponse::Transition { .. } => {
+                LawResponse::Action { .. }
+                | LawResponse::Transition { .. }
+                | LawResponse::TranslationPreserves { .. } => {
                     return Err(LawEvaluationError::Unsupported(law.id));
                 }
             },
