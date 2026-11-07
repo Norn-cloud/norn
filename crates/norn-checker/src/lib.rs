@@ -88,6 +88,7 @@ pub mod metric_interchange;
 )]
 pub mod posting;
 pub mod table_analysis;
+pub mod tool_effect;
 mod unit_admission;
 mod unit_codes;
 pub use metric::check_metrics_and_questions;
