@@ -217,3 +217,17 @@ test("concurrent recovery creates one owner membership", async () => {
   expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 1 })
   expect(db.query(`select "status" from "workspace_provisioning"`).get()).toEqual({ status: "complete" })
 })
+
+
+test("workspace migration deduplicates by role, creation time, then id", () => {
+  const db = new Database(":memory:")
+  db.exec(MIGRATION)
+  db.exec(`insert into "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") values ('u', 'User', 'u@example.com', 1, '2020', '2020');
+    insert into "organization" ("id", "name", "slug", "createdAt") values ('o', 'Org', 'org', '2020');
+    insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values
+      ('viewer', 'o', 'u', 'viewer', '2010'), ('new-owner', 'o', 'u', 'owner', '2022'),
+      ('b-owner', 'o', 'u', 'owner', '2020'), ('a-owner', 'o', 'u', 'owner', '2020')`)
+  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
+  expect(db.query(`select "id", "role" from "member"`).all()).toEqual([{ id: "a-owner", role: "owner" }])
+  expect(() => db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('duplicate', 'o', 'u', 'member', '2025')`)).toThrow()
+})
