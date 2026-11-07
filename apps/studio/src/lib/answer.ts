@@ -4,10 +4,20 @@ import type { Answer, Metric, ObjectType, Question, QuestionAnswer } from "./tra
 import { measured, operandUnits } from "./units.ts"
 
 /** One output bucket with every number as the exact text the server sent. */
+/** What a bucket the server suppressed reads as, everywhere: never a blank or a 0 (D53, #1015). */
+export const SUPPRESSED = "Suppressed: fewer than 3 records"
+
 export interface Bucket {
   readonly key: string
   readonly label: string
+  /** The server's exact value, or `SUPPRESSED`. */
   readonly value: string
+  /**
+   * The server suppressed this bucket for this reader: fewer than 3 records,
+   * and the reader lacks Values on one of them. It sent no value and no
+   * totals; its members are still listed.
+   */
+  readonly suppressed?: boolean
   /** One sum, or numerator then denominator, as the server wrote them, each with its declared unit. */
   readonly totals: readonly string[]
   readonly members: readonly {
@@ -42,11 +52,14 @@ export function buckets({ question, metrics, objectType }: Declarations, { answe
   const operand = (pointer: string, index: number) => measured(text(pointer), units[index])
   return Object.entries(answer.rows).map(([key, row]) => {
     const path = `/rows/${member(key)}`
+    // D53: `{ suppressed: true, value: null, totals: [] }`; nothing is computed in its place.
+    const suppressed = (row as { suppressed?: unknown }).suppressed === true
     return {
       key,
       label: bucketLabel(row.bucket, question),
-      value: text(`${path}/value`),
-      totals: row.totals.map((_, index) => operand(`${path}/totals/${index}`, index)),
+      value: suppressed ? SUPPRESSED : text(`${path}/value`),
+      suppressed,
+      totals: suppressed ? [] : row.totals.map((_, index) => operand(`${path}/totals/${index}`, index)),
       members: Object.entries(row.members).map(([id, { version, amounts }]) => ({
         id,
         version,
