@@ -32,6 +32,7 @@ pub struct ActionAggregateInput {
     /// What is computed over the matched objects.
     pub aggregate: AggregateFunction,
     /// Most objects the fold may match; one more refuses the action.
+    #[serde(deserialize_with = "crate::members::deserialize_u32")]
     pub max_items: u32,
 }
 
