@@ -7,6 +7,7 @@ import { jwt } from "better-auth/plugins/jwt"
 import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
+import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -46,6 +47,8 @@ export interface AuthConfig {
   readonly sendMagicLink?: (mail: MagicLinkMail) => Promise<void>
   /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
   readonly gateway?: GatewayClient
+  /** Password hashing for runtimes without native scrypt. */
+  readonly scrypt?: PasswordScrypt
 }
 
 /** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from Infisical by name. */
@@ -123,6 +126,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       autoSignIn: false,
       minPasswordLength: 12,
       maxPasswordLength: 128,
+      // Better Auth's own hash, computed in pure JS: byte-identical, so accounts move between runtimes.
+      ...config.scrypt === "js" ? { password: { hash: hashPassword, verify: verifyPassword } } : {},
       // A registered address skips the four writes a new account makes (user, credential,
       // organization, member); make the same number of database writes so latency does not tell them apart.
       onExistingUserSignUp: async () => {
