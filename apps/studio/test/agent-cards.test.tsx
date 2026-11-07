@@ -167,7 +167,7 @@ test("where the agent route is not served, the assistant says so and its compose
   expect(agentServedBy("unreachable")).toBe(false)
   expect(agentServedBy(405)).toBe(true)
   const chat = new Chat<UIMessage>({})
-  const base: AgentState = { chat, input: "", setInput: () => {}, stopped: new Set(), setStopped: () => {}, agentServed: false }
+  const base: AgentState = { chat, input: "", setInput: () => {}, stopped: new Set(), setStopped: () => {}, examples: [], setExamples: () => {}, nextExample: { current: 0 }, examplesServed: true, agentServed: false }
   const off = renderToStaticMarkup(<AgentPanel state={base} />)
   expect(off).toContain(AGENT_UNSERVED)
   expect(off).toMatch(/<fieldset disabled=""/)
