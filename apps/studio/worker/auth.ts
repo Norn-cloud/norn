@@ -6,6 +6,7 @@ import { jwt } from "better-auth/plugins/jwt"
 import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
+import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -48,6 +49,8 @@ export interface AuthConfig {
    * seeded `org_demo` on preview; otherwise the user's earliest membership.
    */
   readonly defaultOrganizationId?: string
+  /** "js" where the runtime has no `node:crypto.scrypt` (celld); absent or "native" otherwise. */
+  readonly scrypt?: PasswordScrypt
 }
 
 const MINUTE = 60
@@ -71,6 +74,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       autoSignIn: false,
       minPasswordLength: 12,
       maxPasswordLength: 128,
+      // Better Auth's own hash, computed in pure JS: byte-identical, so accounts move between runtimes.
+      ...config.scrypt === "js" ? { password: { hash: hashPassword, verify: verifyPassword } } : {},
       // A registered address skips the four writes a new account makes (user, credential,
       // organization, member); make the same number of database writes so latency does not tell them apart.
       onExistingUserSignUp: async () => {
