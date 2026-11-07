@@ -239,3 +239,136 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "HOST-TREE-EXCLUDE fixture assertions"
+)]
+mod tests {
+    //! HOST-TREE-EXCLUDE: the walk's exclusion order (Core 07, HOST-TREE-1).
+    use std::path::{Path, PathBuf};
+
+    /// A fresh directory holding `src/lib.rs`, removed on drop.
+    struct Tree(PathBuf);
+
+    impl Tree {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("norn-host-tree-{name}-{}", std::process::id()));
+            let _stale = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            std::fs::write(root.join("src/lib.rs"), b"//! crate\n").unwrap();
+            Self(root)
+        }
+
+        fn write(&self, path: &str, bytes: &[u8]) {
+            let path = self.0.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+
+        fn digest(&self) -> Result<String, String> {
+            super::source_digest(&self.0)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _cleaned = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn hidden_entries_and_target_directories_are_skipped_at_any_depth() {
+        let base = Tree::new("base").digest().unwrap();
+        let tree = Tree::new("skipped");
+        tree.write(".hidden", b"x");
+        tree.write(".git/config", b"x");
+        tree.write("src/.cache/blob", b"x");
+        tree.write("target/debug/out", b"x");
+        tree.write("src/target/nested", b"x");
+        assert_eq!(tree.digest().unwrap(), base);
+    }
+
+    #[test]
+    fn a_file_named_target_counts() {
+        let base = Tree::new("file-base").digest().unwrap();
+        let tree = Tree::new("file");
+        tree.write("src/target", b"x");
+        assert_ne!(tree.digest().unwrap(), base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hidden_symlink_is_skipped_and_any_other_symlink_refuses() {
+        use std::os::unix::fs::symlink;
+        let base = Tree::new("link-base").digest().unwrap();
+        let hidden = Tree::new("hidden-link");
+        symlink(
+            hidden.path().join("src/lib.rs"),
+            hidden.path().join(".link"),
+        )
+        .unwrap();
+        symlink(hidden.path().join("src"), hidden.path().join("src/.dir")).unwrap();
+        assert_eq!(
+            hidden.digest().unwrap(),
+            base,
+            "a hidden symlink is never followed"
+        );
+        // A hidden directory is never visited: what it holds would refuse.
+        let unvisited = Tree::new("hidden-dir");
+        std::fs::create_dir_all(unvisited.path().join(".git")).unwrap();
+        symlink(
+            unvisited.path().join("src"),
+            unvisited.path().join(".git/link"),
+        )
+        .unwrap();
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let name = std::ffi::OsStr::from_bytes(b"\xff");
+            // Some filesystems refuse non-UTF-8 names themselves.
+            let _optional = std::fs::write(unvisited.path().join(".git").join(name), b"x");
+        }
+        assert_eq!(
+            unvisited.digest().unwrap(),
+            base,
+            "nothing below a hidden directory is read or refused"
+        );
+        for name in ["link", "target"] {
+            let tree = Tree::new(&format!("visible-{name}"));
+            symlink(tree.path().join("src"), tree.path().join(name)).unwrap();
+            let refused = tree.digest().unwrap_err();
+            assert!(
+                refused.contains("symlinks are refused"),
+                "{name}: {refused}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_that_is_neither_a_directory_nor_a_file_refuses() {
+        let tree = Tree::new("socket");
+        let _socket = std::os::unix::net::UnixListener::bind(tree.path().join("src/sock")).unwrap();
+        let refused = tree.digest().unwrap_err();
+        assert!(refused.contains("not a regular file"), "{refused}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_name_refuses_even_when_hidden() {
+        use std::os::unix::ffi::OsStrExt;
+        let tree = Tree::new("non-utf8");
+        let name = std::ffi::OsStr::from_bytes(b".\xff");
+        if std::fs::write(tree.path().join(name), b"x").is_err() {
+            return; // the filesystem refuses non-UTF-8 names itself
+        }
+        assert!(tree.digest().unwrap_err().contains("non-UTF-8"));
+    }
+}
