@@ -1,5 +1,5 @@
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
-import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
+import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
@@ -9,6 +9,8 @@ export interface Env {
   readonly AUTH_DB: D1Database
   readonly BETTER_AUTH_SECRET: string
   readonly BETTER_AUTH_URL: string
+  /** JSON array of the exact origins configured for this stage. */
+  readonly BETTER_AUTH_TRUSTED_ORIGINS?: string
   /** Cloudflare Email Service binding and sender; both absent until a sender is enabled. */
   readonly EMAIL?: { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> }
   readonly EMAIL_FROM?: string
@@ -24,6 +26,17 @@ export const refuse = (status: number, reason: string, headers: HeadersInit = {}
 /** Identity reaches Norn only from the verified session; a client-supplied actor header is refused on every stage. */
 export const ACTOR_HEADERS = ["x-norn-actor", "x-norn-principal", "x-norn-roles"] as const
 
+/** A missing list keeps existing single-origin deployments; malformed configuration fails closed. */
+function trustedOrigins(env: Env): string[] {
+  if (env.BETTER_AUTH_TRUSTED_ORIGINS === undefined) return [env.BETTER_AUTH_URL]
+  const origins: unknown = JSON.parse(env.BETTER_AUTH_TRUSTED_ORIGINS)
+  if (!Array.isArray(origins) || origins.length === 0 || !origins.every((origin) => {
+    if (typeof origin !== "string") return false
+    try { const url = new URL(origin); return url.protocol === "https:" && url.origin === origin && !url.username && !url.password } catch { return false }
+  }) || !origins.includes(env.BETTER_AUTH_URL)) throw new Error("Invalid Studio trusted origins")
+  return origins
+}
+
 // One Better Auth instance per database binding (per isolate in production).
 const instances = new WeakMap<object, Auth>()
 
@@ -34,7 +47,7 @@ function auth(env: Env): Auth {
   const sendMagicLink = mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
     await mail.send({ to, from, subject: "Sign in to Norn Studio", text: `Sign in to Norn Studio: ${url}\n\nThe link expires in 10 minutes. If you did not ask for it, ignore this email.` })
   }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...sendMagicLink === undefined ? {} : { sendMagicLink } })
+  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), scrypt: passwordScrypt(env.AUTH_SCRYPT), ...sendMagicLink === undefined ? {} : { sendMagicLink } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
@@ -67,6 +80,11 @@ export default {
     const { pathname } = new URL(request.url)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
+    if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
+      const host = new URL(request.url).host
+      if ([request.headers.get("host"), request.headers.get("x-forwarded-host")].some((value) => value !== null && value.toLowerCase() !== host.toLowerCase())) return refuse(403, "Magic link host does not match this origin.")
+    }
+    if (pathname === "/api/auth/magic-link/verify" && !(await verifyMagicLinkOrigin(request, env.BETTER_AUTH_SECRET, trustedOrigins(env)))) return refuse(403, "Magic link is not valid for this origin.")
     if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
@@ -74,7 +92,7 @@ export default {
     if (pathname.startsWith("/api/host/")) {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
-      if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
+      if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
     }
