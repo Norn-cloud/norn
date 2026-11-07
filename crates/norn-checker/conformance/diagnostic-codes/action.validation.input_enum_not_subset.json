@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.input_enum_not_subset",
+  "message": "ActionIR input {field} admits {values}, which its target property does not declare",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
