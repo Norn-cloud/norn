@@ -137,3 +137,39 @@ test("sign-up answers a registered address byte for byte like a new one, apart f
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "correct horse battery" })).status).toBe(200)
   expect((await post(env, "/api/auth/sign-in/email", { email: "ha@example.com", password: "another horse battery" })).status).toBe(200)
 })
+
+/** A user with a membership in `org_demo` (and their own workspace), returning their cookie and id. */
+const demoMember = async (env: Env, email: string) => {
+  const cookie = cookieOf(await enroll(env, email, "Scope"))
+  const db = env.AUTH_DB as unknown as Database
+  const user = (db.query("select id from user where email = ?").get(email) as { id: string }).id
+  if (db.query("select id from organization where id = 'org_demo'").get() === null) db.run("insert into organization (id, name, slug, createdAt) values ('org_demo', 'Demo', 'demo', ?)", [Date.now()])
+  db.run("insert into member (id, organizationId, userId, role, createdAt) values (?, 'org_demo', ?, 'viewer', ?)", [`m-${user}`, user, Date.now()])
+  return { cookie, user, db }
+}
+const meOf = async (env: Env, cookie: string, extra: HeadersInit = {}, query = "") =>
+  await (await call(env, `/api/me${query}`, { headers: { cookie, ...extra } })).json() as { organization: { id: string } | null; environmentId: string | null }
+
+test("/api/me gives the active workspace's server-configured environment, and none for a workspace without one", async () => {
+  const env = stage()
+  const { cookie, user, db } = await demoMember(env, "scope@example.com")
+  // Their own workspace (the active one after sign-in) has no data cell.
+  expect((await meOf(env, cookie)).environmentId).toBeNull()
+  db.run("update session set activeOrganizationId = 'org_demo' where userId = ?", [user])
+  expect(await meOf(env, cookie)).toMatchObject({ organization: { id: "org_demo" }, environmentId: "analytics" })
+  // The deployment's own map decides; a map without this workspace gives none.
+  expect((await meOf({ ...env, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_demo: "warehouse" }) }, cookie)).environmentId).toBe("warehouse")
+  expect((await meOf({ ...env, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_other: "warehouse" }) }, cookie)).environmentId).toBeNull()
+})
+
+test("/api/me never takes the environment from the client, and gives none for a workspace the caller is not a member of", async () => {
+  const env = stage()
+  const { cookie, user, db } = await demoMember(env, "member@example.com")
+  db.run("update session set activeOrganizationId = 'org_demo' where userId = ?", [user])
+  // Whatever the request claims, the answer is the server's.
+  expect((await meOf(env, cookie, { "x-norn-environment": "warehouse" }, "?environmentId=warehouse&orgId=org_other")).environmentId).toBe("analytics")
+  // An active workspace the caller does not belong to (a stale or forged session value): no workspace, no environment.
+  db.run("insert into organization (id, name, slug, createdAt) values ('org_other', 'Other', 'other', ?)", [Date.now()])
+  db.run("update session set activeOrganizationId = 'org_other' where userId = ?", [user])
+  expect(await meOf({ ...env, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_other: "warehouse", org_demo: "analytics" }) }, cookie)).toMatchObject({ organization: null, environmentId: null })
+})
