@@ -14,7 +14,7 @@ import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answe
 import { conceptTitle } from "./lib/catalog.ts"
 import { chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
-import { recordedTransport, type QuestionAnswer } from "./lib/transport.ts"
+import { transport, type QuestionAnswer } from "./lib/transport.ts"
 import { RestatementCard } from "./restatement.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
@@ -131,7 +131,7 @@ function QuestionCard({ read, heading = "h2" }: { readonly read: QuestionAnswer;
 
 /** The questions on the board, for the submenu island. */
 export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
-  const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
+  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
   return board.data && [
     ...board.data.map((read) => ({ href: `/questions/${read.question.document.name}`, label: headline(read.question.document), group: subject(read) })),
     { href: "#corrections", label: "Corrections", group: "Corrections" },
@@ -144,7 +144,7 @@ const subject = ({ objectType }: QuestionAnswer) => conceptTitle(objectType.docu
 /** One question as a record page; the submenu lists the others by the object type they count. */
 export function QuestionPage() {
   const { name } = useParams({ from: "/questions/$name" })
-  const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
+  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
   const read = board.data?.find(({ question }) => question.document.name === name)
   return (
     <>
@@ -156,7 +156,7 @@ export function QuestionPage() {
 }
 
 export function QuestionsPage() {
-  const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
+  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
   return (
     <section className="space-y-6">
       <div className="space-y-2">

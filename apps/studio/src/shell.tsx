@@ -1,30 +1,38 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { Bell, ChevronDown, Keyboard, LogOut, Search, type LucideIcon } from "lucide-react"
+import { Bell, ChevronRight, ChevronsUpDown, Keyboard, LogOut, Search, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 import {
-  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInput, SidebarInset,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
+  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuAction,
+  SidebarMenuButton, SidebarMenuItem, SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { Inspector, InspectorProvider } from "@/lib/inspector"
+import { KINDS, type Kind } from "@/lib/kinds"
 import type { Account } from "@/lib/session"
 import { cn } from "@/lib/utils"
+import { ViewProvider, ViewToggle, useView } from "@/lib/view"
+import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
 
 export interface Section {
   readonly path: string
   readonly label: string
   readonly icon: LucideIcon
   readonly summary: string
-  /** The section's own items (each object type, question or workflow), listed in its submenu. */
+  /** The kind of artefact the section lists, which colours its icon. */
+  readonly kind?: Kind
+  /** The section's own items (each object type, question or workflow), listed under it. */
   readonly useMenu?: () => readonly MenuEntry[] | undefined
-  /** A count that needs attention, shown on the rail. */
+  /** A count that needs attention, shown on the section. */
   readonly useBadge?: () => number | undefined
-  /** The rail group the section belongs to; a thin divider separates groups. */
+  /** The sidebar group the section is listed under. */
   readonly group?: string
-  /** Listed at the foot of the rail, above the avatar, instead of with the sections. */
+  /** Listed at the foot of the sidebar instead of with the sections. */
   readonly foot?: boolean
 }
 
@@ -32,133 +40,190 @@ export interface MenuEntry {
   /** The entry's route, e.g. `/sources/canon.Holding`, or `#anchor` on the section's own page. */
   readonly href: string
   readonly label: ReactNode
-  /** The submenu group this entry is listed under. */
+  /** The heading this entry is listed under. */
   readonly group?: string
-  /** The entry's leading icon; the section's icon when absent. */
+  /** The entry's leading icon; its kind's icon when absent. */
   readonly icon?: LucideIcon
-  /** The chart colour (1–5) that tints the icon, one per family of entries. */
-  readonly tint?: 1 | 2 | 3 | 4 | 5
+  /** The kind of artefact the entry is, which colours its icon. */
+  readonly kind?: Kind
 }
 
 const none = () => undefined
 
-/** Entries listed per group before "Show more". */
+/** Entries listed under a section before "Show more". */
 const SHOWN = 6
 
-/** Icon tints, one chart colour per family of entries; untinted icons are muted. */
-const TINT = ["[&>svg]:text-muted-foreground", "[&>svg]:text-chart-1", "[&>svg]:text-chart-2", "[&>svg]:text-chart-3", "[&>svg]:text-chart-4", "[&>svg]:text-chart-5"] as const
+/** Whether a route is the entry's page or a page under it. */
+const within = (href: string, pathname: string) => !href.startsWith("#") && (pathname === href || pathname.startsWith(`${href}/`))
 
-function RailItem({ section, active }: { readonly section: Section; readonly active: boolean }) {
-  const badge = (section.useBadge ?? none)()
-  const Icon = section.icon
+/** Where an entry goes: its route, or an anchor on its section's page. */
+export const target = (section: Pick<Section, "path">, href: string) =>
+  href.startsWith("#") ? { to: section.path, hash: href.slice(1) } : { to: href }
+
+/** The section a route belongs to: its own path, or a record page under it. */
+export const sectionOf = (sections: readonly Section[], pathname: string) =>
+  sections.find(({ path }) => within(path, pathname))
+
+/** The project switcher: the open workspace, and the others with whether Studio has recorded documents for them. */
+function WorkspaceSwitcher() {
+  const { isMobile } = useSidebar()
+  const open = WORKSPACES.find(({ recorded }) => recorded)
+  return (
+    <SidebarMenu><SidebarMenuItem>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
+            <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">N</span>
+            <span className="grid flex-1 text-start text-sm leading-tight"><span className="truncate font-medium">{open?.name}</span><span className="truncate text-xs text-muted-foreground">{open?.detail}</span></span>
+            <ChevronsUpDown className="ms-auto" />
+          </SidebarMenuButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-72" align="start" side={isMobile ? "bottom" : "right"} sideOffset={4}>
+          {WORKSPACE_GROUPS.map((group, index) => (
+            <DropdownMenuGroup key={group}>
+              {index > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuLabel className="text-xs text-muted-foreground">{group}</DropdownMenuLabel>
+              {WORKSPACES.filter((workspace) => workspace.group === group).map((workspace) => workspace.results !== undefined
+                ? (
+                  <DropdownMenuItem key={workspace.id} asChild className="flex-col items-start gap-0">
+                    <a href={workspace.results} target="_blank" rel="noreferrer"><span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span></a>
+                  </DropdownMenuItem>
+                )
+                : (
+                  <DropdownMenuCheckboxItem key={workspace.id} checked={workspace === open} disabled={!workspace.recorded} className="flex-col items-start gap-0">
+                    <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
+                  </DropdownMenuCheckboxItem>
+                ))}
+            </DropdownMenuGroup>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </SidebarMenuItem></SidebarMenu>
+  )
+}
+
+/** One section and, opened under it, its own entries. */
+function NavSection({ section, pathname }: { readonly section: Section; readonly pathname: string }) {
   const { setOpenMobile } = useSidebar()
+  const entries = (section.useMenu ?? none)() ?? []
+  const badge = (section.useBadge ?? none)()
+  const active = within(section.path, pathname)
+  const [open, setOpen] = useState(active)
+  const [more, setMore] = useState(false)
+  useEffect(() => { if (active) setOpen(true) }, [active])
+  const shown = more || entries.length <= SHOWN + 1 ? entries : entries.filter((entry, index) => index < SHOWN || within(entry.href, pathname))
+  const Icon = section.icon
   return (
-    <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={active} tooltip={{ children: section.label, hidden: false }}
-        className="relative mx-auto size-10! justify-center rounded-[11px]! p-0! text-muted-foreground hover:bg-sidebar-accent data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-sm [&>svg]:size-5!">
-        <Link to={section.path} onClick={() => setOpenMobile(false)}>
-          <Icon />
-          <span className="sr-only">{section.label}</span>
-          {/* Inside the tile: the button clips anything outside it. A count replaces the active dot. */}
-          {badge !== undefined && badge > 0
-            ? <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-destructive-foreground tabular-nums">{badge > 99 ? "99+" : badge}</span>
-            : active && <span aria-hidden className="absolute top-1 right-1 size-2 rounded-full bg-ring ring-2 ring-background" />}
-        </Link>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
+    <Collapsible asChild open={open} onOpenChange={setOpen}>
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild isActive={active && pathname === section.path} tooltip={section.label} className={section.kind && KINDS[section.kind].svg}>
+          <Link to={section.path} onClick={() => setOpenMobile(false)}>
+            <Icon /><span>{section.label}</span>
+            {badge !== undefined && badge > 0 && <span className="ms-auto me-5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-destructive-foreground tabular-nums">{badge > 99 ? "99+" : badge}</span>}
+          </Link>
+        </SidebarMenuButton>
+        {entries.length > 0 && <>
+          <CollapsibleTrigger asChild>
+            <SidebarMenuAction className="data-[state=open]:rotate-90"><ChevronRight /><span className="sr-only">{open ? "Hide" : "Show"} {section.label}</span></SidebarMenuAction>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <SidebarMenuSub>
+              {shown.map((entry, index) => {
+                const EntryIcon = entry.icon ?? (entry.kind ? KINDS[entry.kind].icon : undefined)
+                const heading = entry.group !== undefined && entry.group !== shown[index - 1]?.group
+                return (
+                  <Fragment key={entry.href}>
+                    {heading && <li className="px-2 pt-2 pb-1 text-xs text-muted-foreground">{entry.group}</li>}
+                    <SidebarMenuSubItem>
+                      <SidebarMenuSubButton asChild isActive={within(entry.href, pathname)} className={entry.kind && KINDS[entry.kind].svg}>
+                        <Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}>{EntryIcon && <EntryIcon />}<span>{entry.label}</span></Link>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  </Fragment>
+                )
+              })}
+              {entries.length > SHOWN + 1 && (
+                <SidebarMenuSubItem>
+                  <SidebarMenuSubButton asChild><button type="button" onClick={() => setMore((current) => !current)} className="w-full text-muted-foreground">{more ? "Show less" : `Show ${entries.length - shown.length} more`}</button></SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              )}
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </>}
+      </SidebarMenuItem>
+    </Collapsible>
   )
 }
 
-/**
- * The section's submenu: its title and data context, then its grouped entries.
- * No server document declares a section action yet, so none is shown.
- */
-export function Submenu({ section }: { readonly section: Section }) {
-  // Navigating closes the phone sheet the submenu sits in.
-  const { setOpenMobile, state, isMobile } = useSidebar()
-  const [search, setSearch] = useState("")
-  const all = (section.useMenu ?? none)() ?? []
-  const query = search.trim().toLowerCase()
-  const entries = all.filter(({ label }) => typeof label !== "string" || label.toLowerCase().includes(query))
-  const groups = [...new Set(entries.map(({ group }) => group ?? section.label))]
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set())
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
-  const toggle = (set: ReadonlySet<string>, group: string) => { const next = new Set(set); if (!next.delete(group)) next.add(group); return next }
+export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
+
+/** The signed-in user, their organization and role, and sign-out. The role is shown, never used to hide or allow anything. */
+export function AccountMenu({ account, onSignOut }: { readonly account: Account; readonly onSignOut: () => void }) {
+  const { user, organization } = account
   return (
-    // Hidden with the collapsed desktop sidebar: inert, so none of its links or controls take focus. The phone sheet keeps it live.
-    <Sidebar collapsible="none" inert={submenuInert(state, isMobile)} className="min-w-0 flex-1 rounded-2xl bg-background shadow-sm">
-      <SidebarHeader className="gap-2 px-5 pt-6 pb-3">
-        <div className="text-[1.75rem] leading-tight font-semibold tracking-tight">{section.label}</div>
-        <DropdownMenu>
-          <DropdownMenuTrigger className="flex w-fit max-w-full items-center gap-1 rounded-md text-start text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30">
-            <span className="truncate" title="Recorded · synthetic world">Recorded · synthetic world</span> <ChevronDown className="size-4 shrink-0" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuLabel>Data</DropdownMenuLabel>
-            <DropdownMenuCheckboxItem checked>Recorded · synthetic world</DropdownMenuCheckboxItem>
-            <DropdownMenuItem disabled>Live, once the read host is up</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        {all.length > 0 && (
-          <label className="relative mt-3 block">
-            <span className="sr-only">Find in {section.label}</span>
-            <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <SidebarInput type="search" placeholder={`Find in ${section.label}`} value={search} onChange={(event) => setSearch(event.target.value)} className="h-9 border-transparent bg-muted ps-9 shadow-none dark:bg-muted" />
-          </label>
-        )}
-      </SidebarHeader>
-      <SidebarContent className="px-2 pb-3">
-        {all.length > 0 && entries.length === 0 && <p className="px-3 py-2 text-sm text-muted-foreground">Nothing matches “{search.trim()}”.</p>}
-        {groups.map((group) => (
-          <SidebarGroup key={group}>
-            <SidebarGroupLabel asChild className="text-xs font-normal text-muted-foreground">
-              <button type="button" tabIndex={hiddenLabelTabIndex(state, isMobile)} aria-expanded={groupOpen(closed, group, query)} onClick={() => setClosed((set) => toggle(set, group))} className="w-full gap-1 hover:text-foreground">
-                {group}<ChevronDown className={cn("size-3.5! transition-transform", !groupOpen(closed, group, query) && "-rotate-90")} />
-              </button>
-            </SidebarGroupLabel>
-            {groupOpen(closed, group, query) && <SidebarGroupContent>
-              <SidebarMenu>
-                {entries.filter((entry) => (entry.group ?? section.label) === group).filter((entry, index, list) => {
-                  const active = entry.href === pathname || pathname.startsWith(`${entry.href}/`)
-                  return query !== "" || expanded.has(group) || index < SHOWN || active || list.length <= SHOWN + 1
-                }).map((entry) => {
-                  const Icon = entry.icon ?? section.icon
-                  return (
-                    <SidebarMenuItem key={entry.href}>
-                      <SidebarMenuButton asChild isActive={entry.href === pathname || pathname.startsWith(`${entry.href}/`)}
-                        className={cn("h-10 gap-3 rounded-lg px-3 text-[0.9375rem] hover:bg-muted data-[active=true]:bg-muted data-[active=true]:font-medium [&>svg]:size-[18px]", TINT[entry.tint ?? 0])}>
-                        <Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}><Icon /><span className="truncate">{entry.label}</span></Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )
-                })}
-                {query === "" && entries.filter((entry) => (entry.group ?? section.label) === group).length > SHOWN + 1 && (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => setExpanded((set) => toggle(set, group))} className="h-9 rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted">
-                      {expanded.has(group) ? "Show less" : "Show more"}
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )}
-              </SidebarMenu>
-            </SidebarGroupContent>}
-          </SidebarGroup>
-        ))}
-      </SidebarContent>
-    </Sidebar>
+    <SidebarMenu><SidebarMenuItem>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarMenuButton size="lg" tooltip={`${user.name} · ${organization?.name ?? "No organization"}`}>
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium ring-1 ring-border">{initials(user.name || user.email)}</span>
+            <span className="grid flex-1 text-start text-sm leading-tight"><span className="truncate font-medium">{user.name}</span><span className="truncate text-xs text-muted-foreground">{organization ? `${organization.name} · ${organization.role}` : "No organization"}</span></span>
+            <span className="sr-only">Account</span>
+          </SidebarMenuButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="right" align="end" className="min-w-56">
+          <DropdownMenuLabel className="grid">
+            <span className="font-medium">{user.name}</span>
+            <span className="text-meta font-normal text-muted-foreground">{user.email}</span>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="grid font-normal">
+            <span>{organization?.name ?? "No organization"}</span>
+            {organization && <span className="text-meta text-muted-foreground">Role: {organization.role}</span>}
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={onSignOut}><LogOut />Sign out</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </SidebarMenuItem></SidebarMenu>
   )
 }
 
-/** A group shows its entries unless the user closed it; a search opens every group so its matches stay visible. */
-/** A collapsed desktop sidebar fades its group labels out; their buttons leave the tab order with them. The phone sheet always shows them. */
-/** The submenu card is out of view while the desktop sidebar is collapsed; on the phone it lives in the sheet. */
-export const submenuInert = (state: "expanded" | "collapsed", isMobile: boolean): boolean => state === "collapsed" && !isMobile
+/** A path segment as text; a malformed escape (e.g. `%E0%A4%A`) is shown as written instead of failing the page. */
+export function decoded(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
 
-export const hiddenLabelTabIndex = (state: "expanded" | "collapsed", isMobile: boolean): -1 | undefined => state === "collapsed" && !isMobile ? -1 : undefined
+/** Section, item, then the record under it. */
+function Crumbs({ section, pathname }: { readonly section: Section; readonly pathname: string }) {
+  const entry = ((section.useMenu ?? none)() ?? []).find(({ href }) => within(href, pathname))
+  const record = entry && pathname !== entry.href ? decoded(pathname.slice(entry.href.length + 1)) : undefined
+  const last = entry === undefined ? "section" : record === undefined ? "entry" : "record"
+  return (
+    <Breadcrumb className="min-w-0">
+      <BreadcrumbList className="flex-nowrap">
+        <BreadcrumbItem className={cn(last !== "section" && "hidden md:inline-flex")}>
+          {last === "section" ? <BreadcrumbPage>{section.label}</BreadcrumbPage> : <BreadcrumbLink asChild><Link to={section.path}>{section.label}</Link></BreadcrumbLink>}
+        </BreadcrumbItem>
+        {entry && <>
+          <BreadcrumbSeparator className="hidden md:block" />
+          <BreadcrumbItem className={cn("min-w-0", last === "record" && "hidden md:inline-flex")}>
+            {last === "entry" ? <BreadcrumbPage className="truncate">{entry.label}</BreadcrumbPage> : <BreadcrumbLink asChild><Link to={entry.href} className="truncate">{entry.label}</Link></BreadcrumbLink>}
+          </BreadcrumbItem>
+        </>}
+        {record !== undefined && <>
+          <BreadcrumbSeparator className="hidden md:block" />
+          <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate font-mono text-xs">{record}</BreadcrumbPage></BreadcrumbItem>
+        </>}
+      </BreadcrumbList>
+    </Breadcrumb>
+  )
+}
 
-export const groupOpen = (closed: ReadonlySet<string>, group: string, query: string) => query !== "" || !closed.has(group)
-
-/** "Search or add… ⌘K": every section and every entry the sections list. */
+/** "Search… ⌘K": every section and every entry the sections list. */
 function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
@@ -173,81 +238,46 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   const go = (to: { to: string; hash?: string }) => { setOpen(false); void navigate(to) }
   return (
     <>
-      <Button variant="outline" className="h-10 w-full min-w-0 justify-start rounded-full bg-background px-4 font-normal text-muted-foreground shadow-none dark:bg-background" onClick={() => setOpen(true)}>
-        <Search /> <span className="min-w-0 truncate">Search or add…</span> <kbd className="ms-auto hidden font-sans text-meta sm:inline">⌘K</kbd>
+      <Button variant="outline" aria-label="Search" className="h-9 justify-start gap-2 px-2.5 font-normal text-muted-foreground shadow-none md:w-56 md:px-3" onClick={() => setOpen(true)}>
+        <Search /><span className="hidden md:inline">Search…</span><kbd className="ms-auto hidden font-sans text-meta md:inline">⌘K</kbd>
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen} title="Search Studio" description="Go to a section or an item">
         <Command>
-        <CommandInput placeholder="Search sections, object types, questions…" />
-        <CommandList>
-          <CommandEmpty>Nothing matches.</CommandEmpty>
-          <CommandGroup heading="Sections">
-            {sections.map(({ path, label, icon: Icon }) => <CommandItem key={path} onSelect={() => go({ to: path })}><Icon />{label}</CommandItem>)}
-          </CommandGroup>
-          {entries.filter(({ entries: list }) => list.length > 0).map(({ section, entries: list }) => (
-            <CommandGroup key={section.path} heading={section.label}>
-              {list.map((entry) => <CommandItem key={entry.href} onSelect={() => go(target(section, entry.href))}>{entry.label}</CommandItem>)}
+          <CommandInput placeholder="Search sections, object types, questions…" />
+          <CommandList>
+            <CommandEmpty>Nothing matches.</CommandEmpty>
+            <CommandGroup heading="Sections">
+              {sections.map(({ path, label, icon: Icon }) => <CommandItem key={path} onSelect={() => go({ to: path })}><Icon />{label}</CommandItem>)}
             </CommandGroup>
-          ))}
-        </CommandList>
+            {entries.filter(({ entries: list }) => list.length > 0).map(({ section, entries: list }) => (
+              <CommandGroup key={section.path} heading={section.label}>
+                {list.map((entry) => <CommandItem key={entry.href} onSelect={() => go(target(section, entry.href))}>{entry.label}</CommandItem>)}
+              </CommandGroup>
+            ))}
+          </CommandList>
         </Command>
       </CommandDialog>
     </>
   )
 }
 
-/** Where an entry goes: its route, or an anchor on its section's page. */
-export const target = (section: Pick<Section, "path">, href: string) =>
-  href.startsWith("#") ? { to: section.path, hash: href.slice(1) } : { to: href }
-
-/** The section a route belongs to: its own path, or a record page under it. */
-export const sectionOf = (sections: readonly Section[], pathname: string) =>
-  sections.find(({ path }) => pathname === path || pathname.startsWith(`${path}/`))
-
-export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
-
-/** The signed-in user, their organization and role, and sign-out. The role is shown, never used to hide or allow anything. */
-export function AccountMenu({ account, onSignOut }: { readonly account: Account; readonly onSignOut: () => void }) {
-  const { user, organization } = account
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <SidebarMenuButton tooltip={{ children: `${user.name} · ${organization?.name ?? "No organization"}`, hidden: false }} className="size-10! justify-center rounded-full p-0!">
-          <span className="flex size-9 items-center justify-center rounded-full bg-muted text-xs font-medium ring-1 ring-border">{initials(user.name || user.email)}</span>
-          <span className="sr-only">Account</span>
-        </SidebarMenuButton>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="right" align="end" className="min-w-56">
-        <DropdownMenuLabel className="grid">
-          <span className="font-medium">{user.name}</span>
-          <span className="text-meta font-normal text-muted-foreground">{user.email}</span>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="grid font-normal">
-          <span>{organization?.name ?? "No organization"}</span>
-          {organization && <span className="text-meta text-muted-foreground">Role: {organization.role}</span>}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onSignOut}><LogOut />Sign out</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-/** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
+/** The page bar's right-hand buttons: the view, the page's own tools, then shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
+  const { view, setView } = useView()
   return (
-    <div className="flex items-center justify-end gap-1">
+    <div className="flex items-center gap-1">
+      <ViewToggle view={view} onChange={setView} label="Business or technical view" />
       {tools}
       <DropdownMenu>
-        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="rounded-full text-muted-foreground"><Keyboard className="size-5" /><span className="sr-only">Keyboard shortcuts</span></Button></DropdownMenuTrigger>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="hidden text-muted-foreground md:inline-flex"><Keyboard /><span className="sr-only">Keyboard shortcuts</span></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuLabel>Keyboard shortcuts</DropdownMenuLabel>
-          <DropdownMenuItem disabled>Search or add<DropdownMenuShortcut>⌘K</DropdownMenuShortcut></DropdownMenuItem>
+          <DropdownMenuItem disabled>Search<DropdownMenuShortcut>⌘K</DropdownMenuShortcut></DropdownMenuItem>
+          <DropdownMenuItem disabled>Collapse the sidebar<DropdownMenuShortcut>⌘B</DropdownMenuShortcut></DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="rounded-full text-muted-foreground"><Bell className="size-5" /><span className="sr-only">Notifications</span></Button></DropdownMenuTrigger>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="text-muted-foreground"><Bell /><span className="sr-only">Notifications</span></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64">
           <DropdownMenuLabel>Notifications</DropdownMenuLabel>
           <p className="px-2 pb-2 text-sm text-muted-foreground">Nothing yet. A recorded demo has no one to notify.</p>
@@ -258,53 +288,47 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
 }
 
 /**
- * Two islands on a grey page: the active section's submenu card and the page
- * card, with a thin rail of square tiles on the grey to their left.
+ * A sidebar that collapses to icons (workspace, sections with their items,
+ * who is viewing), a page bar with breadcrumbs, search and the view, the
+ * page, and the inspector docked on its right.
  */
 export function Shell({ sections, tools, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
   const main = sections.filter(({ foot }) => foot !== true)
   const foot = sections.filter(({ foot }) => foot === true)
+  const groups = [...new Set(main.map(({ group }) => group))]
   return (
-    <TooltipProvider>
-      <SidebarProvider style={{ "--sidebar-width": "23rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}>
-        <Sidebar variant="inset" collapsible="icon" className="overflow-hidden ps-0">
-          {/* One row on every screen: the mobile sheet does not take the outer sidebar's classes. */}
-          <div className="flex size-full min-h-0 flex-row">
-          <Sidebar collapsible="none" className="w-16! shrink-0 bg-transparent">
-            <SidebarHeader className="items-center px-0 pt-1">
-              <Link to="/questions" className="flex size-10 items-center justify-center rounded-[11px] bg-primary text-base font-semibold text-primary-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
-                N<span className="sr-only">Norn Studio</span>
-              </Link>
-            </SidebarHeader>
-            <SidebarContent className="px-0 pt-3">
-              <SidebarMenu className="items-center gap-2">
-                {main.map((section, index) => (
-                  <Fragment key={section.path}>
-                    {index > 0 && section.group !== main[index - 1]?.group && <Separator className="my-1 w-6!" />}
-                    <RailItem section={section} active={section === current} />
-                  </Fragment>
-                ))}
-              </SidebarMenu>
-            </SidebarContent>
-            <SidebarFooter className="items-center px-0 pb-1">
-              {foot.length > 0 && <SidebarMenu className="items-center gap-2">{foot.map((section) => <RailItem key={section.path} section={section} active={section === current} />)}</SidebarMenu>}
-              <SidebarMenu><SidebarMenuItem className="flex justify-center"><AccountMenu account={account} onSignOut={onSignOut} /></SidebarMenuItem></SidebarMenu>
-            </SidebarFooter>
-          </Sidebar>
-          {current && <Submenu key={current.path} section={current} />}
-          </div>
+    <ViewProvider><InspectorProvider><TooltipProvider>
+      <SidebarProvider>
+        <Sidebar collapsible="icon">
+          <SidebarHeader><WorkspaceSwitcher /></SidebarHeader>
+          <SidebarContent>
+            {groups.map((group) => (
+              <SidebarGroup key={group ?? ""}>
+                {group !== undefined && <SidebarGroupLabel>{group}</SidebarGroupLabel>}
+                <SidebarMenu>{main.filter((section) => section.group === group).map((section) => <NavSection key={section.path} section={section} pathname={pathname} />)}</SidebarMenu>
+              </SidebarGroup>
+            ))}
+            {foot.length > 0 && <SidebarGroup className="mt-auto"><SidebarMenu>{foot.map((section) => <NavSection key={section.path} section={section} pathname={pathname} />)}</SidebarMenu></SidebarGroup>}
+          </SidebarContent>
+          <SidebarFooter><AccountMenu account={account} onSignOut={onSignOut} /></SidebarFooter>
+          <SidebarRail />
         </Sidebar>
-        <SidebarInset>
-          <header className="grid h-16 grid-cols-[1fr_minmax(0,28rem)_1fr] items-center gap-3 px-4">
-            <div><SidebarTrigger /></div>
-            <CommandMenu sections={sections} />
-            <BarButtons tools={tools} />
-          </header>
-          <div className="mx-auto w-full max-w-6xl px-4 pb-8 md:px-8"><Outlet /></div>
+        <SidebarInset className="min-w-0 flex-row">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 md:px-4">
+              <SidebarTrigger className="-ms-1" />
+              <Separator orientation="vertical" className="me-1 h-4!" />
+              <div className="min-w-0 flex-1">{current && <Crumbs key={current.path} section={current} pathname={pathname} />}</div>
+              <CommandMenu sections={sections} />
+              <BarButtons tools={tools} />
+            </header>
+            <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8"><Outlet /></div>
+          </div>
+          <Inspector />
         </SidebarInset>
       </SidebarProvider>
-    </TooltipProvider>
+    </TooltipProvider></InspectorProvider></ViewProvider>
   )
 }
