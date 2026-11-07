@@ -399,8 +399,38 @@ def validate_rust_toolchain_steps(path: Path, source: str) -> None:
     require(action_count > 0, f"{path.name}: workflow must contain a Rust toolchain action")
 
 
+# GitHub compiles a `script:` containing `${{ }}` into one format() expression: literal text has
+# every `'`, `{` and `}` doubled, each interpolation becomes `{N}` plus a `, <expr>` argument, and
+# the whole must stay under 21,000 characters or GitHub rejects the workflow file, silently
+# for workflow_run triggers (it stalled the merge queue once). Keep a margin.
+EXPRESSION_CAP = 20_500
+
+
+def actions_expression_length(script: str) -> int:
+    """Length of the format() expression GitHub builds from an interpolated script."""
+    parts = re.split(r"\$\{\{(.*?)\}\}", script, flags=re.S)
+    literal, expressions = "".join(parts[0::2]), [part.strip() for part in parts[1::2]]
+    escaped = len(literal) + literal.count("'") + literal.count("{") + literal.count("}")
+    placeholders = sum(len(f"{{{index}}}") for index in range(len(expressions)))
+    return len("format('')") + escaped + placeholders + sum(len(", ") + len(expression) for expression in expressions)
+
+
+def validate_expression_lengths(sources: dict[str, str]) -> None:
+    for path, text in sources.items():
+        for name, job in yaml.load(text, Loader=WorkflowLoader).get("jobs", {}).items():
+            for step in job.get("steps", []):
+                script = step.get("with", {}).get("script", "")
+                if "${{" in script:
+                    length = actions_expression_length(script)
+                    require(length <= EXPRESSION_CAP,
+                            f"{path}::{name}::{step.get('name', step.get('uses'))}: interpolated script is a "
+                            f"{length}-character expression, over the {EXPRESSION_CAP} cap (GitHub rejects 21,000)")
+
+
 def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW) -> None:
     source = formal_path.read_text(encoding="utf-8")
+    validate_expression_lengths({formal_path.name: source,
+                                 "trusted-merge-group.yml": (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")})
     validate_rust_toolchain_steps(formal_path, source)
     for action in re.findall(r"^\s*- uses: (\S+)", source, re.MULTILINE):
         require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", action) is not None, f"workflow action must be content-pinned: {action}")

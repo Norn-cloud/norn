@@ -648,6 +648,35 @@ sudo() {{
 
 
 
+def workflow_expression_cap_canaries() -> None:
+    """An interpolated script over the expression cap is refused before GitHub silently rejects it."""
+    validator = load_module("norn_expression_cap_canaries", VALIDATOR)
+    if validator.actions_expression_length("a{b}'c ${{ x.y }} d") != len("format('a{{b}}''c {0} d', x.y)"):
+        raise AssertionError("expression length no longer models GitHub's format() escaping")
+    merge = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")
+    source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+    group = yaml.safe_load(merge)
+    name = "Record admin approvals of the queued heads"
+    collector = next(step for step in group["jobs"]["trusted-policy"]["steps"] if step.get("name") == name)
+    current = validator.actions_expression_length(collector["with"]["script"])
+    for target, refused in ((validator.EXPRESSION_CAP, False), (validator.EXPRESSION_CAP + 1, True), (21_034, True)):
+        # Pad with a comment of plain characters up to the target length.
+        document = copy.deepcopy(group)
+        step = next(step for step in document["jobs"]["trusted-policy"]["steps"] if step.get("name") == name)
+        step["with"]["script"] += "//" + "x" * (target - current - 3) + "\n"
+        if validator.actions_expression_length(step["with"]["script"]) != target:
+            raise AssertionError(f"expression cap canary padding drifted for {target}")
+        try:
+            validator.validate_expression_lengths({"trusted-merge-group.yml": yaml.safe_dump(document, sort_keys=False),
+                                                   "ci-policy.yml": source})
+        except validator.InvalidCoverage:
+            if not refused:
+                raise AssertionError(f"a {target}-character collector expression was refused")
+            continue
+        if refused:
+            raise AssertionError(f"a {target}-character collector expression passed the cap")
+
+
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -1759,6 +1788,7 @@ def main() -> int:
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
         workflow_trusted_policy_canaries(source)
+        workflow_expression_cap_canaries()
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
         print("workflow contract: admission, verdict, context and merge-group publisher canaries passed")
