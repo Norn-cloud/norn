@@ -2578,25 +2578,27 @@ impl<E: SqlEngine> CellStore<E> {
         )
     }
 
-    /// Install one retained (non-kernel) definition revision through the
-    /// governed definitions install: the kernel set, receipt and model in
-    /// `input` must be the active ones, unchanged; the commit appends the
-    /// revision, a new definitions version and its ledger event atomically.
-    /// The revision is compare-and-set on the id's current revision.
+    /// Install one retained definition revision through the governed
+    /// definitions install: the commit installs `input`'s kernel set and
+    /// receipt with `candidate_model` (the active ones, unchanged, for a
+    /// definition that is not a kernel artifact; a flow's admitted set and
+    /// projected model otherwise), and appends the revision, a new
+    /// definitions version and its ledger event atomically. The revision is
+    /// compare-and-set on the id's current revision.
     ///
     /// # Errors
     ///
     /// A definitions-version or retained-revision conflict, or a store error.
     pub fn install_retained_definition(
         &mut self,
+        candidate_model: Model,
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
         scope: &str,
         change: &crate::retained::RetainedDefinitionChange,
     ) -> Result<InstalledDefinitionSet, CellError> {
-        let model = self.model.clone();
         self.install_definitions_from_origin(
-            model,
+            candidate_model,
             input,
             expected_version,
             scope,

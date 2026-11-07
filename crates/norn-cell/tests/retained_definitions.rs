@@ -98,7 +98,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         restatement_sha256: "b".repeat(64),
     });
     let installed = store
-        .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &first)
+        .install_retained_definition(
+            model.clone(),
+            &input(&canonical, 20),
+            Some(1),
+            SCOPE,
+            &first,
+        )
         .expect("first revision");
     assert_eq!(installed.version, 2);
     assert_eq!(installed.canonical_set, canonical);
@@ -112,7 +118,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         None,
     );
     assert!(matches!(
-        store.install_retained_definition(&input(&canonical, 21), Some(2), SCOPE, &again),
+        store.install_retained_definition(
+            model.clone(),
+            &input(&canonical, 21),
+            Some(2),
+            SCOPE,
+            &again
+        ),
         Err(CellError::RetainedDefinitionConflict {
             expected: None,
             actual: Some(1),
@@ -128,7 +140,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         Some(2),
     );
     assert!(matches!(
-        store.install_retained_definition(&input(&canonical, 22), Some(2), SCOPE, &stale),
+        store.install_retained_definition(
+            model.clone(),
+            &input(&canonical, 22),
+            Some(2),
+            SCOPE,
+            &stale
+        ),
         Err(CellError::RetainedDefinitionConflict {
             actual: Some(1),
             ..
@@ -152,7 +170,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         Some(1),
     );
     store
-        .install_retained_definition(&input(&canonical, 30), Some(2), SCOPE, &second)
+        .install_retained_definition(
+            model.clone(),
+            &input(&canonical, 30),
+            Some(2),
+            SCOPE,
+            &second,
+        )
         .expect("second revision");
     let other = change(
         "studio.dashboard.b",
@@ -162,7 +186,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         None,
     );
     store
-        .install_retained_definition(&input(&canonical, 40), Some(3), SCOPE, &other)
+        .install_retained_definition(
+            model.clone(),
+            &input(&canonical, 40),
+            Some(3),
+            SCOPE,
+            &other,
+        )
         .expect("other id");
     let retired = change(
         "studio.dashboard.b",
@@ -172,7 +202,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         Some(1),
     );
     store
-        .install_retained_definition(&input(&canonical, 50), Some(4), SCOPE, &retired)
+        .install_retained_definition(
+            model.clone(),
+            &input(&canonical, 50),
+            Some(4),
+            SCOPE,
+            &retired,
+        )
         .expect("retire");
 
     let reader = store.read();

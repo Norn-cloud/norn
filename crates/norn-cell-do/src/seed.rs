@@ -3,16 +3,17 @@
 //! The definitions are the retained catalog Studio already renders
 //! (`fixtures/demo/explorer/three-systems.definitions.json`). They are admitted
 //! by the shared checker at boot, so the admission receipt and its digest are
-//! computed, not copied; an identical provision on a restarted Durable Object
-//! reopens the first revision without writing (`provision_definitions`).
+//! computed, not copied. A restarted Durable Object reopens with the model
+//! of its active set and writes nothing when the seed is unchanged; a changed
+//! seed is installed in place as the next governed version, keeping every
+//! artifact installed since (such as flows), never wiping the cell
+//! (`open_governed`).
 
-use std::collections::BTreeSet;
 use std::fmt;
 
 use norn_api::scope::CellScope;
 use norn_cell::{CellStore, InstalledDefinitionInput, Model, engine::SqlEngine};
-use norn_checker::{EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt};
-use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+use norn_ir::ArtifactEnvelope;
 
 const DEFINITIONS: &str =
     include_str!("../../../fixtures/demo/explorer/three-systems.definitions.json");
@@ -45,29 +46,104 @@ pub fn demo_scope() -> CellScope {
     }
 }
 
-/// Admit the demo definitions and provision (or reopen) them on `engine`.
+/// Admit the demo definitions and provision, reopen or upgrade them on
+/// `engine` (see `open_governed`).
 ///
 /// # Errors
 /// The retained set no longer admits, or the engine holds a different cell.
 pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<CellStore<E>, SeedError> {
     let artifacts: Vec<ArtifactEnvelope> =
         serde_json::from_str(DEFINITIONS).map_err(|e| fail("definitions")(&e))?;
-    provision_set(engine, scope, &artifacts)
+    open_governed(engine, scope, &artifacts, INSTALLED_AT)
 }
 
-/// Admit `artifacts` with the shared checker and provision, or reopen, them
-/// on a fresh `engine` as the cell's first governed definitions version.
+/// Open a cell whose definitions are seeded from `seed`, never wiping it:
+///
+/// - the store is opened with the model of its *active* definitions set
+///   when it has one (so artifacts installed since, such as flows and their
+///   Run types, keep the schema they were installed with), else with the
+///   seed's model;
+/// - a cell with no definitions version (fresh, or opened before it had
+///   one) gets the seed set installed as its first governed version;
+/// - a cell whose seeded artifacts differ from `seed` is upgraded in place:
+///   the seed artifacts and every active artifact the seed does not own are
+///   admitted together and installed as the next governed version, in one
+///   commit. A cell already matching opens without writing.
 ///
 /// # Errors
-/// The set does not admit, or the engine holds a different cell.
-pub(crate) fn provision_set<E: SqlEngine>(
+/// A set that does not admit, or an engine holding a different cell.
+pub(crate) fn open_governed<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
-    artifacts: &[ArtifactEnvelope],
+    seed: &[ArtifactEnvelope],
+    installed_at: u64,
 ) -> Result<CellStore<E>, SeedError> {
-    let (model, input) = admit_set(artifacts)?;
-    CellStore::provision_definitions(engine, model, &input, &scope.key())
-        .map_err(|e| fail("provision")(&e))
+    let active =
+        CellStore::read_active_definitions(&engine).map_err(|e| fail("definitions")(&e))?;
+    let (seed_model, seed_input) = admit_set(seed)?;
+    let Some(active) = active else {
+        let mut store =
+            CellStore::from_engine(engine, seed_model.clone()).map_err(|e| fail("open")(&e))?;
+        store
+            .bind("scope", &scope.key())
+            .map_err(|e| fail("scope")(&e))?;
+        let input = InstalledDefinitionInput {
+            installed_at: installed_at.max(clock(&store)?),
+            ..seed_input
+        };
+        store
+            .install_definitions(seed_model, input, Some(0), &scope.key())
+            .map_err(|e| fail("definitions v1")(&e))?;
+        return Ok(store);
+    };
+    let active_artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)
+        .map_err(|e| fail("active definitions")(&e))?;
+    let active_model =
+        norn_api::kernel_set::kernel_model(&active_artifacts).map_err(|refusal| match refusal {
+            norn_api::kernel_set::KernelRefusal::Refused(diagnostics) => {
+                SeedError(format!("active definitions refused: {diagnostics:?}"))
+            }
+            norn_api::kernel_set::KernelRefusal::Invalid(detail) => SeedError(detail),
+        })?;
+    let mut store = CellStore::from_engine(engine, active_model).map_err(|e| fail("open")(&e))?;
+    store
+        .bind("scope", &scope.key())
+        .map_err(|e| fail("scope")(&e))?;
+    let seeded: Vec<&str> = seed
+        .iter()
+        .map(|artifact| artifact.artifact_id.as_str())
+        .collect();
+    let mut merged: Vec<ArtifactEnvelope> = seed.to_vec();
+    merged.extend(
+        active_artifacts
+            .into_iter()
+            .filter(|artifact| !seeded.contains(&artifact.artifact_id.as_str())),
+    );
+    let (model, input) = admit_set(&merged)?;
+    if input.canonical_set == active.canonical_set {
+        return Ok(store);
+    }
+    let input = InstalledDefinitionInput {
+        installed_at: installed_at.max(clock(&store)?),
+        ..input
+    };
+    store
+        .install_definitions(model, input, Some(active.version), &scope.key())
+        .map_err(|e| fail("definitions upgrade")(&e))?;
+    Ok(store)
+}
+
+/// The logical time of the cell's last commit (0 when it has none).
+fn clock<E: SqlEngine>(store: &CellStore<E>) -> Result<u64, SeedError> {
+    let commits = store
+        .verified_head()
+        .map_err(|e| fail("ledger")(&e))?
+        .commits;
+    Ok(store
+        .read()
+        .receipt_at(commits)
+        .map_err(|e| fail("receipt")(&e))?
+        .map_or(0, |receipt| receipt.body.logical_time))
 }
 
 /// Admit `artifacts` with the shared checker (any `core.` or `std.` artifact
@@ -79,87 +155,22 @@ pub(crate) fn provision_set<E: SqlEngine>(
 pub(crate) fn admit_set(
     artifacts: &[ArtifactEnvelope],
 ) -> Result<(Model, InstalledDefinitionInput), SeedError> {
-    let value = |artifact: &ArtifactEnvelope| {
-        serde_json::to_value(artifact)
-            .map_err(|e| fail("artifact wire")(&e))
-            .and_then(|wire| RuntimeValue::from_json(wire).map_err(|e| fail("artifact value")(&e)))
-    };
-    // The packs are checked over the core layer as a trusted base, which the
-    // cell retains in the same set (`baseArtifactIds` on the definitions read).
-    let (base, candidates): (Vec<_>, Vec<_>) = artifacts
-        .iter()
-        .cloned()
-        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
-    let candidate_values = candidates
-        .iter()
-        .map(value)
-        .collect::<Result<Vec<_>, _>>()?;
-    let base_values = base.iter().map(value).collect::<Result<Vec<_>, _>>()?;
-    let checked = check_artifact_set_with_receipt(
-        &ReceiptSources::new(&candidate_values, &base_values)
-            .map_err(|e| fail("receipt sources")(&e))?,
-        &EntityArtifactSetContext {
-            registry: &BTreeSet::new(),
-            base: &base,
-            tenant: None,
-        },
-        &ResourceLimitProfile::norn_limits_v1(),
-    )
-    .map_err(|e| fail("admission")(&e))?;
-    if !checked.receipt.admitted {
-        return Err(SeedError(format!(
-            "demo definitions refused: {:?}",
-            checked.diagnostics
-        )));
-    }
-    let receipt = checked
-        .receipt
-        .canonical_json()
-        .map_err(|e| fail("receipt")(&e))?;
-    let sources = artifacts.iter().map(value).collect::<Result<Vec<_>, _>>()?;
-    let canonical_set = RuntimeValue::Array(sources)
-        .canonical_json()
-        .map_err(|e| fail("canonical set")(&e))?;
+    let admitted =
+        norn_api::kernel_set::admit_kernel_set(artifacts).map_err(|refusal| match refusal {
+            norn_api::kernel_set::KernelRefusal::Refused(diagnostics) => {
+                SeedError(format!("demo definitions refused: {diagnostics:?}"))
+            }
+            norn_api::kernel_set::KernelRefusal::Invalid(detail) => SeedError(detail),
+        })?;
     let input = InstalledDefinitionInput {
-        canonical_set: String::from_utf8(canonical_set).map_err(|e| fail("set")(&e))?,
+        canonical_set: admitted.canonical_set,
         registry: vec![],
-        receipt_sha256: checked
-            .receipt
-            .content_sha256()
-            .map_err(|e| fail("receipt digest")(&e))?,
-        admission_receipt: Some(String::from_utf8(receipt).map_err(|e| fail("receipt")(&e))?),
+        receipt_sha256: admitted.receipt_sha256,
+        admission_receipt: Some(admitted.receipt),
         readmission: None,
         diff: serde_json::json!({}),
         installed_at: INSTALLED_AT,
         layout: None,
     };
-    Ok((model(artifacts)?, input))
-}
-
-/// The normalized model of the set's entity roots and their governing laws.
-fn model(artifacts: &[ArtifactEnvelope]) -> Result<Model, SeedError> {
-    let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
-    for artifact in artifacts
-        .iter()
-        .filter(|a| a.kind() == ArtifactKind::Entity)
-    {
-        let root: EntityRoot = serde_json::to_value(artifact.payload.to_json_value())
-            .and_then(serde_json::from_value)
-            .map_err(|e| fail(&artifact.artifact_id)(&e))?;
-        match root {
-            EntityRoot::V2(root) => objects.push(root.object_type),
-            EntityRoot::V2Interface(root) => interfaces.push(root.interface),
-            EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-            EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
-                return Err(SeedError(format!(
-                    "{} is outside the three-systems profile",
-                    artifact.artifact_id
-                )));
-            }
-        }
-    }
-    Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
-        .map_err(|e| fail("model")(&e))?
-        .with_governing_laws(artifacts)
-        .map_err(|e| fail("governing laws")(&e))
+    Ok((admitted.model, input))
 }
