@@ -2,7 +2,7 @@ import { Chat, useChat } from "@ai-sdk/react"
 import { DefaultChatTransport, type UIMessage } from "ai"
 import { Bot, LoaderCircle, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react"
 import { Streamdown } from "streamdown"
 import { StickToBottom } from "use-stick-to-bottom"
 import { Badge } from "@/components/ui/badge"
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionCard, VerdictCard } from "./cards.tsx"
-import { SUGGESTIONS, sessionId, tabStorage, verdictOf } from "./verdict.ts"
+import { EXAMPLES, SUGGESTIONS, sessionId, settleExample, tabStorage, timeline, verdictOf, type ExampleRun, type Verdict } from "./verdict.ts"
 
 const ALTERNATIVE = "Suggest a different change that keeps the intent but that the checker would admit, and propose it."
 
@@ -58,39 +58,81 @@ export interface AgentState {
   readonly setInput: (input: string) => void
   readonly stopped: ReadonlySet<string>
   readonly setStopped: (update: (set: ReadonlySet<string>) => ReadonlySet<string>) => void
+  readonly examples: readonly ExampleRun[]
+  readonly setExamples: (update: (list: readonly ExampleRun[]) => readonly ExampleRun[]) => void
+  readonly nextExample: MutableRefObject<number>
+  /** Whether the Worker serves the example checker: unknown until the one probe answers. */
+  readonly examplesServed: boolean | undefined
 }
+
+/** The example route is missing (404) or has no agent service bound (503), or could not be reached: examples cannot run here. */
+export const examplesServedBy = (status: number | "unreachable"): boolean => status !== "unreachable" && status !== 404 && status !== 503
 
 export function useAgentState(): AgentState {
   const [chat] = useState(() => new Chat<UIMessage>({ transport: new DefaultChatTransport({ api: "/api/agent", headers: () => ({ "x-norn-session": sessionId(tabStorage()) }) }) }))
   const [input, setInput] = useState("")
   const [stopped, setStopped] = useState<ReadonlySet<string>>(new Set())
-  return { chat, input, setInput, stopped, setStopped }
+  const [examples, setExamples] = useState<readonly ExampleRun[]>([])
+  const nextExample = useRef(0)
+  const [examplesServed, setExamplesServed] = useState<boolean>()
+  // Probe the example route once per page; it accepts only POST, so any answer but 404 or 503 means it is served.
+  useEffect(() => {
+    let current = true
+    fetch("/api/agent/example", { method: "GET", headers: { accept: "application/json" } })
+      .then((response) => response.status, () => "unreachable" as const)
+      .then((status) => { if (current) setExamplesServed(examplesServedBy(status)) })
+    return () => { current = false }
+  }, [])
+  return { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample, examplesServed }
 }
 
 /** The assistant (AI SDK chat; scrolling and markdown from use-stick-to-bottom and streamdown): ask for a change in plain words; the server's checker admits or refuses what it proposes. */
 export function AgentPanel({ state }: { readonly state: AgentState }) {
-  const { chat, input, setInput, stopped, setStopped } = state
+  const { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample, examplesServed } = state
   const { messages, sendMessage, status, error, stop, regenerate, clearError } = useChat({ chat })
   const busy = status === "submitted" || status === "streaming"
   const send = (text: string) => { if (text.trim() === "" || busy) return; clearError(); void sendMessage({ text }); setInput("") }
   const submit = (event: FormEvent) => { event.preventDefault(); send(input) }
   const last = messages.at(-1)
+  // Example proposals are checked by the server as recorded, without the model.
+  const runExample = async (chip: string) => {
+    const id = nextExample.current++
+    setExamples((list) => [...list, { id, chip, after: messages.length, verdict: "pending" }])
+    const settle = (verdict: Verdict | string) => setExamples((list) => settleExample(list, id, verdict))
+    try {
+      const response = await fetch("/api/agent/example", { method: "POST", headers: { "content-type": "application/json", "x-norn-session": sessionId(tabStorage()) }, body: JSON.stringify({ chip }) })
+      const body: unknown = await response.json().catch(() => null)
+      settle((response.ok ? verdictOf(body) : undefined) ?? reason(new Error(JSON.stringify(body))))
+    } catch {
+      settle("The checker could not be reached.")
+    }
+  }
   return (
     <div className="flex h-full min-h-0 flex-col">
       <StickToBottom className="relative min-h-0 flex-1 overflow-y-hidden" initial="smooth" resize="smooth" role="log">
         <StickToBottom.Content className="flex flex-col gap-4 p-4">
-          {messages.length === 0 && (
+          {messages.length === 0 && examples.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-10 text-center">
               <Bot className="size-8 text-muted-foreground" />
               <div className="font-medium">Propose a change</div>
               <p className="max-w-xs text-sm text-muted-foreground">Ask in plain words. The checker on the server admits or refuses every proposal, and names the law when it refuses. Nothing is installed.</p>
             </div>
           )}
-          {messages.map((message) => (
-            <div key={message.id} className={cn("flex flex-col gap-2 text-sm", message.role === "user" ? "ms-auto max-w-[85%] rounded-2xl bg-muted px-3 py-2" : "max-w-full")}>
-              <Parts message={message} />
-            </div>
-          ))}
+          {/* Examples and chat messages in the order they were sent, so a new result lands at the bottom. */}
+          {timeline(messages, examples).map((entry) => entry.kind === "message"
+            ? (
+              <div key={entry.message.id} className={cn("flex flex-col gap-2 text-sm", entry.message.role === "user" ? "ms-auto max-w-[85%] rounded-2xl bg-muted px-3 py-2" : "max-w-full")}>
+                <Parts message={entry.message} />
+              </div>
+            )
+            : (
+              <div key={`example:${entry.example.id}`} className="flex flex-col gap-2 text-sm">
+                <div className="ms-auto max-w-[85%] rounded-2xl bg-muted px-3 py-2"><Badge variant="outline" className="me-2">Example proposal</Badge>{entry.example.chip}</div>
+                {entry.example.verdict === "pending"
+                  ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Asking the checker…</p>
+                  : typeof entry.example.verdict === "string" ? <p className="text-sm text-destructive">{entry.example.verdict}</p> : <VerdictCard verdict={entry.example.verdict} />}
+              </div>
+            ))}
           {last?.role === "assistant" && !busy && refused(last) && !stopped.has(last.id) && (
             <DecisionCard disabled={busy} onStop={() => setStopped((set) => new Set(set).add(last.id))} onAlternative={() => send(ALTERNATIVE)} />
           )}
@@ -104,11 +146,18 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
         </StickToBottom.Content>
       </StickToBottom>
       <div className="space-y-2 border-t p-3">
-        {messages.length === 0 && (
-          <div className="flex flex-wrap gap-2">{SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}</div>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {/* The model's suggestions open a conversation; the example proposals stay offered throughout. */}
+          {messages.length === 0 && SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}
+          {examplesServed === false && <p className="w-full text-meta text-muted-foreground">Examples need the agent service.</p>}
+          {EXAMPLES.map((chip) => (
+            <Button key={chip} size="sm" variant="outline" disabled={examplesServed !== true} className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => void runExample(chip)} title="Sends this recorded proposal straight to the checker, without the model.">
+              <span className="text-muted-foreground">Example proposal:</span> {chip}
+            </Button>
+          ))}
+        </div>
         <form onSubmit={submit} className="flex items-end gap-2">
-          <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. let Approve skip Submit" rows={2} className="min-h-0 resize-none"
+          <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. record each melt's purity" rows={2} className="min-h-0 resize-none"
             onKeyDown={(event) => { if (sendsOnEnter(event)) { event.preventDefault(); send(input) } }} />
           {busy
             ? <Button type="button" variant="outline" onClick={() => void stop()}>Stop</Button>
