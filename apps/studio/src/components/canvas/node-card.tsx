@@ -73,7 +73,7 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
           <div data-node-title className="text-[15px] leading-5 font-semibold tracking-[-0.01em] break-words text-foreground">{title}</div>
           {subtitle && <div className="truncate text-xs leading-4 text-muted-foreground">{subtitle}</div>}
           {problems > 0 && (
-            <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-destructive/10 px-1.5 text-[11px] leading-4 font-medium text-destructive">
+            <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-destructive/10 px-1.5 text-[11px] leading-4 font-medium text-destructive-text">
               <span className="size-1.5 rounded-full bg-destructive" />{problems} {problems === 1 ? "problem" : "problems"}
             </div>
           )}
