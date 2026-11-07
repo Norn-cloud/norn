@@ -1,0 +1,10 @@
+{
+  "objectType": "canon.Party",
+  "id": "demo/party/customer",
+  "scope": "org_demo/dev",
+  "version": 1,
+  "values": {
+    "display_name": "Customer",
+    "kind": "organization"
+  }
+}
