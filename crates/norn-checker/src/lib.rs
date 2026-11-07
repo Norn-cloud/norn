@@ -23,8 +23,6 @@
 
 // TODO(rust-safety): these downgrades were moved with the code from norn-ir
 // (docs/platform/rust-safety-baseline.md) and keep the same staged burn-down.
-/// The `perform` records of a lowered flow's decide rule.
-pub mod flow_performs;
 pub mod action_set;
 pub mod artifact_set;
 pub mod classification;
@@ -59,6 +57,8 @@ pub mod entity_model;
 pub mod envelope;
 pub mod exact_rational;
 mod finite;
+/// The `perform` records of a lowered flow's decide rule.
+pub mod flow_performs;
 pub mod flow_source_map;
 pub mod function;
 mod graph;
