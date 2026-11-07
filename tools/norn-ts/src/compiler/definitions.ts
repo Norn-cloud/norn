@@ -108,6 +108,7 @@ function lowerEach<T>(
   files: ReadonlyArray<string>,
   overrides: Partial<CompilerLimits>,
   lower: (compiler: DefinitionCompiler, source: ts.SourceFile) => Lowered<T>,
+  onModuleWork?: (path: string, work: number) => void,
 ): Lowered<T>[] {
   const { started, limits, profile, program, expansion, accepted, failed } = prepareCompilation(files, overrides)
   const results = new Map<string, Lowered<T>>()
@@ -116,8 +117,10 @@ function lowerEach<T>(
     const source = program!.getSourceFile(path)!
     try {
       checkClosure(program!, source, limits)
+      expansion.beginModule()
       const lowered = lower(new DefinitionCompiler(profile, program!, started, limits, expansion), source)
       if (lowered.ok) expansion.addOutput(lowered.value)
+      onModuleWork?.(path, expansion.workUsed)
       results.set(path, lowered)
     } catch (error) {
       if (error instanceof BudgetExceeded) { results.set(path, { ok: false, diagnostics: [diagnostic(source, "NORN-FLOW-UNBOUNDED", error.message)] }); continue }
@@ -136,8 +139,11 @@ export function compileDefinitionFiles(
   files: ReadonlyArray<string>,
   options: EnvelopeOptions | ((path: string) => EnvelopeOptions),
   overrides: Partial<CompilerLimits> = {},
-  /** `allowEmpty`: a module with no ontology definition (a flow-only module) is not an error. */
-  mode: { readonly allowEmpty?: boolean } = {},
+  /**
+   * `allowEmpty`: a module with no ontology definition (a flow-only module) is
+   * not an error. `onModuleWork`: the expansion work each root module charged.
+   */
+  mode: { readonly allowEmpty?: boolean; readonly onModuleWork?: (path: string, work: number) => void } = {},
 ): DefinitionsResult[] {
   return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[] }>(files, overrides, (compiler, source) => {
     const { definitions, flows } = compiler.compile(source, mode.allowEmpty === true)
@@ -164,7 +170,7 @@ export function compileDefinitionFiles(
       else for (const d of built.diagnostics) diagnostics.push({ ...diagnostic(source, d.code, d.message), ...(d.at ? { start: { line: d.at.line, column: d.at.column ?? 1 } } : {}) })
     }
     return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings } }
-  }).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
+  }, mode.onModuleWork).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
 }
 
 export function compileDefinitions(file: string, options: EnvelopeOptions, limits: Partial<CompilerLimits> = {}, mode: { readonly allowEmpty?: boolean } = {}): DefinitionsResult {
