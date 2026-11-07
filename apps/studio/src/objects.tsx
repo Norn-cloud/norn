@@ -1,10 +1,11 @@
 import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
+import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import {
   type ColumnDef, type SortingState, flexRender, getCoreRowModel, getFilteredRowModel,
   getPaginationRowModel, getSortedRowModel, useReactTable,
 } from "@tanstack/react-table"
-import { ArrowDown, ArrowUp, ArrowUpDown, Database, Link2, Rows3 } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, Database, GitBranch, Link2, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -118,10 +119,10 @@ function ObjectTable({ concept, collected }: { readonly concept: Concept; readon
   )
 }
 
-export function ObjectsPage() {
-  const { concept: name = "" } = useParams({ strict: false })
-  const { read: catalogRead, catalog } = useCatalog()
-  const concept = catalog?.byName.get(name)
+/** An object type's records, read page by page from the server, for its object-type page. */
+export function ObjectRecords({ concept }: { readonly concept: Concept }) {
+  const name = concept.name
+  const { read: catalogRead } = useCatalog()
   const pages = useInfiniteQuery({
     queryKey: ["objects", name],
     initialPageParam: undefined as string | undefined,
@@ -137,18 +138,10 @@ export function ObjectsPage() {
   const first = pages.data?.pages[0]
   const reading = pages.isPending || isFetchingNextPage || readNext
   const problem = readProblem(catalogRead, pages)
-  const title = concept?.title ?? conceptTitle(name)
+  const title = concept.title
   const records = (body: ReactNode) => <Panel icon={Rows3} label="Records"><Well className="p-3">{body}</Well></Panel>
   return (
     <section className="space-y-6">
-      <div className="space-y-2">
-        <Link to="/sources" className="text-sm text-muted-foreground underline-offset-4 hover:underline">Sources</Link>
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-title font-medium">{title}</h1>
-          {first?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
-        </div>
-        {concept?.description && <p className="max-w-2xl text-muted-foreground">{concept.description}</p>}
-      </div>
       {first && <div className="flex flex-wrap gap-8">
         <div><div className="text-4xl font-medium tabular-nums">{collected.complete ? "" : "at least "}{collected.rows.length}</div><div className="text-meta text-muted-foreground">records</div></div>
         <div><div className="text-4xl font-medium tabular-nums">{collected.held}</div><div className="text-meta text-muted-foreground">held back for review</div></div>
@@ -158,9 +151,8 @@ export function ObjectsPage() {
         {isFetchNextPageError && <Button variant="outline" size="sm" onClick={() => void fetchNextPage()}>Retry</Button>}
       </div>}
       {problem === undefined && (catalogRead.isPending || reading) && <p className="text-muted-foreground">Reading records…</p>}
-      {catalog && !concept && <p className="text-muted-foreground">This concept is not in the business model.</p>}
-      {concept && pages.data !== undefined && !reading && (first === null
-        ? <Panel icon={Rows3} label="Records"><Well><EmptyState icon={Rows3}>Records for this concept are not available yet.</EmptyState></Well></Panel>
+      {pages.data !== undefined && !reading && (first === null
+        ? <Panel icon={Rows3} label="Records"><Well><EmptyState icon={Rows3}>Records for this object type are not available yet.</EmptyState></Well></Panel>
         : !collected.complete
           ? records(<>
             <p className="pb-3 text-meta text-muted-foreground">The server has more pages than could be read here, so this list is incomplete.</p>
@@ -199,6 +191,11 @@ export function ObjectPage() {
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
       {reads.isSuccess && data === null && <p className="text-muted-foreground">This record is not available yet.</p>}
       {data && concept && <>
+        {concept.lifecycles.map((lifecycle) => (
+          <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
+            <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
+          </Panel>
+        ))}
         <Panel icon={Rows3} label="Facts"><Well className="p-3">
           <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Value</TableHead></TableRow>}>
             {concept.fields.map((field) => (

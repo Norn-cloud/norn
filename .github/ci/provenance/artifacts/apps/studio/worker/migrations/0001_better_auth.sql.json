@@ -1,0 +1,20 @@
+{
+  "sha256": "87a975e71c6d74464c4d8274e8cdca3ce6d5d4c413c0c3a6d2d8c416c6c86c66",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "apps/studio/scripts/auth-schema.ts",
+    "apps/studio/worker/auth.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

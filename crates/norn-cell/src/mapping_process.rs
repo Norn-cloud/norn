@@ -12,8 +12,8 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     /// The inbox identity selects evidence; no caller supplies facts or authority.
     ///
     /// # Errors
-    /// Changed pins/outputs refuse `core.boundary.bundle_mismatch`. Relation and
-    /// delete processing are outside this CP2 property/lifecycle profile.
+    /// Changed pins/outputs refuse `core.boundary.bundle_mismatch`. Source deletes
+    /// remain outside this mapping-bundle profile.
     pub fn process_mapping_bundle(&mut self, observation_id: &str) -> Result<bool, CellError> {
         let Some(pending) = self
             .store()
@@ -71,10 +71,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             return Err(CellError::UnsupportedMappingProfile);
         }
         for record in &bundle.records {
-            if !record.links.is_empty()
-                || !record.cleared_links.is_empty()
-                || record.invocations.len() != 1
-            {
+            if record.invocations.len() != 1 {
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
@@ -98,15 +95,17 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 },
             )
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-            let (part, authority) = prepared.into_parts();
-            commit.reads.extend(part.reads);
-            commit.writes.extend(part.writes);
-            commit.events.extend(part.events);
-            commit.effects.extend(part.effects);
-            commit.links.extend(part.links);
-            commit.link_reads.extend(part.link_reads);
-            authorization.merge(authority);
+            prepared
+                .append_to(&mut commit, &mut authorization)
+                .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         }
+        self.store().read().prepare_mapping_links(
+            &bundle,
+            &catalog,
+            &turn,
+            &mut commit,
+            &mut authorization,
+        )?;
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
@@ -118,7 +117,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
 
 impl<E: SqlEngine> StoreReader<'_, E> {
     // OBS-EVIDENCE-1: cell-owned observation preparation retains raw versions in quarantine.
-    fn mapping_observation_slice(
+    pub(crate) fn mapping_observation_slice(
         &self,
         key: &FactKey,
     ) -> Result<norn_kernel::FactSlice, CellError> {
