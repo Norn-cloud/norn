@@ -116,6 +116,9 @@ use crate::entity_instance::{
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::lifecycle_writes::{codes as codes_lifecycle, finding as lifecycle_finding};
 use crate::lifecycles::{check_transition_firing, codes::UNDECLARED_WRITE};
+use crate::predicate_property::{
+    EQUALITY, ScalarClass, WINDOW, indexed_scalar_property, scalar_class,
+};
 use crate::property_types::error;
 use crate::typed_roots::{action_input_field_type, check_action_slice_preconditions};
 use crate::{Diagnostic, DiagnosticCode, Span};
@@ -720,46 +723,6 @@ impl AggregateSite<'_> {
     }
 }
 
-/// The comparable value class of a scalar expression type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScalarClass {
-    Text,
-    Integer,
-    Decimal,
-    Bool,
-    Date,
-    Timestamp,
-}
-
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "The foreign non-exhaustive enum requires a catch-all; any other kind is not a scalar the fold can compare"
-)]
-fn scalar_class(ty: &Type) -> Option<ScalarClass> {
-    match ty {
-        Type::Optional(inner) => scalar_class(inner),
-        Type::Text { .. } | Type::Enum { .. } => Some(ScalarClass::Text),
-        Type::Integer => Some(ScalarClass::Integer),
-        Type::Decimal { .. } | Type::Number => Some(ScalarClass::Decimal),
-        Type::Bool => Some(ScalarClass::Bool),
-        Type::Date => Some(ScalarClass::Date),
-        Type::Timestamp { .. } => Some(ScalarClass::Timestamp),
-        _ => None,
-    }
-}
-
-/// Property kinds an aggregate filter compares by equality.
-const FILTERABLE: &[ScalarClass] = &[
-    ScalarClass::Text,
-    ScalarClass::Integer,
-    ScalarClass::Decimal,
-    ScalarClass::Bool,
-    ScalarClass::Date,
-];
-
-/// Property kinds an aggregate window ranges over.
-const EDGES: &[ScalarClass] = &[ScalarClass::Date, ScalarClass::Timestamp];
-
 /// Whether an action input field can be compared with a stored property of
 /// `class`. Inputs carry dates and timestamps as strings.
 fn input_comparable(input: ScalarClass, property: ScalarClass) -> bool {
@@ -824,29 +787,20 @@ fn aggregate_result_type(
             .map(|field| field.ty.clone())
     };
     let mut admitted = true;
+    // #1104 shares this rule: predicate properties are indexed scalars.
     let mut compare =
         |suffix: String, property: &PropertyId, input: &str, allowed: &[ScalarClass]| {
-            let Some(ty) = property_type(property) else {
-                findings.push(site.finding(
-                    &suffix,
-                    format!(
-                        "{:?} is not a stored property of {kind:?}",
-                        property.as_str()
-                    ),
-                ));
-                admitted = false;
-                return;
-            };
-            let Some(class) = scalar_class(&ty).filter(|class| allowed.contains(class)) else {
-                findings.push(site.finding(
-                    &suffix,
-                    format!(
-                        "property {:?} has a kind the fold cannot compare",
-                        property.as_str()
-                    ),
-                ));
-                admitted = false;
-                return;
+            let class = match indexed_scalar_property(record, effective, property.as_str(), allowed)
+            {
+                Ok((class, _)) => class,
+                Err(error) => {
+                    findings.push(site.finding(
+                        &suffix,
+                        format!("property {:?} {}", property.as_str(), error.reason()),
+                    ));
+                    admitted = false;
+                    return;
+                }
             };
             let input_class = action_input_field_type(Some(site.input_schema), input)
                 .as_ref()
@@ -867,7 +821,7 @@ fn aggregate_result_type(
             format!("/filter/{}", property.as_str()),
             property,
             input,
-            FILTERABLE,
+            EQUALITY,
         );
     }
     if let Some(window) = &aggregate.window {
@@ -875,13 +829,13 @@ fn aggregate_result_type(
             "/window/start".to_owned(),
             &window.property,
             &window.start,
-            EDGES,
+            WINDOW,
         );
         compare(
             "/window/end".to_owned(),
             &window.property,
             &window.end,
-            EDGES,
+            WINDOW,
         );
     }
     let result = match &aggregate.aggregate {

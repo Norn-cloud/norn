@@ -47,6 +47,8 @@ fn documents() -> Vec<Value> {
                         {"id": "rate", "type": {"kind": "decimal", "scale": 4}},
                         {"id": "credit", "constraints": {"nullable": true}, "type": {"kind": "decimal",
                             "scale": 2, "additivity": {"kind": "additive"}}},
+                        {"id": "account_copy", "type": {"kind": "text"},
+                            "computed": "self.account"},
                         {"id": "lines", "type": {"kind": "integer",
                             "additivity": {"kind": "additive"}}}
                     ]
@@ -170,6 +172,12 @@ fn property_kinds_the_fold_cannot_read_are_refused() {
             json!({"window": {"property": "account", "start": "from", "end": "to",
                 "startInclusive": true, "endInclusive": true}}),
             "cannot compare",
+        ),
+        // A filter over a computed property: predicates select by stored,
+        // indexable properties only (shared with #1104).
+        (
+            json!({"filter": {"account_copy": "account"}}),
+            "is computed",
         ),
         // A filter whose input has another value class.
         (
