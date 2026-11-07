@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 2,
+  "id": "data_quality_finding:fa752f4f44a9adcdc6c2032aeb10b334da0920e17cb7cbe2200fbbf74015409f",
+  "dedupeKey": "sha256:fa752f4f44a9adcdc6c2032aeb10b334da0920e17cb7cbe2200fbbf74015409f",
+  "evidenceDigest": "sha256:9ed0e24a83e263c537bec7d09a59b877cc6d5e02a25c937d5b8ef811ed87648a",
+  "ruleRef": {
+    "kind": "invariant",
+    "owner": {
+      "kind": "object",
+      "name": "demo.Conversion"
+    },
+    "invariantId": "recovery_bound",
+    "version": "sha256:e28ab9e4cee6deb34c506defe87c0cd961f8249dc6744c2fe242fd18cb7cb571"
+  },
+  "subjects": [
+    {
+      "objectType": "demo.Conversion",
+      "key": "SYN-MELT-15-1"
+    }
+  ],
+  "severity": "error",
+  "message": "Recovered mass exceeds source input",
+  "outcome": {
+    "kind": "not_satisfied"
+  },
+  "provenance": [
+    {
+      "provenance": {
+        "source": {
+          "system": "synthetic-erpnext",
+          "record": "SYN-MELT-15-1"
+        },
+        "mappingVersion": "synthetic.measurements@1",
+        "recordedAt": "2026-10-26T00:00:00Z",
+        "sourceFields": [
+          "input",
+          "recovered"
+        ]
+      },
+      "observationIds": [
+        "bad-source"
+      ]
+    }
+  ],
+  "firstSeen": "2026-10-26T00:00:00Z",
+  "lastSeen": "2026-10-26T00:00:00Z",
+  "status": "open"
+}

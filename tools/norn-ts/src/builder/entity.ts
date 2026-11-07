@@ -166,7 +166,14 @@ interface TypeMetaBase {
   readonly properties: ReadonlyArray<PropertyDecl>
 }
 
+export interface PathEquation {
+  readonly id: string
+  readonly left: ReadonlyArray<string>
+  readonly right: ReadonlyArray<string>
+}
+
 export interface ObjectTypeDef extends TypeMetaBase {
+  readonly pathEquations?: ReadonlyArray<PathEquation>
   readonly _tag: "ObjectType"
   readonly extends?: string
   readonly implements: ReadonlyArray<string>
@@ -222,6 +229,7 @@ export function property(id: string, type: PropertyType, options: Omit<PropertyD
 
 export function objectType(
   meta: TypeMetaBase & {
+    readonly pathEquations?: ReadonlyArray<PathEquation>
     readonly extends?: string | ObjectTypeDef
     readonly implements?: ReadonlyArray<string | InterfaceDef>
     readonly links?: ReadonlyArray<LinkDecl>
@@ -320,6 +328,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
         }
       : {
           entityVersion: "2.0",
+          extensions: def.pathEquations?.length ? { "norn.path-equations/1.0.0": def.pathEquations } : undefined,
           objectType: {
             name: def.name,
             role: def.role,

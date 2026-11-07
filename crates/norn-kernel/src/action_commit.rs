@@ -40,6 +40,13 @@
 //!    input's `set` changes. Both go through [`crate::prepare_decision`]. The
 //!    target's prepared `put` is canonicalized with the shared effective-value
 //!    builder, then authorized as the proposed state.
+//!    **Receipt acceptance** (RECEIPT-EFFECT-1 / RECEIPT-CONSUME-1, Core 07):
+//!    a `fire_transition` declaring `acceptReceipt` resolves its input's
+//!    receipt digest through [`CellHost::resolve_accepted_receipt`], checks the
+//!    receipt is bound to the target run and its current generation, and adds
+//!    the digest and bound result `set`s plus the acceptance's delivery and
+//!    pins to the same commit. The host's pending check refuses a second
+//!    consumption; no transition commits without its consumption.
 //! 9. **Commit**: the prepared writes and call record commit atomically. A
 //!    concurrent call that commits first makes this one stale; if that call
 //!    had the same idempotency key and binding, this one replays after current
@@ -748,6 +755,14 @@ pub enum ActionRefusal<X> {
         /// Why the target failed the mode.
         reason: String,
     },
+    /// RECEIPT-EFFECT-1: the referenced receipt cannot be consumed by this
+    /// call (unknown, replayed, bound to another run or generation, not an
+    /// accepted success, or its result does not fit the declared bindings).
+    #[error("the action's receipt was refused: {}", reason.code())]
+    ReceiptRefused {
+        /// Why.
+        reason: crate::receipt_binding::ReceiptRefusal,
+    },
     /// The transition was refused by the decision-commit path.
     #[error(transparent)]
     Decision(DecisionRefusal<X>),
@@ -775,6 +790,7 @@ impl<X> ActionRefusal<X> {
             Self::KindMismatch { .. } => "artifact_set.action.effect_kind_mismatch",
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
+            Self::ReceiptRefused { reason } => reason.code(),
             Self::Decision(refusal) => refusal.code(),
         }
     }
@@ -933,19 +949,16 @@ where
         )?,
     };
     match action.effect_program.as_ref() {
-        // RECEIPT-EFFECT-1: refuse until consumption and effects share one commit.
-        Some(ActionEffectProgram::FireTransition {
-            accept_receipt: Some(_),
-            ..
-        })
-        | None => Err(ActionRefusal::UnsupportedEffect {
+        None => Err(ActionRefusal::UnsupportedEffect {
             action_id: action.action_id.clone(),
         }),
+        // RECEIPT-EFFECT-1: an accepted receipt is consumed in the transition's commit.
         Some(ActionEffectProgram::FireTransition {
             object_id_field,
             object_kind,
             lifecycle,
             transition,
+            accept_receipt,
             ..
         }) => commit_transition(
             host,
@@ -957,6 +970,7 @@ where
             object_kind,
             lifecycle,
             transition,
+            accept_receipt.as_ref(),
             limits,
             meter,
         ),
@@ -1020,6 +1034,7 @@ fn commit_transition<H>(
     object_kind: &str,
     lifecycle: &norn_ir::PropertyId,
     transition: &norn_ir::TransitionId,
+    accept_receipt: Option<&norn_ir::ReceiptAcceptance>,
     limits: &EnvelopeLimits,
     meter: Option<&mut TurnEnvelopeMeter>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
@@ -1030,6 +1045,15 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
+    if accept_receipt.is_some()
+        && (action.synchronous_rule.is_some() || call.turn.consumes.is_some())
+    {
+        // One commit consumes at most one delivery, and a rule writer's
+        // closure has not been qualified against receipt-bound values.
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
+    }
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
         return Err(ActionRefusal::InvalidInput {
@@ -1148,6 +1172,15 @@ where
     } else {
         Vec::new()
     };
+    let receipt = match accept_receipt {
+        Some(declaration) => {
+            let accepted =
+                resolve_receipt_effect(host, &preparation.effective_input, declaration, &target)?;
+            changes.extend(accepted.changes);
+            Some(accepted.acceptance)
+        }
+        None => None,
+    };
     let change = FactChange::Transition {
         object_type,
         key: object_id.clone(),
@@ -1173,9 +1206,83 @@ where
             recorded,
             record,
             series_candidate: None,
+            receipt,
         },
         EnvelopePolicy { limits, meter },
     )
+}
+
+/// The property changes and delivery a receipt-accepting transition commits.
+struct ReceiptEffect {
+    changes: Vec<FactChange>,
+    acceptance: crate::result_reconciliation::Acceptance,
+}
+
+/// RECEIPT-EFFECT-1: resolve the input's receipt reference through the host and
+/// turn the authenticated result into the declared property changes. Nothing
+/// is consumed here; [`commit_effect`] consumes the acceptance's delivery in
+/// the same commit as the transition.
+fn resolve_receipt_effect<H: CellHost + ?Sized>(
+    host: &H,
+    effective_input: &JsonObject,
+    declaration: &norn_ir::ReceiptAcceptance,
+    target: &FactKey,
+) -> Result<ReceiptEffect, ActionRefusal<H::Error>> {
+    use crate::receipt_binding::{ReceiptReference, ReceiptRefusal};
+    let refuse = |reason| ActionRefusal::ReceiptRefused { reason };
+    let reference = effective_input
+        .get(&declaration.reference_field)
+        .ok_or_else(|| ActionRefusal::InvalidInput {
+            field: declaration.reference_field.clone(),
+        })?;
+    let reference = ReceiptReference::parse(reference).map_err(|error| refuse(error.into()))?;
+    let binding = match host.resolve_accepted_receipt(&reference, &declaration.manifest_digest) {
+        Ok(Some(binding)) => binding,
+        Ok(None) => return Err(refuse(ReceiptRefusal::EffectUnsupported)),
+        Err(error) => return Err(error.into_refusal().map_or_else(host_failure, refuse)),
+    };
+    // The host authenticates; the kernel re-checks the pins it can see.
+    if binding.manifest() != &declaration.manifest_digest {
+        return Err(refuse(ReceiptRefusal::BindingMismatch));
+    }
+    // RUN-BIND-1: a receipt resolves only the run it was dispatched under.
+    if binding.run().id != target.key {
+        return Err(refuse(ReceiptRefusal::RunMismatch));
+    }
+    let run_generation = binding.run().generation;
+    let (digest, result, acceptance) = binding.into_parts();
+    if acceptance.record.generation.0 != run_generation
+        || acceptance.state.generation.0 != run_generation
+    {
+        return Err(refuse(ReceiptRefusal::RunMismatch));
+    }
+    if acceptance.requires_cell_lane || acceptance.destination.is_some() {
+        // Predicate pins and written destinations need their own fences.
+        return Err(refuse(ReceiptRefusal::EffectUnsupported));
+    }
+    let mut changes = Vec::with_capacity(declaration.result_bindings.len().saturating_add(1));
+    changes.push(FactChange::Set {
+        object_type: target.object_type.clone(),
+        key: target.key.clone(),
+        property: declaration.digest_property.clone(),
+        value: RuntimeValue::String(digest.0),
+    });
+    for (property, member) in &declaration.result_bindings {
+        let value = result
+            .get(member.as_str())
+            .cloned()
+            .ok_or_else(|| refuse(ReceiptRefusal::ResultType))?;
+        changes.push(FactChange::Set {
+            object_type: target.object_type.clone(),
+            key: target.key.clone(),
+            property: property.clone(),
+            value,
+        });
+    }
+    Ok(ReceiptEffect {
+        changes,
+        acceptance,
+    })
 }
 
 fn upsert_stored_input(
@@ -1449,6 +1556,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            receipt: None,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -1798,6 +1906,7 @@ fn validate_stored_patch<X>(
             });
         };
         if declared.computed
+            || declared.protected()
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -2289,6 +2398,16 @@ where
             let Some(child) = catalog.effective_type(&collection.child_type) else {
                 return true;
             };
+            if [&collection.row_id_property, &collection.ordering_key]
+                .into_iter()
+                .any(|property| {
+                    child
+                        .property(property.as_str())
+                        .is_some_and(norn_checker::EffectiveProperty::protected)
+                })
+            {
+                return true;
+            }
             configs.get(id.as_str()).is_none_or(|config| {
                 config.derive.keys().any(|property| {
                     property == &collection.row_id_property
@@ -2299,7 +2418,7 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| candidate.computed)
+                            .is_none_or(|candidate| candidate.computed || candidate.protected())
                 })
             })
         })
@@ -2622,7 +2741,10 @@ where
             })?;
             let lifecycle_properties = catalog.lifecycle_properties(&object_type);
             let touch = effective_type.properties.iter().find_map(|property| {
-                if property.computed || lifecycle_properties.contains(&property.id) {
+                if property.computed
+                    || property.protected()
+                    || lifecycle_properties.contains(&property.id)
+                {
                     None
                 } else {
                     current_values
@@ -3180,10 +3302,19 @@ where
             }
             Ok(ActionOutcome::Committed { receipt, record })
         }
-        Err(error @ CommitError::InvariantViolation { .. }) => Err(ActionRefusal::Decision(
+        Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => {
+            authorize_identity_collision(
+                host,
+                catalog,
+                call,
+                &preparation.effective_input,
+                authorizer,
+                &target,
+                &error,
+            )?;
             if matches!(
                 &error,
                 CommitError::Conflict { .. }
@@ -3402,6 +3533,7 @@ where
             record,
             series_candidate: Some(candidate),
             remaining_fuel: preparation.remaining_fuel,
+            receipt: None,
         };
         let outcome = commit_effect(
             host,
@@ -3561,6 +3693,8 @@ struct Pending {
     recorded: FactState,
     record: ActionCallRecord,
     series_candidate: Option<SeriesCandidate>,
+    /// RECEIPT-EFFECT-1: the receipt delivery this commit consumes.
+    receipt: Option<crate::result_reconciliation::Acceptance>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.
@@ -3672,6 +3806,7 @@ where
         recorded,
         record,
         series_candidate,
+        receipt,
     } = pending;
     let generated_key = series_candidate.is_some();
     let additional_events = usize::from(generated_key);
@@ -3786,8 +3921,18 @@ where
             values: record.to_values(),
         },
     });
+    let mut consumes = prepared.consumes;
+    let receipt_delivery = match receipt {
+        Some(acceptance) => {
+            let delivery =
+                consume_receipt::<H::Error>(consumes.is_some(), &acceptance, &writes, &mut reads)?;
+            consumes = Some(delivery.clone());
+            Some(delivery)
+        }
+        None => None,
+    };
     let commit = CellCommit {
-        consumes: prepared.consumes,
+        consumes,
         reads,
         writes,
         events: events.into_iter().map(Into::into).collect(),
@@ -3833,11 +3978,12 @@ where
             }
             Ok(ActionOutcome::Committed { receipt, record })
         }
-        Err(error @ CommitError::InvariantViolation { .. }) => Err(ActionRefusal::Decision(
+        Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => action_commit_conflict(
             host,
+            catalog,
             call,
             authorizer,
             error,
@@ -3848,8 +3994,59 @@ where
                 precondition_reads: &precondition_reads,
                 generated_key,
             },
-        ),
+        )
+        .map_err(|refusal| {
+            // RECEIPT-EFFECT-1: the receipt's delivery was already consumed
+            // or is not the run's current generation; nothing committed.
+            if let ActionRefusal::Decision(DecisionRefusal::NotPending { consumed }) = &refusal
+                && receipt_delivery.as_ref() == Some(consumed)
+            {
+                ActionRefusal::ReceiptRefused {
+                    reason: crate::receipt_binding::ReceiptRefusal::NotPending,
+                }
+            } else {
+                refusal
+            }
+        }),
     }
+}
+
+/// RECEIPT-EFFECT-1: the receipt's delivery joins the transition's commit, with
+/// every reconciliation pin as a compare-and-swap read. The host's pending
+/// check makes this the receipt's only consumption; a refused commit applies
+/// neither the transition nor the consumption.
+fn consume_receipt<X>(
+    already_consumes: bool,
+    acceptance: &crate::result_reconciliation::Acceptance,
+    writes: &[FactWrite],
+    reads: &mut Vec<FactExpectation>,
+) -> Result<crate::cell_host::Consumed, ActionRefusal<X>> {
+    let mismatch = ActionRefusal::ReceiptRefused {
+        reason: crate::receipt_binding::ReceiptRefusal::BindingMismatch,
+    };
+    if already_consumes {
+        return Err(mismatch);
+    }
+    for pin in &acceptance.reads {
+        if let Some(write) = writes.iter().find(|write| write.key == pin.key) {
+            if write.expected != pin.expected {
+                return Err(ActionRefusal::StalePreconditionRead {
+                    key: pin.key.clone(),
+                    link: None,
+                });
+            }
+        } else if let Some(read) = reads.iter().find(|read| read.key == pin.key) {
+            if read.expected != pin.expected {
+                return Err(ActionRefusal::StalePreconditionRead {
+                    key: pin.key.clone(),
+                    link: None,
+                });
+            }
+        } else {
+            reads.push(pin.clone());
+        }
+    }
+    Ok(acceptance.consumed.clone())
 }
 
 /// Kernel-owned attribution for direct reference validation. It cannot cross a
@@ -4132,6 +4329,7 @@ struct ActionReplayState<'a> {
 
 fn action_commit_conflict<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     error: CommitError<H::Error>,
@@ -4144,6 +4342,15 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         precondition_reads,
         generated_key,
     } = *state;
+    authorize_identity_collision(
+        host,
+        catalog,
+        call,
+        effective_input,
+        authorizer,
+        &record.object,
+        &error,
+    )?;
     if generated_key {
         // A generated candidate may lose the counter CAS to a different key.
         // The allocation loop reloads the call record and revalidates replay
@@ -4173,6 +4380,62 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         .unwrap_or_else(|| ActionRefusal::Decision(DecisionRefusal::from_commit(error))))
 }
 
+/// ID-UNIQUE-1: conflict details require ordinary collection/object read authority.
+fn authorize_identity_collision<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    input: &JsonObject,
+    authorizer: &dyn ActionAuthorizer,
+    target: &FactKey,
+    error: &CommitError<H::Error>,
+) -> Result<(), ActionRefusal<H::Error>> {
+    let CommitError::IdentityCollision { conflicts, .. } = error else {
+        return Ok(());
+    };
+    for key in conflicts.iter() {
+        authorize_slice_type(call, input, authorizer, &key.object_type)?;
+        let bounded = host
+            .load_bounded(
+                key,
+                norn_ir::ResourceLimitProfile::norn_limits_v1()
+                    .slice
+                    .max_canonical_bytes,
+            )
+            .map_err(host_failure)?
+            .ok_or(ActionRefusal::TargetNotFound)?;
+        if bounded.state.values.is_none() {
+            if key.key == target.key
+                && catalog
+                    .lineage(&target.object_type)
+                    .contains(&key.object_type)
+            {
+                continue;
+            }
+            return Err(ActionRefusal::TargetNotFound);
+        }
+        let concrete = bounded.concrete_type.as_ref().map_or_else(
+            || key.clone(),
+            |kind| FactKey::new(kind.as_str(), key.key.clone()),
+        );
+        if authorizer
+            .authorize_read(&ActionReadAuthzRequest {
+                action: call.action,
+                scope: &call.scope,
+                actor: &call.actor,
+                input,
+                declared_type: &key.object_type,
+                target: &concrete,
+                target_values: bounded.state.values.as_ref(),
+            })
+            .is_err()
+        {
+            return Err(ActionRefusal::TargetNotFound);
+        }
+    }
+    Ok(())
+}
+
 fn precondition_read_refusal<X>(
     error: &CommitError<X>,
     precondition_reads: &BTreeSet<FactKey>,
@@ -4183,7 +4446,9 @@ fn precondition_read_refusal<X>(
             .iter()
             .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
             .cloned(),
-        CommitError::AtomicBoundary { .. }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
+        | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
@@ -4218,7 +4483,9 @@ fn precondition_read_refusal<X>(
         | CommitError::UnsupportedLinkRead { source_key, link } => {
             Some((source_key.clone(), link.clone()))
         }
-        CommitError::AtomicBoundary { .. }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
+        | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
@@ -4329,67 +4596,14 @@ where
     H: CellHost + ?Sized,
     H::Event: From<FactEvent>,
 {
-    let (key, owner, version, id, message, outcome) = match error {
-        CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        } => (key, owner, version, id, message, outcome),
-        error @ (CommitError::AtomicBoundary { .. }
-        | CommitError::AtomicDeliveryBoundary { .. }
-        | CommitError::OwnedRowsProtected { .. }
-        | CommitError::DuplicateKey { .. }
-        | CommitError::NotPending { .. }
-        | CommitError::Conflict { .. }
-        | CommitError::DuplicateLink { .. }
-        | CommitError::IdentifierTooLong { .. }
-        | CommitError::LinkConflict { .. }
-        | CommitError::LinkReadConflict { .. }
-        | CommitError::UnsupportedLinkRead { .. }
-        | CommitError::DuplicateLinkRead { .. }
-        | CommitError::LinkReadTooLarge { .. }
-        | CommitError::InvalidLinkRead { .. }
-        | CommitError::DanglingLink { .. }
-        | CommitError::LinkTarget { .. }
-        | CommitError::LinkCardinality { .. }
-        | CommitError::LinkRequired { .. }
-        | CommitError::TypeMismatch { .. }
-        | CommitError::EffectiveValues { .. }
-        | CommitError::TraversalLimitExceeded { .. }
-        | CommitError::AccountingPosting { .. }
-        | CommitError::InvariantBudgetExceeded { .. }
-        | CommitError::Law { .. }
-        | CommitError::InvariantModel { .. }
-        | CommitError::ObservationAuthorization
-        | CommitError::EventLimitExceeded { .. }
-        | CommitError::Overflow
-        | CommitError::Host(_)) => return DecisionRefusal::from_commit(error),
-    };
-    let refusal = DecisionRefusal::InvariantViolation {
-        key: key.clone(),
-        owner: owner.clone(),
-        version,
-        id: id.clone(),
-        message: message.clone(),
-        outcome: outcome.clone(),
-    };
     let attempt_id = format!("{}/{}", call.action.action_id, call.idempotency_key);
+    let Some(event) = error.invariant_refusal_event(attempt_id) else {
+        return DecisionRefusal::from_commit(error);
+    };
+    let refusal = DecisionRefusal::from_commit(error);
     let mut refusal_commit = CellCommit::empty();
     refusal_commit.consumes.clone_from(&call.turn.consumes);
-    refusal_commit.events.push(
-        FactEvent::InvariantRefused {
-            key: *key,
-            owner,
-            id,
-            message,
-            outcome: *outcome,
-            attempt_id,
-        }
-        .into(),
-    );
+    refusal_commit.events.push(event.into());
     match host.commit(refusal_commit) {
         Ok(_) => refusal,
         Err(error) => DecisionRefusal::from_commit(error),

@@ -487,7 +487,7 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    check_versions(commit, model, view)?;
+    check_versions(commit, model, view, authorization)?;
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;
     check_endpoints(commit, model, view, &links)?;
@@ -500,6 +500,7 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     check_required_links(commit, model, view, authorization)?;
     check_acyclic_links(commit, model, view)?;
     check_invariants(commit, model.catalog, authorization).map_err(|error| match error {
+        InvariantAdmissionError::Law { key, reason } => CommitError::Law { key, reason },
         InvariantAdmissionError::EffectiveValues { key, reason } => {
             CommitError::EffectiveValues { key, reason }
         }
@@ -543,16 +544,19 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
         if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
             return Err(CommitError::Law {
                 key: write.key.clone(),
-                reason: crate::governing_laws::LawEvaluationError::Violated(failure.message),
+                reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
             });
         }
     }
     next_versions(commit)
 }
 
-// Outgoing links share the source's authority, not their target's authority.
-// Authored incoming edges remain authored; pending target resolution carries
-// the original source's sealed scope and exact relation intent.
+/// Outgoing links share the source's authority, not their target's authority.
+/// Authored incoming edges remain authored; pending target resolution carries
+/// the original source's sealed scope and exact relation intent.
+///
+/// OBS-LINK-CONVERGE-1: only opaque claim edges share canonical relation authority.
+/// Authored writes retain their namespace and claim-metadata protections.
 #[allow(
     clippy::too_many_lines,
     reason = "one shared boundary fences source ownership, pending intents, and outgoing relations atomically"
@@ -563,6 +567,13 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    if commit.writes.iter().any(|write| {
+        model.canonical(&write.key).object_type.as_str()
+            == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+            && !authorization.is_some_and(|a| a.authorizes_claim_write(write))
+    }) {
+        return Err(CommitError::ObservationAuthorization);
+    }
     if authorization.is_none()
         && commit
             .writes
@@ -572,9 +583,12 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
         return Err(CommitError::ObservationAuthorization);
     }
     check_source_markers(commit, view, authorization)?;
+    let convergent =
+        authorization.map_or_else(Vec::new, ObservationAuthorization::convergent_links);
     let sources: BTreeSet<_> = commit
         .links
         .iter()
+        .filter(|write| !convergent.contains(write))
         .map(|write| model.canonical(&write.key.source))
         .chain(
             authorization
@@ -780,7 +794,19 @@ pub fn evaluate_invariants(
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
-    evaluate_invariants_for_class(catalog, key, values, remaining, None)
+    evaluate_invariants_for_class(catalog, key, values, remaining, None, None)
+}
+
+/// LAW-COMMIT-1: evaluate a resolved invariant response with the shared value,
+/// expression and fuel semantics, excluding unrelated declarations.
+pub(crate) fn evaluate_named_invariant(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &crate::cell_host::JsonObject,
+    remaining: &mut u64,
+    id: &str,
+) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
+    evaluate_invariants_for_class(catalog, key, values, remaining, None, Some(id))
 }
 
 /// Evaluate only integrity invariants and intrinsic temporal property checks.
@@ -800,6 +826,7 @@ fn evaluate_integrity_invariants(
         values,
         remaining,
         Some(ConstraintClass::Integrity),
+        None,
     )
 }
 
@@ -813,6 +840,7 @@ fn evaluate_invariants_for_class(
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
     class: Option<ConstraintClass>,
+    selected: Option<&str>,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
     let values = catalog
         .effective_object_values(&key.object_type, values)
@@ -823,8 +851,15 @@ fn evaluate_invariants_for_class(
     if let Some(class) = class {
         invariants.retain(|effective| effective.invariant.classification == class);
     }
+    if let Some(id) = selected {
+        invariants.retain(|effective| effective.id.as_str() == id);
+    }
 
-    let mut failures = evaluate_temporal_properties(catalog, key, &values, remaining)?;
+    let mut failures = if selected.is_none() {
+        evaluate_temporal_properties(catalog, key, &values, remaining)?
+    } else {
+        Vec::new()
+    };
     if invariants.is_empty() {
         return Ok(failures);
     }
@@ -1019,6 +1054,10 @@ fn expression_type_name(value: &ExprValue) -> &'static str {
 }
 
 enum InvariantAdmissionError {
+    Law {
+        key: FactKey,
+        reason: crate::governing_laws::LawEvaluationError,
+    },
     EffectiveValues {
         key: FactKey,
         reason: String,
@@ -1105,6 +1144,20 @@ fn check_invariants<E, C, T>(
             .into_iter()
             .find(|failure| failure.classification == ConstraintClass::Integrity)
         {
+            if let Some(law_failure) =
+                crate::governing_laws::invariant_failure(catalog, &write.key.object_type, &failure)
+                    .map_err(|reason| InvariantAdmissionError::Law {
+                        key: write.key.clone(),
+                        reason,
+                    })?
+            {
+                return Err(InvariantAdmissionError::Law {
+                    key: write.key.clone(),
+                    reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(
+                        law_failure,
+                    )),
+                });
+            }
             return Err(InvariantAdmissionError::Violation {
                 key: Box::new(write.key.clone()),
                 version: catalog
@@ -1525,7 +1578,21 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
+    authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    // ID-STABLE-1: event payloads never establish the per-write observation authority.
+    for write in &commit.writes {
+        if matches!(write.mutation, FactMutation::Put { .. }) {
+            let key = model.canonical(&write.key);
+            let version = view.version(&key).map_err(CommitError::Host)?;
+            let live = view.concrete(&key).map_err(CommitError::Host)?.is_some();
+            if version.has_committed_deletion(live)
+                && !authorization.is_some_and(|proof| proof.authorizes_write(write))
+            {
+                return Err(CommitError::IdentityReuse);
+            }
+        }
+    }
     let expectations = commit
         .reads
         .iter()

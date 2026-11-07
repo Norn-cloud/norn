@@ -161,6 +161,12 @@ impl FactVersion {
     /// The version of an object that was never written.
     pub const ABSENT: Self = Self(0);
 
+    /// ID-STABLE-1: distinguish a retained deletion from an unwritten identity.
+    #[must_use]
+    pub const fn has_committed_deletion(self, live: bool) -> bool {
+        crate::version_check::has_committed_deletion(self.0, live)
+    }
+
     /// The next version, or `None` on overflow.
     #[must_use]
     pub const fn checked_next(self) -> Option<Self> {
@@ -599,6 +605,19 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// ID-STABLE-1: only an authenticated observation can lift this deletion.
+    #[error("{message}", message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
+    /// ID-UNIQUE-1: a normalized business key is occupied in this root/scope/world.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// The declaring root; no object IDs or key values are exposed.
+        owner: String,
+        /// Declared business-key name.
+        key: String,
+        /// Internal lookup subjects for authorized diagnostics; never displayed.
+        conflicts: Box<[FactKey; 2]>,
+    },
     /// Atomic closure includes another cell or unknown ownership.
     #[error("core.txn.atomic_boundary: dependency {key} is outside the supported local profile")]
     AtomicBoundary {
@@ -849,6 +868,8 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
+            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
                 norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
             }
@@ -963,16 +984,23 @@ pub trait CellHost {
 
     /// Resolve and authenticate an unconsumed receipt within this cell's scope,
     /// world and pinned Function manifest. Action JSON supplies only a reference.
-    /// RECEIPT-EFFECT-1: unsupported hosts return no evidence; acceptance alone
-    /// does not commit effects or consume the receipt.
+    /// RECEIPT-EFFECT-1: `Ok(None)` means the host does not support receipt
+    /// effects and the action refuses. A binding alone neither commits effects
+    /// nor consumes the receipt: the accepting action commit consumes the
+    /// binding's delivery (`Acceptance::consumed`) in the same commit as its
+    /// transition, and the host's pending check refuses a second consumption.
     ///
     /// # Errors
-    /// Host storage, authentication or manifest-binding failure.
+    /// A typed binding refusal (unknown, replayed, mismatched, not accepted,
+    /// result type), or [`crate::receipt_binding::ReceiptBindingError::Store`] for a host failure.
     fn resolve_accepted_receipt(
         &self,
         _reference: &crate::receipt_binding::ReceiptReference,
         _manifest: &norn_ir::function::Digest,
-    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, Self::Error> {
+    ) -> Result<
+        Option<crate::receipt_binding::ReceiptBinding<JsonObject>>,
+        crate::receipt_binding::ReceiptBindingError<Self::Error>,
+    > {
         Ok(None)
     }
 

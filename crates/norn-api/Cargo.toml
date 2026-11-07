@@ -7,6 +7,9 @@ publish.workspace = true
 description = "Generated core IR and checker API contracts"
 
 [dependencies]
+# Host token verification (HOST-PRINCIPAL, #817): Ed25519 JWTs, pure Rust, wasm32-clean.
+base64 = "0.22.1"
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
 norn-kernel = { path = "../norn-kernel" }
@@ -20,6 +23,7 @@ utoipa = "5.4.0"
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
 
 [dev-dependencies]
+jsonschema = { version = "=0.47.0", default-features = false }
 proptest = "1.11.0"
 
 [lints]

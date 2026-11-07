@@ -228,6 +228,9 @@ pub mod codes {
     /// Edge values have no classification snapshot or reveal projection yet.
     pub const LINK_PROPERTY_MARKINGS_UNSUPPORTED: &str =
         "object_type.validation.link_property_markings_unsupported";
+    /// Link values have no sealed rule-authority path yet.
+    pub const LINK_PROPERTY_PROTECTION_UNSUPPORTED: &str =
+        "object_type.validation.link_property_protection_unsupported";
     /// A link override redeclares the inverse role or link properties, which
     /// belong to the inherited link.
     pub const LINK_OVERRIDE_REDECLARES: &str = "object_type.validation.link_override_redeclares";

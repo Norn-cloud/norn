@@ -1,0 +1,11 @@
+{
+  "objectType": "canon.PartyRole",
+  "id": "demo/party/customer/role/customer",
+  "scope": "org_demo/dev",
+  "version": 1,
+  "values": {
+    "role": "customer",
+    "valid_from": null,
+    "valid_to": null
+  }
+}

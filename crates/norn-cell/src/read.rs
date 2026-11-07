@@ -732,14 +732,19 @@ pub(crate) fn active_definition_version(engine: &impl SqlEngine) -> Result<Optio
 pub(crate) fn validate_active_definition_pointer(
     engine: &impl SqlEngine,
 ) -> Result<Option<u64>, CellError> {
-    let active = active_definition_version(engine)?;
-    let latest: Option<i64> = engine.query_optional(
+    // One statement pins both values to the same SQLite snapshot, including
+    // when another CellStore installs definitions on a separate connection.
+    let (active, latest): (Option<i64>, Option<i64>) = engine.query_row(
         &format!(
-            "SELECT \"version\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\" DESC LIMIT 1"
+            "SELECT (SELECT \"version\" FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1), \
+             (SELECT \"version\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\" DESC LIMIT 1)"
         ),
         params![],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
+    let active = active
+        .map(|version| to_u64(version, "definitions version"))
+        .transpose()?;
     let latest = latest
         .map(|version| to_u64(version, "definitions version"))
         .transpose()?;
@@ -1148,6 +1153,8 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     pub(crate) source_disputes_transaction: bool,
     pub(crate) source_disputes:
         Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
+    pub(crate) mapping_plans:
+        Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1225,6 +1232,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             quantity_boundary: None,
             pending_digests: None,
             source_disputes: None,
+            mapping_plans: None,
             source_disputes_transaction: false,
         }
     }
@@ -1244,6 +1252,14 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     ) -> Self {
         self.source_disputes = Some(index);
+        self
+    }
+
+    pub(crate) const fn with_mapping_plans(
+        mut self,
+        plans: &'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>,
+    ) -> Self {
+        self.mapping_plans = Some(plans);
         self
     }
 
