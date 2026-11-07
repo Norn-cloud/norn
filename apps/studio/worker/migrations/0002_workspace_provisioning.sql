@@ -3,6 +3,12 @@ create table "workspace_provisioning" (
   "userId" text not null primary key references "user" ("id") on delete cascade,
   "status" text not null check ("status" in ('pending', 'complete'))
 );
+-- The marker and new user commit together. Existing users are not backfilled:
+-- a missing marker for them must never recreate a deliberately removed owner.
+create trigger "workspace_provisioning_on_user_insert" after insert on "user"
+begin
+  insert into "workspace_provisioning" ("userId", "status") values (new."id", 'pending');
+end;
 -- Keep the highest role, then the oldest membership, then the lowest id.
 delete from "member" where "id" in (
   select "id" from (

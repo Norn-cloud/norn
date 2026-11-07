@@ -82,8 +82,7 @@ async function provisionBatch(db: ProvisionDb, statements: readonly SqlStatement
   } else throw new Error("Atomic provisioning is unavailable")
 }
 
-async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string, initialize = false) {
-  if (initialize) await provisionBatch(db, [{ sql: `insert into "workspace_provisioning" ("userId", "status") values (?, 'pending') on conflict ("userId") do nothing`, params: [user.id] }])
+async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string) {
   if (await stateOf(db, user.id) !== "pending") return
   const identity = await workspaceIdentity(secret, user.id)
   const metadata = JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {} })
@@ -202,9 +201,9 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     databaseHooks: {
       user: {
         create: {
-          // This hook runs after commit; session creation retries any incomplete provisioning.
+          // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
           after: async (user, ctx) => {
-            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, true)
+            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
           },
         },
       },

@@ -231,3 +231,21 @@ test("workspace migration deduplicates by role, creation time, then id", () => {
   expect(db.query(`select "id", "role" from "member"`).all()).toEqual([{ id: "a-owner", role: "owner" }])
   expect(() => db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('duplicate', 'o', 'u', 'member', '2025')`)).toThrow()
 })
+
+
+test("failure to initialize provisioning rolls back user creation and a retry succeeds", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  db.exec(`create trigger fail_provisioning_marker before insert on "workspace_provisioning" begin select raise(abort, 'injected marker failure'); end`)
+  const body = { email: "marker@example.com", password: "correct horse battery", name: "Marker" }
+  const failed = await post(env, "/api/auth/sign-up/email", body)
+  expect(failed.status).not.toBe(200)
+  expect(db.query(`select count(*) as n from "user" where "email" = ?`).get(body.email)).toEqual({ n: 0 })
+  expect(db.query(`select count(*) as n from "workspace_provisioning"`).get()).toEqual({ n: 0 })
+  db.exec(`drop trigger fail_provisioning_marker`)
+  expect((await post(env, "/api/auth/sign-up/email", body)).status).toBe(200)
+  const signedIn = await post(env, "/api/auth/sign-in/email", { email: body.email, password: body.password })
+  expect(signedIn.status).toBe(200)
+  const me = await (await call(env, "/api/me", { headers: { cookie: cookieOf(signedIn) } })).json() as { organization: { role: string } }
+  expect(me.organization.role).toBe("owner")
+})
