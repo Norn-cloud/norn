@@ -232,7 +232,9 @@ export function ObjectPage() {
                 <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
               </Panel>
             ))}
+            <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
             <Facts concept={concept} reads={data} />
+            <RelatedInline concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} />
             {view === "technical" && <Technical name={name} lineage={lineage} />}
           </TabsContent>
           <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} /></TabsContent>
@@ -400,4 +402,44 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
       </dl>
     </Well></Panel>
   </>
+}
+
+/** Other object types' declared relations that point at this one: `Holding.item → Item` is "held by" from the item's side. */
+const incomingOf = (concept: Concept, concepts: readonly Concept[]) =>
+  concepts.flatMap((other) => other.relationships.filter(({ target }) => target === concept.name).map((relationship) => ({ from: other, relationship })))
+
+/** One plain sentence from what the server sent: the record, its type, where it was read from and what its stored links say. */
+export function summaryOf(concept: Concept, reads: ObjectReads, concepts: readonly Concept[]): string {
+  const source = reads.source?.document
+  const stored = reads.links.document.items.length
+  const declared = concept.relationships.length + incomingOf(concept, concepts).length
+  const from = source ? `, read from ${systemName(source.sourceRecordRef.system)} by mapping ${source.mappingPin.artifactId}` : ""
+  // Only the first page of links may have been returned; then the count is a floor, not the whole.
+  const more = reads.links.document.hasMore
+  const links = declared === 0 ? "Its type declares no relations."
+    : stored === 0 ? (more ? "No stored link appears on the first page the server returned; more may exist." : declared === 1 ? "Its one declared relation has no stored link in this snapshot." : `None of the ${declared} relations its type declares has a stored link in this snapshot.`)
+    : `${more ? "At least " : ""}${stored} stored ${stored === 1 ? "link connects" : "links connect"} it to other records.`
+  return `${recordName(reads.object.document)} is ${/^[aeiou]/i.test(concept.title) ? "an" : "a"} ${concept.title.toLowerCase()} record${from}. ${links}`
+}
+
+/** The record's relations on its overview, both directions, each with the stored links the server returned or an honest "none". */
+function RelatedInline({ concept, id, links, concepts }: { readonly concept: Concept; readonly id: string; readonly links: LinkPage; readonly concepts: readonly Concept[] }) {
+  const incoming = incomingOf(concept, concepts)
+  if (concept.relationships.length === 0 && incoming.length === 0) return null
+  const none = <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none in this snapshot"}</span>
+  const record = (type: string, target: string) => <Link key={`${type}/${target}`} to="/sources/$concept/$" params={{ concept: type, _splat: target }} className="me-2 font-medium underline-offset-4 hover:underline">{target}</Link>
+  return (
+    <Panel icon={Link2} label="Related"><Well className="p-3">
+      <dl className="space-y-2 text-sm">
+        {concept.relationships.map((relationship) => {
+          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id)
+          return <div key={`out/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{relationship.id.replaceAll("_", " ")} → {relationship.count} {conceptTitle(relationship.target)}</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge.targetType, edge.target))}</dd></div>
+        })}
+        {incoming.map(({ from, relationship }) => {
+          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.sourceType === from.name)
+          return <div key={`in/${from.name}/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{from.title} records ({relationship.id.replaceAll("_", " ")})</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge.sourceType, edge.source))}</dd></div>
+        })}
+      </dl>
+    </Well></Panel>
+  )
 }
