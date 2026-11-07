@@ -159,8 +159,14 @@ FUNCTION-HOST-1: engine built-ins only; never authorable. `implementation.format
 
 HOST-TREE-1: `implementation.digest` of a host Function is the source-tree digest
 of its implementing crate directory. The tree is every regular file below that
-directory, except entries whose name starts with `.` and directories named
-`target`; symlinks, non-UTF-8 names and other file kinds refuse. Each file is
+directory. Each directory entry is judged in this order, and the first rule that
+applies decides: (1) a name that is not valid UTF-8 refuses, even one that would be
+hidden; (2) an entry whose name starts with `.` is skipped whatever its kind, so a
+hidden file, directory or symlink is never read, followed or refused, and nothing
+below a hidden directory counts; (3) a directory named `target` is skipped at any
+depth, while a regular file named `target` counts and a symlink named `target`
+refuses, because a symlink is never a directory; (4) any other symlink, or any
+entry that is neither a directory nor a regular file, refuses. Each file is
 named by its relative `/`-separated path, which is non-empty, relative, and has
 no empty, `.` or `..` component, backslash or control character. Each file
 contributes `{path, size, sha256}`, where `sha256` is the lower-case hex SHA-256 of
@@ -177,7 +183,8 @@ keys and compact separators). Any change to the algorithm needs a new domain
 version. Named scenarios (`crates/norn-ir/tests/source_tree.rs`):
 **HOST-TREE-PINNED**, **HOST-TREE-UNICODE** (a precomposed and a decomposed
 spelling differ; a second golden vector pins raw-byte order),
-**HOST-TREE-SENSITIVE** (an edit, rename, removal,
+**HOST-TREE-EXCLUDE** (`crates/norn-cli/src/main.rs`: the exclusion order
+above, for hidden entries, `target` and symlinks), **HOST-TREE-SENSITIVE** (an edit, rename, removal,
 addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
 (listing order is irrelevant) and **HOST-TREE-REFUSE**.
 
