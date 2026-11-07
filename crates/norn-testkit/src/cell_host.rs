@@ -302,14 +302,22 @@ impl<E, C, I> MemoryCell<E, C, I> {
 }
 
 impl<E, C, I> MemoryCell<E, C, I> {
-    /// The live objects of the queried type matching `predicate`, in key
-    /// order, at most `limit`; every object is in memory, so the
-    /// enumeration is always complete.
-    fn predicate_objects(&self, predicate: &PredicateQuery, limit: usize) -> Vec<PredicateObject> {
+    /// The live objects of the queried object type (or a subtype) matching
+    /// `predicate`, in key order, at most `limit`. Every object is in
+    /// memory, so the enumeration is complete; an interface predicate is
+    /// unsupported (`None`), as on every host.
+    fn predicate_objects(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Option<Vec<PredicateObject>> {
         let catalog = TypeCatalog::new(&self.types)
             .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
+        if !catalog.contains(&predicate.object_type) {
+            return None;
+        }
         let model = CommitModel::new(&catalog);
         let candidates: Vec<(FactKey, FactVersion, &JsonObject)> = self
             .facts
@@ -329,13 +337,13 @@ impl<E, C, I> MemoryCell<E, C, I> {
                 })
             })
             .collect();
-        norn_kernel::predicate_read::select_members(
+        Some(norn_kernel::predicate_read::select_members(
             predicate,
             candidates
                 .iter()
                 .map(|(key, version, values)| (key, *version, *values)),
             limit,
-        )
+        ))
     }
 }
 
@@ -416,13 +424,10 @@ impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
         predicate: &PredicateQuery,
         limit: usize,
     ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
-        Ok(Some(
-            self.0
-                .predicate_objects(predicate, limit)
-                .iter()
-                .map(PredicateObject::member)
-                .collect(),
-        ))
+        Ok(self
+            .0
+            .predicate_objects(predicate, limit)
+            .map(|objects| objects.iter().map(PredicateObject::member).collect()))
     }
 
     fn has_link_target(
@@ -649,10 +654,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
         predicate: &PredicateQuery,
         max_members: usize,
     ) -> Result<Option<Vec<PredicateObject>>, Infallible> {
-        Ok(Some(self.predicate_objects(
-            predicate,
-            max_members.saturating_add(1),
-        )))
+        Ok(self.predicate_objects(predicate, max_members.saturating_add(1)))
     }
 
     fn read_link_targets(
