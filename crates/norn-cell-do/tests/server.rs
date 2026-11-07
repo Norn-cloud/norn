@@ -251,3 +251,18 @@ fn object_path_segments_keep_a_raw_ampersand() {
     assert_eq!(status("/v1/objects/canon.Party/SYN%2DPARTY-01"), 200);
     assert_eq!(status("/v1/objects/canon.Party/SYN-PARTY-01&x"), 404);
 }
+
+/// A path segment that is not UTF-8 once decoded names nothing: it refuses
+/// rather than alias another id through the replacement character.
+#[test]
+fn a_non_utf8_object_path_segment_refuses() {
+    let demo = host(NativeEngine::open_in_memory().unwrap());
+    for path in [
+        "/v1/objects/canon.Party/%FF",
+        "/v1/objects/canon.Party/%FE",
+        "/v1/objects/canon%FF",
+    ] {
+        let (status, body) = get(&demo, path, SCOPE, VIEWER);
+        assert_eq!(status, 400, "{path}: {body}");
+    }
+}

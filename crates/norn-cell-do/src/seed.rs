@@ -168,11 +168,25 @@ fn seed_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &CellScope) -> Resul
                 ("kind".to_owned(), text(kind)),
             ]),
         });
+    // A seeded cell keeps its one receipt: nothing is re-sent, so a later
+    // clock never conflicts with it. A cell that committed past the seed time
+    // before it was seeded takes the rows at its clock floor, never behind it.
+    let floor = {
+        let reader = store.read();
+        if reader
+            .receipt_by_idempotency_key(MAIN_WORLD, SEED_ROWS_KEY)
+            .map_err(|e| fail("demo rows")(&e))?
+            .is_some()
+        {
+            return Ok(());
+        }
+        reader.clock_floor().map_err(|e| fail("demo rows")(&e))?
+    };
     store
         .commit(&CommitBatch {
             world: MAIN_WORLD.into(),
             scope: scope.key(),
-            logical_time: SEEDED_AT,
+            logical_time: SEEDED_AT.max(floor),
             idempotency_key: Some(SEED_ROWS_KEY.into()),
             writes: items.chain(parties).collect(),
             ..CommitBatch::default()
@@ -207,4 +221,63 @@ fn model(artifacts: &[ArtifactEnvelope]) -> Result<Model, SeedError> {
         .map_err(|e| fail("model")(&e))?
         .with_governing_laws(artifacts)
         .map_err(|e| fail("governing laws")(&e))
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "seed regression")]
+    use super::{SEED_ITEMS, SEED_PARTIES, SEED_ROWS_KEY, demo_scope, seed_rows};
+    use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model};
+    use std::collections::BTreeMap;
+
+    /// The two seeded types alone, with every property optional.
+    fn model() -> Model {
+        let item = serde_json::from_value(serde_json::json!({"name":"canon.Item","properties":[
+            {"id":"id","type":{"kind":"text"},"constraints":{"nullable":true}},
+            {"id":"code","type":{"kind":"text"},"constraints":{"nullable":true}},
+            {"id":"label","type":{"kind":"text"},"constraints":{"nullable":true}}]}))
+        .unwrap();
+        let party = serde_json::from_value(serde_json::json!({"name":"canon.Party","properties":[
+            {"id":"display_name","type":{"kind":"text"}},
+            {"id":"kind","type":{"kind":"enum","values":[{"value":"person"},{"value":"organization"},{"value":"system"}]}}]}))
+        .unwrap();
+        Model::from_definitions(&[item, party], &[]).unwrap()
+    }
+
+    /// A cell whose clock passed the seed time before it was seeded takes the
+    /// rows at its clock floor; a seeded cell sends nothing again.
+    #[test]
+    fn a_cell_past_the_seed_time_is_seeded_at_its_clock_floor() {
+        let mut store = CellStore::open_in_memory(model()).unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: demo_scope().key(),
+                logical_time: 1_000,
+                writes: vec![FactWriteRow::Put {
+                    object_type: "canon.Item".into(),
+                    key: "EARLIER".into(),
+                    values: BTreeMap::new(),
+                }],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+        seed_rows(&mut store, &demo_scope()).unwrap();
+        let receipt = store
+            .read()
+            .receipt_by_idempotency_key(MAIN_WORLD, SEED_ROWS_KEY)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.body.logical_time, 1_000);
+        let head = store.verified_head().unwrap().commits;
+        seed_rows(&mut store, &demo_scope()).unwrap();
+        assert_eq!(store.verified_head().unwrap().commits, head);
+        let rows = store
+            .read()
+            .list_after(MAIN_WORLD, "canon.Party", None, 100)
+            .unwrap()
+            .len();
+        assert_eq!(rows, SEED_PARTIES.len());
+        assert_eq!(SEED_ITEMS.len(), 6);
+    }
 }
