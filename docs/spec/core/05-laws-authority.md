@@ -11,13 +11,13 @@ Reuse `LawIR`, `LawScope`, `LawRoot`, `LawModality` (temporal), `LawTiming`, `La
 | Structured law | stable law ID/version, `scope`, `condition?: Expr<bool>` (absent means unconditional), `subject`, `grade: obligation/permission/prohibition`, temporal requirement, typed response, normative source/precedence, severity; existing structured safety fragment is authoritative. |
 | Effective instance | original law artifact/digest/ID, concrete subject member identity, attachment origin, all inheritance/containment/mapping paths, explicit typed bindings; original LawIR unchanged. |
 | Cross-module binding | `organisation`, `book`, `currency`, `valuation_basis`, `account_roles`, transaction revision, opening balance scope; required references resolve unambiguously. |
-| Activation (timed extension) | `id`, triggering event ID, law instance, start time, deadline/calendar pin, cancellation/retrigger policy, accountable subject; unsupported timing refuses admission. |
+| Activation (timed extension) | `Activation`: canonical `ActivationKey` (law ID, effective-instance digest, attachment origin, subject, opening ledger position), trigger transition, start and exclusive deadline (cell clock ms), retrigger policy, accountable subject. Declared by `RequirementTiming::Within` (LAW-WITHIN-1); a calendar pin and every other unsupported timing refuses admission. |
 | Evidence | generated goal/statement digest, full writer/mapping closure, semantics/compiler/tool pins, parameter assumptions, bounds/fairness, result and proof digests, assurance level. |
 | Delegation | authenticated principal, acting agent/session, accountable delegator, parent grant, scope/resources/actions/expiry/budget, revocation generation; every child is an attenuation. |
 
 Display wording is an ordered BCP 47 locale map, separate from executable semantics. Each locale declares direction, templates and the full renderer vocabulary; all declared locales must be complete. See [the wording contract](../../platform/structured-requirements.md#locale-wording-law-wording-locale-1).
 
-B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR without changing semantic IDs. Event occurrence, arbitrary temporal logic and progress are not implied by these PRs.
+B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR without changing semantic IDs. LAW-WITHIN-1 adds one transition-triggered deadline form; a `within` requirement's wording must declare `terms.within` in every locale. Arbitrary temporal logic and unbounded progress are not implied.
 
 ## Semantics and obligations
 
@@ -43,6 +43,24 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 **LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 
+**LAW-WITHIN-1 (deadline obligation):** a structured requirement with `timing = within {trigger, retrigger, cancel?, accountable, calendar?}` is admitted only as an `obligation` whose law is `eventually` with `law.timing = within {millis}` (positive canonical u64 decimal text, the ordinary LawIR rule, and at most `MAX_WITHIN_MILLIS` = 2^63) and a `predicate` response, with no `condition`, lifecycle-state or commitment filter, exception or `defeatedBy` entry, no calendar pin, nonblank `trigger` and `accountable`, and Boolean response and cancel predicates. Any other pairing refuses with `law.validation.unsupported_temporal` (calendar, gated or defeasible activations included), `law.validation.invalid_document` (grade mismatch, invalid or over-cap duration, or non-predicate response), `law.model.unknown_binding` or `law.model.predicate_type`. Monitor semantics, per law instance and subject, over commits in ledger order, using only each commit's ledger position `seq` and the cell's committed clock `t` (never a wall clock):
+
+1. *Expire.* An open activation with `t ≥ deadline` closes as `violated`, recorded at this commit (see *Violation placement*), before this commit is otherwise considered. A commit at exactly the deadline does not discharge.
+2. *Settle.* An open activation closes as `discharged` if the response holds on the committed state, else as `cancelled` if the cancel predicate holds. Discharge takes precedence.
+3. *Trigger.* If the commit applies `trigger` to the subject: with no open activation, open one with `start = t`, `deadline = t + millis`, then settle it against the same commit, so a trigger commit that already satisfies the response discharges at once. With one still open, `keep_first` records `retrigger_ignored` and keeps the first deadline; `restart` records `restarted` and replaces it with a new activation from this commit, which is then settled.
+
+The cell's committed clock is a nonnegative SQLite INTEGER, so `t ≤ 2^63 − 1`; with the admission cap, `t + millis ≤ u64::MAX`. Opening an activation can therefore never overflow, and a deadline law never refuses or vetoes a business commit: monitor outcomes are recorded events, not commit refusals. A commit presented out of ledger order, or for another subject, is a host invariant failure reported as corruption, never a business refusal.
+
+*Trigger resolution.* Catalog admission resolves `trigger` to exactly one transition of the subject's effective lifecycle, or refuses with `law.model.unknown_binding`. A misspelled trigger never admits. TARGET: `check_requirement` has no lifecycle catalog and checks only that `trigger` is nonblank. Until the lifecycle-graph binding lands, no `within` requirement reaches runtime, because runtime law evaluation refuses timed laws.
+
+*Identity.* An activation's identity is `ActivationKey {lawId, lawDigest, origin, subjectId, triggerSeq}`: the effective law instance (law ID, SHA-256 of its canonical `LawIR`, attachment origin), the subject and the ledger position of the opening commit. Its `id` is `sha256("norn.activation.v1\0" ‖ canonical_json(key))` in lowercase hex (`domain_hash_hex`). It is never a string concatenation. A `restart` opens a new key.
+
+*Violation placement.* `violated` is recorded in exactly one ledger commit: the first commit in ledger order with `t ≥ deadline` that is either this activation's deadline timer or a commit touching its subject. It carries that commit's `atSeq` and `atMillis`, and the activation still states the deadline. Replaying the ledger therefore reproduces the same event at the same position.
+
+*Retired or revised law, deleted or archived subject.* An open activation stays pinned to its `lawDigest` (D08/D10). Retiring or revising the law, archiving the subject, leaving a class or deleting the subject never discharges or cancels it. It runs to its outcome under the pinned instance. Only a satisfying response commit or the declared cancel predicate on a committed subject state closes it before the deadline. Otherwise it is `violated` at the deadline timer. A checked migration plan is the only way to move an open activation to another instance.
+
+Replaying the same commits yields the same events. The accountable subject is carried on every activation and violation and grants no authority. A violation is evidence, never a silent pass or a refusal of the later commit. Status: IR (data only), `check_requirement`, `render_requirement` and `lower_requirement` are CURRENT. All LAW-WITHIN-1 validation (`within_shape`, `MAX_WITHIN_MILLIS`, `check_wording`) lives in norn-checker. `render_requirement` is the checked render entry; norn-ir's `RequirementView::slots` is a render-only projection that refuses only what it cannot render. `lower_requirement` refuses `within` (`ActivationTiming`) rather than drop the trigger, retrigger and cancel policy in plain `LawIR`. The kernel monitor, cell deadline timer and lifecycle-graph obligations (non-vacuity: a discharging trace exists; bounded discharge/violation checking, reported bounded or unknown) are TARGET, so runtime law evaluation and theorem lowering still refuse timed laws.
+
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
 | Invariant / layer | Stable target diagnostic |
@@ -52,6 +70,7 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 | LAW-COMPLETE-1: complete effective subject/writer/mapping closure; admission | `core.laws.unresolved_scope` |
 | LAW-SUPPORTED-1: exact predicate/timing supported, never omitted; admission | `core.laws.unsupported_semantics` |
 | LAW-COMMIT-1: whole proposed state satisfies immediate safety; commit | `core.laws.violated` |
+| LAW-WITHIN-1: exact `within` obligation shape; structural admission | `law.validation.unsupported_temporal` / `law.validation.invalid_document` / `law.model.unknown_binding` / `law.model.predicate_type` |
 | AUTH-ATTENUATE-1: current scoped authority, no escalation; admission/commit/dispatch | `core.authority.denied` / `core.authority.revoked` |
 | PROOF-BIND-1: exact generated statement and checked result; evidence admission | `core.laws.stale_evidence` |
 
