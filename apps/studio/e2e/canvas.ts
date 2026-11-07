@@ -92,10 +92,22 @@ export async function clear(page: Page) {
  * A straight level edge has a zero-height box, so the point comes from the path itself, not its bounding box.
  */
 export async function clickEdge(page: Page, id: string) {
+  const at = await edgePoint(page, id, true)
+  await page.mouse.click(at.x, at.y)
+  await expect(edge(page, id)).toHaveClass(/selected/)
+}
+
+/** Hover an edge where a person would: on its line (a label is not part of the edge for hover), not its box's centre. */
+export async function hoverEdge(page: Page, id: string) {
+  const at = await edgePoint(page, id, false)
+  await page.mouse.move(at.x, at.y)
+}
+
+/** The point nearest the middle of an edge's interaction path where this edge, not one crossing or sharing its handle, is on top. */
+async function edgePoint(page: Page, id: string, labelCounts: boolean) {
   const path = edge(page, id).locator(".react-flow__edge-interaction")
   await reveal(page, path)
-  // The point nearest the middle where this edge, not one crossing or sharing its handle, is on top.
-  const at = await path.evaluate((element, id) => {
+  const at = await path.evaluate((element, [id, labelCounts]) => {
     const shape = element as SVGGeometryElement
     const length = shape.getTotalLength()
     for (const t of [0.5, 0.6, 0.4, 0.7, 0.3, 0.8, 0.2, 0.9, 0.1]) {
@@ -103,13 +115,12 @@ export async function clickEdge(page: Page, id: string) {
       const screen = new DOMPoint(point.x, point.y).matrixTransform(shape.getScreenCTM() ?? undefined)
       // The line, or the edge's own label pill (clicking a label selects its edge).
       const hit = document.elementFromPoint(screen.x, screen.y)
-      if (hit?.closest(".react-flow__edge")?.getAttribute("data-id") === id || hit?.closest(`[data-edge-label="${id}"],[data-exit-label="${id}"]`)) return { x: screen.x, y: screen.y }
+      if (hit?.closest(".react-flow__edge")?.getAttribute("data-id") === id || (labelCounts && hit?.closest(`[data-edge-label="${id}"],[data-exit-label="${id}"]`))) return { x: screen.x, y: screen.y }
     }
     return null
-  }, id)
+  }, [id, labelCounts] as const)
   if (!at) throw new Error(`edge ${id} is covered along its whole length`)
-  await page.mouse.click(at.x, at.y)
-  await expect(edge(page, id)).toHaveClass(/selected/)
+  return at
 }
 
 /** Drag from one handle to another, as a user draws a connection. */
