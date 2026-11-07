@@ -111,6 +111,7 @@ pub mod obligations;
     clippy::large_futures
 )]
 pub mod ontology;
+mod predicate_property;
 pub mod property_codec;
 pub mod property_types;
 #[allow(
