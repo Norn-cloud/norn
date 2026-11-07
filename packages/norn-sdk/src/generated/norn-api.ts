@@ -5409,6 +5409,13 @@ export interface components {
         NornIrRelationPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /** @description Exact pinned calendar identity. */
+        NornIrRequirementCalendarPin: {
+            /** @description Calendar artifact identity. */
+            id: string;
+            /** @description Exact calendar version. */
+            version: string;
+        };
         /**
          * @description The normative grade is separate from the temporal wrapper in `law`.
          * @enum {string}
@@ -5624,12 +5631,16 @@ export interface components {
             permission: string;
             prohibition: string;
             sameCommit: string;
+            /** @description Required to render a `within` requirement; other timings never read it. */
+            within?: string | null;
         };
         /**
-         * @description Closed safety fragment. No event activation, clocks, fairness or progress.
-         * @enum {string}
+         * @description Closed safety fragment plus one event-activated deadline form. No fairness,
+         *     unbounded progress or wall-clock reads.
          */
-        NornIrRequirementRequirementTiming: "every_committed_state" | "same_commit";
+        NornIrRequirementRequirementTiming: "every_committed_state" | "same_commit" | {
+            within: components["schemas"]["NornIrRequirementWithinTiming"];
+        };
         /**
          * @description LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
          *     Wording is never executable and does not change the law's semantic identity.
@@ -5637,6 +5648,8 @@ export interface components {
         NornIrRequirementRequirementWording: {
             [key: string]: components["schemas"]["NornIrRequirementLocalizedRequirement"];
         };
+        /** @enum {string} */
+        NornIrRequirementRetriggerPolicy: "keep_first" | "restart";
         NornIrRequirementRuleByteRange: {
             /** Format: uint32 */
             end: number;
@@ -5671,6 +5684,26 @@ export interface components {
         NornIrRequirementView: {
             locale: string;
             requirement: components["schemas"]["NornIrRequirementStructuredRequirement"];
+        };
+        /** @description Activation policy for `within`; the duration stays in `law.timing`. */
+        NornIrRequirementWithinTiming: {
+            /** @description Principal or role answerable for discharge; grants no authority. */
+            accountable: string;
+            /** @description Business calendar for the deadline. No calendar is admitted yet: refuses. */
+            calendar?: components["schemas"]["NornIrRequirementCalendarPin"] | null;
+            /** @description Optional committed-state predicate that closes an open activation unpaid. */
+            cancel?: components["schemas"]["NornIrRequirementZenExpression"] | null;
+            /**
+             * @description What a trigger does while an activation is already open.
+             * @enum {string}
+             */
+            retrigger: "keep_first" | "restart";
+            /**
+             * @description Lifecycle transition identity on the subject that opens an activation.
+             *     Admission (norn-checker) checks it is nonblank; resolving it against the
+             *     subject's lifecycle is catalog admission (TARGET).
+             */
+            trigger: string;
         };
         /**
          * @description Source text of one ZEN Expression (the IR's single expression language,
