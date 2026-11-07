@@ -14,7 +14,8 @@ export interface Bucket {
     readonly id: string
     /** The object version the server counted. */
     readonly version: number
-    readonly amounts: readonly (string | null)[]
+    /** Each operand's exact text; `null` when the server withheld this record's amounts from the reader (DATA-VALUES-1). */
+    readonly amounts: readonly (string | null)[] | null
   }[]
 }
 
@@ -49,13 +50,17 @@ export function buckets({ question, metrics, objectType }: Declarations, { answe
       members: Object.entries(row.members).map(([id, { version, amounts }]) => ({
         id,
         version,
-        amounts: amounts.map((amount, index) => amount === null ? null : operand(`${path}/members/${member(id)}/amounts/${index}`, index)),
+        // The server sends `amounts: null` for a member whose values the reader may not see.
+        amounts: (amounts as readonly (number | null)[] | null) === null ? null : amounts.map((amount, index) => amount === null ? null : operand(`${path}/members/${member(id)}/amounts/${index}`, index)),
       })),
     }
   })
 }
 
 export const fraction = (totals: readonly (string | null)[]): string => totals.map((total) => total ?? "left out").join(" / ")
+
+/** A member's contribution in words: its exact amounts, or "Withheld" when the server sent none for this reader. */
+export const contribution = (amounts: readonly (string | null)[] | null): string => amounts === null ? "Withheld" : fraction(amounts)
 
 /** A ratio reads as a percentage at one precision everywhere; a sum stays the server's text. */
 export const shown = (bucket: Pick<Bucket, "value" | "totals">): string => bucket.totals.length > 1 ? percent(bucket.value) : bucket.value
