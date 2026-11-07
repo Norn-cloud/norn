@@ -1,10 +1,14 @@
-import { expect, mock, test } from "bun:test"
+import { afterAll, expect, mock, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } from "@tanstack/react-router"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
+
+// These pages read the view from localStorage, which the tests replace; put the original back so later files in the same bun process see their own.
+const originalStorage = globalThis.localStorage
+afterAll(() => { globalThis.localStorage = originalStorage })
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
