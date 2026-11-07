@@ -1,15 +1,15 @@
 //! Retained definitions: Studio dashboards and agents saved in the cell.
 //!
 //! These are not kernel artifacts (the IR has no kind for them). Each kind
-//! has a host validator ([`DefinitionKinds`]) whose context comes only from
+//! has a host validator ([`DefinitionKinds`](crate::definition_routes::DefinitionKinds)) whose context comes only from
 //! the host. `:admit` runs it without side effects; `:install` and `:retire`
 //! re-admit, then append one revision through the governed definitions
 //! install ([`norn_cell::SqliteCell::install_retained_definition`]), which
 //! creates a new definitions version, its ledger event and commit receipt
 //! atomically, with the kernel set and its checker receipt unchanged.
 //!
-//! Reads need [`Operation::ReadDefinitions`]; writes need
-//! [`Operation::WriteDefinitions`]. Every denied or out-of-scope request gets
+//! Reads need [`Operation::ReadDefinitions`](crate::authz::Operation::ReadDefinitions); writes need
+//! [`Operation::WriteDefinitions`](crate::authz::Operation::WriteDefinitions). Every denied or out-of-scope request gets
 //! the one opaque 403, decided before the body is interpreted.
 
 use std::collections::BTreeSet;
@@ -1237,7 +1237,7 @@ pub fn list_definitions<E: SqlEngine>(
     let cursor = if more {
         rows.last()
             .map(|last| {
-                serde_json::to_vec(&Cursor {
+                norn_ir::canonical::canonical_json_of(&Cursor {
                     k: kind.to_owned(),
                     r: include_retired,
                     a: last.definition.id.clone(),
