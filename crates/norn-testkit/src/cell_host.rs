@@ -42,10 +42,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use norn_kernel::CommitError::{
-    AccountingPosting, AtomicDeliveryBoundary, EffectiveValues, UnsupportedLinkRead,
-};
-
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
     ObjectTypeDef, ObjectTypeName, PropertyTypeDef, ResourceStatus,
@@ -1993,121 +1989,39 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
     }
 }
 
+/// Rebuild every listed field-only variant with an uninhabited host error.
+/// The generated `match` is exhaustive, so a new [`CommitError`] variant
+/// fails to compile until it is listed here.
+macro_rules! rehost {
+    ($error:expr; $($variant:ident $({ $($field:ident),* })?),* $(,)?) => {
+        match $error {
+            $(norn_kernel::CommitError::$variant $({ $($field),* })? =>
+                norn_kernel::CommitError::$variant $({ $($field),* })?,)*
+            norn_kernel::CommitError::Host(error) => return Err(error),
+        }
+    };
+}
+
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
-    use norn_kernel::CommitError::{self as Error, IdentityCollision};
-
-    Ok(match error {
-        Error::IdentityReuse => Error::IdentityReuse,
-        Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
-        AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
-        Error::Law { key, reason } => Error::Law { key, reason },
-        IdentityCollision {
-            owner,
-            key,
-            conflicts,
-        } => IdentityCollision {
-            owner,
-            key,
-            conflicts,
-        },
-        Error::OwnedRowsProtected { key } => Error::OwnedRowsProtected { key },
-        Error::DuplicateKey { key } => Error::DuplicateKey { key },
-        Error::NotPending { consumed } => Error::NotPending { consumed },
-        Error::Conflict {
-            key,
-            expected,
-            current,
-        } => Error::Conflict {
-            key,
-            expected,
-            current,
-        },
-        Error::DuplicateLink { key } => Error::DuplicateLink { key },
-        Error::IdentifierTooLong {
-            field,
-            actual_bytes,
-            max_bytes,
-        } => Error::IdentifierTooLong {
-            field,
-            actual_bytes,
-            max_bytes,
-        },
-        Error::LinkConflict {
-            key,
-            expected,
-            current,
-        } => Error::LinkConflict {
-            key,
-            expected,
-            current,
-        },
-        Error::LinkReadConflict { source_key, link } => {
-            Error::LinkReadConflict { source_key, link }
-        }
-        UnsupportedLinkRead { source_key, link } => UnsupportedLinkRead { source_key, link },
-        Error::DuplicateLinkRead { source_key, link } => {
-            Error::DuplicateLinkRead { source_key, link }
-        }
-        Error::LinkReadTooLarge {
-            source_key,
-            link,
-            actual,
-            max,
-        } => Error::LinkReadTooLarge {
-            source_key,
-            link,
-            actual,
-            max,
-        },
-        Error::InvalidLinkRead { source_key, link } => Error::InvalidLinkRead { source_key, link },
-        Error::PredicateReadConflict { object_type } => {
-            Error::PredicateReadConflict { object_type }
-        }
-        Error::UnsupportedPredicateRead { object_type } => {
-            Error::UnsupportedPredicateRead { object_type }
-        }
-        Error::InvalidPredicateRead {
-            object_type,
-            reason,
-        } => Error::InvalidPredicateRead {
-            object_type,
-            reason,
-        },
-        Error::DanglingLink { key, missing } => Error::DanglingLink { key, missing },
-        Error::LinkTarget { key } => Error::LinkTarget { key },
-        Error::LinkCardinality { key, endpoint } => Error::LinkCardinality { key, endpoint },
-        Error::LinkRequired { parent, link } => Error::LinkRequired { parent, link },
-        Error::TypeMismatch { key, concrete } => Error::TypeMismatch { key, concrete },
-        EffectiveValues { key, reason } => EffectiveValues { key, reason },
-        Error::TraversalLimitExceeded { key, reason } => {
-            Error::TraversalLimitExceeded { key, reason }
-        }
-        AccountingPosting { key, reason } => AccountingPosting { key, reason },
-        Error::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        } => Error::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        },
-        Error::InvariantBudgetExceeded { key, limit } => {
-            Error::InvariantBudgetExceeded { key, limit }
-        }
-        Error::InvariantModel { key, interface } => Error::InvariantModel { key, interface },
-        Error::ObservationAuthorization => Error::ObservationAuthorization,
-        Error::EventLimitExceeded { limit, actual } => Error::EventLimitExceeded { limit, actual },
-        Error::Overflow => Error::Overflow,
-        Error::Host(error) => return Err(error),
-    })
+    Ok(rehost!(error;
+        IdentityReuse, AtomicBoundary { key }, AtomicDeliveryBoundary { consumed },
+        Law { key, reason }, IdentityCollision { owner, key, conflicts },
+        OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed },
+        Conflict { key, expected, current }, DuplicateLink { key },
+        IdentifierTooLong { field, actual_bytes, max_bytes },
+        LinkConflict { key, expected, current }, LinkReadConflict { source_key, link },
+        UnsupportedLinkRead { source_key, link }, DuplicateLinkRead { source_key, link },
+        LinkReadTooLarge { source_key, link, actual, max }, InvalidLinkRead { source_key, link },
+        PredicateReadConflict { object_type }, UnsupportedPredicateRead { object_type },
+        InvalidPredicateRead { object_type, reason }, DanglingLink { key, missing },
+        LinkTarget { key }, LinkCardinality { key, endpoint }, LinkRequired { parent, link },
+        TypeMismatch { key, concrete }, EffectiveValues { key, reason },
+        TraversalLimitExceeded { key, reason }, AccountingPosting { key, reason },
+        InvariantViolation { key, owner, version, id, message, outcome },
+        InvariantBudgetExceeded { key, limit }, InvariantModel { key, interface },
+        ObservationAuthorization, EventLimitExceeded { limit, actual }, Overflow,
+    ))
 }
 
 fn consumed_label(consumed: Option<&Consumed>) -> &'static str {
