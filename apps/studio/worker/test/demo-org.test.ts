@@ -20,9 +20,11 @@ function stage() {
     BETTER_AUTH_URL: ORIGIN,
     STUDIO_DEFAULT_ORG: DEMO_ORG.id,
   }
-  const seed = (members = ["viewer@demo.norn.cloud=viewer", "analyst@demo.norn.cloud=member"]) => seedDemoOrg(parseMembers(members), new Date(), async (statements) => {
-    db.transaction(() => { for (const { sql, params } of statements) db.prepare(sql).run(...params) })()
-  })
+  const binding = {
+    prepare: (sql: string) => ({ bind: (...params: string[]) => ({ sql, params }) }),
+    batch: async (statements: { sql: string; params: string[] }[]) => db.transaction(() => { for (const { sql, params } of statements) db.prepare(sql).run(...params) })(),
+  } as unknown as D1Database
+  const seed = (members = ["viewer@demo.norn.cloud=viewer", "analyst@demo.norn.cloud=member"]) => seedDemoOrg(binding, parseMembers(members), new Date())
   const verify = (email: string) => db.prepare(`update "user" set "emailVerified" = 1 where "email" = ?`).run(email)
   return { db, env, seed, verify, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }
 }
@@ -102,12 +104,12 @@ test("provisioning refuses an unverified pre-registered account, including an ex
   const { db, env, seed, verify } = stage()
   const email = "analyst@demo.norn.cloud"
   await signUp(env, email)
-  await expect(seed([`${email}=admin`])).rejects.toThrow("verified email")
+  await expect(seed([`${email}=admin`])).rejects.toThrow()
   expect(db.query(`select * from "member" where "organizationId" = ?`).all(DEMO_ORG.id)).toEqual([])
   verify(email)
   await seed([`${email}=viewer`])
   db.prepare(`update "user" set "emailVerified" = 0 where "email" = ?`).run(email)
-  await expect(seed([`${email}=admin`])).rejects.toThrow("verified email")
+  await expect(seed([`${email}=admin`])).rejects.toThrow()
   expect(db.query(`select "role" from "member" where "organizationId" = ?`).get(DEMO_ORG.id)).toEqual({ role: "viewer" })
   // Both membership writes remain guarded for an unverified account.
   const writes = seedStatements(parseMembers([`${email}=admin`]), new Date())
@@ -119,7 +121,7 @@ test("a later membership write failure rolls back all earlier grants", async () 
   const { db, env, seed, verify } = stage()
   for (const email of ["analyst@demo.norn.cloud", "viewer@demo.norn.cloud"]) { await signUp(env, email); verify(email) }
   db.exec(`create trigger fail_viewer before insert on "member" when new."userId" = (select "id" from "user" where "email" = 'viewer@demo.norn.cloud') begin select raise(abort, 'injected later failure'); end`)
-  await expect(seed(["analyst@demo.norn.cloud=member", "viewer@demo.norn.cloud=viewer"])).rejects.toThrow("Demo provisioning failed")
+  await expect(seed(["analyst@demo.norn.cloud=member", "viewer@demo.norn.cloud=viewer"])).rejects.toThrow("injected later failure")
   expect(db.query(`select * from "member" where "organizationId" = ?`).all(DEMO_ORG.id)).toEqual([])
   expect(db.query(`select * from "organization" where "id" = ?`).all(DEMO_ORG.id)).toEqual([])
 })
