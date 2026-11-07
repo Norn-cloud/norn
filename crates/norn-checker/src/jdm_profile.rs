@@ -1559,6 +1559,13 @@ pub fn rule_closure<'a>(
     };
     let pool = Pool::new(artifacts, base);
     let mut members: BTreeMap<&'a str, &'a ArtifactEnvelope> = BTreeMap::new();
+    // The deepest depth each key has been scheduled at. A key is expanded
+    // again only on a strictly deeper path, which the depth bound may
+    // refuse, so each of at most MAX_SUB_DECISION_CLOSURE + 1 graphs is
+    // decoded at most MAX_SUB_DECISION_DEPTH + 1 times, however many
+    // references share it. Depths rise strictly along any path, so a cycle
+    // is still walked back to its start (Cycle) or past the bound (Bound).
+    let mut scheduled: BTreeMap<&'a str, usize> = BTreeMap::new();
     // (rule, depth of rule, keys on the path to it)
     let mut stack: Vec<(&'a ArtifactEnvelope, usize, Vec<&'a str>)> =
         vec![(root, 0, vec![root.artifact_id.as_str()])];
@@ -1608,6 +1615,13 @@ pub fn rule_closure<'a>(
                     }
                 }
             }
+            if scheduled
+                .get(key)
+                .is_some_and(|&deepest| deepest >= child_depth)
+            {
+                continue;
+            }
+            scheduled.insert(key, child_depth);
             let mut next = path.clone();
             next.push(key);
             stack.push((target, child_depth, next));
@@ -1902,12 +1916,12 @@ mod tests {
         rule["artifactId"] = json!(id);
         rule["version"] = json!(version);
         rule["payload"]["ruleId"] = json!(id);
-        for (key, pinned) in calls {
+        for (index, (key, pinned)) in calls.iter().enumerate() {
             rule["payload"]["graph"]["nodes"]
                 .as_array_mut()
                 .expect("nodes")
                 .push(json!({
-                    "id": format!("call_{key}"), "name": key, "type": "decisionNode",
+                    "id": format!("call_{index}_{key}"), "name": key, "type": "decisionNode",
                     "content": { "key": key, "outputPath": key, "passThrough": true }
                 }));
             rule["dependencies"]
@@ -1984,6 +1998,24 @@ mod tests {
                 versions: vec!["1".to_owned(), "2".to_owned()],
             })
         );
+    }
+
+    /// Shared references are expanded once per depth, not once per path:
+    /// three levels of 100 references each to the next rule would otherwise
+    /// decode graphs 1,010,101 times for a three-member closure.
+    #[test]
+    fn shared_references_are_expanded_once_per_depth() {
+        let calls = |key: &'static str| vec![(key, "1"); 100];
+        let set = [
+            helper("demo.l0", "1", &calls("demo.l1")),
+            helper("demo.l1", "1", &calls("demo.l2")),
+            helper("demo.l2", "1", &calls("demo.l3")),
+            helper("demo.l3", "1", &[]),
+        ];
+        let started = std::time::Instant::now();
+        let closure = super::rule_closure(&set, &[], "demo.l0").expect("fan-out resolves");
+        assert_eq!(keys(&closure), ["demo.l1@1", "demo.l2@1", "demo.l3@1"]);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]
