@@ -116,3 +116,14 @@ test("the dirty check compares maps, sets, dates and cycles, not their JSON", ()
   expect(sameValue(a, b)).toBe(true)
   expect(sameValue(a, c)).toBe(false)
 })
+
+test("the dirty check ends on cycles of different shape, and tells a sparse slot from none", () => {
+  const self: { next?: unknown } = {}; self.next = self
+  const first: { next?: unknown } = {}, second: { next?: unknown } = {}; first.next = second; second.next = first
+  expect(sameValue(self, first)).toBe(false)
+  const other: { next?: unknown } = {}; other.next = other
+  expect(sameValue(self, other)).toBe(true)
+  // eslint-disable-next-line no-sparse-arrays
+  expect(sameValue([], [,])).toBe(false)
+  expect(sameValue([1, 2], [1, 2])).toBe(true)
+})
