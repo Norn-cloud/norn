@@ -6,6 +6,7 @@ import { jwt } from "better-auth/plugins/jwt"
 import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
+import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -41,14 +42,80 @@ export interface AuthConfig {
   readonly secret: string
   /** The Studio origin, e.g. https://studio-preview.norn.cloud. */
   readonly baseURL: string
+  /** Optional server-held default cell for newly provisioned workspaces. */
+  readonly defaultEnvironmentId?: string
   /** Absent when this deployment has no mail sender: magic links then refuse. */
   readonly sendMagicLink?: (mail: MagicLinkMail) => Promise<void>
+  /**
+   * The organization a new session starts in when its user is a member, e.g. the
+   * seeded `org_demo` on preview; otherwise the user's earliest membership.
+   */
+  readonly defaultOrganizationId?: string
+  /** "js" where the runtime has no `node:crypto.scrypt` (celld); absent or "native" otherwise. */
+  readonly scrypt?: PasswordScrypt
 }
 
 const MINUTE = 60
 
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
+
+type SqlStatement = { readonly sql: string; readonly params: readonly string[] }
+type ProvisionDb = {
+  prepare(sql: string): { bind?: (...params: string[]) => { first<T>(): Promise<T | null> }; get?: (...params: string[]) => unknown; run?: (...params: string[]) => unknown }
+  batch?: (statements: unknown[]) => Promise<unknown>
+  transaction?: (fn: () => void) => () => void
+}
+
+async function stateOf(db: ProvisionDb, userId: string): Promise<string | undefined> {
+  const statement = db.prepare(`select "status" from "workspace_provisioning" where "userId" = ?`)
+  const row = statement.bind ? await statement.bind(userId).first<{ status: string }>() : statement.get?.(userId) as { status: string } | undefined
+  return row?.status
+}
+
+/** Execute all workspace writes and completion in one database transaction. */
+async function provisionBatch(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<void> {
+  if (db.batch) {
+    const prepared = statements.map(({ sql, params }) => {
+      const statement = db.prepare(sql)
+      if (!statement.bind) throw new Error("D1 statement binding unavailable")
+      return statement.bind(...params)
+    })
+    await db.batch(prepared)
+  } else if (db.transaction) {
+    db.transaction(() => { for (const { sql, params } of statements) db.prepare(sql).run?.(...params) })()
+  } else throw new Error("Atomic provisioning is unavailable")
+}
+
+async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string) {
+  if (await stateOf(db, user.id) !== "pending") return
+  const identity = await workspaceIdentity(secret, user.id)
+  const metadata = JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {} })
+  const at = new Date().toISOString()
+  const pending = `exists (select 1 from "workspace_provisioning" where "userId" = ? and "status" = 'pending')`
+  await provisionBatch(db, [
+    { sql: `insert into "organization" ("id", "name", "slug", "metadata", "createdAt") select ?, ?, ?, ?, ? where ${pending} on conflict ("id") do nothing`, params: [identity.id, `${user.name || user.email}'s workspace`, `u-${identity.id.slice(10)}`, metadata, at, user.id] },
+    { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, 'owner', ? where ${pending} and exists (select 1 from "organization" where "id" = ? and json_extract("metadata", '$."norn.provisioningProof"') = ?) on conflict ("organizationId", "userId") do nothing`, params: [crypto.randomUUID(), identity.id, user.id, at, user.id, identity.id, JSON.parse(identity.metadata)["norn.provisioningProof"]] },
+    { sql: `update "workspace_provisioning" set "status" = 'complete' where "userId" = ? and "status" = 'pending' and exists (select 1 from "member" where "organizationId" = ? and "userId" = ? and "role" = 'owner')`, params: [user.id, identity.id, user.id] },
+  ])
+  if (await stateOf(db, user.id) === "pending") throw new Error("Workspace ownership could not be verified")
+}
+
+/** A server-authenticated workspace identity, independent of user-editable slugs. */
+async function workspaceIdentity(secret: string, userId: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+  const sign = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))), (byte) => byte.toString(16).padStart(2, "0")).join("")
+  const id = `workspace_${await sign(`id:${userId}`)}`
+  return { id, metadata: JSON.stringify({ "norn.provisioningProof": await sign(`owner:${userId}:${id}`) }) }
+}
+
+/** Reserved metadata is assigned only by server-side provisioning. */
+const reservedMetadata = (key: string) => key === "environmentId" || key.startsWith("norn.")
+function metadataObject(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") { try { return metadataObject(JSON.parse(value)) } catch { return {} } }
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+const publicMetadata = (value: unknown) => Object.fromEntries(Object.entries(metadataObject(value)).filter(([key]) => !reservedMetadata(key)))
 
 export function authOptions(config: AuthConfig, self: Self = {}) {
   return {
@@ -66,6 +133,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       autoSignIn: false,
       minPasswordLength: 12,
       maxPasswordLength: 128,
+      // Better Auth's own hash, computed in pure JS: byte-identical, so accounts move between runtimes.
+      ...config.scrypt === "js" ? { password: { hash: hashPassword, verify: verifyPassword } } : {},
       // A registered address skips the four writes a new account makes (user, credential,
       // organization, member); make the same number of database writes so latency does not tell them apart.
       onExistingUserSignUp: async () => {
@@ -109,7 +178,19 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     plugins: [
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
       // sender verifies addresses, nobody can join an organization by claiming an invited email.
-      organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true }),
+      organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true,
+        organizationHooks: {
+          beforeCreateOrganization: async ({ organization }) => ({ data: { ...organization, ...organization.metadata === undefined ? {} : { metadata: publicMetadata(organization.metadata) } } }),
+          beforeUpdateOrganization: async ({ organization, member }) => {
+            if (organization.metadata === undefined) return
+            const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
+            const stored = await adapter.findOne<{ metadata?: string | null }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
+            if (stored === null) throw new Error("Organization no longer exists")
+            const protectedFields = Object.fromEntries(Object.entries(metadataObject(stored.metadata)).filter(([key]) => reservedMetadata(key)))
+            return { data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...protectedFields } } }
+          },
+        },
+      }),
       apiKey({ references: "organization", enableMetadata: true, rateLimit: { enabled: true, timeWindow: 60_000, maxRequests: 120 } }),
       magicLink({
         expiresIn: 10 * MINUTE,
@@ -125,17 +206,9 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     databaseHooks: {
       user: {
         create: {
-          // Every account starts with its own organization, so a fresh session has a scope.
+          // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
           after: async (user, ctx) => {
-            if (ctx === null) return
-            const now = new Date()
-            // Inside the sign-up transaction where the database has one (SQLite); D1 has none.
-            const adapter = await getCurrentAdapter(ctx.context.adapter)
-            const org = await adapter.create<{ id: string }>({
-              model: "organization",
-              data: { name: `${user.name || user.email}'s workspace`, slug: `u-${user.id.toLowerCase()}`, createdAt: now },
-            })
-            await adapter.create({ model: "member", data: { organizationId: org.id, userId: user.id, role: "owner", createdAt: now } })
+            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
           },
         },
       },
@@ -143,13 +216,22 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         create: {
           before: async (session, ctx) => {
             const method = ctx === null ? undefined : AUTH_METHODS[ctx.path as keyof typeof AUTH_METHODS]
-            // The earliest membership, the same rule activeMembership uses when a session has none.
-            const [member] = ctx === null ? [] : await (await getCurrentAdapter(ctx.context.adapter)).findMany<{ organizationId: string }>({
+            const adapter = ctx === null ? undefined : await getCurrentAdapter(ctx.context.adapter)
+            if (adapter !== undefined && await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
+              const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
+              if (user === null) throw new Error("Cannot provision a workspace for a missing user")
+              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
+            }
+            const first = (where: { field: string; value: string }[]) => adapter === undefined ? Promise.resolve([]) : adapter.findMany<{ organizationId: string }>({
               model: "member",
-              where: [{ field: "userId", value: session.userId }],
+              where: [{ field: "userId", value: session.userId }, ...where],
               sortBy: { field: "createdAt", direction: "asc" },
               limit: 1,
             })
+            // The stage's default organization when the user belongs to it, else the earliest membership
+            // (the same rule activeMembership uses when a session has none).
+            const preferred = config.defaultOrganizationId === undefined ? [] : await first([{ field: "organizationId", value: config.defaultOrganizationId }])
+            const [member] = preferred.length > 0 ? preferred : await first([])
             return { data: { ...session, authMethod: method ?? null, activeOrganizationId: member?.organizationId ?? null } }
           },
         },
