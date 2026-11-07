@@ -251,3 +251,43 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         all
     );
 }
+
+/// A retained revision never changes the kernel: installing one over another
+/// set or receipt is refused, so every definitions version a retained save
+/// commits has the kernel identity (receipt) of the one before it.
+#[test]
+fn a_retained_revision_cannot_change_the_kernel_set_or_receipt() {
+    let (model, canonical) = definitions();
+    let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(model, input(&canonical, 10), Some(0), SCOPE)
+        .expect("kernel definitions");
+    let dashboard = change(
+        "studio.dashboard.k",
+        1,
+        RetainedLifecycle::Active,
+        "K",
+        None,
+    );
+    let mut other_receipt = input(&canonical, 20);
+    other_receipt.receipt_sha256 = "c".repeat(64);
+    let mut other_set = input(&canonical, 20);
+    other_set.canonical_set = "[]".to_owned();
+    for changed in [other_receipt, other_set] {
+        assert!(matches!(
+            store.install_retained_definition(&changed, Some(1), SCOPE, &dashboard),
+            Err(CellError::DefinitionReceiptInvalid(_))
+        ));
+    }
+    let installed = store
+        .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &dashboard)
+        .expect("unchanged kernel");
+    let before = store
+        .read()
+        .installed_definitions(Some(1))
+        .expect("read")
+        .expect("v1");
+    assert_eq!(installed.version, 2);
+    assert_eq!(installed.receipt_sha256, before.receipt_sha256);
+}

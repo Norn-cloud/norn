@@ -1797,6 +1797,20 @@ fn preflight_definition_install<E: SqlEngine>(
         })
         .transpose()?;
     if let Some(change) = install.retained {
+        // A retained revision rides the governed install but never changes
+        // the kernel: its set and receipt are the active ones, so the new
+        // definitions version has the kernel identity of the one before it
+        // (question pins and historical cutoffs compare that identity).
+        let unchanged = previous.as_ref().is_some_and(|previous| {
+            previous.canonical_set == install.input.canonical_set
+                && previous.receipt_sha256 == install.input.receipt_sha256
+        });
+        if !unchanged {
+            return Err(CellError::DefinitionReceiptInvalid(
+                "a retained revision installs over the active kernel set and receipt, unchanged"
+                    .to_owned(),
+            ));
+        }
         crate::retained::preflight(engine, change)?;
     }
     let (layout, layout_revision) =
