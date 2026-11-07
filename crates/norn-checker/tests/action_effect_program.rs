@@ -395,7 +395,7 @@ fn codes_at(artifact: &ArtifactEnvelope) -> Vec<(String, String)> {
         .collect()
 }
 
-/// D66: display-only labels and groups on ActionIR inputs.
+/// D66: display-only labels and groups on `ActionIR` inputs.
 #[test]
 fn input_labels_and_groups_are_admitted() {
     let artifact = with_input(|schema| {
