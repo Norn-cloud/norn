@@ -73,10 +73,10 @@ use norn_expr::{
     check_expression_with_root_bounds,
 };
 use norn_ir::{
-    ActionCommand, ActionCommandOperation, ActionInputDerivation, ActionRoot, ArtifactDependency,
-    ArtifactEnvelope, ArtifactKind, ArtifactPayload, Diagnostic, DiagnosticRemediation,
-    DiagnosticSeverity, JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile, SliceDeclaration,
-    SliceKey, ZenExpression,
+    ActionAggregateInput, ActionCommand, ActionCommandOperation, ActionInputDerivation, ActionRoot,
+    ArtifactDependency, ArtifactEnvelope, ArtifactKind, ArtifactPayload, Diagnostic,
+    DiagnosticRemediation, DiagnosticSeverity, JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile,
+    SliceDeclaration, SliceKey, ZenExpression,
 };
 
 use crate::envelope::{
@@ -257,6 +257,7 @@ pub(crate) fn validate_action_typed_members(
 
     let derivations = validate_action_derivations(payload, diagnostics, artifact_id);
     validate_action_slice(payload, &derivations, diagnostics, artifact_id);
+    validate_action_aggregates(payload, &derivations, diagnostics, artifact_id);
     let precondition_cost = validate_action_preconditions(payload, diagnostics, artifact_id);
     let turn_fuel = ResourceLimitProfile::norn_limits_v1().turn.fuel_units;
     if derivations.cost.saturating_add(precondition_cost) > turn_fuel {
@@ -441,6 +442,94 @@ fn validate_action_slice(
                 format!("{path}.optional"),
                 artifact_id,
             ));
+        }
+    }
+}
+
+/// Validate an action's bounded aggregate inputs (#1105): names, bounds, and
+/// the input fields they read. Object types and property kinds are checked
+/// over the artifact set ([`crate::action_set`]).
+fn validate_action_aggregates(
+    payload: &BTreeMap<String, JsonValue>,
+    derivations: &ActionDerivationCheck,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    let Some(aggregates) = decode_member!(
+        Vec<ActionAggregateInput>,
+        payload,
+        "aggregates",
+        ACTION_CODE,
+        diagnostics,
+        artifact_id
+    ) else {
+        return;
+    };
+    let limits = ResourceLimitProfile::norn_limits_v1().slice;
+    let total_items = aggregates.iter().fold(0_u64, |total, aggregate| {
+        total.saturating_add(u64::from(aggregate.max_items))
+    });
+    if total_items > u64::from(limits.max_records) {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            format!(
+                "aggregates may match {total_items} objects in total, above the profile's slice record cap of {}",
+                limits.max_records
+            ),
+            "payload.aggregates",
+            artifact_id,
+        ));
+    }
+    let slice_names: BTreeSet<&str> = payload
+        .get("slice")
+        .and_then(JsonValue::as_array)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| entry.as_object()?.get("name")?.as_string())
+        .collect();
+    let mut names = BTreeSet::new();
+    for (index, aggregate) in aggregates.iter().enumerate() {
+        let path = format!("payload.aggregates[{index}]");
+        if !is_action_member_name(&aggregate.name)
+            || slice_names.contains(aggregate.name.as_str())
+            || !names.insert(aggregate.name.as_str())
+        {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                format!(
+                    "aggregate name {:?} is empty, repeated, or also a slice entry",
+                    aggregate.name
+                ),
+                format!("{path}.name"),
+                artifact_id,
+            ));
+        }
+        if aggregate.max_items == 0 {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                "aggregate maxItems must be at least 1",
+                format!("{path}.maxItems"),
+                artifact_id,
+            ));
+        }
+        for field in aggregate.input_fields() {
+            if action_input_field_type(payload.get("inputSchema"), field).is_none() {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    format!("aggregate input field {field:?} is not declared in inputSchema"),
+                    path.clone(),
+                    artifact_id,
+                ));
+            } else if !action_input_key_is_guaranteed(payload, field, derivations) {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    format!(
+                        "aggregate input field {field:?} may be absent; require its final input value"
+                    ),
+                    path.clone(),
+                    artifact_id,
+                ));
+            }
         }
     }
 }
@@ -773,11 +862,13 @@ fn validate_action_preconditions(
             artifact_id,
         ));
     }
-    if payload
-        .get("slice")
-        .and_then(JsonValue::as_array)
-        .is_none_or(<[JsonValue]>::is_empty)
-    {
+    let declares = |member: &str| {
+        payload
+            .get(member)
+            .and_then(JsonValue::as_array)
+            .is_some_and(|entries| !entries.is_empty())
+    };
+    if !declares("slice") && !declares("aggregates") {
         return check_action_input_preconditions(payload, preconditions, diagnostics, artifact_id);
     }
     0
@@ -821,13 +912,15 @@ fn check_action_input_preconditions(
     aggregate_cost
 }
 
-/// Type-check action preconditions over the resolved slice object records.
-/// Entity type resolution belongs to the artifact-set checker; this helper
-/// only assembles the closed ZEN environment and checks boolean expressions.
+/// Type-check action preconditions over the resolved slice object records
+/// and aggregate result types. Entity type resolution belongs to the
+/// artifact-set checker; this helper only assembles the closed ZEN
+/// environment and checks boolean expressions.
 pub(crate) fn check_action_slice_preconditions(
     root: &ActionRoot,
     records: BTreeMap<String, BTreeMap<String, Type>>,
     slice_fields: BTreeMap<String, Type>,
+    aggregate_fields: BTreeMap<String, Type>,
     artifact_id: Option<&str>,
 ) -> Vec<Diagnostic> {
     if root.preconditions.is_empty() {
@@ -847,10 +940,12 @@ pub(crate) fn check_action_slice_preconditions(
             artifact_id,
         )];
     }
-    let Some(environment) = action_slice_environment(root, &schema, records, slice_fields) else {
+    let Some(environment) =
+        action_slice_environment(root, &schema, records, slice_fields, aggregate_fields)
+    else {
         return vec![invalid_diagnostic(
             codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
-            "preconditions require every declared slice object to have a resolved, closed property record",
+            "preconditions require every declared slice object and aggregate to have a resolved, closed type",
             "payload.slice",
             artifact_id,
         )];
@@ -984,10 +1079,15 @@ fn action_slice_environment(
     input_schema: &JsonValue,
     mut records: BTreeMap<String, BTreeMap<String, Type>>,
     slice_fields: BTreeMap<String, Type>,
+    aggregate_fields: BTreeMap<String, Type>,
 ) -> Option<ZenTypeEnv> {
     let (fields, _) = action_post_derivation_fields(input_schema, &root.derive)?;
     let slice_record = "norn:ActionSlice".to_owned();
     records.insert(slice_record.clone(), slice_fields);
+    let aggregate_record = "norn:ActionAggregates".to_owned();
+    if !root.aggregates.is_empty() {
+        records.insert(aggregate_record.clone(), aggregate_fields);
+    }
     let mut environment = ZenTypeEnv::input_only_with_records(
         records,
         fields,
@@ -997,6 +1097,11 @@ fn action_slice_environment(
     environment = environment
         .bind_operand("slice", Type::Record(slice_record))
         .ok()?;
+    if !root.aggregates.is_empty() {
+        environment = environment
+            .bind_operand("aggregates", Type::Record(aggregate_record))
+            .ok()?;
+    }
     bind_flat_input_aliases(environment)
 }
 
@@ -1316,7 +1421,10 @@ fn action_input_fields(
 }
 
 /// Translate an action schema property to its final value type.
-fn action_input_field_type(input_schema: Option<&JsonValue>, field: &str) -> Option<Type> {
+pub(crate) fn action_input_field_type(
+    input_schema: Option<&JsonValue>,
+    field: &str,
+) -> Option<Type> {
     let properties = input_schema?.as_object()?.get("properties")?.as_object()?;
     action_schema_type(properties.get(field)?)
 }
@@ -3148,6 +3256,7 @@ mod tests {
                 &root,
                 records.clone(),
                 slice_fields.clone(),
+                BTreeMap::new(),
                 None,
             )
             .is_empty()
@@ -3159,6 +3268,7 @@ mod tests {
             &invalid,
             records,
             slice_fields,
+            BTreeMap::new(),
             Some("fashion.set-season-brand"),
         );
         assert!(

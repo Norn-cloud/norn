@@ -101,20 +101,23 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv};
 use norn_ir::{
-    ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactKind,
-    ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity, EntityMutationAuthority,
-    JsonObject, JsonValue, ObjectTypeName, OwnedCollectionAction, PropertyId, PropertyTypeName,
-    SliceKey, TransitionId, UpsertWriteMode, WriteChange, ZenExpression,
+    ActionAggregateInput, ActionEffectProgram, ActionEffectTarget, ActionRoot, AggregateFunction,
+    ArtifactEnvelope, ArtifactKind, ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity,
+    EntityMutationAuthority, JsonObject, JsonValue, ObjectTypeName, OwnedCollectionAction,
+    PropertyAdditivity, PropertyId, PropertyTypeName, SliceKey, TransitionId, UpsertWriteMode,
+    WriteChange, ZenExpression,
 };
 
 use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
-use crate::entity_instance::{EffectiveCatalog, EffectiveLifecycle, EffectiveObjectType};
+use crate::entity_instance::{
+    EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveObjectType, EffectiveProperty,
+};
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::lifecycle_writes::{codes as codes_lifecycle, finding as lifecycle_finding};
 use crate::lifecycles::{check_transition_firing, codes::UNDECLARED_WRITE};
 use crate::property_types::error;
-use crate::typed_roots::check_action_slice_preconditions;
+use crate::typed_roots::{action_input_field_type, check_action_slice_preconditions};
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 /// Stable `artifact_set.action.*` and `artifact_set.entity.*` codes.
@@ -139,6 +142,9 @@ pub mod codes {
     pub const UNKNOWN_SLICE_KIND: &str = "artifact_set.action.unknown_slice_kind";
     /// An action slice reads an unknown key property or link.
     pub const INVALID_SLICE: &str = "artifact_set.action.invalid_slice";
+    /// An action aggregate input names an unknown type or property, or a
+    /// property whose kind the fold cannot read (#1105).
+    pub const INVALID_AGGREGATE: &str = "artifact_set.action.invalid_aggregate";
     /// An effect target or declared write is not writable by a generic
     /// action: a domain-engine type, or a computed property.
     pub const TARGET_NOT_WRITABLE: &str = "artifact_set.action.target_not_writable";
@@ -507,15 +513,18 @@ fn action_slice_findings(
     model: &Model<'_>,
 ) -> Vec<Diagnostic> {
     let mut findings = Vec::new();
-    if !root.slice.is_empty() {
+    if !root.slice.is_empty() || !root.aggregates.is_empty() {
         let slice = action_slice_types(artifact, root, model);
         findings.extend(slice.findings);
-        if slice.typed_slice {
+        let aggregates = action_aggregate_types(artifact, root, model);
+        findings.extend(aggregates.findings);
+        if slice.typed_slice && aggregates.typed {
             findings.extend(
                 check_action_slice_preconditions(
                     root,
                     slice.records,
                     slice.fields,
+                    aggregates.fields,
                     Some(&artifact.artifact_id),
                 )
                 .into_iter()
@@ -639,6 +648,285 @@ fn action_slice_types(
         fields: slice_fields,
         typed_slice,
     }
+}
+
+struct ActionAggregateTypes {
+    findings: Vec<Diagnostic>,
+    fields: BTreeMap<String, Type>,
+    typed: bool,
+}
+
+/// Resolve each aggregate input (#1105) against the effective model: its
+/// type, the scalar filter properties and their input fields, the window
+/// property, and the summed property. The result type of a sum is the summed
+/// property's type (an exact decimal keeps its scale, unit and currency); a
+/// count is an integer.
+fn action_aggregate_types(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    model: &Model<'_>,
+) -> ActionAggregateTypes {
+    let mut types = ActionAggregateTypes {
+        findings: Vec::new(),
+        fields: BTreeMap::new(),
+        typed: true,
+    };
+    if root.aggregates.is_empty() {
+        return types;
+    }
+    let Ok(environment) = &model.expression_environment else {
+        types.findings.push(finding(
+            codes::INVALID_AGGREGATE,
+            "aggregate property types cannot be resolved".to_owned(),
+            artifact,
+            "/payload/aggregates",
+        ));
+        types.typed = false;
+        return types;
+    };
+    let input_schema = JsonValue::Object(root.input_schema.clone());
+    for (index, aggregate) in root.aggregates.iter().enumerate() {
+        let site = AggregateSite {
+            artifact,
+            aggregate,
+            path: format!("/payload/aggregates/{index}"),
+            input_schema: &input_schema,
+        };
+        match aggregate_result_type(&site, model, environment, &mut types.findings) {
+            Some(ty) => {
+                types.fields.insert(aggregate.name.clone(), ty);
+            }
+            None => types.typed = false,
+        }
+    }
+    types
+}
+
+struct AggregateSite<'a> {
+    artifact: &'a ArtifactEnvelope,
+    aggregate: &'a ActionAggregateInput,
+    path: String,
+    input_schema: &'a JsonValue,
+}
+
+impl AggregateSite<'_> {
+    fn finding(&self, suffix: &str, message: String) -> Diagnostic {
+        finding(
+            codes::INVALID_AGGREGATE,
+            format!("aggregate {:?}: {message}", self.aggregate.name),
+            self.artifact,
+            &format!("{}{suffix}", self.path),
+        )
+    }
+}
+
+/// The comparable value class of a scalar expression type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScalarClass {
+    Text,
+    Integer,
+    Decimal,
+    Bool,
+    Date,
+    Timestamp,
+}
+
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "The foreign non-exhaustive enum requires a catch-all; any other kind is not a scalar the fold can compare"
+)]
+fn scalar_class(ty: &Type) -> Option<ScalarClass> {
+    match ty {
+        Type::Optional(inner) => scalar_class(inner),
+        Type::Text { .. } | Type::Enum { .. } => Some(ScalarClass::Text),
+        Type::Integer => Some(ScalarClass::Integer),
+        Type::Decimal { .. } | Type::Number => Some(ScalarClass::Decimal),
+        Type::Bool => Some(ScalarClass::Bool),
+        Type::Date => Some(ScalarClass::Date),
+        Type::Timestamp { .. } => Some(ScalarClass::Timestamp),
+        _ => None,
+    }
+}
+
+/// Property kinds an aggregate filter compares by equality.
+const FILTERABLE: &[ScalarClass] = &[
+    ScalarClass::Text,
+    ScalarClass::Integer,
+    ScalarClass::Decimal,
+    ScalarClass::Bool,
+    ScalarClass::Date,
+];
+
+/// Property kinds an aggregate window ranges over.
+const EDGES: &[ScalarClass] = &[ScalarClass::Date, ScalarClass::Timestamp];
+
+/// Whether an action input field can be compared with a stored property of
+/// `class`. Inputs carry dates and timestamps as strings.
+fn input_comparable(input: ScalarClass, property: ScalarClass) -> bool {
+    match property {
+        ScalarClass::Date | ScalarClass::Timestamp => input == ScalarClass::Text,
+        ScalarClass::Decimal => matches!(input, ScalarClass::Decimal | ScalarClass::Integer),
+        ScalarClass::Text | ScalarClass::Integer | ScalarClass::Bool => input == property,
+    }
+}
+
+/// METRIC-ADDITIVITY-1: only an explicit numeric contract admits a sum. A
+/// semi-additive property sums across objects at one instant, never across a
+/// time window.
+fn sum_admitted(property: &EffectiveProperty, windowed: bool) -> bool {
+    let EffectiveKind::Base(kind) = &property.kind else {
+        return false;
+    };
+    match kind.additivity() {
+        PropertyAdditivity::Additive {} => true,
+        PropertyAdditivity::SemiAdditive {} => !windowed,
+        PropertyAdditivity::Undeclared {}
+        | PropertyAdditivity::NonAdditive {}
+        | PropertyAdditivity::Ratio { .. } => false,
+    }
+}
+
+fn aggregate_result_type(
+    site: &AggregateSite<'_>,
+    model: &Model<'_>,
+    environment: &ZenTypeEnv,
+    findings: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let aggregate = site.aggregate;
+    let kind = aggregate.object_type.as_str();
+    let Some(defined) = model.object_type(kind) else {
+        findings.push(site.finding(
+            "/objectType",
+            format!("{kind:?} is not an object type of the artifact set or the installed base"),
+        ));
+        return None;
+    };
+    findings.extend(scope_finding(
+        site.artifact,
+        defined.artifact,
+        &format!("{}/objectType", site.path),
+    ));
+    let (Some(Ok(effective)), Some(record)) =
+        (&defined.effective_object_type, environment.record(kind))
+    else {
+        findings.push(site.finding(
+            "/objectType",
+            format!("{kind:?} has no admitted effective definition"),
+        ));
+        return None;
+    };
+    // Only stored properties are folded; links are never implicit reads.
+    let property_type = |property: &PropertyId| {
+        record
+            .fields
+            .get(property.as_str())
+            .filter(|field| matches!(field.source, FieldSource::Property { .. }))
+            .map(|field| field.ty.clone())
+    };
+    let mut admitted = true;
+    let mut compare =
+        |suffix: String, property: &PropertyId, input: &str, allowed: &[ScalarClass]| {
+            let Some(ty) = property_type(property) else {
+                findings.push(site.finding(
+                    &suffix,
+                    format!(
+                        "{:?} is not a stored property of {kind:?}",
+                        property.as_str()
+                    ),
+                ));
+                admitted = false;
+                return;
+            };
+            let Some(class) = scalar_class(&ty).filter(|class| allowed.contains(class)) else {
+                findings.push(site.finding(
+                    &suffix,
+                    format!(
+                        "property {:?} has a kind the fold cannot compare",
+                        property.as_str()
+                    ),
+                ));
+                admitted = false;
+                return;
+            };
+            let input_class = action_input_field_type(Some(site.input_schema), input)
+                .as_ref()
+                .and_then(scalar_class);
+            if input_class.is_some_and(|input_class| !input_comparable(input_class, class)) {
+                findings.push(site.finding(
+                    &suffix,
+                    format!(
+                        "input field {input:?} cannot be compared with property {:?}",
+                        property.as_str()
+                    ),
+                ));
+                admitted = false;
+            }
+        };
+    for (property, input) in &aggregate.filter {
+        compare(
+            format!("/filter/{}", property.as_str()),
+            property,
+            input,
+            FILTERABLE,
+        );
+    }
+    if let Some(window) = &aggregate.window {
+        compare(
+            "/window/start".to_owned(),
+            &window.property,
+            &window.start,
+            EDGES,
+        );
+        compare(
+            "/window/end".to_owned(),
+            &window.property,
+            &window.end,
+            EDGES,
+        );
+    }
+    let result = match &aggregate.aggregate {
+        AggregateFunction::Count {} => Some(Type::Integer),
+        AggregateFunction::Sum { property } => match property_type(property) {
+            Some(ty @ (Type::Decimal { .. } | Type::Integer)) => {
+                let summable = effective
+                    .property(property.as_str())
+                    .is_some_and(|stored| sum_admitted(stored, aggregate.window.is_some()));
+                if summable {
+                    Some(ty)
+                } else {
+                    findings.push(site.finding(
+                        "/aggregate/property",
+                        format!(
+                            "summed property {:?} must declare additive aggregation (semi-additive only without a window)",
+                            property.as_str()
+                        ),
+                    ));
+                    None
+                }
+            }
+            Some(_) => {
+                findings.push(site.finding(
+                    "/aggregate/property",
+                    format!(
+                        "summed property {:?} must be a non-nullable decimal or integer",
+                        property.as_str()
+                    ),
+                ));
+                None
+            }
+            None => {
+                findings.push(site.finding(
+                    "/aggregate/property",
+                    format!(
+                        "{:?} is not a stored property of {kind:?}",
+                        property.as_str()
+                    ),
+                ));
+                None
+            }
+        },
+    };
+    result.filter(|_| admitted)
 }
 
 fn action_slice_key_findings(
