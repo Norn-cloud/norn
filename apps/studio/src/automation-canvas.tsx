@@ -239,14 +239,17 @@ const DEFAULTS: Record<string, Record<string, string>> = {
   succeed: { outcome: "done" },
 }
 
+/** A step card's drawn height: its content, or taller when its exits need the room. */
+const stepHeight = (node: g.CanvasNode) => Math.max(cardHeight({ kindLine: node.kind !== "start", subtitle: node.kind !== "start" }), exitsHeight(outsOf(node)) ?? 0)
+
 /** The frame's props for an automation; the sheet renders the same props with fixed findings. */
 export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.Graph = EXAMPLE): CanvasFrameProps {
   return {
     draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
     saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
     fixed: (node) => node.kind === "start",
-    tidy: (graph) => tidy(graph, STEP_SPACING),
-    nodeSize: (node) => ({ width: CARD.step, height: Math.max(cardHeight({ kindLine: node.kind !== "start", subtitle: node.kind !== "start" }), exitsHeight(outsOf(node)) ?? 0) }),
+    tidy: (graph) => tidy(graph, STEP_SPACING, stepHeight),
+    nodeSize: (node) => ({ width: CARD.step, height: stepHeight(node) }),
     toNode: (node, found, selected): StepNode => ({
       id: node.id, type: "step", position: node.position, selected,
       data: {

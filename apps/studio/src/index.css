@@ -30,6 +30,8 @@
   --accent-foreground: #0a0a0a;
   --surface-subtle: #f9fafb;
   --destructive: #ff3b30;
+  /* Destructive as small text: 5.4:1 on the card (the fill colour is 3.6:1). */
+  --destructive-text: #d70015;
   --success: #1f7a4d;
   --warning: #ff9500;
   --border: #e5e7eb;
@@ -96,6 +98,8 @@
   --accent-foreground: #f5f5f7;
   --surface-subtle: #2a2a2e;
   --destructive: #ff453a;
+  /* Destructive as small text: 5.4:1 on the card (the fill colour is 4.5:1). */
+  --destructive-text: #ff6961;
   --success: #30d158;
   --warning: #ff9f0a;
   --border: #38383d;
@@ -175,6 +179,7 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-text: var(--destructive-text);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -213,6 +218,10 @@
 .canvas-node:hover { box-shadow: var(--node-highlight), var(--elevation-node-hover); transform: translateY(-1.5px); }
 .canvas-node-selected { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px var(--node-ring), var(--elevation-node-hover); }
 .canvas-node-failing { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px color-mix(in oklab, var(--destructive) 55%, transparent), var(--elevation-node); }
+/* Hover lifts without dropping a ring; a selected step with problems shows both rings, selection inside. */
+.canvas-node-selected:hover { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px var(--node-ring), var(--elevation-node-hover); }
+.canvas-node-failing:hover { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px color-mix(in oklab, var(--destructive) 55%, transparent), var(--elevation-node-hover); }
+.canvas-node.canvas-node-selected.canvas-node-failing { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px var(--node-ring), 0 0 0 6px color-mix(in oklab, var(--destructive) 55%, transparent), var(--elevation-node-hover); }
 @media (prefers-reduced-motion: reduce) { .canvas-node, .canvas-node:hover { transition: none; transform: none; } }
 /* Canvas edges: thin and muted; the active path in the accent, its direction drawn by a slow dash. */
 .react-flow {

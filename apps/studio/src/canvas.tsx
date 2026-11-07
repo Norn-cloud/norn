@@ -54,7 +54,7 @@ export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, da
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
       {data?.label && room >= 28 && (
         <EdgeLabelRenderer>
-          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive")} onClick={() => store.getState().addSelectedEdges([id])}
+          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive-text")} onClick={() => store.getState().addSelectedEdges([id])}
             style={{ maxWidth: room, transform: `translate(${shift}, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
