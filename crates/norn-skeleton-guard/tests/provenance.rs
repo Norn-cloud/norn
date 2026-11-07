@@ -517,6 +517,7 @@ fn policy_fixture() -> Fixture {
     fixture.add(".github/workflows/core.yml", b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
     for path in [
         "scripts/ci/core.sh",
+        "scripts/ci/implementation_receipts.py",
         ".config/nextest.toml",
         "scripts/ci/validate-runner-policy.py",
         "scripts/proof_enrollment.py",
@@ -589,6 +590,7 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
     for path in [
         ".github/workflows/core.yml",
         "scripts/ci/core.sh",
+        "scripts/ci/implementation_receipts.py",
         "verification/coverage-v1/negative_canaries.py",
     ] {
         let mut candidate = policy_fixture();
