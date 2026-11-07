@@ -15,11 +15,12 @@ const { ViewProvider } = await import("../src/lib/view.tsx")
 const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
 /** The record page at its route, with the recorded reads already answered. */
-async function page(concept: string, id: string, view = "business", links?: unknown) {
+async function page(concept: string, id: string, view = "business", links?: unknown, access?: unknown) {
   globalThis.localStorage = { getItem: () => view, setItem: () => {} } as unknown as Storage
   const client = new QueryClient()
   const file = (read: string) => fixture(`objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`)
   client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
+  if (access !== undefined) client.setQueryData(["live-access"], access)
   client.setQueryData(["object", concept, id], { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") })
   const root = createRootRoute()
   const router = createRouter({
@@ -143,4 +144,22 @@ test("Business shows a type's plain summary only; Technical shows the registry's
   const technical = await render("technical")
   expect(technical).toContain("valuation_method")
   expect(technical).toContain(">core.Resource<")
+})
+
+test("the technical view shows the host's live access decision as the server wrote it, or its refusal, or the snapshot", async () => {
+  // The host's access document (#1022) for a viewer: Population only.
+  const document = JSON.stringify({ principal: { subjectId: "user:u1", actorKind: "user", roles: ["viewer"], roleTable: "studio-roles/1" }, policy: "demo.host.read", grantTable: "norn-cell-do-grants/1",
+    capabilities: { population: { decision: "permit", rule: "norn-cell-do-grants/1:viewer" }, values: { decision: "deny", rule: null }, sources: { decision: "deny", rule: null } } })
+  const live = await page("canon.Item", "demo/item/gold", "technical", undefined, { kind: "read", read: readDocument(document, "live") })
+  expect(live).toContain("read live from the cell for your account")
+  expect(live).toContain("Copy user:u1")
+  expect(live).toContain("norn-cell-do-grants/1:viewer")
+  expect(live.match(/>Permit</g)?.length).toBe(1)
+  expect(live.match(/>Deny</g)?.length).toBe(2)
+  expect(live).toContain("no rule grants it")
+  const refused = await page("canon.Item", "demo/item/gold", "technical", undefined, { kind: "refused", refusal: { code: "authz.denied", message: "the read request is not authorized" } })
+  expect(refused).toContain("the read request is not authorized")
+  expect(refused).not.toContain(">Permit<")
+  const unavailable = await page("canon.Item", "demo/item/gold", "technical", undefined, { kind: "unavailable", status: 503 })
+  expect(unavailable).toContain("This page shows a recorded snapshot.")
 })

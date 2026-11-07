@@ -116,3 +116,14 @@ export function amountTexts(read: Read<Trace>, index: number): readonly (string 
   if (amounts == null) return null
   return amounts.map((amount, at) => amount === null ? null : read.numbers.get(`/contributions/${index}/amounts/${at}`) ?? String(amount))
 }
+
+/** The host's access document (`GET /v1/access`): who the server verified, and its decision per read capability. */
+export interface Access {
+  readonly principal: { readonly subjectId: string; readonly actorKind: string; readonly roles: readonly string[]; readonly roleTable: string }
+  readonly policy: string
+  readonly grantTable: string
+  readonly capabilities: Readonly<Record<"population" | "values" | "sources", { readonly decision: "permit" | "deny"; readonly rule: string | null }>>
+}
+
+/** The signed-in account's access decisions in the demo cell, computed by the host on each read. */
+export const liveAccess = (fetcher?: Fetch) => hostRead<Access>(`/v1/access?${DEMO}&environmentId=dev`, fetcher)

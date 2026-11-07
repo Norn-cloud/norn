@@ -58,7 +58,7 @@ export function LiveRecords({ question, lineageRef, bucket }: { readonly questio
 }
 
 /** The server's refusal, as an answer: its reason in its own words, and its code. */
-function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
+export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
   return (
     <div role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
       <div><span className="font-medium">Refused:</span> {refusal.message}</div>
