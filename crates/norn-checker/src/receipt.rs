@@ -999,7 +999,7 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
         .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
 }
 
-fn hash_serde_json(value: &serde_json::Value) -> Result<String, CanonicalJsonError> {
+pub(crate) fn hash_serde_json(value: &serde_json::Value) -> Result<String, CanonicalJsonError> {
     // Re-canonicalized under Norn1, so key order and number spelling do not
     // matter.
     let bytes = norn_canonical::canonical_json_of(value)?;
