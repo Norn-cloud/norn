@@ -157,6 +157,37 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 
 FUNCTION-HOST-1: engine built-ins only; never authorable. `implementation.format: host` is reserved for Norn-owned, versioned built-in Functions distributed in the engine and identified by the engine's own built-in namespace. Authored and pack definitions cannot install host Functions, including by imitating that namespace; admission refuses fail-closed with a stable diagnostic. Built-ins are reviewed and qualified like kernel code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The engine must resolve its shipped built-in implementation by these exact pins or refuse.
 
+HOST-TREE-1: `implementation.digest` of a host Function is the source-tree digest
+of its implementing crate directory. The tree is every regular file below that
+directory. Each directory entry is judged in this order, and the first rule that
+applies decides: (1) a name that is not valid UTF-8 refuses, even one that would be
+hidden; (2) an entry whose name starts with `.` is skipped whatever its kind, so a
+hidden file, directory or symlink is never read, followed or refused, and nothing
+below a hidden directory counts; (3) a directory named `target` is skipped at any
+depth, while a regular file named `target` counts and a symlink named `target`
+refuses, because a symlink is never a directory; (4) any other symlink, or any
+entry that is neither a directory nor a regular file, refuses. Each file is
+named by its relative `/`-separated path, which is non-empty, relative, and has
+no empty, `.` or `..` component, backslash or control character. Each file
+contributes `{path, size, sha256}`, where `sha256` is the lower-case hex SHA-256 of
+its exact bytes, with no line-ending or encoding normalization. The entries are
+sorted by raw path bytes (UTF-8 bytes, which is code-point order), and the digest
+is `sha256:` followed by the hex SHA-256 of `norn.function/source-tree/v1\0` and the
+exact canonical JSON of that array: sorted keys, compact, strings kept byte for byte
+with no NFC normalization, so an NFC-equivalent rename is a different tree. An empty tree
+or a duplicate path refuses. `norn_ir::source_tree::source_tree_digest` is the
+pure implementation, and `norn source-digest <dir>` walks a clean checkout. The
+golden vector in `crates/norn-ir/tests/fixtures/source-tree.digest` was computed
+by an independent reimplementation (Python `hashlib` and `json.dumps` with sorted
+keys and compact separators). Any change to the algorithm needs a new domain
+version. Named scenarios (`crates/norn-ir/tests/source_tree.rs`):
+**HOST-TREE-PINNED**, **HOST-TREE-UNICODE** (a precomposed and a decomposed
+spelling differ; a second golden vector pins raw-byte order),
+**HOST-TREE-EXCLUDE** (`crates/norn-cli/src/main.rs`: the exclusion order
+above, for hidden entries, `target` and symlinks), **HOST-TREE-SENSITIVE** (an edit, rename, removal,
+addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
+(listing order is irrelevant) and **HOST-TREE-REFUSE**.
+
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 
 OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed

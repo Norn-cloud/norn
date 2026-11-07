@@ -46,6 +46,11 @@ export interface AuthConfig {
   readonly defaultEnvironmentId?: string
   /** Absent when this deployment has no mail sender: magic links then refuse. */
   readonly sendMagicLink?: (mail: MagicLinkMail) => Promise<void>
+  /**
+   * The organization a new session starts in when its user is a member, e.g. the
+   * seeded `org_demo` on preview; otherwise the user's earliest membership.
+   */
+  readonly defaultOrganizationId?: string
   /** "js" where the runtime has no `node:crypto.scrypt` (celld); absent or "native" otherwise. */
   readonly scrypt?: PasswordScrypt
 }
@@ -211,21 +216,22 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         create: {
           before: async (session, ctx) => {
             const method = ctx === null ? undefined : AUTH_METHODS[ctx.path as keyof typeof AUTH_METHODS]
-            if (ctx !== null) {
-              const adapter = await getCurrentAdapter(ctx.context.adapter)
-              if (await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
-                const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
-                if (user === null) throw new Error("Cannot provision a workspace for a missing user")
-                await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
-              }
+            const adapter = ctx === null ? undefined : await getCurrentAdapter(ctx.context.adapter)
+            if (adapter !== undefined && await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
+              const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
+              if (user === null) throw new Error("Cannot provision a workspace for a missing user")
+              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
             }
-            // The earliest membership, the same rule activeMembership uses when a session has none.
-            const [member] = ctx === null ? [] : await (await getCurrentAdapter(ctx.context.adapter)).findMany<{ organizationId: string }>({
+            const first = (where: { field: string; value: string }[]) => adapter === undefined ? Promise.resolve([]) : adapter.findMany<{ organizationId: string }>({
               model: "member",
-              where: [{ field: "userId", value: session.userId }],
+              where: [{ field: "userId", value: session.userId }, ...where],
               sortBy: { field: "createdAt", direction: "asc" },
               limit: 1,
             })
+            // The stage's default organization when the user belongs to it, else the earliest membership
+            // (the same rule activeMembership uses when a session has none).
+            const preferred = config.defaultOrganizationId === undefined ? [] : await first([{ field: "organizationId", value: config.defaultOrganizationId }])
+            const [member] = preferred.length > 0 ? preferred : await first([])
             return { data: { ...session, authMethod: method ?? null, activeOrganizationId: member?.organizationId ?? null } }
           },
         },
