@@ -12,8 +12,10 @@
 //! - nothing value-derived reaches a withheld row's record, the cursor or the
 //!   counts.
 //!
-//! The cursor carries no value: the type, a digest of the normalized query,
-//! the scope, a digest of the caller, the snapshot head and the last row's id.
+//! The cursor carries no value: a digest of the type and normalized query,
+//! digests of the scope and the caller, the snapshot, and the resume position
+//! (a plain listing's last row id, or a digest of it under a sort or filter),
+//! within `MAX_CURSOR_BYTES` whatever the id's length.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -294,7 +296,7 @@ pub(crate) fn parse(
     let sort = parse_sort(params.sort.as_deref(), &kinds, &mut findings);
     let filter = parse_filter(params.filter.as_deref(), &kinds, &mut findings);
     if let Some(after) = params.after.as_deref()
-        && (after.is_empty() || after.len() > 2048)
+        && (after.is_empty() || after.len() > MAX_CURSOR_BYTES)
     {
         findings.push(
             "query.cursor_invalid",
@@ -927,35 +929,89 @@ pub(crate) fn compare(
     a.0.cmp(b.0)
 }
 
-/// What a cursor binds: no value of any row.
+/// Longest `after` the host accepts. It covers the largest cursor the host
+/// issues: the fixed-size header (digests and the snapshot, at most a few
+/// hundred bytes) and a plain listing's resume id of up to
+/// [`norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES`] bytes, base64url.
+pub const MAX_CURSOR_BYTES: usize = 6_144;
+
+/// What a cursor binds: no value of any row. The header is fixed-size: the
+/// type and query bind through `q`, the scope and the caller through digests.
+/// The resume position `p` travels outside the JSON, so it is never escaped.
+/// A plain listing resumes by the last row's id, and a sort or filter by a
+/// digest of it, which keeps that cursor small beside a large filter.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Cursor {
     pub(crate) v: u8,
-    pub(crate) t: String,
     pub(crate) q: String,
     pub(crate) s: String,
     pub(crate) a: String,
     pub(crate) c: u64,
     pub(crate) r: Option<(u64, u64)>,
-    pub(crate) id: String,
+    #[serde(skip)]
+    pub(crate) p: String,
 }
 
 impl Cursor {
-    /// The opaque wire form: base64url of the cursor's JSON.
+    /// The opaque wire form: base64url of the header's JSON, `.`, and
+    /// base64url of the position's UTF-8.
     pub(crate) fn encode(&self) -> String {
-        URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).unwrap_or_default())
+        format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).unwrap_or_default()),
+            URL_SAFE_NO_PAD.encode(self.p.as_bytes()),
+        )
     }
 
-    /// The cursor `text` encodes, if it is a version-1 cursor.
+    /// The cursor `text` encodes, if it is a version-2 cursor.
     pub(crate) fn decode(text: &str) -> Option<Self> {
-        let bytes = URL_SAFE_NO_PAD.decode(text).ok()?;
-        serde_json::from_slice::<Self>(&bytes)
+        let (header, position) = text.split_once('.')?;
+        let mut cursor = serde_json::from_slice::<Self>(&URL_SAFE_NO_PAD.decode(header).ok()?)
             .ok()
-            .filter(|cursor| cursor.v == 1)
+            .filter(|cursor| cursor.v == 2)?;
+        cursor.p = String::from_utf8(URL_SAFE_NO_PAD.decode(position).ok()?).ok()?;
+        Some(cursor)
     }
 
     /// The digest a cursor binds the caller by.
     pub(crate) fn actor_digest(actor: &str) -> String {
         norn_cell::compute::lineage::keyed_lineage_handle(CURSOR_KEY, &format!("actor:{actor}"))
+    }
+
+    /// The digest a cursor binds the scope by.
+    pub(crate) fn scope_digest(scope: &str) -> String {
+        norn_cell::compute::lineage::keyed_lineage_handle(CURSOR_KEY, &format!("scope:{scope}"))
+    }
+
+    /// The position a sort or filter resumes after: a digest of the row id.
+    pub(crate) fn row_digest(id: &str) -> String {
+        norn_cell::compute::lineage::keyed_lineage_handle(CURSOR_KEY, &format!("row:{id}"))
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    #![allow(clippy::unwrap_used, reason = "cursor bound")]
+    use super::{Cursor, MAX_CURSOR_BYTES};
+
+    /// The largest cursor the host can issue round-trips and fits the bound
+    /// it accepts: a maximal resume id of four-byte characters, and the
+    /// largest snapshot numbers.
+    #[test]
+    fn the_largest_issued_cursor_fits_the_accepted_bound() {
+        let digest = Cursor::actor_digest("any");
+        let id = "\u{1F600}".repeat(norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES / 4);
+        let cursor = Cursor {
+            v: 2,
+            q: digest.clone(),
+            s: digest.clone(),
+            a: digest,
+            c: u64::MAX,
+            r: Some((u64::MAX, u64::MAX)),
+            p: id,
+        };
+        let wire = cursor.encode();
+        assert!(wire.len() <= MAX_CURSOR_BYTES, "{} bytes", wire.len());
+        assert_eq!(Cursor::decode(&wire).unwrap(), cursor);
     }
 }

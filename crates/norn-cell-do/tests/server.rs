@@ -266,3 +266,19 @@ fn a_non_utf8_object_path_segment_refuses() {
         assert_eq!(status, 400, "{path}: {body}");
     }
 }
+
+/// A cursor up to the host's cursor bound is never refused for the query
+/// string's length: it reaches the route, which judges the cursor itself.
+#[test]
+fn a_cursor_at_the_cursor_bound_reaches_the_route() {
+    let demo = host(NativeEngine::open_in_memory().unwrap());
+    let after = "A".repeat(norn_api::object_query::MAX_CURSOR_BYTES);
+    let (status, body) = get(
+        &demo,
+        "/v1/objects/canon.Party",
+        &format!("{SCOPE}&limit=2&after={after}"),
+        VIEWER,
+    );
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["diagnostics"][0]["code"], "query.cursor_invalid");
+}

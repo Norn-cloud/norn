@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::host::DevHost;
-use norn_api::object_query::ObjectQueryParams;
+use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
@@ -250,11 +250,17 @@ fn objects<E: SqlEngine>(
         )?;
         return document_json(&record);
     }
+    // The cursor has its own bound, so any query the host accepts on a first
+    // page stays acceptable with every cursor the host issues for it.
     let mut fields = parse_within(
         query,
         &["orgId", "environmentId", "limit", "sort", "filter", "after"],
-        MAX_OBJECT_QUERY_BYTES,
+        MAX_OBJECT_QUERY_BYTES.saturating_add(MAX_CURSOR_BYTES),
     )?;
+    let cursor_bytes = fields.get("after").map_or(0, String::len);
+    if query.len().saturating_sub(cursor_bytes) > MAX_OBJECT_QUERY_BYTES {
+        return Err(Refusal::invalid("the query string exceeds the host bound"));
+    }
     let scope = ScopeQuery {
         org_id: fields.remove("orgId"),
         environment_id: fields.remove("environmentId"),
