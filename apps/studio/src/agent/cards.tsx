@@ -1,4 +1,5 @@
 import { CircleCheck, CircleX, Scale } from "lucide-react"
+import type { ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { STAGE, type Verdict } from "./verdict.ts"
@@ -14,6 +15,16 @@ export function reasons(message: string): string[] {
 
 const where = ({ artifact, pointer }: { readonly artifact: string; readonly pointer: string }) => `${artifact} ${pointer}`
 
+/** The ids, pointers and codes behind a verdict, folded away: a reader sees the law in its own words first. */
+function TechnicalDetails({ children }: { readonly children: ReactNode }) {
+  return (
+    <details className="text-meta text-muted-foreground">
+      <summary className="cursor-pointer">Details</summary>
+      <div className="mt-1 space-y-1 font-mono break-all">{children}</div>
+    </details>
+  )
+}
+
 /** What the server's checker said about one proposal; Studio adds no verdict of its own. */
 export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
   if ("error" in verdict) {
@@ -28,8 +39,8 @@ export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
     return (
       <div className="rounded-xl border bg-card p-3 text-sm">
         <div className="flex items-center gap-2 font-medium"><CircleCheck className="size-4 text-success" />Admitted by the checker</div>
-        <p className="mt-1 font-mono text-meta break-all text-muted-foreground">{where(verdict.proposal)}</p>
-        <p className="mt-1 text-muted-foreground">Checked, not installed. Receipt {verdict.receiptSha256?.slice(0, 12) ?? "none"}.</p>
+        <p className="mt-1 text-muted-foreground">Checked, not installed.</p>
+        <TechnicalDetails><div>{where(verdict.proposal)}</div><div>receipt {verdict.receiptSha256 ?? "none"}</div></TechnicalDetails>
       </div>
     )
   }
@@ -39,7 +50,6 @@ export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
         <CircleX className="size-4 text-destructive" />Refused by the checker
         <Badge variant="outline">{STAGE[verdict.stage] ?? verdict.stage}</Badge>
       </div>
-      <p className="font-mono text-meta break-all text-muted-foreground">{where(verdict.proposal)}</p>
       {verdict.refusals.map((refusal, index) => (
         <div key={`${refusal.code}:${index}`} className="space-y-1 rounded-lg bg-muted px-3 py-2">
           {refusal.law && (
@@ -53,17 +63,14 @@ export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
             </div>
           )}
           {reasons(refusal.message).map((reason) => <div key={reason}>{reason}</div>)}
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline" className="font-mono">{refusal.code}</Badge>
-            {reasons(refusal.message)[0] !== refusal.message && (
-              <details className="text-meta text-muted-foreground">
-                <summary className="cursor-pointer">Details</summary>
-                <pre className="mt-1 whitespace-pre-wrap break-all font-mono">{refusal.message}</pre>
-              </details>
-            )}
-          </div>
+          <TechnicalDetails>
+            <div>{refusal.code}</div>
+            {reasons(refusal.message)[0] !== refusal.message && <pre className="whitespace-pre-wrap">{refusal.message}</pre>}
+          </TechnicalDetails>
         </div>
       ))}
+      {/* The proposal's location once per card, so a refusal with no findings still says what was checked. */}
+      <TechnicalDetails><div>{where(verdict.proposal)}</div></TechnicalDetails>
     </div>
   )
 }

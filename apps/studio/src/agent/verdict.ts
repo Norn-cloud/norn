@@ -25,9 +25,9 @@ export type Verdict =
 
 /** Where the checker stopped, in plain words. */
 export const STAGE: Record<string, string> = {
-  shape: "The definition's shape",
-  resolution: "How definitions depend on each other",
-  model: "What the law or rule means",
+  shape: "Stopped at: the definition's shape",
+  resolution: "Stopped at: how definitions depend on each other",
+  model: "Stopped at: what the law means",
   admitted: "Admitted",
 }
 
