@@ -82,7 +82,12 @@ interface Draft { readonly graph: g.Graph; readonly at: string }
 function readDraft(key: string): Draft | undefined {
   try {
     const text = window.localStorage.getItem(`norn.canvas.draft.${key}`)
-    return text ? JSON.parse(text) as Draft : undefined
+    if (!text) return undefined
+    // A draft from another build may have another shape: one that is not a drawing is dropped, not rendered.
+    const draft = JSON.parse(text) as Partial<Draft> | null
+    const graph = draft?.graph as Partial<g.Graph> | undefined
+    if (!Array.isArray(graph?.nodes) || !Array.isArray(graph?.edges) || typeof draft?.at !== "string") { window.localStorage.removeItem(`norn.canvas.draft.${key}`); return undefined }
+    return draft as Draft
   } catch { return undefined }
 }
 
