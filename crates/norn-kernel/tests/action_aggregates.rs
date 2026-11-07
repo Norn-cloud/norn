@@ -143,7 +143,8 @@ fn put(cell: &mut Cell, id: &str, values: Value) {
 }
 
 fn entries() -> Cell {
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell =
+        Cell::new(|command: &Command<JsonObject>| command.payload.clone()).with_types(types());
     for (id, account, on, amount) in [
         ("E1", "A", "2026-11-01", json!(10.00)),
         ("E2", "A", "2026-11-15", json!(25.25)),
