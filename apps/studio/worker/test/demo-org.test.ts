@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements, waitForWorker, seedWhenReady, withWrangler, SeedFailure, SEED_EXIT } from "../../scripts/seed-demo-org.ts"
+import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements, waitForWorker, seedWhenReady, withWrangler, SeedFailure, SEED_EXIT, discoverD1 } from "../../scripts/seed-demo-org.ts"
 import { hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
@@ -179,4 +179,34 @@ test("Wrangler is reaped after success and each failure exit", async () => {
   alreadyExited.kill()
   await alreadyExited.exited
   await expect(withWrangler(alreadyExited, async () => { throw new SeedFailure("original", SEED_EXIT.wranglerExited) })).rejects.toThrow("original")
+})
+
+
+test("D1 discovery obeys its deadline", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Promise<Response>(() => {}) })
+  try {
+    await expect(discoverD1(`http://127.0.0.1:${server.port}/d1`, {}, 40)).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout })
+  } finally { server.stop(true) }
+})
+
+test("SIGTERM during provisioning reaps Wrangler before the operator exits", async () => {
+  const modulePath = join(import.meta.dir, "../../scripts/seed-demo-org.ts")
+  const source = `
+    import { withWrangler, seedWhenReady } from ${JSON.stringify(modulePath)};
+    const worker = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 60000)"], { stdout: "ignore", stderr: "ignore" });
+    try {
+      await withWrangler(worker, async (signal) => {
+        console.log(worker.pid);
+        await seedWhenReady(worker.exited, "http://127.0.0.1:1", "test", [], undefined, signal);
+      });
+    } catch (error) { process.exitCode = error.exitCode ?? 1; }
+  `
+  const operator = Bun.spawn([globalThis.process.execPath, "-e", source], { stdout: "pipe", stderr: "pipe" })
+  const reader = operator.stdout.getReader()
+  const output = await reader.read()
+  const pid = Number(new TextDecoder().decode(output.value).trim())
+  expect(Number.isSafeInteger(pid) && pid > 1).toBe(true)
+  operator.kill("SIGTERM")
+  expect(await operator.exited).toBe(143)
+  expect(() => globalThis.process.kill(pid, 0)).toThrow()
 })
