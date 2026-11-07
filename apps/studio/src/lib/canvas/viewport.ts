@@ -4,6 +4,8 @@
  */
 /** Card widths on the canvas: a lifecycle state and an automation step. */
 export const CARD = { state: 168, step: 208 } as const
+/** A state card's height (kind line and title): node-card's cardHeight({}), held here so layout and drawing need no component. */
+export const STATE_CARD_HEIGHT = 58
 
 export interface Box { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 export interface Viewport { readonly x: number; readonly y: number; readonly zoom: number }

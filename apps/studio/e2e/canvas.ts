@@ -42,7 +42,7 @@ async function blank(page: Page): Promise<{ x: number; y: number }> {
  * readable zoom and does not shrink a large graph to fit, so a far node can start out of view.
  */
 export async function reveal(page: Page, ...targets: Locator[]) {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     const surface = await page.locator("[data-canvas-surface]").boundingBox()
     const boxes = await Promise.all(targets.map((target) => target.boundingBox()))
     if (!surface || boxes.some((box) => !box)) return
@@ -50,6 +50,15 @@ export async function reveal(page: Page, ...targets: Locator[]) {
     const top = Math.min(...boxes.map((box) => box!.y)), bottom = Math.max(...boxes.map((box) => box!.y + box!.height))
     // The toolbar floats over the top of the canvas and the minimap over its bottom right.
     if (left >= surface.x + 24 && right <= surface.x + surface.width - 200 && top >= surface.y + 80 && bottom <= surface.y + surface.height - 24) return
+    // Ends farther apart than the canvas shows (a long drag): zoom out first, as a person would, then centre them.
+    if (right - left > surface.width - 224 || bottom - top > surface.height - 104) {
+      const zoomOut = page.locator(".react-flow__controls-zoomout")
+      // At the minimum zoom the control is disabled: say so, rather than waiting on it until the test times out.
+      if (await zoomOut.isDisabled()) throw new Error("reveal: the targets do not fit the canvas even at its minimum zoom")
+      await zoomOut.click()
+      await page.waitForTimeout(250)
+      continue
+    }
     const dx = surface.x + (surface.width - 180) / 2 - (left + right) / 2
     const dy = surface.y + 80 + (surface.height - 104) / 2 - (top + bottom) / 2
     const from = await blank(page)

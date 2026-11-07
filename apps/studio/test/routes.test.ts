@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { LANE, RAIL_GAP, laneRoute, placeLabels, railsOf, rounded } from "../src/lib/canvas/routes.ts"
 
 test("a step along the row goes straight across, its label mid-gap", () => {
-  expect(laneRoute({ x: 144, y: 29 }, { x: 240, y: 29 })).toEqual({ path: "M 144 29 L 240 29", label: { x: 192, y: 29, anchor: "middle" }, straight: true })
+  expect(laneRoute({ x: 144, y: 29 }, { x: 240, y: 29 })).toEqual({ path: "M 144 29 L 240 29", label: { x: 192, y: 29, anchor: "middle" }, straight: true, points: [{ x: 144, y: 29 }, { x: 240, y: 29 }] })
 })
 
 test("a step down to the next row runs in the lane between the rows, its label under its own source", () => {

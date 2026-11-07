@@ -11,6 +11,8 @@ export interface Routed {
   /** Where the label goes and which side of it touches that point. */
   readonly label: { readonly x: number; readonly y: number; readonly anchor: "middle" | "start" | "end" }
   readonly straight: boolean
+  /** The route's corners, for counting crossings. */
+  readonly points: readonly Point[]
 }
 
 /** Row pitch of the lifecycle layout, the horizontal stub before a turn, and the corner radius. */
@@ -42,6 +44,8 @@ export function rounded(points: readonly Point[], radius: number = LANE.radius):
  */
 export interface Rail {
   readonly offset: number; readonly out: number; readonly into: number; readonly port: number
+  /** For a step back along its row: which side of the row it loops (-1 above, 1 below); away from the side states. */
+  readonly side?: number
   /** Where its label's centre sits along its run, from the turn at `out` toward the target; placed so no two labels overlap. */
   readonly along?: number
 }
@@ -56,15 +60,14 @@ const around = (count: number, gap: number, skipMiddle: boolean) => {
 }
 
 /** Each lane step's rail, from where its states sit (their positions; a row is a shared y). Straight steps need none. */
-export function railsOf(steps: readonly { readonly id: string; readonly source: Point; readonly target: Point }[], gap: number = RAIL_GAP): ReadonlyMap<string, Rail> {
+export function railsOf(steps: readonly { readonly id: string; readonly source: Point; readonly target: Point; readonly side?: number }[], gap: number = RAIL_GAP): ReadonlyMap<string, Rail> {
   const straight = (step: { source: Point; target: Point }) => Math.abs(step.source.y - step.target.y) < 2 && step.target.x > step.source.x
   const lane = steps.filter((step) => !straight(step))
   const key = (p: Point) => `${p.x},${p.y}`
   const group = <T,>(items: readonly T[], by: (item: T) => string) => items.reduce((all, item) => all.set(by(item), [...all.get(by(item)) ?? [], item]), new Map<string, T[]>())
   const offset = new Map<string, number>(), out = new Map<string, number>(), into = new Map<string, number>(), port = new Map<string, number>()
   // A rail per step in each lane, ordered by where they leave, then where they go.
-  // Grouped by the lane's y: a step back along a row and a step down into that row run in the same lane.
-  for (const shared of group(lane, ({ source, target }) => String(laneYOf(source, target))).values()) {
+  for (const shared of group(lane, ({ source, target, side }) => String(laneYOf(source, target, LANE, side))).values()) {
     const ordered = [...shared].sort((a, b) => a.source.x - b.source.x || a.target.x - b.target.x)
     around(ordered.length, gap, false).forEach((v, i) => offset.set(ordered[i]!.id, v))
   }
@@ -76,21 +79,21 @@ export function railsOf(steps: readonly { readonly id: string; readonly source: 
     const middleTaken = steps.some((step) => straight(step) && key(step.target) === at)
     around(ordered.length, gap, middleTaken).forEach((v, i) => port.set(ordered[i]!.id, v))
   }
-  return new Map(lane.map(({ id }) => [id, { offset: offset.get(id) ?? 0, out: out.get(id) ?? 0, into: into.get(id) ?? 0, port: port.get(id) ?? 0 }]))
+  return new Map(lane.map(({ id, side }) => [id, { offset: offset.get(id) ?? 0, out: out.get(id) ?? 0, into: into.get(id) ?? 0, port: port.get(id) ?? 0, ...side === undefined ? {} : { side } }]))
 }
 
 /** The lane a non-straight step runs in: between the two rows it joins, or above the row for a step back along it. */
-export const laneYOf = (source: Point, target: Point, lane: { readonly pitch: number } = LANE) =>
-  Math.abs(source.y - target.y) < 2 ? source.y - lane.pitch / 2 : Math.max(source.y, target.y) - lane.pitch / 2
+export const laneYOf = (source: Point, target: Point, lane: { readonly pitch: number } = LANE, side = -1) =>
+  Math.abs(source.y - target.y) < 2 ? source.y + side * lane.pitch / 2 : Math.max(source.y, target.y) - lane.pitch / 2
 
 /**
  * Several steps of one lifecycle step into one target, drawn as one: each source turns into the shared rail (a small
  * tick where it joins), the rail runs to the target's turn and drops into it. Only the drawing bundles; each step
  * stays its own in the model. The label sits on the rail beside the turn, in the gap to the nearest join.
  */
-export function bundleRoute(sources: readonly Point[], target: Point, labelWidth: number, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE, offset = 0) {
+export function bundleRoute(sources: readonly Point[], target: Point, labelWidth: number, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE, offset = 0, side = -1) {
   // On its own rail in the lane: two bundles through one lane never share a line.
-  const y = laneYOf(sources[0]!, target, lane) + offset
+  const y = laneYOf(sources[0]!, target, lane, side) + offset
   const into = target.x - lane.stub
   const joins = sources.map((source) => ({ x: source.x + lane.stub, y }))
   const branches = sources.map((source, index) => rounded([source, { x: joins[index]!.x, y: source.y }, joins[index]!], lane.radius))
@@ -99,25 +102,26 @@ export function bundleRoute(sources: readonly Point[], target: Point, labelWidth
   // The drop into the target is drawn last, so the arrowhead lands on the target.
   const drop = rounded([{ x: into, y }, { x: into, y: target.y }, target], lane.radius)
   const nearest = [...joins].sort((a, b) => Math.abs(a.x - into) - Math.abs(b.x - into))[0]!
-  const side = nearest.x >= into ? 1 : -1
+  const toward = nearest.x >= into ? 1 : -1
   const room = Math.abs(nearest.x - into)
-  const x = room >= labelWidth + 16 ? (into + nearest.x) / 2 : nearest.x + side * (labelWidth / 2 + 10)
-  return { path: [...branches, rail, drop].join(" "), ticks: joins, label: { x, y }, y }
+  const x = room >= labelWidth + 16 ? (into + nearest.x) / 2 : nearest.x + toward * (labelWidth / 2 + 10)
+  const lines = [...sources.map((source, index) => [source, { x: joins[index]!.x, y: source.y }, joins[index]!]), [{ x: Math.min(...xs), y }, { x: Math.max(...xs), y }], [{ x: into, y }, { x: into, y: target.y }, target]]
+  return { path: [...branches, rail, drop].join(" "), ticks: joins, label: { x, y }, y, lines }
 }
 
 export function laneRoute(source: Point, target: Point, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE, rail: Rail = NO_RAIL): Routed {
   const sameRow = Math.abs(source.y - target.y) < 2
   if (sameRow && target.x > source.x) {
-    return { path: `M ${source.x} ${source.y} L ${target.x} ${target.y}`, label: { x: (source.x + target.x) / 2, y: source.y, anchor: "middle" }, straight: true }
+    return { path: `M ${source.x} ${source.y} L ${target.x} ${target.y}`, label: { x: (source.x + target.x) / 2, y: source.y, anchor: "middle" }, straight: true, points: [source, target] }
   }
   // Between the two rows it joins, or above the row for a step back along it; on this step's own rail.
-  const y = (sameRow ? source.y - lane.pitch / 2 : Math.max(source.y, target.y) - lane.pitch / 2) + rail.offset
+  const y = laneYOf(source, target, lane, rail.side) + rail.offset
   const out = source.x + lane.stub + rail.out, into = target.x - lane.stub - rail.into
   const landing = { x: target.x, y: target.y + rail.port }
   const points = [source, { x: out, y: source.y }, { x: out, y }, { x: into, y }, { x: into, y: landing.y }, landing]
   const forward = into >= out
-  if (rail.along !== undefined) return { path: rounded(points, lane.radius), label: { x: out + (forward ? rail.along : -rail.along), y, anchor: "middle" }, straight: false }
-  return { path: rounded(points, lane.radius), label: { x: out + (forward ? 10 : -10), y, anchor: forward ? "start" : "end" }, straight: false }
+  if (rail.along !== undefined) return { path: rounded(points, lane.radius), label: { x: out + (forward ? rail.along : -rail.along), y, anchor: "middle" }, straight: false, points }
+  return { path: rounded(points, lane.radius), label: { x: out + (forward ? 10 : -10), y, anchor: forward ? "start" : "end" }, straight: false, points }
 }
 
 /** A label's height on the canvas (the edge pill), and the room kept between two labels. */
@@ -137,8 +141,7 @@ export function placeLabels(steps: readonly { readonly id: string; readonly sour
   const runs = steps.flatMap((step) => {
     const rail = rails.get(step.id)
     if (!rail) return []
-    const sameRow = Math.abs(step.source.y - step.target.y) < 2
-    const y = (sameRow ? step.source.y - lane.pitch / 2 : Math.max(step.source.y, step.target.y) - lane.pitch / 2) + rail.offset
+    const y = laneYOf(step.source, step.target, lane, rail.side) + rail.offset
     const out = step.source.x + lane.stub + rail.out, into = step.target.x - lane.stub - rail.into
     return [{ step, rail, y, out, into, forward: into >= out }]
   }).sort((a, b) => a.y - b.y || Math.min(a.out, a.into) - Math.min(b.out, b.into))
