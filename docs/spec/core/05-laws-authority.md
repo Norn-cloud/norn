@@ -497,3 +497,12 @@ ActionRoot for every referenced policy action. Missing or duplicate roots yield
 unknown (`None`), never safety proof evidence. This closure check grants no
 runtime access or availability witness. Named scenarios cover complete grants,
 an undeclared policy action, duplicate roots and sampled undeclared identities.
+
+### Warning-severity governing laws (LAW-COMMIT-1 / OBS-EVIDENCE-1)
+
+Severity controls display, never governing authority. Every verified governing-law
+failure is integrity-classified: observed facts retain warning evidence and are
+quarantined, while native writes refuse atomically. Non-law quality warnings
+retain their separate quality classification. The named cell scenario
+`warning_severity_governing_law_quarantines_observed_fact` checks native refusal,
+persisted warning/pin, quarantine and recovery after a valid correction.
