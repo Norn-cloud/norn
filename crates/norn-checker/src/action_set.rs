@@ -99,7 +99,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv};
+use norn_expr::{
+    EntityDefinitions, EnvOptions, Expression, FieldSource, RecordType, Type, ZenTypeEnv,
+};
 use norn_ir::{
     ActionAggregateInput, ActionEffectProgram, ActionEffectTarget, ActionRoot, AggregateFunction,
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity,
@@ -713,7 +715,7 @@ struct AggregateSite<'a> {
 }
 
 impl AggregateSite<'_> {
-    fn finding(&self, suffix: &str, message: String) -> Diagnostic {
+    fn finding(&self, suffix: &str, message: &str) -> Diagnostic {
         finding(
             codes::INVALID_AGGREGATE,
             format!("aggregate {:?}: {message}", self.aggregate.name),
@@ -760,7 +762,7 @@ fn aggregate_result_type(
     let Some(defined) = model.object_type(kind) else {
         findings.push(site.finding(
             "/objectType",
-            format!("{kind:?} is not an object type of the artifact set or the installed base"),
+            &format!("{kind:?} is not an object type of the artifact set or the installed base"),
         ));
         return None;
     };
@@ -774,17 +776,9 @@ fn aggregate_result_type(
     else {
         findings.push(site.finding(
             "/objectType",
-            format!("{kind:?} has no admitted effective definition"),
+            &format!("{kind:?} has no admitted effective definition"),
         ));
         return None;
-    };
-    // Only stored properties are folded; links are never implicit reads.
-    let property_type = |property: &PropertyId| {
-        record
-            .fields
-            .get(property.as_str())
-            .filter(|field| matches!(field.source, FieldSource::Property { .. }))
-            .map(|field| field.ty.clone())
     };
     let mut admitted = true;
     // #1104 shares this rule: predicate properties are indexed scalars.
@@ -796,7 +790,7 @@ fn aggregate_result_type(
                 Err(error) => {
                     findings.push(site.finding(
                         &suffix,
-                        format!("property {:?} {}", property.as_str(), error.reason()),
+                        &format!("property {:?} {}", property.as_str(), error.reason()),
                     ));
                     admitted = false;
                     return;
@@ -808,7 +802,7 @@ fn aggregate_result_type(
             if input_class.is_some_and(|input_class| !input_comparable(input_class, class)) {
                 findings.push(site.finding(
                     &suffix,
-                    format!(
+                    &format!(
                         "input field {input:?} cannot be compared with property {:?}",
                         property.as_str()
                     ),
@@ -840,47 +834,50 @@ fn aggregate_result_type(
     }
     let result = match &aggregate.aggregate {
         AggregateFunction::Count {} => Some(Type::Integer),
-        AggregateFunction::Sum { property } => match property_type(property) {
-            Some(ty @ (Type::Decimal { .. } | Type::Integer)) => {
-                let summable = effective
-                    .property(property.as_str())
-                    .is_some_and(|stored| sum_admitted(stored, aggregate.window.is_some()));
-                if summable {
-                    Some(ty)
-                } else {
-                    findings.push(site.finding(
-                        "/aggregate/property",
-                        format!(
-                            "summed property {:?} must declare additive aggregation (semi-additive only without a window)",
-                            property.as_str()
-                        ),
-                    ));
-                    None
-                }
-            }
-            Some(_) => {
-                findings.push(site.finding(
-                    "/aggregate/property",
-                    format!(
-                        "summed property {:?} must be a non-nullable decimal or integer",
-                        property.as_str()
-                    ),
-                ));
-                None
-            }
-            None => {
-                findings.push(site.finding(
-                    "/aggregate/property",
-                    format!(
-                        "{:?} is not a stored property of {kind:?}",
-                        property.as_str()
-                    ),
-                ));
-                None
-            }
-        },
+        AggregateFunction::Sum { property } => {
+            sum_result_type(site, record, effective, property, findings)
+        }
     };
     result.filter(|_| admitted)
+}
+
+/// The result type of a sum: the summed property's type, when it is a
+/// stored, non-nullable decimal or integer with an additive contract.
+fn sum_result_type(
+    site: &AggregateSite<'_>,
+    record: &RecordType,
+    effective: &EffectiveObjectType,
+    property: &PropertyId,
+    findings: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let id = property.as_str();
+    // Only stored properties are folded; links are never implicit reads.
+    let stored = record
+        .fields
+        .get(id)
+        .filter(|field| matches!(field.source, FieldSource::Property { .. }))
+        .map(|field| field.ty.clone());
+    let message = match stored {
+        Some(ty @ (Type::Decimal { .. } | Type::Integer)) => {
+            let windowed = site.aggregate.window.is_some();
+            if effective
+                .property(id)
+                .is_some_and(|stored| sum_admitted(stored, windowed))
+            {
+                return Some(ty);
+            }
+            format!(
+                "summed property {id:?} must declare additive aggregation (semi-additive only without a window)"
+            )
+        }
+        Some(_) => format!("summed property {id:?} must be a non-nullable decimal or integer"),
+        None => format!(
+            "{id:?} is not a stored property of {:?}",
+            site.aggregate.object_type.as_str()
+        ),
+    };
+    findings.push(site.finding("/aggregate/property", &message));
+    None
 }
 
 fn action_slice_key_findings(
