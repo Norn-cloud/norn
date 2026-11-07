@@ -244,6 +244,11 @@ export interface Membership {
   readonly organizationId: string
   readonly organizationName: string
   readonly role: string
+  /**
+   * The workspace's data environment (cell): the reserved `environmentId` that server-side provisioning wrote into the
+   * organization's metadata, or null. Clients cannot write it (organization create and update strip reserved keys).
+   */
+  readonly environmentId: string | null
 }
 
 /**
@@ -256,8 +261,10 @@ export async function activeMembership(auth: Auth, userId: string, activeOrganiz
   const where = [{ field: "userId", value: userId }, ...activeOrganizationId == null ? [] : [{ field: "organizationId", value: activeOrganizationId }]]
   const [member] = await adapter.findMany<{ organizationId: string; role: string }>({ model: "member", where, sortBy: { field: "createdAt", direction: "asc" }, limit: 1 })
   if (member === undefined) return null
-  const org = await adapter.findOne<{ name: string }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
-  return org === null ? null : { organizationId: member.organizationId, organizationName: org.name, role: member.role }
+  const org = await adapter.findOne<{ name: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
+  if (org === null) return null
+  const environmentId = metadataObject(org.metadata).environmentId
+  return { organizationId: member.organizationId, organizationName: org.name, role: member.role, environmentId: typeof environmentId === "string" && environmentId.trim() !== "" ? environmentId : null }
 }
 
 export function createAuth(config: AuthConfig) {

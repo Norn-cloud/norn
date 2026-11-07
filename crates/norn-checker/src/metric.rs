@@ -5,6 +5,7 @@
 
 pub mod compute;
 pub mod derive;
+pub mod restate;
 
 use std::collections::{BTreeMap, BTreeSet};
 
