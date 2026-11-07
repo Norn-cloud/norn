@@ -123,6 +123,7 @@ fn run(command: Command) -> Result<(String, bool), String> {
                 .ok_or("missing checker digest")?;
             let decision = eval::OfflineDecision::prepare(
                 &artifacts,
+                &input,
                 &exact_payloads,
                 receipt,
                 digest,

@@ -40,21 +40,61 @@ impl OfflineDecision {
     /// load into the evaluator.
     pub(crate) fn prepare(
         artifacts: &[ArtifactEnvelope],
+        artifacts_json: &str,
         exact_payloads: &BTreeMap<String, RuntimeValue>,
         receipt: &Value,
         receipt_sha256: &str,
         artifact_id: &str,
     ) -> Result<Self, String> {
         let error = |reason: String| format!("{artifact_id}: {reason}");
-        // The same pinned-dependency closure admission checked.
-        let closure = norn_checker::rule_closure(artifacts, &[], artifact_id)
-            .map_err(|failure| error(failure.to_string()))?;
-        let root = rule_root(closure.root)?;
+        // The same pinned-dependency closure admission checked, through the
+        // checker ABI.
+        let closure: Value = serde_json::from_str(
+            &norn_checker_wasm::rule_closure_json(artifacts_json, artifact_id)
+                .map_err(|failure| error(failure.to_string()))?,
+        )
+        .map_err(|failure| error(failure.to_string()))?;
+        if closure.get("resolved").and_then(Value::as_bool) != Some(true) {
+            return Err(error(
+                closure
+                    .get("refusal")
+                    .and_then(Value::as_str)
+                    .unwrap_or("the closure does not resolve")
+                    .to_owned(),
+            ));
+        }
+        let find = |id: &str, version: Option<&str>| {
+            artifacts
+                .iter()
+                .find(|artifact| {
+                    artifact.artifact_id == id
+                        && version.is_none_or(|version| artifact.version == version)
+                        && matches!(artifact.payload, ArtifactPayload::Rule(_))
+                })
+                .ok_or_else(|| error(format!("{id} is absent from the admitted set")))
+        };
+        let root = rule_root(find(artifact_id, None)?)?;
         let sub_decisions = closure
-            .sub_decisions
-            .iter()
-            .map(|(key, artifact)| rule_root(artifact).map(|root| ((*key).to_owned(), root)))
+            .get("subDecisions")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(key, member)| {
+                let id = member
+                    .get("artifactId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let version = member.get("version").and_then(Value::as_str);
+                find(id, version)
+                    .and_then(rule_root)
+                    .map(|root| (key.clone(), root))
+            })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let closure_digest = closure
+            .get("closureDigest")
+            .and_then(Value::as_str)
+            .ok_or_else(|| error("the closure has no digest".to_owned()))?
+            .to_owned();
         let binding = DecisionBinding {
             profile_id: receipt
                 .get("exprProfile")
@@ -72,7 +112,7 @@ impl OfflineDecision {
                 .map_err(|failure| error(failure.to_string()))?;
         Ok(Self {
             decision,
-            closure_digest: closure.digest,
+            closure_digest,
         })
     }
 
@@ -118,7 +158,11 @@ impl OfflineDecision {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, reason = "fixed fixtures")]
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "fixed fixtures"
+    )]
 
     use super::*;
 
@@ -132,9 +176,10 @@ mod tests {
         serde_json::from_str(text).expect("fixture should decode")
     }
 
-    fn prepare(artifacts: &[ArtifactEnvelope]) -> Result<OfflineDecision, String> {
+    fn prepare(artifacts: &[ArtifactEnvelope], json: &str) -> Result<OfflineDecision, String> {
         OfflineDecision::prepare(
             artifacts,
+            json,
             &BTreeMap::new(),
             &serde_json::json!({}),
             "sha256:test",
@@ -147,18 +192,17 @@ mod tests {
     #[test]
     fn a_decision_evaluates_with_its_sub_decision_closure() {
         let set = [envelope(DECIDE), envelope(HELPER)];
-        let offline = prepare(&set).expect("the closure resolves");
+        let json = format!("[{DECIDE},{HELPER}]");
+        let offline = prepare(&set, &json).expect("the closure resolves");
         let output = offline.run(INPUT, 1_000_000).expect("evaluates");
         assert_eq!(offline.run(INPUT, 1_000_000).as_ref(), Ok(&output));
-        // The cell's path: the same closure through `AdmittedDecision::admit`.
-        let closure = norn_checker::rule_closure(&set, &[], &set[0].artifact_id).expect("closure");
-        let subs = closure
-            .sub_decisions
-            .iter()
-            .map(|(key, artifact)| ((*key).to_owned(), rule_root(artifact).expect("rule")))
-            .collect();
+        // The cell's path: the same graphs through `AdmittedDecision::admit`.
+        let subs = BTreeMap::from([(
+            set[1].artifact_id.clone(),
+            rule_root(&set[1]).expect("rule"),
+        )]);
         let cell = AdmittedDecision::admit(
-            &rule_root(closure.root).expect("rule"),
+            &rule_root(&set[0]).expect("rule"),
             &subs,
             DecisionBinding {
                 profile_id: norn_expr::check::CHECKER_PROFILE.to_owned(),
@@ -168,15 +212,28 @@ mod tests {
         .expect("admits");
         let cell = OfflineDecision {
             decision: cell,
-            closure_digest: closure.digest.clone(),
+            closure_digest: String::new(),
         };
         assert_eq!(cell.run(INPUT, 1_000_000), Ok(output));
-        assert_eq!(offline.closure_digest(), closure.digest);
+        let abi: Value = serde_json::from_str(
+            &norn_checker_wasm::rule_closure_json(&json, &set[0].artifact_id).expect("abi"),
+        )
+        .expect("json");
+        assert_eq!(
+            abi["subDecisions"][&set[1].artifact_id]["version"],
+            set[1].version.as_str()
+        );
+        assert_eq!(
+            Some(offline.closure_digest()),
+            abi["closureDigest"].as_str()
+        );
     }
 
     #[test]
     fn a_missing_sub_decision_is_refused_not_guessed() {
-        let refused = prepare(&[envelope(DECIDE)]).err().expect("refused");
+        let refused = prepare(&[envelope(DECIDE)], &format!("[{DECIDE}]"))
+            .err()
+            .expect("refused");
         assert!(
             refused.contains("retail.reorder_priority.rule"),
             "{refused}"
