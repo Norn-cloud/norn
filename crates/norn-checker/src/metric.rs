@@ -4,6 +4,7 @@
 //! roles. A successful check is a definition check, never evaluation evidence.
 
 pub mod compute;
+pub mod restate;
 
 use std::collections::{BTreeMap, BTreeSet};
 
