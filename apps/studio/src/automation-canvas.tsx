@@ -328,6 +328,8 @@ export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
   const [words, setWords] = useState<{ readonly drawing: string; readonly value: FlowRestatement; readonly fromCell: boolean } | null>(null)
   const [signed, setSigned] = useState<string>()
   const [busy, setBusy] = useState(false)
+  /** The last save's notice, shown again by the canvas that reopens on the saved version. */
+  const [landed, setLanded] = useState<{ readonly tone: "info"; readonly text: string } | null>(null)
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const issues = useCallback((graph: g.Graph) => {
     const { lowered, problems } = lower(graph, RECORDED_TOOLS, meta, RECORDED_SCOPE)
@@ -363,9 +365,11 @@ export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
     }
     const result = await store.install(meta.id, payload, at?.version, current ? signed : undefined)
     if (result.installed) {
-      setRefused(null); setAt({ version: result.version }); setWords(null); setSigned(undefined)
+      // The canvas reopens on the new version (its key), so the notice is handed to the reopened canvas too.
+      const done = { tone: "info" as const, text: `Saved as version ${result.version}; the cell admitted and installed it${result.receipt ? ` (receipt ${result.receipt.slice(0, 12)}…)` : ""}. Run starts it.` }
+      setRefused(null); setAt({ version: result.version }); setWords(null); setSigned(undefined); setLanded(done)
       void client.invalidateQueries({ queryKey: ["flow", meta.id] }); void client.invalidateQueries({ queryKey: ["flows"] })
-      return { tone: "info" as const, text: `Saved as version ${result.version}; the cell admitted and installed it${result.receipt ? ` (receipt ${result.receipt.slice(0, 12)}…)` : ""}. Run starts it.` }
+      return done
     }
     if ("conflict" in result) return { tone: "refusal" as const, text: "Someone saved a newer version first. Reopen the automation to see it; your drawing is kept as a draft." }
     if ("runsLive" in result) return { tone: "refusal" as const, text: "The cell refused: this flow has live runs." }
@@ -383,7 +387,7 @@ export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
     try {
       const result = await store.retire(meta.id, at.version)
       if (result.installed) { setAt(undefined); setNotice({ tone: "info", text: `Retired. The cell keeps versions 1 to ${result.version - 1} and their runs.` }); void client.invalidateQueries({ queryKey: ["flow", meta.id] }); void client.invalidateQueries({ queryKey: ["flows"] }) }
-      else setNotice({ tone: "refusal", text: "runsLive" in result ? "The cell refused: this automation has runs still going. Retire it once they end." : "conflict" in result ? "Someone changed it first; reopen it." : `The cell refused: ${result.findings.map(({ code }) => code).join(", ")}.` })
+      else setNotice({ tone: "refusal", text: "runsLive" in result ? "The cell refused: this automation has runs still going. Retire it once they end." : "conflict" in result ? "Someone changed it first; reopen it." : "findings" in result ? `The cell refused: ${result.findings.map(({ code }) => code).join(", ")}.` : "The cell refused to retire it." })
     } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) }
     finally { setBusy(false) }
   }
@@ -393,7 +397,7 @@ export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
   return (
     <div className="space-y-2">
       {stored.isError && !routesDown && <p role="alert" className="text-destructive">{(stored.error as Error).message}</p>}
-      <CanvasFrame key={stored.data?.version ?? "new"} {...frame} draftKey={`automation:${meta.id}:${stored.data?.version ?? "new"}`} saveBlocked={blocked} {...store && !routesDown ? { save } : {}} />
+      <CanvasFrame key={stored.data?.version ?? "new"} {...frame} draftKey={`automation:${meta.id}:${stored.data?.version ?? "new"}`} {...landed ? { initialNotice: landed } : {}} saveBlocked={blocked} {...store && !routesDown ? { save } : {}} />
       {words && <PlainWords words={words.value} signed={signed === words.value.sha256} fromCell={words.fromCell} onSign={() => setSigned(words.value.sha256)} testId="automation-restatement" />}
       {stored.data?.signoff && !words && (
         <p className="text-meta text-muted-foreground" data-testid="automation-signoff">

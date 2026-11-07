@@ -25,6 +25,8 @@ export async function open(page: Page, tab?: string) {
 
 /** A point on the empty canvas (the pane itself, not a node, edge, toolbar or minimap), in page coordinates. */
 async function blank(page: Page): Promise<{ x: number; y: number }> {
+  // A canvas that is still opening (a tab just switched, an automation being read) has no pane yet: wait for it.
+  await expect(page.locator("[data-canvas-surface] .react-flow__pane")).toHaveCount(1)
   const point = await page.evaluate(() => {
     const surface = document.querySelector("[data-canvas-surface]")?.getBoundingClientRect()
     if (!surface) return null

@@ -14,7 +14,6 @@ const sha = async (text: string) => Array.from(new Uint8Array(await crypto.subtl
 
 async function cell(page: Page, options: { refuseOnce?: string; runsLive?: boolean; mismatchOnce?: boolean } = {}) {
   test.skip(Boolean(process.env.E2E_BASE), "these rows use a deterministic stand-in cell; the deployed suite runs against next")
-  page.on("dialog", (dialog) => void dialog.accept())
   const state = { flows: new Map<string, Kept & { signoff?: string }>(), installs: [] as Record<string, unknown>[], runs: new Map<string, { id: string; flow: string }>(), refuseOnce: options.refuseOnce, runsLive: options.runsLive ?? false, mismatchOnce: options.mismatchOnce ?? false, suffix: "" }
   await page.route("**/api/host/v1/**", async (route) => {
     const url = new URL(route.request().url())

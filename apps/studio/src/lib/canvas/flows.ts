@@ -9,7 +9,7 @@ import { scopeQuery, type StudioScope } from "../scope.ts"
 
 /** The payload a flow definition installs; `layout` is the drawing, so the automation reopens as it was left. */
 export interface FlowPayload {
-  readonly flow: Record<string, unknown> & { readonly id: string; readonly version: string }
+  readonly flow: { readonly id: string; readonly version: string; readonly title?: string; readonly steps?: ReadonlyArray<{ readonly id: string; readonly label: string }> }
   readonly artifacts: readonly unknown[]
   readonly layout?: { readonly nodes: readonly CanvasNode[]; readonly edges: readonly CanvasEdge[] }
 }
