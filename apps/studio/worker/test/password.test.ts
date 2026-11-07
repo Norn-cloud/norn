@@ -55,6 +55,7 @@ test("an account stored on Cloudflare signs in on a pure-JS deployment", async (
   const file = join(mkdtempSync(join(tmpdir(), "studio-scrypt-")), "auth.sqlite")
   const db = new Database(file)
   db.exec(readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8"))
+  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
   const assets = { fetch: async () => new Response("studio") } as unknown as Fetcher
   const env = (database: Database, scrypt?: string): Env => ({ ASSETS: assets, AUTH_DB: database as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, ...scrypt === undefined ? {} : { AUTH_SCRYPT: scrypt } })
   const post = (target: Env, path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, {
