@@ -1233,3 +1233,47 @@ fn finding_metadata_lookup_uses_commit_index_and_excludes_future_history() {
             .is_none()
     );
 }
+
+/// A native engine that, like Durable Object storage, keeps platform tables
+/// in the same database.
+struct PlatformTables(NativeEngine);
+
+impl SqlEngine for PlatformTables {
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        &["_cf_*", "__cf_*"]
+    }
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.0.execute(sql, params)
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.0.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.0.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.0.transaction(f)
+    }
+}
+
+#[test]
+fn platform_tables_leave_an_engine_fresh_but_foreign_tables_do_not() {
+    use norn_cell::CellStore;
+    let engine = PlatformTables(NativeEngine::open_in_memory().expect("engine"));
+    engine
+        .execute_batch("CREATE TABLE \"_cf_KV\" (key TEXT PRIMARY KEY, value BLOB)")
+        .expect("platform table");
+    engine
+        .execute_batch("CREATE TABLE \"__cf_kv\" (key TEXT PRIMARY KEY, value BLOB)")
+        .expect("platform kv table");
+    engine
+        .execute_batch("CREATE INDEX \"kv_lookup\" ON \"__cf_kv\" (value)")
+        .expect("platform index with its own name");
+    assert!(CellStore::engine_is_fresh(&engine).expect("fresh"));
+    // The native engine names no platform tables, so the same table is state.
+    assert!(!CellStore::engine_is_fresh(&engine.0).expect("native"));
+    engine
+        .execute_batch("CREATE TABLE \"other\" (id INTEGER)")
+        .expect("foreign table");
+    assert!(!CellStore::engine_is_fresh(&engine).expect("not fresh"));
+}

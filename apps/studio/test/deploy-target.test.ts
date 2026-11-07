@@ -4,8 +4,21 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { deployTarget, leakedSecrets, scanState } from "../deploy-target.ts"
 
+const PROD = { ALCHEMY_STAGE: "prod", NORN_DEPLOY_PROD: "1" }
+
+test("an unset stage refuses instead of meaning production", () => {
+  expect(() => deployTarget({})).toThrow("ALCHEMY_STAGE is required")
+  expect(() => deployTarget({ ALCHEMY_STAGE: "" })).toThrow("ALCHEMY_STAGE is required")
+  expect(() => deployTarget({ NORN_DEPLOY_PROD: "1", STUDIO_DOMAINS: "studio.norn.cloud" })).toThrow("ALCHEMY_STAGE is required")
+})
+
+test("production refuses without its confirmation", () => {
+  expect(() => deployTarget({ ALCHEMY_STAGE: "prod" })).toThrow("NORN_DEPLOY_PROD=1")
+  expect(() => deployTarget({ ALCHEMY_STAGE: "prod", NORN_DEPLOY_PROD: "true" })).toThrow("NORN_DEPLOY_PROD=1")
+})
+
 test("production keeps the live Worker and both demo domains", () => {
-  expect(deployTarget({})).toEqual({ stage: "prod", worker: "norn-studio-recorded", domains: ["studio.norn.cloud", "studio-demo.norn.cloud"] })
+  expect(deployTarget(PROD)).toEqual({ stage: "prod", worker: "norn-studio-recorded", domains: ["studio.norn.cloud", "studio-demo.norn.cloud"] })
 })
 
 test("any other stage gets its own Worker and only the domains it names", () => {
@@ -18,14 +31,14 @@ test("a non-production stage never falls back to the production domains", () => 
 })
 
 test("a malformed domain list or stage refuses before anything deploys", () => {
-  expect(() => deployTarget({ STUDIO_DOMAINS: "studio.norn.cloud," })).toThrow("comma-separated hostnames")
+  expect(() => deployTarget({ ...PROD, STUDIO_DOMAINS: "studio.norn.cloud," })).toThrow("comma-separated hostnames")
   expect(() => deployTarget({ ALCHEMY_STAGE: "Pre view" })).toThrow("ALCHEMY_STAGE")
 })
 
 test("a DNS label longer than 63 characters is refused", () => {
-  expect(() => deployTarget({ STUDIO_DOMAINS: `${"a".repeat(64)}.norn.cloud` })).toThrow("comma-separated hostnames")
-  expect(deployTarget({ STUDIO_DOMAINS: `${"a".repeat(63)}.norn.cloud` }).domains).toEqual([`${"a".repeat(63)}.norn.cloud`])
-  expect(() => deployTarget({ STUDIO_DOMAINS: "-studio.norn.cloud" })).toThrow("comma-separated hostnames")
+  expect(() => deployTarget({ ...PROD, STUDIO_DOMAINS: `${"a".repeat(64)}.norn.cloud` })).toThrow("comma-separated hostnames")
+  expect(deployTarget({ ...PROD, STUDIO_DOMAINS: `${"a".repeat(63)}.norn.cloud` }).domains).toEqual([`${"a".repeat(63)}.norn.cloud`])
+  expect(() => deployTarget({ ...PROD, STUDIO_DOMAINS: "-studio.norn.cloud" })).toThrow("comma-separated hostnames")
 })
 
 test("a non-production stage cannot take the production hostnames", () => {
