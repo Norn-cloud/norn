@@ -41,7 +41,8 @@ enum Command {
         #[arg(long)]
         context: PathBuf,
     },
-    /// Evaluate an admitted standalone decision over JSON-lines stdin.
+    /// Evaluate an admitted decision, with its sub-decision closure, over
+    /// JSON-lines stdin.
     Eval {
         /// Directory of definition envelopes.
         #[arg(long)]
@@ -129,9 +130,17 @@ fn run(command: Command) -> Result<(String, bool), String> {
             )?;
             for line in std::io::stdin().lock().lines() {
                 let line = line.map_err(|error| error.to_string())?;
+                let digest = decision.closure_digest();
                 let response = match decision.run(&line, units) {
-                    Ok(output) => format!("{{\"ok\":true,\"output\":{output}}}"),
-                    Err(error) => serde_json::json!({"ok":false,"error":error}).to_string(),
+                    Ok(output) => {
+                        format!(
+                            "{{\"ok\":true,\"closureDigest\":\"{digest}\",\"output\":{output}}}"
+                        )
+                    }
+                    Err(error) => {
+                        serde_json::json!({"ok":false,"closureDigest":digest,"error":error})
+                            .to_string()
+                    }
                 };
                 writeln!(std::io::stdout().lock(), "{response}")
                     .map_err(|error| error.to_string())?;

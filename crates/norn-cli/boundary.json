@@ -3,6 +3,7 @@
   "ring": "One",
   "allowed_norn": [
     "norn-api",
+    "norn-checker",
     "norn-checker-wasm",
     "norn-ir",
     "norn-expr",
