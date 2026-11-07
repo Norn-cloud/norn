@@ -672,6 +672,68 @@ context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:
     return json.loads(result.stdout)
 
 
+def workflow_bot_comment_canaries(source: str) -> None:
+    """Bot-authored comments skip capture; every human comment, however edited, is captured."""
+    workflow = yaml.safe_load(source)
+    capture = workflow["jobs"]["rights-capture"]
+    expression = capture["if"]
+    for event, author, sender, action in itertools.product(
+            ("issue_comment", "pull_request", "pull_request_target", "merge_group", "push"),
+            ("User", "Bot", "Organization"), ("User", "Bot"), ("created", "edited", "deleted")):
+        concrete = (expression.replace("github.event_name", repr(event))
+                    .replace("github.event.comment.user.type", repr(author))
+                    .replace("&&", " and ").replace("||", " or "))
+        # An edit or deletion of a human comment is captured whoever (or whatever) sends it.
+        if bool(eval(concrete, {"__builtins__": {}}, {})) != (event == "issue_comment" and author != "Bot"):
+            raise AssertionError(f"rights capture admission drift: {event}/{author}/{sender}/{action}")
+    marker = "github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot' && format('issue_comment bot {0}', github.event.comment.id) || "
+    if marker not in workflow["run-name"]:
+        raise AssertionError("bot comment run-name marker drifted")
+    validator = load_module("norn_bot_comment_canaries", VALIDATOR)
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+
+        def rejected(label: str, document: dict[str, Any]) -> None:
+            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate)
+            except validator.InvalidCoverage:
+                return
+            raise AssertionError(f"bot comment mutation passed: {label}")
+
+        for label, value in (
+                # Keyed on the sender, a bot's edit of a human acknowledgment would go unrecorded.
+                ("sender", expression.replace("github.event.comment.user.type", "github.event.sender.type")),
+                ("actor", expression.replace("github.event.comment.user.type != 'Bot'", "github.actor != 'coderabbitai[bot]'")),
+                ("login suffix", expression.replace("github.event.comment.user.type != 'Bot'",
+                                                    "!endsWith(github.event.comment.user.login, '[bot]')")),
+                ("inverted", expression.replace("!= 'Bot'", "== 'Bot'")),
+                ("dropped event", expression.replace("github.event_name == 'issue_comment' && ", ""))):
+            if value == expression:
+                raise AssertionError(f"bot capture mutation is a no-op: {label}")
+            document = copy.deepcopy(workflow)
+            document["jobs"]["rights-capture"]["if"] = value
+            rejected(f"rights capture {label}", document)
+        for label, before, after in (
+                ("sender", "github.event.comment.user.type == 'Bot'", "github.event.sender.type == 'Bot'"),
+                ("any comment", "github.event.comment.user.type == 'Bot' && ", ""),
+                ("unbound id", "github.event.comment.id", "github.run_id"),
+                ("renamed", "'issue_comment bot {0}'", "'bot {0}'")):
+            document = copy.deepcopy(workflow)
+            document["run-name"] = workflow["run-name"].replace(before, after)
+            if document["run-name"] == workflow["run-name"]:
+                raise AssertionError(f"bot run-name mutation is a no-op: {label}")
+            rejected(f"bot run-name {label}", document)
+        for job, step in (("trusted-policy", "Record admin approvals of the exact PR head"),):
+            for before, after in (("raw.length===1&&", ""), ("raw[0].conclusion==='skipped'&&", ""),
+                                  ("/^issue_comment bot \\d+$/", "/^issue_comment bot/"),
+                                  ("!captures.length&&", "")):
+                document = copy.deepcopy(workflow)
+                target = next(s for s in document["jobs"][job]["steps"] if s.get("name") == step)
+                if before not in target["with"]["script"]:
+                    raise AssertionError(f"bot walk canary target drifted: {before}")
+                target["with"]["script"] = target["with"]["script"].replace(before, after)
+                rejected(f"bot walk mutation {before}", document)
 def workflow_superseded_canaries(source: str) -> None:
     """A superseded pull_request_target evaluation writes nothing; comment events never skip."""
     workflow = yaml.safe_load(source)
@@ -754,20 +816,32 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "unrelated", "", True, False),
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
+        *(("pull_request_target", action, "", "", True, True) for action in ("opened", "synchronize", "reopened", "edited")),
     ):
-        for cancelled in (False, True):
+        # A bot-authored comment never re-evaluates; a human one does, whoever edits or
+        # deletes it (the condition keys on the author, so the sender is irrelevant).
+        # A pull_request_target event evaluates only for a main-targeted head, and an edit
+        # only when it changed the base (a retarget): stacked heads never take the mutex.
+        # Actions compares strings case-insensitively, so a case-variant base such as `Main`
+        # is evaluated too: the skip errs only towards an extra evaluation, never away from main.
+        for cancelled, author, base, retarget in itertools.product(
+                (False, True), ("User", "Bot", "Organization"), ("main", "feature/base", "Main", ""), (False, True)):
             condition = expression
             for key, value in {
                 "github.event_name": event, "github.event.action": action,
                 "github.event.comment.body": body, "github.event.changes.body.from": previous,
-                "github.event.issue.pull_request": is_pr,
+                "github.event.issue.pull_request": is_pr, "github.event.comment.user.type": author,
+                "github.event.pull_request.base.ref": base.casefold(), "github.event.repository.default_branch": "main",
+                "github.event.changes.base": retarget,
             }.items():
                 condition = condition.replace(key, repr(value))
             condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
             condition = re.sub(r"!(?!=)", " not ", condition)
             accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
-            if bool(accepted) != (expected and not cancelled):
-                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}")
+            bot = event == "issue_comment" and author == "Bot"
+            stacked = event == "pull_request_target" and (base.casefold() != "main" or (action == "edited" and not retarget))
+            if bool(accepted) != (expected and not cancelled and not bot and not stacked):
+                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}/{base}/{retarget}")
 
     reporter = next(step for step in job["steps"]
                     if step.get("name") == "Report trusted policy on the exact PR head")
@@ -953,6 +1027,34 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
             rejected(f"renamed control check {name}", document)
+        bot_clause = "github.event.comment.user.type != 'Bot' && "
+        for label, before, after in (("sender", "github.event.comment.user.type", "github.event.sender.type"),
+                                     ("actor", "github.event.comment.user.type != 'Bot'", "github.actor != 'coderabbitai[bot]'"),
+                                     ("inverted", "!= 'Bot'", "== 'Bot'"),
+                                     ("dropped", bot_clause, "")):
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["if"].replace(before, after)
+            if changed == document["jobs"]["trusted-policy"]["if"]:
+                raise AssertionError(f"trusted-policy bot mutation is a no-op: {label}")
+            document["jobs"]["trusted-policy"]["if"] = changed
+            rejected(f"trusted-policy bot comment {label}", document)
+        main_only = "github.event.pull_request.base.ref == github.event.repository.default_branch && "
+        retarget = "(github.event.action != 'edited' || github.event.changes.base)"
+        for label, before, after in (
+                ("unfiltered stacked heads", main_only, ""),
+                ("skip main", "base.ref == github.event.repository.default_branch", "base.ref != github.event.repository.default_branch"),
+                ("live base", "github.event.pull_request.base.ref", "github.base_ref || github.event.repository.default_branch"),
+                ("every edit", retarget, "true"),
+                ("no edits", retarget, "github.event.action != 'edited'")):
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["if"].replace(before, after)
+            if changed == document["jobs"]["trusted-policy"]["if"]:
+                raise AssertionError(f"trusted-policy stacked mutation is a no-op: {label}")
+            document["jobs"]["trusted-policy"]["if"] = changed
+            rejected(f"trusted-policy stacked {label}", document)
+        document = copy.deepcopy(workflow)
+        document["on"]["pull_request_target"]["types"].remove("edited")
+        rejected("retarget never re-evaluates", document)
         for change in ("concurrency", "if", "reporter"):
             document = copy.deepcopy(workflow)
             trusted = document["jobs"]["trusted-policy"]
@@ -2125,6 +2227,27 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     jobs.get(removedRun).set(2,[original[0],{...original[1],conclusion:'skipped'}]);
     assert(pending(await collect('pr')).includes(removedRun));
     jobs.get(removedRun).set(2,original);
+    // A bot-authored comment run skips capture: the job keeps its unexpanded name, and
+    // only the run-name marker, evaluated at creation, lets the walk treat it as plain.
+    const rawCapture='Capture immutable rights event ${{ ((github.event.issue.pull_request && \'pull\') || \'issue\') }} ${{ raw }}';
+    const rawLedger='Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}';
+    const botRun=nextRun++;runs.unshift({...makeRun(botRun),display_title:'issue_comment'});
+    jobs.set(botRun,new Map([[1,[{name:rawCapture,status:'completed',conclusion:'skipped'},{name:rawLedger,status:'completed',conclusion:'skipped'}]]]));
+    // Unmarked, or marked with a capture that was not skipped, the walk fails closed.
+    for(const [title,conclusion] of [['issue_comment','skipped'],['issue_comment bot','skipped'],['issue_comment bot 30 x','skipped'],
+        ['issue_comment bot 30','cancelled'],['issue_comment bot 30','success']]){
+      runs.find(r=>r.id===botRun).display_title=title;jobs.get(botRun).get(1)[0].conclusion=conclusion;
+      for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights capture incomplete/);assert(!fs.existsSync(path))}
+    }
+    jobs.get(botRun).get(1).push({name:rawCapture,status:'completed',conclusion:'skipped'});
+    runs.find(r=>r.id===botRun).display_title='issue_comment bot 30';
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights capture incomplete/);assert(!fs.existsSync(path))}
+    jobs.get(botRun).get(1).pop();jobs.get(botRun).get(1)[0].conclusion='skipped';
+    await snapshot(prefix+'bot');assert(!pending(evidence[prefix+'bot'].pr).includes(botRun));
+    // The marker never hides a captured rights event: an expanded capture is read as usual.
+    const markedRevoke=nextRun++;await record(markedRevoke,payload(comment(31,'/revoke-rights '+head,clock)),1,true);
+    runs.find(r=>r.id===markedRevoke).display_title='issue_comment bot 31';
+    await snapshot(prefix+'marked');assert(pending(evidence[prefix+'marked'].pr).includes(markedRevoke));
   }
   console.log(JSON.stringify(evidence));
 })().catch(error=>{console.error(error);process.exit(1)});"""
@@ -2228,6 +2351,7 @@ def main() -> int:
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
         workflow_trusted_policy_canaries(source)
+        workflow_bot_comment_canaries(source)
         workflow_superseded_canaries(source)
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
