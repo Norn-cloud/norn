@@ -4132,18 +4132,29 @@ norn_testkit::proptest::proptest! {
         let action: ActionRoot = serde_json::from_value(payload).unwrap();
         let types = order_types(); let catalog = TypeCatalog::new(&types);
         let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        seed(&mut cell, ORDER, "SO-1", "draft");
+        let seeded = cell.ledger().len();
         let mut request = call(&action, "SO-1", "receipt-effect");
         request.input.insert("receipt".to_owned(), JsonValue::String(reference));
         let reference = norn_kernel::receipt_binding::ReceiptReference::parse(&JsonValue::String(format!("sha256:{}", "a".repeat(64)))).unwrap();
         let manifest = norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)));
         let unresolved = cell.resolve_accepted_receipt(&reference, &manifest).unwrap().is_none();
         norn_testkit::proptest::prop_assert!(unresolved);
-        let refused = matches!(commit_action(&mut cell, &catalog, &request, &Allow), Err(ActionRefusal::UnsupportedEffect { .. }));
-        norn_testkit::proptest::prop_assert!(refused);
-        norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
+        // RECEIPT-EFFECT-1: a host without receipt support refuses; a
+        // malformed reference refuses before any host lookup.
+        let refused = commit_action(&mut cell, &catalog, &request, &Allow).map(|_| ()).unwrap_err();
+        norn_testkit::proptest::prop_assert!(matches!(
+            refused.code(),
+            "action.receipt_effect_unsupported" | "action.receipt_reference_invalid"
+        ), "{}", refused.code());
+        norn_testkit::proptest::prop_assert_eq!(cell.ledger().len(), seeded);
         request.input.insert("receipt".to_owned(), JsonValue::Object(JsonObject::new()));
-        norn_testkit::proptest::prop_assert!(commit_action(&mut cell, &catalog, &request, &Allow).is_err());
-        norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
+        let refused = commit_action(&mut cell, &catalog, &request, &Allow).map(|_| ()).unwrap_err();
+        norn_testkit::proptest::prop_assert!(matches!(
+            refused.code(),
+            "action.invalid_input" | "action.receipt_body_forbidden"
+        ), "{}", refused.code());
+        norn_testkit::proptest::prop_assert_eq!(cell.ledger().len(), seeded);
     }
 }
 

@@ -13,6 +13,7 @@ const MIGRATION: string = readFileSync(join(import.meta.dir, "../migrations/0001
 function stage() {
   const db = new Database(":memory:")
   db.exec(MIGRATION)
+  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
   const env: Env = {
     ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
     AUTH_DB: db as unknown as D1Database,
