@@ -617,6 +617,31 @@ def workflow_verdict_canaries(source: str) -> None:
             raise AssertionError(f"workflow verdict case {index} had unexpected status {result.returncode}")
 
 
+def studio_browser_pin_canaries() -> None:
+    """Weakened browser phases are rejected by the coverage validator."""
+    validator = load_module("norn_browser_pin_canaries", VALIDATOR)
+    core = validator.CORE_RUNNER.read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as directory:
+        mutated = Path(directory) / "core.sh"
+        for label, before, after in (
+                ("passes with no tests", "bunx playwright test --reporter=list,json\n", "bunx playwright test --reporter=list,json --pass-with-no-tests\n"),
+                ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
+                ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
+                ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
+                ("not in the plan", " integration browser formal ", " integration formal ")):
+            if core.count(before) != 1:
+                raise AssertionError(f"browser pin canary target drifted: {label}")
+            mutated.write_text(core.replace(before, after), encoding="utf-8")
+            validator.CORE_RUNNER = mutated
+            try:
+                validator.validate_workflow_integrity([])
+            except validator.InvalidCoverage:
+                continue
+            finally:
+                validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+            raise AssertionError(f"browser phase mutation passed: {label}")
+
+
 def workflow_cleanup_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     for job in ("core", "test"):
@@ -799,6 +824,60 @@ def workflow_superseded_canaries(source: str) -> None:
             changed = document["jobs"]["trusted-policy"]["steps"][0]
             changed["with"]["script"] = changed["with"]["script"].replace(before, after)
             rejected(f"superseded resolution mutation {before}", document)
+
+
+def studio_browser_phase_canaries() -> None:
+    """The browser phase never passes silently: missing or empty Studio browser tests fail."""
+    with tempfile.TemporaryDirectory() as directory:
+        tree, bin_dir = Path(directory) / "tree", Path(directory) / "bin"
+        (tree / "crates/norn-checker-wasm/scripts").mkdir(parents=True)
+        (tree / "apps/studio").mkdir(parents=True)
+        bin_dir.mkdir()
+        tools = {
+            "cargo": "exit 0",
+            "bun": "exit 0",
+            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
+            "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
+                    'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
+                    'exit "$RUN_STATUS"',
+        }
+        for name, body in tools.items():
+            (bin_dir / name).write_text("#!/bin/sh\n" + body + "\n")
+            (bin_dir / name).chmod(0o755)
+        build = tree / "crates/norn-checker-wasm/scripts/build-pkg.sh"
+        build.write_text("#!/bin/sh\nmkdir -p \"$1\"\n")
+        build.chmod(0o755)
+        config, e2e = tree / "apps/studio/playwright.config.ts", tree / "apps/studio/e2e"
+        wasm_libdir = Path(directory) / "wasm32-lib"
+        wasm_libdir.mkdir()
+        for label, has_config, has_tests, listed, run_status, expected, libdir, ran in (
+                ("no config, no tests", False, False, "0", 0, 0, "", "0"),
+                ("tests without a config", False, True, "0", 0, 1, str(wasm_libdir), "0"),
+                ("config, no wasm32 target", True, True, "99", 0, 1, str(Path(directory) / "absent"), "0"),
+                ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir), "0"),
+                ("config, every row skipped", True, True, "99", 0, 1, str(wasm_libdir), "0"),
+                ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir), "99"),
+                ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98")):
+            config.unlink(missing_ok=True)
+            if has_config:
+                config.write_text("export default {}\n")
+            if has_tests:
+                e2e.mkdir(exist_ok=True)
+                (e2e / "row.e2e.ts").write_text("")
+            elif e2e.exists():
+                for entry in e2e.iterdir():
+                    entry.unlink()
+                e2e.rmdir()
+            result = subprocess.run(["bash", str(ROOT / "scripts/ci/core.sh"), "browser"], cwd=tree, capture_output=True,
+                                    text=True, timeout=60, env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                                                                "CARGO_HOME": str(Path(directory) / "cargo-home"),
+                                                                "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
+                                                                "WASM_LIBDIR": libdir, "RAN": ran,
+                                                                "SKIPPED": str(int(listed) - int(ran))})
+            if result.returncode != expected:
+                raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")
+            if label == "config, no wasm32 target" and "run under the pinned CI toolchain" not in result.stderr:
+                raise AssertionError(f"browser phase must name the pinned toolchain when wasm32 is missing: {result.stderr[-300:]}")
 
 
 def workflow_trusted_policy_canaries(source: str) -> None:
@@ -2444,6 +2523,8 @@ def main() -> int:
         workflow_verdict_canaries(source)
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
+        studio_browser_phase_canaries()
+        studio_browser_pin_canaries()
         workflow_trusted_policy_canaries(source)
         workflow_bot_comment_canaries(source)
         workflow_superseded_canaries(source)
