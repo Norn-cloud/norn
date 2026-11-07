@@ -18,6 +18,22 @@ import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 
+/** Wait for the local Worker or report Wrangler's exit immediately. */
+export async function waitForWorker(exited: Promise<number>, url: string, token: string, members: readonly { email: string; role: string }[]): Promise<Response> {
+  const failure = exited.then((code) => ({ kind: "exited" as const, code }))
+  const deadline = Date.now() + 60_000
+  while (Date.now() < deadline) {
+    const attempt = fetch(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ members }), signal: AbortSignal.timeout(1_000) })
+      .then((response) => ({ kind: "ready" as const, response }), () => ({ kind: "retry" as const }))
+    const result = await Promise.race([attempt, failure])
+    if (result.kind === "exited") throw new Error(`Wrangler exited before the provisioning Worker was ready (exit ${result.code})`)
+    if (result.kind === "ready") return result.response
+    const pause = await Promise.race([Bun.sleep(200).then(() => null), failure])
+    if (pause) throw new Error(`Wrangler exited before the provisioning Worker was ready (exit ${pause.code})`)
+  }
+  throw new Error("Local provisioning Worker did not start")
+}
+
 async function main(argv: readonly string[]) {
   const stage = argv[argv.indexOf("--stage") + 1]
   if (argv.indexOf("--stage") < 0 || stage !== "preview") throw new Error("--stage preview is required; prod gets org_demo only on promotion")
@@ -51,14 +67,7 @@ async function main(argv: readonly string[]) {
     await writeFile(configPath, JSON.stringify(config), { mode: 0o600 })
     await writeFile(join(dir, ".dev.vars"), `SEED_TOKEN=${JSON.stringify(token)}\n`, { mode: 0o600 })
     child = Bun.spawn([resolve(import.meta.dir, "../node_modules/.bin/wrangler"), "dev", "--config", configPath, "--ip", "127.0.0.1", "--port", String(port), "--inspector-port", "0"], { stdout: "ignore", stderr: "ignore", env: process.env })
-    const url = `http://127.0.0.1:${port}/seed`
-    let response: Response | undefined
-    const deadline = Date.now() + 60_000
-    while (Date.now() < deadline && !response) {
-      try { response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ members }) }) }
-      catch { await Bun.sleep(200) }
-    }
-    if (!response) throw new Error("Local provisioning Worker did not start")
+    const response = await waitForWorker(child.exited, `http://127.0.0.1:${port}/seed`, token, members)
     const body: unknown = await response.json()
     if (!response.ok) throw new Error(`Provisioning failed: ${JSON.stringify(body)}`)
     console.log(`${DEMO_ORG.id} members:`, JSON.stringify(body))

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements } from "../../scripts/seed-demo-org.ts"
+import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements, waitForWorker } from "../../scripts/seed-demo-org.ts"
 import { hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
@@ -97,6 +97,7 @@ test("without a default organization a session starts in the earliest membership
 test("the seed refuses an owner role or a malformed member", () => {
   expect(() => parseMembers(["a@b.c=owner"])).toThrow("admin, member or viewer")
   expect(() => parseMembers(["nobody=viewer"])).toThrow("not an email")
+  expect(() => parseMembers(["a@b.c=viewer=admin"])).toThrow("email=role")
 })
 
 
@@ -124,4 +125,10 @@ test("a later membership write failure rolls back all earlier grants", async () 
   await expect(seed(["analyst@demo.norn.cloud=member", "viewer@demo.norn.cloud=viewer"])).rejects.toThrow("injected later failure")
   expect(db.query(`select * from "member" where "organizationId" = ?`).all(DEMO_ORG.id)).toEqual([])
   expect(db.query(`select * from "organization" where "id" = ?`).all(DEMO_ORG.id)).toEqual([])
+})
+
+
+test("provisioning fails promptly when Wrangler exits", async () => {
+  const process = Bun.spawn([globalThis.process.execPath, "-e", "process.exit(27)"], { stdout: "ignore", stderr: "ignore" })
+  await expect(waitForWorker(process.exited, "http://127.0.0.1:1/seed", "test", [])).rejects.toThrow("exit 27")
 })

@@ -39,7 +39,9 @@ export async function seedDemoOrg(db: SeedDatabase, members: readonly { readonly
 /** `email=role` pairs, each role one the organization plugin knows. */
 export function parseMembers(args: readonly string[]): { email: string; role: OrgRole }[] {
   return args.map((arg) => {
-    const [email = "", role = ""] = arg.split("=")
+    const parts = arg.split("=")
+    if (parts.length !== 2) throw new Error("member must be email=role")
+    const [email = "", role = ""] = parts
     if (!/^[^@\s]+@[^@\s]+$/.test(email)) throw new Error(`not an email: ${email}`)
     if (!["admin", "member", "viewer"].includes(role)) throw new Error(`role must be admin, member or viewer, got ${role}`)
     return { email, role: role as OrgRole }
