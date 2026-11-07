@@ -79,15 +79,26 @@ export function probeAgentRoute(
   { signal, timeoutMs = PROBE_DEADLINE_MS }: { readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
 ): Promise<boolean> {
   const controller = new AbortController()
-  const abort = () => controller.abort()
-  signal?.addEventListener("abort", abort, { once: true })
   return new Promise<boolean>((resolve) => {
+    let settled = false
+    // The probe settles once; cancelling (deadline or the caller's abort) settles it false at once and stops the timer.
+    const finish = (served: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      signal?.removeEventListener("abort", cancel)
+      resolve(served)
+    }
+    const cancel = () => { controller.abort(); finish(false) }
     // A timer, not AbortSignal.timeout, so the deadline also runs under fake timers.
-    const deadline = setTimeout(() => { controller.abort(); resolve(false) }, timeoutMs)
+    const deadline = setTimeout(cancel, timeoutMs)
+    if (signal?.aborted) return cancel()
+    signal?.addEventListener("abort", cancel, { once: true })
     fetcher("/api/agent", { method: "GET", headers: { accept: "application/json" }, signal: controller.signal })
       .then((response) => agentServedBy(response.status), () => agentServedBy("unreachable"))
-      .then((served) => { clearTimeout(deadline); resolve(served) })
-  }).finally(() => signal?.removeEventListener("abort", abort))
+      // A response that lands after a cancel never counts as served.
+      .then((served) => finish(served && !controller.signal.aborted))
+  })
 }
 
 /** Sending is open only once the probe has said the route is served: never while it is pending or after it failed. */

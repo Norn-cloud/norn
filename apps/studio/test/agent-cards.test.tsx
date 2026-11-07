@@ -1,4 +1,4 @@
-import { expect, jest, test } from "bun:test"
+import { expect, jest, spyOn, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, verdictOf } from "../src/agent/verdict.ts"
@@ -179,4 +179,35 @@ test("unmounting aborts the probe's request, and the probe settles as not served
   unmounted.abort()
   expect(request?.aborted).toBe(true)
   expect(await probe).toBe(false)
+})
+
+test("an abort that lands before a fulfilled 405 is read settles the probe as not served", async () => {
+  const caller = new AbortController()
+  const probe = probeAgentRoute(() => Promise.resolve(new Response(null, { status: 405 })), { signal: caller.signal })
+  caller.abort()
+  expect(await probe).toBe(false)
+})
+
+test("an already-aborted signal settles the probe as not served at once, without a request", async () => {
+  const caller = new AbortController()
+  caller.abort()
+  let asked = false
+  expect(await probeAgentRoute(async () => { asked = true; return new Response(null, { status: 405 }) }, { signal: caller.signal })).toBe(false)
+  expect(asked).toBe(false)
+})
+
+test("aborting clears the deadline timer, even when the fetch ignores the abort", async () => {
+  const set = spyOn(globalThis, "setTimeout")
+  const clear = spyOn(globalThis, "clearTimeout")
+  try {
+    const caller = new AbortController()
+    const probe = probeAgentRoute(() => new Promise<Response>(() => {}), { signal: caller.signal })
+    const timer = set.mock.results.at(-1)?.value
+    caller.abort()
+    expect(await probe).toBe(false)
+    expect(clear).toHaveBeenCalledWith(timer)
+  } finally {
+    set.mockRestore()
+    clear.mockRestore()
+  }
 })
