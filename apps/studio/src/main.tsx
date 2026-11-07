@@ -17,11 +17,11 @@ import { ObjectPage } from "./objects.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu },
-  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", useMenu: useWorkflowsMenu },
-  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", useMenu: useGuaranteesMenu },
-  { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area." },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu, group: "model" },
+  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu, group: "model" },
+  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", useMenu: useWorkflowsMenu, group: "rules" },
+  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", useMenu: useGuaranteesMenu, group: "rules" },
+  { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", group: "system", foot: true },
 ]
 
 function NotYet({ label, summary, icon }: Section) {
