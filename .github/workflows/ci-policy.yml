@@ -1,9 +1,11 @@
 name: Public core
-run-name: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}
+run-name: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot' && format('issue_comment bot {0}', github.event.comment.id) || github.event_name }}
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_target:
+    # `edited` carries a retarget (base change); trusted-policy ignores every other edit.
+    types: [opened, synchronize, reopened, edited]
   # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.
   issue_comment:
     types: [created, edited, deleted]
@@ -218,7 +220,10 @@ jobs:
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   rights-capture:
     name: Capture immutable rights event ${{ github.event.issue.pull_request && 'pull' || 'issue' }} ${{ (contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights')) && 'possible' || 'none' }}
-    if: github.event_name == 'issue_comment'
+    # A bot-authored comment can never be a rights event (a bot holds no rights), so it
+    # needs no runner. The skip keys on the comment's author, not the sender: any edit
+    # or deletion of a human comment is still captured, whoever makes it.
+    if: github.event_name == 'issue_comment' && github.event.comment.user.type != 'Bot'
     permissions:
       contents: read
     runs-on: ubuntu-24.04
@@ -328,12 +333,21 @@ jobs:
     # An edit re-runs when either the new or the previous body mentions the
     # command, so removing an approval re-evaluates and fails closed. `contains`
     # also covers bodies the gate accepts after trimming.
+    # A bot-authored comment is never an approval or a rights event (a bot holds
+    # neither), so it never re-evaluates. Keyed on the author, not the sender: any
+    # edit or deletion of a human comment still re-evaluates, whoever makes it.
+    # A stacked pull request (base other than the default branch) cannot merge, so its
+    # head events never take the rights mutex. Every event carries its own base: a PR
+    # targeting main is always evaluated, and retargeting to main is an `edited` event
+    # with a base change, evaluated against the then-current head. Comment events
+    # (approvals and rights) are unchanged.
     # Evaluate relevant events without an implicit success() precondition.
     # A cancelled run still cannot begin another policy evaluation.
     if: >-
       !cancelled() && (
-      github.event_name == 'pull_request_target' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      (github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      (github.event.action != 'edited' || github.event.changes.base)) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.type != 'Bot' &&
       (contains(github.event.comment.body, '/approve-gates') || contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') ||
       (github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))
     # One rights authority spans every target and both workflows. Keep this
@@ -386,6 +400,9 @@ jobs:
           fetch-depth: 0
       # Workflow and gate changes need a same-repository head and an unedited
       # `/approve-gates <head sha>` comment from an admin; comment events re-evaluate it.
+      # The history walk treats a bot-authored comment run as plain only when its
+      # capture job was skipped (unexpanded name) and its run-name, evaluated at run
+      # creation from the base workflow, is `issue_comment bot <comment id>`.
       # Without this evidence such changes fail closed; data-only PRs
       # never need it.
       - name: Record admin approvals of the exact PR head
@@ -538,6 +555,8 @@ jobs:
                     {owner,repo,run_id:run.id,attempt_number:run.run_attempt,per_page:100});
                   const captures=jobs.filter(j=>/^Capture immutable rights event (pull|issue) (none|possible)$/.test(j.name));
                   const journals=jobs.filter(j=>j.name.startsWith('Rights ledger '));
+                  const raw=jobs.filter(j=>j.name.startsWith('Capture immutable rights event '));
+                  if(!captures.length&&raw.length===1&&raw[0].conclusion==='skipped'&&/^issue_comment bot \d+$/.test(run.display_title||''))return {jobs,plain:true};
                   if(captures.length===1&&(/ event issue /.test(captures[0].name)||captures[0].name.endsWith(' none')))return {jobs,plain:true};
                   const stamp=captures[0]?.steps?.find(step=>step.name.startsWith('Rights event '));
                   const tag=stamp?.name.match(/^Rights event (none|[0-9a-f]{40}(?:,[0-9a-f]{40})?) comment (\d+)$/);
