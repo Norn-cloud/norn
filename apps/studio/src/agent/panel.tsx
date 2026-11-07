@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { useEffect, useState, type FormEvent } from "react"
 import { Streamdown } from "streamdown"
 import { StickToBottom } from "use-stick-to-bottom"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
@@ -157,7 +158,9 @@ export function AgentButton() {
       <SheetContent className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-md">
         <SheetHeader className="border-b">
           <SheetTitle>Assistant</SheetTitle>
-          <SheetDescription>Proposals to the purchasing world's definitions, checked on the server.</SheetDescription>
+          <SheetDescription>Proposes changes to a separate synthetic purchasing world (orders, receipts and their laws), not the Jewelry workspace. The server's checker admits or refuses each one.</SheetDescription>
+          {/* The world the server's checker loads (worker/world.ts); the label names it rather than the open workspace. */}
+          <Badge variant="outline" className="w-fit">World · Purchasing (synthetic)</Badge>
         </SheetHeader>
         <AgentPanel state={state} />
       </SheetContent>
