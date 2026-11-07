@@ -4,7 +4,7 @@ import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, verdictOf } from "../src/agent/verdict.ts"
 import { Chat } from "@ai-sdk/react"
 import type { UIMessage } from "ai"
-import { AgentPanel, sendsOnEnter, type AgentState } from "../src/agent/panel.tsx"
+import { AGENT_UNSERVED, AgentPanel, agentServedBy, sendsOnEnter, type AgentState } from "../src/agent/panel.tsx"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
 const refusal = {
@@ -100,4 +100,29 @@ test("Enter sends, but not with Shift and not while an IME composition is being 
   expect(sendsOnEnter({ key: "Enter", shiftKey: true, nativeEvent: { isComposing: false } })).toBe(false)
   expect(sendsOnEnter({ key: "Enter", shiftKey: false, nativeEvent: { isComposing: true } })).toBe(false)
   expect(sendsOnEnter({ key: "a", shiftKey: false, nativeEvent: {} })).toBe(false)
+})
+
+test("the page keeps one session id even when storage recovers holding another, and writes its id back", () => {
+  const broken = { getItem: (): string | null => { throw new Error("SecurityError") }, setItem: () => { throw new Error("SecurityError") } }
+  const first = sessionId(broken)
+  const store = new Map([["norn-agent-session", "00000000-0000-4000-8000-000000000000"]])
+  const recovered = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value) }
+  expect(sessionId(recovered)).toBe(first)
+  expect(store.get("norn-agent-session")).toBe(first)
+  expect(sessionId(undefined)).toBe(first)
+})
+
+test("where the agent route is not served, the assistant says so and its composer is disabled", () => {
+  expect(agentServedBy(404)).toBe(false)
+  expect(agentServedBy(503)).toBe(false)
+  expect(agentServedBy("unreachable")).toBe(false)
+  expect(agentServedBy(405)).toBe(true)
+  const chat = new Chat<UIMessage>({})
+  const base: AgentState = { chat, input: "", setInput: () => {}, stopped: new Set(), setStopped: () => {}, agentServed: false }
+  const off = renderToStaticMarkup(<AgentPanel state={base} />)
+  expect(off).toContain(AGENT_UNSERVED)
+  expect(off).toMatch(/<fieldset disabled=""/)
+  const on = renderToStaticMarkup(<AgentPanel state={{ ...base, agentServed: true }} />)
+  expect(on).not.toContain(AGENT_UNSERVED)
+  expect(on).not.toMatch(/<fieldset disabled=""/)
 })
