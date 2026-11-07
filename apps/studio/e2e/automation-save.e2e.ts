@@ -51,7 +51,10 @@ async function cell(page: Page, options: { refuseOnce?: string; runsLive?: boole
     }
     if (path === "definitions:list") {
       expect(url.searchParams.get("kind")).toBe("flow")
-      return route.fulfill({ json: { items: [...state.flows].filter(([, kept]) => !kept.retired).map(([id, kept]) => ({ id, kind: "flow", title: (kept.payload.flow as { title?: string }).title ?? "", version: kept.version, lifecycle: "active" })), cursor: null } })
+      // One automation per page, so every row that lists two or more reads past the first page.
+      const all = [...state.flows].filter(([, kept]) => !kept.retired).map(([id, kept]) => ({ id, kind: "flow", title: (kept.payload.flow as { title?: string }).title ?? "", version: kept.version, lifecycle: "active" }))
+      const at = Number(url.searchParams.get("cursor") ?? 0)
+      return route.fulfill({ json: { items: all.slice(at, at + 1), cursor: at + 1 < all.length ? String(at + 1) : null } })
     }
     const get = /^definitions\/([^:]+)$/.exec(path)
     if (get?.[1]) {
@@ -186,6 +189,14 @@ test("automations: two saved side by side under their own ids, and each reopens 
   await page.getByTestId("automations").getByRole("button", { name: /^Payment reminders/ }).click()
   await expect(node(page, "done")).toBeVisible()
   await expect(actions(page)).toContainText("Saved in the cell · version 1")
+  // The same name again, from the first automation: its id is on the list's second page, so the new one gets its own.
+  await page.getByTestId("automations").getByRole("button", { name: /^Invoice follow-up/ }).click()
+  await expect(node(page, "load")).toBeVisible()
+  await page.getByLabel("New automation name").fill("Payment reminders")
+  await page.getByRole("button", { name: "New automation" }).click()
+  await saveSigned(page)
+  await expect(actions(page)).toContainText("Saved in the cell · version 1")
+  expect([...state.flows.keys()].sort()).toEqual(["studio.automation.invoice_follow_up", "studio.automation.payment_reminders", "studio.automation.payment_reminders_2"])
 })
 
 test("sign-off: Save shows the cell's words; when the cell reads them differently it shows its own; re-sign and save; reopen shows who signed", async ({ page }) => {

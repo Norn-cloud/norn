@@ -12,7 +12,7 @@ import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editin
 import { SAVE_BLOCKED } from "./canvas.tsx"
 import { RunButton } from "./run-button.tsx"
 import { PlainWords } from "@/components/plain-words"
-import { FlowRoutesMissing, automationId, flowStore, nodeOfFinding, type FlowRestatement, type FlowFinding, type FlowPayload, type FlowStore } from "./lib/canvas/flows.ts"
+import { FlowRoutesMissing, automationId, flowStore, nodeOfFinding, type FlowRestatement, type FlowFinding, type FlowPayload, type FlowStore, type FlowSummary } from "./lib/canvas/flows.ts"
 import { scopeOf } from "./lib/scope.ts"
 import { useAccount } from "./lib/session.ts"
 import { automationKinds, branchesOf, flowDefinitionPayload, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
@@ -428,7 +428,13 @@ export function AutomationsView() {
   const account = useAccount()
   const scope = scopeOf(account.data)
   const store = useMemo(() => scope ? flowStore(scope) : null, [scope?.orgId, scope?.environmentId])
-  const saved = useQuery({ queryKey: ["flows", scope?.orgId, scope?.environmentId], queryFn: () => store!.list(), enabled: store !== null, retry: false })
+  // Every page: a new automation's id must not take one a saved automation already holds, on any page.
+  const saved = useQuery({ queryKey: ["flows", scope?.orgId, scope?.environmentId], queryFn: async () => {
+    const items: FlowSummary[] = []
+    let cursor: string | undefined
+    do { const page = await store!.list(cursor); items.push(...page.items); cursor = page.cursor ?? undefined } while (cursor)
+    return { items }
+  }, enabled: store !== null, retry: false })
   const [open, setOpen] = useState<{ readonly automation: Automation; readonly fresh?: g.Graph }>({ automation: FIRST })
   const [name, setName] = useState("")
   const create = () => {
