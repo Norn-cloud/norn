@@ -832,9 +832,7 @@ where
             command,
             generation,
         }) = &commit.consumes
-            && let Some(pending) = self.store.read().head_command()?
-            && pending.command.command_id == command.0
-            && pending.command.generation == generation.0
+            && let Some(pending) = self.store.read().pending_result(&command.0, generation.0)?
             && pending
                 .command
                 .command
@@ -1076,6 +1074,31 @@ where
     C: DeserializeOwned,
     I: DeserializeOwned,
 {
+    /// PARKED-1: redeliver the recorded, unconsumed results of parked
+    /// commands, oldest first, decoded from the store (never from memory).
+    /// After a crash between [`Self::complete_parked`] and the consuming
+    /// commit, this is how the result is delivered again; `perform` never
+    /// returns a parked command.
+    ///
+    /// # Errors
+    ///
+    /// Engine or decode errors.
+    pub fn parked_results(&self) -> Result<Vec<Performed<I>>, CellError> {
+        self.store
+            .read()
+            .parked_commands()?
+            .into_iter()
+            .filter_map(|pending| {
+                let result = pending.result?;
+                Some(from_runtime(&result).map(|input| Performed {
+                    command: CommandId(pending.command.command_id.clone()),
+                    generation: Generation(pending.command.generation),
+                    input,
+                }))
+            })
+            .collect()
+    }
+
     /// The pending commands, oldest first.
     ///
     /// # Errors
@@ -1274,6 +1297,35 @@ where
         Ok(Some(Performed {
             command: command.id.clone(),
             generation: command.generation,
+            input,
+        }))
+    }
+
+    /// PARKED-1: record the result the cell itself produced for a parked
+    /// command (for `norn.decision@1`, the receipt it issued), out of FIFO
+    /// order. Returns `None` without writing when the command is not a
+    /// pending parked command at `generation`, or already has a result, so a
+    /// parked command completes at most once. A commit consuming the returned
+    /// delivery applies it, exactly once, under the ordinary delivery fence.
+    ///
+    /// # Errors
+    ///
+    /// Serialization or SQLite errors.
+    pub fn complete_parked(
+        &mut self,
+        command: &CommandId,
+        generation: Generation,
+        input: I,
+    ) -> Result<Option<Performed<I>>, CellError> {
+        if !self
+            .store
+            .record_parked(&command.0, generation.0, &to_runtime(&input)?)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(Performed {
+            command: command.clone(),
+            generation,
             input,
         }))
     }
