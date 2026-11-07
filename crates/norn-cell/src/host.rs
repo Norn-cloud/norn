@@ -694,8 +694,16 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
         predicate: &PredicateQuery,
         limit: usize,
     ) -> Result<Option<Vec<PredicateReadMember>>, CellError> {
-        Ok(predicate_objects(self.0, predicate, limit)?
-            .map(|objects| objects.iter().map(PredicateObject::member).collect()))
+        let Some(objects) = predicate_objects(self.0, predicate, limit)? else {
+            return Ok(None);
+        };
+        // OBS-EVIDENCE-1: a governed read never consumes a disputed source
+        // subject, so a disputed current match refuses the commit rather
+        // than being compared as an ordinary member.
+        for object in &objects {
+            self.0.refuse_disputed_subject(&object.key)?;
+        }
+        Ok(Some(objects.iter().map(PredicateObject::member).collect()))
     }
 
     fn has_link_target(
