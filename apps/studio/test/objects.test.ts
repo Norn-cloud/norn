@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import type { Field } from "../src/lib/catalog.ts"
+import { catalogOf, type Field } from "../src/lib/catalog.ts"
 import { readDocument } from "../src/lib/exact.ts"
-import { collect, compareDecimals, factText, nextAfter, readProblem, readsOf, recordName, shouldReadNext } from "../src/lib/objects.ts"
-import type { LinkPage, ObjectPage, ObjectRecord } from "../src/lib/transport.ts"
+import { collect, compareDecimals, exactJson, factText, lifecycleOf, lifecycleStates, nextAfter, readProblem, readsOf, recordName, shouldReadNext } from "../src/lib/objects.ts"
+import type { Artifact, LinkPage, ObjectPage, ObjectRecord } from "../src/lib/transport.ts"
 
 // The cell's reads of the three-systems world (crates/norn-api/tests/explorer_objects.rs).
 const recorded = (name: string) => readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects", name), "utf8")
@@ -93,4 +93,30 @@ test("a failed continuation read stops automatic paging until an explicit retry"
   expect(shouldReadNext({ ...state, isFetchingNextPage: true }, 50)).toBe(false)
   expect(shouldReadNext({ ...state, pagesRead: 50 }, 50)).toBe(false)
   expect(shouldReadNext({ ...state, hasNextPage: false }, 50)).toBe(false)
+})
+
+// Lifecycles come from the admitted definitions; the record is a minimal synthetic one.
+const lifecycleCatalog = catalogOf(readDocument<readonly Artifact[]>(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8"), "recorded").document)
+const record = { objectType: "t", id: "x", scope: "s", version: 1, values: {} } as ObjectRecord
+
+test("a lifecycle's states follow its declared transitions from the initial state", () => {
+  const [lifecycle] = lifecycleCatalog.byName.get("core.analytics.Restatement")?.lifecycles ?? []
+  if (lifecycle === undefined) throw new Error("Restatement declares a lifecycle")
+  expect(lifecycleStates(lifecycle)).toEqual(["building", "ready", "approved", "active"])
+  const ready = lifecycleOf(lifecycle, { ...record, values: { [lifecycle.property]: "ready" } })
+  expect(ready.state).toBe("ready")
+  expect(ready.next.map(({ id }) => id)).toEqual(["approve"])
+  expect(lifecycleOf(lifecycle, record).state).toBeUndefined()
+  expect(lifecycleOf(lifecycle, record).next).toEqual([])
+})
+
+test("object types without a lifecycle declare none", () => {
+  expect(lifecycleCatalog.byName.get("canon.Item")?.lifecycles).toEqual([])
+})
+
+test("composite facts keep every nested number's exact text", () => {
+  const read = readDocument<ObjectRecord>('{"objectType":"t","id":"x","scope":"s","version":1,"values":{"lots":[{"qty":100.000,"unit":"g"}],"range":{"low":1.50,"high":2}}}', "recorded")
+  expect(exactJson(read.document.values.lots, read.numbers, "/values/lots")).toBe('[{"qty":100.000,"unit":"g"}]')
+  expect(factText({ id: "lots", type: "List", optional: false, decimal: undefined }, read.document, read.numbers, "")).toBe('[{"qty":100.000,"unit":"g"}]')
+  expect(exactJson(read.document.values.range, read.numbers, "/values/range")).toBe('{"low":1.50,"high":2}')
 })
