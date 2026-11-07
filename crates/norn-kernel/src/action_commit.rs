@@ -923,6 +923,14 @@ where
     let action = call.action;
     // TXN-RULE-1: a declared closure never degrades to its primary effect.
     crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
+    // #1105: aggregate inputs are admitted ahead of their commit-time
+    // evaluation; until it lands, an action reading one refuses instead of
+    // committing on a fold it never computed.
+    if !action.aggregates.is_empty() {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
+    }
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())
         && matches!(
             action.effect_program,
