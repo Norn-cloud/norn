@@ -72,10 +72,15 @@ export function drawingOf(graph: g.Graph): Drawing {
     const key = `${stepKey(edge)}|${edge.target}|${laneYOf(h.source, h.target)}`
     groups.set(key, [...groups.get(key) ?? [], edge])
   }
+  // A bundle's id is its step and target; two bundles that share both (different guards or lanes) keep distinct ids.
+  const ids = new Set<string>()
   const bundles = [...groups.values()].filter((members) => members.length > 1).map((members) => {
     const first = members[0]!
     const sorted = [...members].sort((a, b) => handles.get(a.id)!.source.x - handles.get(b.id)!.source.x)
-    return { id: `bundle:${first.config.transition || first.id}:${first.target}`, members: sorted.map(({ id }) => id), sources: sorted.map(({ source }) => source), target: first.target, label: `${words(first.config.transition || first.id)} · from ${members.length} states` }
+    const base = `bundle:${first.config.transition || first.id}:${first.target}`
+    const id = ids.has(base) ? `${base}:${sorted[0]!.id}` : base
+    ids.add(id)
+    return { id, members: sorted.map(({ id }) => id), sources: sorted.map(({ source }) => source), target: first.target, label: `${words(first.config.transition || first.id)} · from ${members.length} states` }
   })
   const bundled = new Set(bundles.flatMap(({ members }) => members))
   // A bundle holds the middle of its lane; the other steps take rails around it.
@@ -90,7 +95,7 @@ export function drawingOf(graph: g.Graph): Drawing {
     const { label } = bundleRoute(bundle.members.map((id) => handles.get(id)!.source), handles.get(bundle.members[0]!)!.target, width, LANE, bundle.offset)
     return { x1: label.x - width / 2, x2: label.x + width / 2, y: label.y }
   })
-  const rails = placeLabels(steps.filter(({ id }) => !id.startsWith("bundle:")), assigned, LANE, graph.nodes.map(({ position }) => ({ ...position, width: CARD.state, height: middle * 2 })), taken)
+  const rails = placeLabels(steps.filter(({ id }) => !ids.has(id)), assigned, LANE, graph.nodes.map(({ position }) => ({ ...position, width: CARD.state, height: middle * 2 })), taken)
   const drawing = { rails, bundles: placedBundles }
   drawings.set(graph, drawing)
   return drawing

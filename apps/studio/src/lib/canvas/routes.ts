@@ -63,7 +63,8 @@ export function railsOf(steps: readonly { readonly id: string; readonly source: 
   const group = <T,>(items: readonly T[], by: (item: T) => string) => items.reduce((all, item) => all.set(by(item), [...all.get(by(item)) ?? [], item]), new Map<string, T[]>())
   const offset = new Map<string, number>(), out = new Map<string, number>(), into = new Map<string, number>(), port = new Map<string, number>()
   // A rail per step in each lane, ordered by where they leave, then where they go.
-  for (const shared of group(lane, ({ source, target }) => Math.abs(source.y - target.y) < 2 ? `above:${source.y}` : `between:${Math.max(source.y, target.y)}`).values()) {
+  // Grouped by the lane's y: a step back along a row and a step down into that row run in the same lane.
+  for (const shared of group(lane, ({ source, target }) => String(laneYOf(source, target))).values()) {
     const ordered = [...shared].sort((a, b) => a.source.x - b.source.x || a.target.x - b.target.x)
     around(ordered.length, gap, false).forEach((v, i) => offset.set(ordered[i]!.id, v))
   }
