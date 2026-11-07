@@ -24,8 +24,15 @@ export function seedStatements(members: readonly { readonly email: string; reado
   ]
 }
 
+/** Narrow structural view of the Worker D1 binding used by provisioning. */
+export interface SeedDatabase {
+  prepare(sql: string): { bind(...params: string[]): SeedStatement }
+  batch(statements: SeedStatement[]): Promise<unknown>
+}
+export interface SeedStatement { all(): Promise<{ results: unknown[] }> }
+
 /** Execute provisioning through the Worker D1 binding's atomic batch. */
-export async function seedDemoOrg(db: D1Database, members: readonly { readonly email: string; readonly role: OrgRole }[], now: Date): Promise<void> {
+export async function seedDemoOrg(db: SeedDatabase, members: readonly { readonly email: string; readonly role: OrgRole }[], now: Date): Promise<void> {
   await db.batch(seedStatements(members, now).map(({ sql, params }) => db.prepare(sql).bind(...params)))
 }
 

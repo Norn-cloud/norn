@@ -23,7 +23,7 @@ function stage() {
   const binding = {
     prepare: (sql: string) => ({ bind: (...params: string[]) => ({ sql, params }) }),
     batch: async (statements: { sql: string; params: string[] }[]) => db.transaction(() => { for (const { sql, params } of statements) db.prepare(sql).run(...params) })(),
-  } as unknown as D1Database
+  } as unknown as import("../../scripts/seed-demo-org-core.ts").SeedDatabase
   const seed = (members = ["viewer@demo.norn.cloud=viewer", "analyst@demo.norn.cloud=member"]) => seedDemoOrg(binding, parseMembers(members), new Date())
   const verify = (email: string) => db.prepare(`update "user" set "emailVerified" = 1 where "email" = ?`).run(email)
   return { db, env, seed, verify, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }

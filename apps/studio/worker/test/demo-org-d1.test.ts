@@ -14,12 +14,12 @@ test("D1 binding rolls back an injected second grant failure and then provisions
     }
     await db.exec(`create trigger fail_second before insert on "member" when new."userId" = 'v' begin select raise(abort, 'INJECTED_SECOND_GRANT_FAILURE'); end;`)
     const members = parseMembers(["analyst@example.com=member", "viewer@example.com=viewer"])
-    await expect(seedDemoOrg(db, members, new Date())).rejects.toThrow("INJECTED_SECOND_GRANT_FAILURE")
+    await expect(seedDemoOrg(db as unknown as import("../../scripts/seed-demo-org-core.ts").SeedDatabase, members, new Date())).rejects.toThrow("INJECTED_SECOND_GRANT_FAILURE")
     expect((await db.prepare(`select count(*) as n from "member" where "organizationId" = ?`).bind(DEMO_ORG.id).first<{ n: number }>())?.n).toBe(0)
     expect((await db.prepare(`select count(*) as n from "organization" where "id" = ?`).bind(DEMO_ORG.id).first<{ n: number }>())?.n).toBe(0)
     await db.exec(`drop trigger fail_second;`)
-    await seedDemoOrg(db, members, new Date())
-    await seedDemoOrg(db, members, new Date())
+    await seedDemoOrg(db as unknown as import("../../scripts/seed-demo-org-core.ts").SeedDatabase, members, new Date())
+    await seedDemoOrg(db as unknown as import("../../scripts/seed-demo-org-core.ts").SeedDatabase, members, new Date())
     const rows = await db.prepare(`select "user"."email" as email, "member"."role" as role from "member" join "user" on "user"."id" = "member"."userId" where "organizationId" = ? order by email`).bind(DEMO_ORG.id).all()
     expect(rows.results).toEqual([{ email: "analyst@example.com", role: "member" }, { email: "viewer@example.com", role: "viewer" }])
   } finally { await mf.dispose() }

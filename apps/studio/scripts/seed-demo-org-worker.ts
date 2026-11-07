@@ -1,8 +1,8 @@
 /** Operator-only Worker: Wrangler binds it to loopback and a remote D1 database. */
-import { parseMembers, seedDemoOrg } from "./seed-demo-org-core.ts"
+import { parseMembers, seedDemoOrg, type SeedDatabase } from "./seed-demo-org-core.ts"
 
 export default {
-  async fetch(request: Request, env: { AUTH_DB: D1Database; SEED_TOKEN: string }): Promise<Response> {
+  async fetch(request: Request, env: { AUTH_DB: SeedDatabase; SEED_TOKEN: string }): Promise<Response> {
     if (request.method !== "POST" || new URL(request.url).pathname !== "/seed") return new Response(null, { status: 404 })
     if (!env.SEED_TOKEN || request.headers.get("authorization") !== `Bearer ${env.SEED_TOKEN}`) return new Response(null, { status: 403 })
     try {
@@ -15,4 +15,4 @@ export default {
       return Response.json({ error: error instanceof Error ? error.message : "Provisioning failed" }, { status: 500 })
     }
   },
-} satisfies ExportedHandler<{ AUTH_DB: D1Database; SEED_TOKEN: string }>
+}
