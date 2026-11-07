@@ -675,6 +675,7 @@ mod ontology_derived_measures {
 
     fn property(id: &str, kind: PropertyType) -> Property {
         Property {
+            protected: false,
             id: PropertyId(id.to_owned()),
             description: None,
             property_type: kind,
