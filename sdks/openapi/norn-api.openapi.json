@@ -13744,6 +13744,25 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrRequirementCalendarPin": {
+        "type": "object",
+        "description": "Exact pinned calendar identity.",
+        "required": [
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Calendar artifact identity."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact calendar version."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementDeonticModality": {
         "type": "string",
         "description": "The normative grade is separate from the temporal wrapper in `law`.",
@@ -14491,21 +14510,49 @@
           "sameCommit": {
             "type": "string",
             "pattern": "\\S"
+          },
+          "within": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a `within` requirement; other timings never read it.",
+            "pattern": "\\S"
           }
         },
         "additionalProperties": false
       },
       "NornIrRequirementRequirementTiming": {
-        "type": "string",
-        "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
-        "enum": [
-          "every_committed_state",
-          "same_commit"
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Condition and response are evaluated at every applicable committed state.",
+            "enum": [
+              "every_committed_state"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit.",
+            "enum": [
+              "same_commit"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "LAW-WITHIN-1: a committed trigger transition opens an activation that a\nlater satisfying commit must discharge before `law.timing`'s deadline.",
+            "required": [
+              "within"
+            ],
+            "properties": {
+              "within": {
+                "$ref": "#/components/schemas/NornIrRequirementWithinTiming"
+              }
+            },
+            "additionalProperties": false
+          }
         ],
-        "x-enumDescriptions": [
-          "Condition and response are evaluated at every applicable committed state.",
-          "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit."
-        ]
+        "description": "Closed safety fragment plus one event-activated deadline form. No fairness,\nunbounded progress or wall-clock reads."
       },
       "NornIrRequirementRequirementWording": {
         "type": "object",
@@ -14514,6 +14561,17 @@
           "$ref": "#/components/schemas/NornIrRequirementLocalizedRequirement"
         },
         "minProperties": 1
+      },
+      "NornIrRequirementRetriggerPolicy": {
+        "type": "string",
+        "enum": [
+          "keep_first",
+          "restart"
+        ],
+        "x-enumDescriptions": [
+          "A trigger while open is recorded as ignored; the first deadline stands.",
+          "A trigger while open restarts the window from the triggering commit."
+        ]
       },
       "NornIrRequirementRuleByteRange": {
         "type": "object",
@@ -14625,6 +14683,60 @@
           },
           "requirement": {
             "$ref": "#/components/schemas/NornIrRequirementStructuredRequirement"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRequirementWithinTiming": {
+        "type": "object",
+        "description": "Activation policy for `within`; the duration stays in `law.timing`.",
+        "required": [
+          "trigger",
+          "retrigger",
+          "accountable"
+        ],
+        "properties": {
+          "accountable": {
+            "type": "string",
+            "description": "Principal or role answerable for discharge; grants no authority."
+          },
+          "calendar": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRequirementCalendarPin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Business calendar for the deadline. No calendar is admitted yet: refuses."
+          },
+          "cancel": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRequirementZenExpression"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional committed-state predicate that closes an open activation unpaid."
+          },
+          "retrigger": {
+            "type": "string",
+            "description": "What a trigger does while an activation is already open.",
+            "enum": [
+              "keep_first",
+              "restart"
+            ],
+            "x-enumDescriptions": [
+              "A trigger while open is recorded as ignored; the first deadline stands.",
+              "A trigger while open restarts the window from the triggering commit."
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "description": "Lifecycle transition identity on the subject that opens an activation.\nAdmission (norn-checker) checks it is nonblank; resolving it against the\nsubject's lifecycle is catalog admission (TARGET)."
           }
         },
         "additionalProperties": false

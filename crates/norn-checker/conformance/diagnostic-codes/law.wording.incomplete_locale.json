@@ -1,0 +1,7 @@
+{
+  "code": "law.wording.incomplete_locale",
+  "message": "a declared requirement locale lacks a slot, label or term its rendering needs: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
