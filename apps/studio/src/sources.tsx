@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
-import { ArrowRight, Database, Search, Shapes } from "lucide-react"
+import { ArrowRight, Box, Database, Layers, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { KpiTile } from "@/components/kpi-tile"
 import { EmptyState, Panel, Well } from "@/components/panel"
@@ -196,7 +196,7 @@ export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
-    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces" })))
+    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, tint: definition === "object type" ? (1 as const) : (3 as const) })))
 }
 
 /** The admitted catalog, indexed once per read. */

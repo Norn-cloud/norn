@@ -1,10 +1,11 @@
 import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
+import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import {
   type ColumnDef, type SortingState, flexRender, getCoreRowModel, getFilteredRowModel,
   getPaginationRowModel, getSortedRowModel, useReactTable,
 } from "@tanstack/react-table"
-import { ArrowDown, ArrowUp, ArrowUpDown, Database, Link2, Rows3 } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, Database, GitBranch, Link2, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -190,6 +191,11 @@ export function ObjectPage() {
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
       {reads.isSuccess && data === null && <p className="text-muted-foreground">This record is not available yet.</p>}
       {data && concept && <>
+        {concept.lifecycles.map((lifecycle) => (
+          <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
+            <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
+          </Panel>
+        ))}
         <Panel icon={Rows3} label="Facts"><Well className="p-3">
           <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Value</TableHead></TableRow>}>
             {concept.fields.map((field) => (
