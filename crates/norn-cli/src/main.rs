@@ -321,6 +321,25 @@ mod tests {
             base,
             "a hidden symlink is never followed"
         );
+        // A hidden directory is never visited: what it holds would refuse.
+        let unvisited = Tree::new("hidden-dir");
+        std::fs::create_dir_all(unvisited.path().join(".git")).unwrap();
+        symlink(
+            unvisited.path().join("src"),
+            unvisited.path().join(".git/link"),
+        )
+        .unwrap();
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let name = std::ffi::OsStr::from_bytes(b"\xff");
+            // Some filesystems refuse non-UTF-8 names themselves.
+            let _optional = std::fs::write(unvisited.path().join(".git").join(name), b"x");
+        }
+        assert_eq!(
+            unvisited.digest().unwrap(),
+            base,
+            "nothing below a hidden directory is read or refused"
+        );
         for name in ["link", "target"] {
             let tree = Tree::new(&format!("visible-{name}"));
             symlink(tree.path().join("src"), tree.path().join(name)).unwrap();
@@ -330,6 +349,15 @@ mod tests {
                 "{name}: {refused}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_that_is_neither_a_directory_nor_a_file_refuses() {
+        let tree = Tree::new("socket");
+        let _socket = std::os::unix::net::UnixListener::bind(tree.path().join("src/sock")).unwrap();
+        let refused = tree.digest().unwrap_err();
+        assert!(refused.contains("not a regular file"), "{refused}");
     }
 
     #[cfg(unix)]
