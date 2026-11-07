@@ -23,10 +23,10 @@ pub mod host;
 pub mod jcs;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
-/// Typed object, link and source-lineage reads for the Data Explorer.
-pub mod objects;
 /// HOST-READ-2: authorized typed object pages and objects.
 pub mod object_routes;
+/// Typed object, link and source-lineage reads for the Data Explorer.
+pub mod objects;
 /// Authorized exact question answers and numeric traces.
 pub mod question_routes;
 /// Authorized read services shared by transports.
