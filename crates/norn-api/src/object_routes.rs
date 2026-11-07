@@ -506,10 +506,10 @@ pub(crate) fn scan_bound_exceeded() -> Refusal {
 
 /// The cursor `text` decodes to, when it continues this query: the same
 /// type, normalized query, scope and caller (`bound`, in that order).
-fn continued(text: Option<&str>, bound: [&str; 4]) -> Result<Option<Cursor>, Refusal> {
+fn continued(text: Option<&str>, bound: [&str; 3]) -> Result<Option<Cursor>, Refusal> {
     text.map(|text| {
         Cursor::decode(text)
-            .filter(|cursor| [&*cursor.t, &*cursor.q, &*cursor.s, &*cursor.a] == bound)
+            .filter(|cursor| [&*cursor.q, &*cursor.s, &*cursor.a] == bound)
             .ok_or_else(object_query::cursor_invalid)
     })
     .transpose()
@@ -573,9 +573,8 @@ pub fn get_object_query_within<E: SqlEngine>(
     let cursor = continued(
         query.after.as_deref(),
         [
-            object_type,
             &digest,
-            &host.scope().key(),
+            &Cursor::scope_digest(&host.scope().key()),
             &Cursor::actor_digest(&actor),
         ],
     )?;
@@ -583,7 +582,7 @@ pub fn get_object_query_within<E: SqlEngine>(
     // A sort or filter reads the whole collection; a plain page streams from
     // the cursor's id and, past the first page, stops one row past the page.
     let (from, want) = match (&cursor, full) {
-        (Some(cursor), false) => (Some(cursor.id.as_str()), query.limit.saturating_add(1)),
+        (Some(cursor), false) => (Some(cursor.p.as_str()), query.limit.saturating_add(1)),
         _ => (None, usize::MAX),
     };
     let scan = scan_listed(host, access, &actor, object_type, (from, want, max_scan))?;
@@ -608,7 +607,7 @@ pub fn get_object_query_within<E: SqlEngine>(
     let begin = match (&cursor, full) {
         (Some(cursor), true) => matched
             .iter()
-            .position(|listed| listed.row.id == cursor.id)
+            .position(|listed| Cursor::row_digest(&listed.row.id) == cursor.p)
             .map(|at| at.saturating_add(1))
             .ok_or_else(object_query::cursor_invalid)?,
         _ => 0,
@@ -623,14 +622,17 @@ pub fn get_object_query_within<E: SqlEngine>(
     let next = match page.last() {
         Some(last) if more => Some(
             Cursor {
-                v: 1,
-                t: object_type.to_owned(),
+                v: 2,
                 q: digest,
-                s: host.scope().key(),
+                s: Cursor::scope_digest(&host.scope().key()),
                 a: Cursor::actor_digest(&actor),
                 c: scan.version.0,
                 r: scan.version.1,
-                id: last.row.id.clone(),
+                p: if full {
+                    Cursor::row_digest(&last.row.id)
+                } else {
+                    last.row.id.clone()
+                },
             }
             .encode(),
         ),
@@ -659,8 +661,8 @@ pub fn get_object_query_within<E: SqlEngine>(
 /// are read under one snapshot.
 ///
 /// # Errors
-/// As [`get_object`], and a commit between the two locked reads (409
-/// `object.snapshot_moved`, `retryable`).
+/// As [`get_object`], and a commit between the row read and the closing
+/// snapshot check, withheld or not (409 `object.snapshot_moved`, `retryable`).
 pub fn get_queried_object<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -684,13 +686,19 @@ pub fn get_queried_object<E: SqlEngine>(
         return Err(not_found());
     }
     let readable = permitted(host, access, &actor, &row, Values);
-    if readable
-        && locked(host, access, &mut start, |reader| {
+    // The closing section always runs, so a commit during authorization is
+    // detected for a withheld record too; only the quarantine lookup needs
+    // Values.
+    let quarantined = locked(host, access, &mut start, |reader| {
+        if readable {
             reader
                 .observation_is_quarantined(MAIN_WORLD, &row)
                 .map_err(Refusal::host)
-        })?
-    {
+        } else {
+            Ok(false)
+        }
+    })?;
+    if quarantined {
         return Err(not_found());
     }
     Ok(queried(&Listed { row, readable }))

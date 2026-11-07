@@ -591,3 +591,89 @@ fn rows_hidden_from_the_caller_never_count_toward_the_scan_bound() {
         (413, "object.scan_bound_exceeded")
     );
 }
+
+/// Every cursor the host issues is one it accepts: pages page through a row
+/// whose id is about 4 000 bytes of characters JSON would escape, plain and
+/// sorted.
+#[test]
+fn a_4000_byte_id_pages_through_plain_and_sorted() {
+    let long = format!("L-{}", "\"\\é".repeat(1_000));
+    let mut rows = writes([(Some("512"), Some("gold")), (Some("8"), None)]);
+    rows.push(row(&long, Some("300"), Some("gold")));
+    let (host, _dir) = host_of(rows);
+    for base in [
+        params(Some("1"), None, None),
+        params(Some("1"), Some("input:desc"), None),
+    ] {
+        let all = pages(&host, "full", &base);
+        let seen = ids(&all);
+        assert_eq!(seen.len(), 9, "{base:?}");
+        assert_eq!(seen.iter().filter(|id| **id == long).count(), 1, "{base:?}");
+        assert!(
+            all.iter()
+                .filter_map(|page| page.next.as_ref())
+                .all(|next| next.len() <= norn_api::object_query::MAX_CURSOR_BYTES),
+            "{base:?}"
+        );
+    }
+}
+
+/// Commits once, through a second connection, the first time a row is
+/// authorized: between a read's locked sections.
+struct CommitsOnRowAccess {
+    path: std::path::PathBuf,
+    committed: std::sync::atomic::AtomicBool,
+}
+impl ObjectAccess for CommitsOnRowAccess {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<PdpRequest, Refusal> {
+        if row.is_some()
+            && !self
+                .committed
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            commit_elsewhere(&self.path);
+        }
+        Mapping.access(scope, actor, capability, object_type, row)
+    }
+}
+
+/// Commit one row through a second connection to the cell at `path`.
+fn commit_elsewhere(path: &std::path::Path) {
+    let model =
+        norn_cell::Model::from_definitions(std::slice::from_ref(&nullable_type()), &[]).unwrap();
+    let mut store = CellStore::open(path, model, norn_cell::StoreOptions::default()).unwrap();
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 5_000,
+            writes: vec![row("R-99", Some("1"), Some("gold"))],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+}
+
+/// A Population-only read of one object detects a commit made while the row
+/// was being authorized: the withheld record is never served from a moved
+/// snapshot.
+#[test]
+fn a_withheld_object_read_detects_a_commit_during_authorization() {
+    let (host, dir) = host_of(writes([(Some("512"), Some("gold")), (Some("8"), None)]));
+    let commits = CommitsOnRowAccess {
+        path: dir.path().join("cell.sqlite"),
+        committed: std::sync::atomic::AtomicBool::new(false),
+    };
+    let moved =
+        get_queried_object(&host, &scope(), Some("pop"), TYPE, WITHHELD[0], &commits).unwrap_err();
+    assert_eq!(
+        (moved.status, moved.code.as_str(), moved.retryable),
+        (409, "object.snapshot_moved", true)
+    );
+}
