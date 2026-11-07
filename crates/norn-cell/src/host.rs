@@ -551,6 +551,15 @@ fn predicate_objects<S: SqlEngine>(
             .max_records,
     )
     .unwrap_or(usize::MAX);
+    // Interfaces have no stored table chain; a predicate over one is
+    // unsupported on every host.
+    if !reader
+        .model()
+        .object_types()
+        .any(|defined| defined.name == predicate.object_type)
+    {
+        return Ok(None);
+    }
     let records = reader.list_after(
         MAIN_WORLD,
         predicate.object_type.as_str(),

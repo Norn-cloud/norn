@@ -60,8 +60,12 @@ pub struct PredicateWindow {
 }
 
 /// Which objects a predicate read selects: every live object whose concrete
-/// type is `object_type` (or a subtype or implementer) whose properties equal
-/// `filter` and, when present, fall inside `window`.
+/// type is the stored object type `object_type` or one of its subtypes, whose
+/// properties equal `filter` and, when present, fall inside `window`.
+///
+/// Interfaces are not supported: a predicate over an interface is refused
+/// at commit ([`crate::CommitError::InvalidPredicateRead`]), and every host's
+/// `read_predicate` and `predicate_members` return `None` for it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PredicateQuery {
@@ -234,6 +238,9 @@ pub(crate) fn check_predicate_read_shapes<X>(
             reason,
         };
         predicate.check_shape()?;
+        if !model.is_object_type(&predicate.object_type) {
+            return Err(invalid("the predicate type is not a stored object type"));
+        }
         if seen.contains(&predicate) {
             return Err(invalid("the same predicate is read twice"));
         }

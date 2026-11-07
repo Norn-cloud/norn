@@ -51,6 +51,11 @@ pub struct CommitModel<'m, 'a> {
 }
 
 impl<'m, 'a> CommitModel<'m, 'a> {
+    /// Whether `object_type` is a stored object type (not an interface).
+    pub(crate) fn is_object_type(&self, object_type: &ObjectTypeName) -> bool {
+        self.catalog.contains(object_type)
+    }
+
     /// The model of `catalog`.
     #[must_use]
     pub const fn new(catalog: &'m TypeCatalog<'a>) -> Self {

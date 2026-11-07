@@ -2442,3 +2442,109 @@ fn malformed_predicate_reads_are_refused_before_the_host_is_read() {
         .expect_err("one predicate is read once");
     assert_eq!(twice.code(), "commit.invalid_predicate_read");
 }
+
+fn parity_definitions() -> (Vec<norn_ir::ObjectTypeDef>, Vec<norn_ir::InterfaceDef>) {
+    let types = serde_json::from_value(json!([{
+        "name": "books.Entry",
+        "implements": ["books.Dated"],
+        "properties": [
+            { "id": "account", "type": { "kind": "text" } },
+            { "id": "booked_on", "type": { "kind": "date" } }
+        ]
+    }]))
+    .expect("types");
+    let interfaces =
+        serde_json::from_value(json!([{ "name": "books.Dated" }])).expect("interfaces");
+    (types, interfaces)
+}
+
+/// Sol on #1118: the SQLite cell and the memory cell agree on predicate
+/// reads: identical members and versions for an object type, and an
+/// interface predicate is unsupported on both, at read and at commit.
+#[test]
+fn predicate_reads_agree_across_hosts_and_refuse_interfaces_on_both() {
+    let (types, interfaces) = parity_definitions();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut native = SqliteCell::open(
+        &dir.path().join("cell.sqlite"),
+        Model::from_definitions_with_interfaces(&types, &[], &interfaces).expect("model"),
+        StoreOptions::default(),
+        "org_demo/dev",
+        charge_responder,
+    )
+    .expect("opens");
+    let mut memory = norn_testkit::cell_host::MemoryCell::<OrderEvent, Charge, OrderInput>::new(
+        charge_responder,
+    )
+    .with_types(types)
+    .with_interfaces(interfaces);
+    for (id, account, on) in [
+        ("E1", "A", "2026-11-01"),
+        ("E2", "A", "2026-11-30"),
+        ("E3", "B", "2026-11-05"),
+        ("E4", "A", "2026-12-01"),
+    ] {
+        let write = || CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("books.Entry", id),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: serde_json::from_value(json!({ "account": account, "booked_on": on }))
+                        .expect("values"),
+                },
+            }],
+            ..CellCommit::empty()
+        };
+        native.commit(write()).expect("native write");
+        memory.commit(write()).expect("memory write");
+    }
+
+    let concrete = november("A", true);
+    let members = |objects: Option<Vec<PredicateObject>>| -> Vec<PredicateReadMember> {
+        objects
+            .expect("an object type is enumerable")
+            .iter()
+            .map(PredicateObject::member)
+            .collect()
+    };
+    let from_native = members(native.read_predicate(&concrete, 16).expect("native read"));
+    let from_memory = members(memory.read_predicate(&concrete, 16).expect("memory read"));
+    assert_eq!(ids(&from_native), ["E1", "E2"]);
+    assert_eq!(from_native, from_memory, "members and versions agree");
+
+    let interface: PredicateQuery =
+        serde_json::from_value(json!({ "objectType": "books.Dated" })).expect("predicate");
+    assert_eq!(
+        native.read_predicate(&interface, 16).expect("native read"),
+        None
+    );
+    assert_eq!(
+        memory.read_predicate(&interface, 16).expect("memory read"),
+        None
+    );
+    let pinned = || CellCommit {
+        predicate_reads: vec![PredicateReadExpectation {
+            predicate: interface.clone(),
+            members: Vec::new(),
+        }],
+        ..CellCommit::empty()
+    };
+    let native_refusal = native.commit(pinned()).expect_err("native refuses");
+    let memory_refusal = memory.commit(pinned()).expect_err("memory refuses");
+    assert_eq!(native_refusal.code(), "commit.invalid_predicate_read");
+    assert_eq!(memory_refusal.code(), native_refusal.code());
+
+    let pinned_concrete = |members: &[PredicateReadMember]| CellCommit {
+        predicate_reads: vec![PredicateReadExpectation {
+            predicate: concrete.clone(),
+            members: members.to_vec(),
+        }],
+        ..CellCommit::empty()
+    };
+    native
+        .commit(pinned_concrete(&from_native))
+        .expect("native commits an unchanged read");
+    memory
+        .commit(pinned_concrete(&from_memory))
+        .expect("memory commits an unchanged read");
+}
