@@ -2,7 +2,7 @@ import { Chat, useChat } from "@ai-sdk/react"
 import { DefaultChatTransport, type UIMessage } from "ai"
 import { Bot, LoaderCircle, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { Streamdown } from "streamdown"
 import { StickToBottom } from "use-stick-to-bottom"
 import { Button } from "@/components/ui/button"
@@ -57,13 +57,29 @@ export interface AgentState {
   readonly setInput: (input: string) => void
   readonly stopped: ReadonlySet<string>
   readonly setStopped: (update: (set: ReadonlySet<string>) => ReadonlySet<string>) => void
+  /** Whether this deployment serves the agent route: unknown until the one probe answers. */
+  readonly agentServed?: boolean
 }
+
+/** The agent route is missing (404), has no agent service bound (503), or cannot be reached: the assistant cannot answer here. */
+export const agentServedBy = (status: number | "unreachable"): boolean => status !== "unreachable" && status !== 404 && status !== 503
+
+export const AGENT_UNSERVED = "The assistant needs the agent service, which this deployment does not serve yet."
 
 export function useAgentState(): AgentState {
   const [chat] = useState(() => new Chat<UIMessage>({ transport: new DefaultChatTransport({ api: "/api/agent", headers: () => ({ "x-norn-session": sessionId(tabStorage()) }) }) }))
   const [input, setInput] = useState("")
   const [stopped, setStopped] = useState<ReadonlySet<string>>(new Set())
-  return { chat, input, setInput, stopped, setStopped }
+  const [agentServed, setAgentServed] = useState<boolean>()
+  // Probe the agent route once per page; it takes only POST, so any answer but 404 or 503 means it is served.
+  useEffect(() => {
+    let current = true
+    fetch("/api/agent", { method: "GET", headers: { accept: "application/json" } })
+      .then((response) => response.status, () => "unreachable" as const)
+      .then((status) => { if (current) setAgentServed(agentServedBy(status)) })
+    return () => { current = false }
+  }, [])
+  return { chat, input, setInput, stopped, setStopped, agentServed }
 }
 
 /** The assistant (AI SDK chat; scrolling and markdown from use-stick-to-bottom and streamdown): ask for a change in plain words; the server's checker admits or refuses what it proposes. */
@@ -71,7 +87,7 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
   const { chat, input, setInput, stopped, setStopped } = state
   const { messages, sendMessage, status, error, stop, regenerate, clearError } = useChat({ chat })
   const busy = status === "submitted" || status === "streaming"
-  const send = (text: string) => { if (text.trim() === "" || busy) return; clearError(); void sendMessage({ text }); setInput("") }
+  const send = (text: string) => { if (text.trim() === "" || busy || state.agentServed === false) return; clearError(); void sendMessage({ text }); setInput("") }
   const submit = (event: FormEvent) => { event.preventDefault(); send(input) }
   const last = messages.at(-1)
   return (
@@ -103,6 +119,8 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
         </StickToBottom.Content>
       </StickToBottom>
       <div className="space-y-2 border-t p-3">
+        {state.agentServed === false && <p role="status" className="text-meta text-muted-foreground">{AGENT_UNSERVED}</p>}
+        <fieldset disabled={state.agentServed === false} className="contents">
         {messages.length === 0 && (
           <div className="flex flex-wrap gap-2">{SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}</div>
         )}
@@ -113,6 +131,7 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
             ? <Button type="button" variant="outline" onClick={() => void stop()}>Stop</Button>
             : <Button type="submit" disabled={input.trim() === ""}>Send</Button>}
         </form>
+        </fieldset>
       </div>
     </div>
   )
