@@ -110,6 +110,6 @@ export const SetValuationPolicy = Norn.action({
     { id: "policy", title: "Policy", fields: ["/id", "/label"] },
     { id: "valuation", title: "Valuation", fields: ["/valuation_method"] },
   ],
-  writes: [{ type: ValuationPolicy, change: "modified" }],
+  writes: [{ type: ValuationPolicy, change: "created" }, { type: ValuationPolicy, change: "modified" }],
   effect: { kind: "upsert_input_object", type: ValuationPolicy, objectIdField: "id" },
 })
