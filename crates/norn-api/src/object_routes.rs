@@ -457,16 +457,20 @@ fn scan_listed<E: SqlEngine>(
             }
         }
         scan.version = start.unwrap_or_default();
+        // The bound counts only rows the caller may see: a bound on raw rows
+        // would reveal how many it may not (HOST-READ-2). It is checked before
+        // the end of the collection, so the last batch cannot carry it past.
+        let visible = u64::try_from(scan.listed.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(scan.quarantined);
+        if visible > u64::try_from(max).unwrap_or(u64::MAX) {
+            return Ok(scan);
+        }
         if ended {
             scan.exhausted = true;
             return Ok(scan);
         }
-        // The bound counts only rows the caller may see: a bound on raw rows
-        // would reveal how many it may not (HOST-READ-2).
-        let visible = u64::try_from(scan.listed.len())
-            .unwrap_or(u64::MAX)
-            .saturating_add(scan.quarantined);
-        if visible > u64::try_from(max).unwrap_or(u64::MAX) || scan.listed.len() >= want {
+        if scan.listed.len() >= want {
             return Ok(scan);
         }
     }
