@@ -407,6 +407,28 @@ fn synchronous_rule_never_degrades_to_the_primary_effect() {
 }
 
 #[test]
+fn aggregate_inputs_refuse_before_any_host_read_until_evaluated_at_commit() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let mut action = approve();
+    action.aggregates = vec![
+        serde_json::from_value(json!({
+            "name": "open_orders", "objectType": "SalesOrder",
+            "aggregate": {"kind": "count"}, "maxItems": 10
+        }))
+        .unwrap(),
+    ];
+    let refusal = commit_action(
+        &mut NoReadOrCommit,
+        &catalog,
+        &call(&action, "SO-1", "aggregate"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refusal.code(), "action.unsupported_effect");
+}
+
+#[test]
 fn overlong_idempotency_key_is_refused_before_any_host_read_or_commit() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
