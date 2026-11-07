@@ -63,6 +63,14 @@ export class ExpansionBudget {
     } finally { this.active.delete(value) }
   }
 
+  /**
+   * Start the next root module of a pack (#1110): work is bounded per module,
+   * while the output byte bound and the deadline stay pack-wide.
+   */
+  beginModule(): void { this.work = 0 }
+  /** Work charged since the last `beginModule`. */
+  get workUsed(): number { return this.work }
+
   assert(value: unknown): void { this.charge(this.cost(value)) }
   /** Reserve `work` units for data about to be materialized (measured on a shared DAG by the caller). */
   reserve(work: number): void { this.charge({ work: this.capWork(work), bytes: 0, lines: 0, height: 0 }) }

@@ -14,7 +14,7 @@ test("every stage needs a session secret and a state password", () => {
 })
 
 test("users sign in on the stage's first domain; a mail sender is optional", () => {
-  const prod = deployTarget({})
+  const prod = deployTarget({ ALCHEMY_STAGE: "prod", NORN_DEPLOY_PROD: "1" })
   expect(authDeploy({ BETTER_AUTH_SECRET: secret, ALCHEMY_PASSWORD: "p", STUDIO_EMAIL_FROM: "studio@norn.cloud" }, prod))
     .toEqual({ secret, url: "https://studio.norn.cloud", emailFrom: "studio@norn.cloud" })
   expect(() => authDeploy({ BETTER_AUTH_SECRET: secret, ALCHEMY_PASSWORD: "p", STUDIO_EMAIL_FROM: "nope" }, prod)).toThrow("STUDIO_EMAIL_FROM")

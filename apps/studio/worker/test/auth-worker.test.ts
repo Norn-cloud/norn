@@ -249,3 +249,38 @@ test("failure to initialize provisioning rolls back user creation and a retry su
   const me = await (await call(env, "/api/me", { headers: { cookie: cookieOf(signedIn) } })).json() as { organization: { role: string } }
   expect(me.organization.role).toBe("owner")
 })
+
+const meOf = async (env: Env, cookie: string, extra: HeadersInit = {}, query = "") =>
+  await (await call(env, `/api/me${query}`, { headers: { cookie, ...extra } })).json() as { organization: { id: string } | null; environmentId: string | null }
+
+test("/api/me gives the active workspace's provisioned environment, and none for a workspace without one", async () => {
+  const env = { ...stage(), STUDIO_DEFAULT_ENVIRONMENT_ID: "server-cell" }
+  const db = env.AUTH_DB as unknown as Database
+  const cookie = cookieOf(await enroll(env, "cell@example.com", "Cell"))
+  const own = (db.query(`select "organizationId" from "member"`).get() as { organizationId: string }).organizationId
+  expect(await meOf(env, cookie)).toMatchObject({ organization: { id: own }, environmentId: "server-cell" })
+  // A workspace provisioned without a default environment, or with malformed metadata, has none.
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ label: "x" }), own])
+  expect((await meOf(env, cookie)).environmentId).toBeNull()
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, ["not-json", own])
+  expect((await meOf(env, cookie)).environmentId).toBeNull()
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: " " }), own])
+  expect((await meOf(env, cookie)).environmentId).toBeNull()
+})
+
+test("/api/me never takes the environment from the client, and gives none for a workspace the caller is not a member of", async () => {
+  const env = { ...stage(), STUDIO_DEFAULT_ENVIRONMENT_ID: "server-cell" }
+  const db = env.AUTH_DB as unknown as Database
+  const cookie = cookieOf(await enroll(env, "claims@example.com", "Claims"))
+  const user = (db.query(`select "id" from "user" where "email" = 'claims@example.com'`).get() as { id: string }).id
+  // Whatever the request claims, the answer is the server's.
+  expect((await meOf(env, cookie, { "x-norn-environment": "warehouse" }, "?environmentId=warehouse&orgId=org_other")).environmentId).toBe("server-cell")
+  // A client's own metadata write cannot set it (reserved keys are stripped), so /api/me still reads the provisioned one.
+  const own = (db.query(`select "organizationId" from "member"`).get() as { organizationId: string }).organizationId
+  expect((await post(env, "/api/auth/organization/update", { organizationId: own, data: { metadata: { environmentId: "warehouse" } } }, { cookie })).status).toBe(200)
+  expect((await meOf(env, cookie)).environmentId).toBe("server-cell")
+  // An active workspace the caller does not belong to (a stale or forged session value): no workspace, no environment.
+  db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_other', 'Other', 'other', ?, ?)`, [JSON.stringify({ environmentId: "warehouse" }), Date.now()])
+  db.run(`update "session" set "activeOrganizationId" = 'org_other' where "userId" = ?`, [user])
+  expect(await meOf(env, cookie)).toMatchObject({ organization: null, environmentId: null })
+})

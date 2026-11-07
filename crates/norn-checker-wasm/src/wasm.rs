@@ -121,3 +121,25 @@ pub fn function_contract(
 pub fn version() -> String {
     crate::version_json()
 }
+
+/// `restateQuestion(questionJson, metricsJson)`: see
+/// [`crate::restate_question_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = restateQuestion)]
+pub fn restate_question(question_json: &str, metrics_json: &str) -> Result<String, JsError> {
+    crate::restate_question_json(question_json, metrics_json).map_err(JsError::from)
+}
+
+/// `restateDashboard(payloadJson, metricsJson)`: see
+/// [`crate::restate_dashboard_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = restateDashboard)]
+pub fn restate_dashboard(payload_json: &str, metrics_json: &str) -> Result<String, JsError> {
+    crate::restate_dashboard_json(payload_json, metrics_json).map_err(JsError::from)
+}
