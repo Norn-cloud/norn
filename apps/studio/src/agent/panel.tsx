@@ -67,6 +67,15 @@ export const agentServedBy = (status: number | "unreachable"): boolean => status
 
 export const AGENT_UNSERVED = "The assistant needs the agent service, which this deployment does not serve yet."
 
+/** The one probe: what the agent route answers, or "unreachable" when the request fails. */
+export const probeAgentRoute = (fetcher: (input: string, init?: RequestInit) => Promise<Response> = fetch): Promise<boolean> =>
+  fetcher("/api/agent", { method: "GET", headers: { accept: "application/json" } })
+    .then((response) => agentServedBy(response.status), () => agentServedBy("unreachable"))
+
+/** Sending is open only once the probe has said the route is served: never while it is pending or after it failed. */
+export const canSend = (agentServed: boolean | undefined, text: string, busy: boolean): boolean =>
+  agentServed === true && text.trim() !== "" && !busy
+
 export function useAgentState(): AgentState {
   const [chat] = useState(() => new Chat<UIMessage>({ transport: new DefaultChatTransport({ api: "/api/agent", headers: () => ({ "x-norn-session": sessionId(tabStorage()) }) }) }))
   const [input, setInput] = useState("")
@@ -75,9 +84,7 @@ export function useAgentState(): AgentState {
   // Probe the agent route once per page; it takes only POST, so any answer but 404 or 503 means it is served.
   useEffect(() => {
     let current = true
-    fetch("/api/agent", { method: "GET", headers: { accept: "application/json" } })
-      .then((response) => response.status, () => "unreachable" as const)
-      .then((status) => { if (current) setAgentServed(agentServedBy(status)) })
+    void probeAgentRoute().then((served) => { if (current) setAgentServed(served) })
     return () => { current = false }
   }, [])
   return { chat, input, setInput, stopped, setStopped, agentServed }
@@ -88,7 +95,7 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
   const { chat, input, setInput, stopped, setStopped } = state
   const { messages, sendMessage, status, error, stop, regenerate, clearError } = useChat({ chat })
   const busy = status === "submitted" || status === "streaming"
-  const send = (text: string) => { if (text.trim() === "" || busy || state.agentServed === false) return; clearError(); void sendMessage({ text }); setInput("") }
+  const send = (text: string) => { if (!canSend(state.agentServed, text, busy)) return; clearError(); void sendMessage({ text }); setInput("") }
   const submit = (event: FormEvent) => { event.preventDefault(); send(input) }
   const last = messages.at(-1)
   return (
@@ -121,7 +128,8 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
       </StickToBottom>
       <div className="space-y-2 border-t p-3">
         {state.agentServed === false && <p role="status" className="text-meta text-muted-foreground">{AGENT_UNSERVED}</p>}
-        <fieldset disabled={state.agentServed === false} className="contents">
+        {state.agentServed === undefined && <p role="status" className="text-meta text-muted-foreground">Checking the agent service…</p>}
+        <fieldset disabled={state.agentServed !== true} className="contents">
         {messages.length === 0 && (
           <div className="flex flex-wrap gap-2">{SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}</div>
         )}

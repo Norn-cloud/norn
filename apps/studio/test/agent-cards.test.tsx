@@ -4,7 +4,7 @@ import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, verdictOf } from "../src/agent/verdict.ts"
 import { Chat } from "@ai-sdk/react"
 import type { UIMessage } from "ai"
-import { AGENT_UNSERVED, AgentPanel, agentServedBy, sendsOnEnter, type AgentState } from "../src/agent/panel.tsx"
+import { AGENT_UNSERVED, AgentPanel, agentServedBy, canSend, probeAgentRoute, sendsOnEnter, type AgentState } from "../src/agent/panel.tsx"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
 const refusal = {
@@ -70,7 +70,7 @@ test("a tab keeps one session id when its storage throws", () => {
 
 test("the panel renders the conversation and draft it is given, so reopening the sheet keeps them", () => {
   const chat = new Chat<UIMessage>({ messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Let Receive start from draft" }] }] })
-  const state: AgentState = { chat, input: "half-typed draft", setInput: () => {}, stopped: new Set(), setStopped: () => {} }
+  const state: AgentState = { chat, input: "half-typed draft", setInput: () => {}, stopped: new Set(), setStopped: () => {}, agentServed: true }
   const html = renderToStaticMarkup(<AgentPanel state={state} />)
   expect(html).toContain("Let Receive start from draft")
   expect(html).toContain("half-typed draft")
@@ -125,4 +125,25 @@ test("where the agent route is not served, the assistant says so and its compose
   const on = renderToStaticMarkup(<AgentPanel state={{ ...base, agentServed: true }} />)
   expect(on).not.toContain(AGENT_UNSERVED)
   expect(on).not.toMatch(/<fieldset disabled=""/)
+})
+
+test("sending stays closed while the agent probe is pending, and after it fails or is refused", async () => {
+  expect(canSend(undefined, "hello", false)).toBe(false)
+  expect(canSend(false, "hello", false)).toBe(false)
+  expect(canSend(true, "hello", false)).toBe(true)
+  expect(canSend(true, " ", false)).toBe(false)
+  expect(canSend(true, "hello", true)).toBe(false)
+  expect(await probeAgentRoute(async () => { throw new TypeError("network") })).toBe(false)
+  expect(await probeAgentRoute(async () => new Response(null, { status: 404 }))).toBe(false)
+  expect(await probeAgentRoute(async () => new Response(null, { status: 503 }))).toBe(false)
+  expect(await probeAgentRoute(async () => new Response(null, { status: 405 }))).toBe(true)
+  // A probe that never settles leaves the panel pending: the composer is disabled and says it is checking.
+  let settled = false
+  void probeAgentRoute(() => new Promise<Response>(() => {})).then(() => { settled = true })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(settled).toBe(false)
+  const pending: AgentState = { chat: new Chat<UIMessage>({}), input: "draft", setInput: () => {}, stopped: new Set(), setStopped: () => {} }
+  const html = renderToStaticMarkup(<AgentPanel state={pending} />)
+  expect(html).toMatch(/<fieldset disabled=""/)
+  expect(html).toContain("Checking the agent service…")
 })
