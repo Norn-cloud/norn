@@ -40,7 +40,7 @@ export interface AuthDeploy {
 export function authDeploy(env: Readonly<Record<string, string | undefined>>, target: DeployTarget): AuthDeploy {
   const secret = env.BETTER_AUTH_SECRET
   if (secret === undefined || secret.length < 32) throw new Error("BETTER_AUTH_SECRET (at least 32 characters) is required: every stage requires sign-in")
-  if (env.ALCHEMY_PASSWORD === undefined) throw new Error("ALCHEMY_PASSWORD is required to encrypt the Worker secrets in state")
+  if (!env.ALCHEMY_PASSWORD?.trim()) throw new Error("ALCHEMY_PASSWORD is required to encrypt the Worker secrets in state")
   const emailFrom = env.STUDIO_EMAIL_FROM
   if (emailFrom !== undefined && !/^[^@\s]+@[a-z0-9.-]+$/.test(emailFrom)) throw new Error("STUDIO_EMAIL_FROM must be an email address")
   return { secret, url: `https://${target.domains[0]}`, ...emailFrom === undefined ? {} : { emailFrom } }
