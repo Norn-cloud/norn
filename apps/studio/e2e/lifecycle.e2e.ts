@@ -219,12 +219,13 @@ test("bundle: steps of one step into one state draw as one; hover lights its sou
   // Its steps are not drawn one by one.
   await expect(page.locator('.react-flow__edge[data-id^="cancel:"]')).toHaveCount(0)
   // Hovering it lights its sources (an accent ring on each source card).
+  // Read before any click, so the ring comes from hover alone; the card's shadow eases in (200ms), so poll until it settles.
+  const ring = () => page.locator('.react-flow__node[data-id="draft"] .canvas-node').evaluate((element) => getComputedStyle(element).boxShadow)
   await page.locator('.react-flow__edge[data-id^="bundle:cancel:"]').first().hover({ force: true })
+  await expect.poll(ring).toContain("0px 0px 0px 4px")
   await bundle.click()
   await expect(page.getByTestId("step-sources").locator("li")).toHaveCount(count)
   await expect(page.getByTestId("step-sources")).toContainText("Draft → Cancelled")
-  // The card's shadow eases in (200ms), so read it once it has settled.
-  await expect.poll(() => page.locator('.react-flow__node[data-id="draft"] .canvas-node').evaluate((element) => getComputedStyle(element).boxShadow)).toContain("0px 0px 0px 4px")
   // Removing one step leaves the bundle one source smaller; undo brings it back.
   await page.getByRole("button", { name: "Remove the step from Draft" }).click()
   await expect(bundle).toHaveText(`Cancel · from ${count - 1} states`)

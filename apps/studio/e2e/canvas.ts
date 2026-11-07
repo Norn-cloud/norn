@@ -54,7 +54,10 @@ export async function reveal(page: Page, ...targets: Locator[]) {
     if (left >= surface.x + 24 && right <= surface.x + surface.width - 200 && top >= surface.y + 80 && bottom <= surface.y + surface.height - 24) return
     // Ends farther apart than the canvas shows (a long drag): zoom out first, as a person would, then centre them.
     if (right - left > surface.width - 224 || bottom - top > surface.height - 104) {
-      await page.locator(".react-flow__controls-zoomout").click()
+      const zoomOut = page.locator(".react-flow__controls-zoomout")
+      // At the minimum zoom the control is disabled: say so, rather than waiting on it until the test times out.
+      if (await zoomOut.isDisabled()) throw new Error("reveal: the targets do not fit the canvas even at its minimum zoom")
+      await zoomOut.click()
       await page.waitForTimeout(250)
       continue
     }

@@ -265,13 +265,21 @@ function Frame(props: CanvasFrameProps) {
   const focusSheet = useRef<HTMLStyleElement>(null)
   const pointer = useRef<{ readonly node?: string; readonly edge?: string }>({})
   const bundlesOf = useRef((drawn: g.Graph) => props.bundles?.(drawn) ?? [])
-  bundlesOf.current = (drawn: g.Graph) => props.bundles?.(drawn) ?? []
   const membersOf = (id: string): readonly string[] => props.bundles?.(graph).find((bundle) => bundle.id === id)?.members ?? [id]
   const current = useRef({ graph, selection })
-  current.current = { graph, selection }
+  // Committed values only: a discarded render never reaches the refs the pointer handlers paint from.
+  useLayoutEffect(() => {
+    bundlesOf.current = (drawn: g.Graph) => props.bundles?.(drawn) ?? []
+    current.current = { graph, selection }
+  })
   const paintFocus = useCallback(() => {
     const { graph: drawn, selection: chosen } = current.current
-    const over = pointer.current
+    // What the pointer was over may be gone (deleted or undone under it, with no leave event): drop it, so the canvas is not left dimmed.
+    const bundleIds = new Set(bundlesOf.current(drawn).map(({ id }) => id))
+    const over = {
+      ...pointer.current.node && drawn.nodes.some(({ id }) => id === pointer.current.node) ? { node: pointer.current.node } : {},
+      ...pointer.current.edge && (bundleIds.has(pointer.current.edge) || drawn.edges.some(({ id }) => id === pointer.current.edge)) ? { edge: pointer.current.edge } : {},
+    }
     if (focusSheet.current) focusSheet.current.textContent = focusCss(drawn, { nodes: [...chosen.nodes, ...over.node ? [over.node] : []], edges: [...chosen.edges, ...over.edge ? [over.edge] : []] }, canvasId, bundlesOf.current(drawn))
   }, [canvasId])
   useEffect(paintFocus, [graph, selection, paintFocus])
