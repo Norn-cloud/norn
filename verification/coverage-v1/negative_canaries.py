@@ -624,7 +624,8 @@ def studio_browser_pin_canaries() -> None:
     with tempfile.TemporaryDirectory() as directory:
         mutated = Path(directory) / "core.sh"
         for label, before, after in (
-                ("passes with no tests", "        bunx playwright test\n", "        bunx playwright test --pass-with-no-tests\n"),
+                ("passes with no tests", "bunx playwright test --reporter=list,json\n", "bunx playwright test --reporter=list,json --pass-with-no-tests\n"),
+                ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
                 ("not in the plan", " integration browser formal ", " integration formal ")):
@@ -836,7 +837,9 @@ def studio_browser_phase_canaries() -> None:
             "cargo": "exit 0",
             "bun": "exit 0",
             "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
-            "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; exit "$RUN_STATUS"',
+            "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
+                    'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
+                    'exit "$RUN_STATUS"',
         }
         for name, body in tools.items():
             (bin_dir / name).write_text("#!/bin/sh\n" + body + "\n")
@@ -847,13 +850,14 @@ def studio_browser_phase_canaries() -> None:
         config, e2e = tree / "apps/studio/playwright.config.ts", tree / "apps/studio/e2e"
         wasm_libdir = Path(directory) / "wasm32-lib"
         wasm_libdir.mkdir()
-        for label, has_config, has_tests, listed, run_status, expected, libdir in (
-                ("no config, no tests", False, False, "0", 0, 0, ""),
-                ("tests without a config", False, True, "0", 0, 1, str(wasm_libdir)),
-                ("config, no wasm32 target", True, True, "99", 0, 1, str(Path(directory) / "absent")),
-                ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir)),
-                ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir)),
-                ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir))):
+        for label, has_config, has_tests, listed, run_status, expected, libdir, ran in (
+                ("no config, no tests", False, False, "0", 0, 0, "", "0"),
+                ("tests without a config", False, True, "0", 0, 1, str(wasm_libdir), "0"),
+                ("config, no wasm32 target", True, True, "99", 0, 1, str(Path(directory) / "absent"), "0"),
+                ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir), "0"),
+                ("config, every row skipped", True, True, "99", 0, 1, str(wasm_libdir), "0"),
+                ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir), "99"),
+                ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98")):
             config.unlink(missing_ok=True)
             if has_config:
                 config.write_text("export default {}\n")
@@ -868,7 +872,8 @@ def studio_browser_phase_canaries() -> None:
                                     text=True, timeout=60, env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
                                                                 "CARGO_HOME": str(Path(directory) / "cargo-home"),
                                                                 "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
-                                                                "WASM_LIBDIR": libdir})
+                                                                "WASM_LIBDIR": libdir, "RAN": ran,
+                                                                "SKIPPED": str(int(listed) - int(ran))})
             if result.returncode != expected:
                 raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")
             if label == "config, no wasm32 target" and "run under the pinned CI toolchain" not in result.stderr:

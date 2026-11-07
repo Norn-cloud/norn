@@ -223,7 +223,11 @@ PY
         # "No tests found" must fail: a broken testDir or testMatch is never a pass.
         listed=$(bunx playwright test --list | sed -n 's/^Total: \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p')
         [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\n' >&2; exit 1; }
-        bunx playwright test
+        # A suite of only skipped rows must fail too: require at least one executed test.
+        report="$upstream/playwright.json"
+        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json
+        ran=$(python3 -c 'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))' "$report")
+        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\n' >&2; exit 1; }
       )
       ;;
     formal)
