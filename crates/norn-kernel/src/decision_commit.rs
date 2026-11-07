@@ -1921,6 +1921,18 @@ impl<X> DecisionRefusal<X> {
             CommitError::InvalidLinkRead { source_key, link } => Self::InvalidOutput {
                 reason: format!("link targets for {source_key} -{link}-> are malformed"),
             },
+            CommitError::PredicateReadConflict { object_type } => invalid(format!(
+                "objects matching a predicate over {object_type:?} changed since the turn read them"
+            )),
+            CommitError::UnsupportedPredicateRead { object_type } => invalid(format!(
+                "host cannot verify a predicate read over {object_type:?}"
+            )),
+            CommitError::InvalidPredicateRead {
+                object_type,
+                reason,
+            } => Self::InvalidOutput {
+                reason: format!("predicate read over {object_type:?} is malformed: {reason}"),
+            },
             CommitError::DanglingLink { key, missing } => Self::InvalidOutput {
                 reason: format!("link {key} would dangle: {missing} does not exist"),
             },
@@ -2281,6 +2293,7 @@ fn prepare_decision_with_limits_for<X>(
         effects,
         links: Vec::new(),
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     })
 }
 
@@ -2401,6 +2414,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: Vec::new(),
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     match host.commit(commit) {
         Ok(receipt) => {

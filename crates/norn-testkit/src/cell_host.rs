@@ -56,8 +56,9 @@ use norn_kernel::{
     FactState, FactVersion, FactWrite, FreshnessPolicy, Generation, IdempotencyKey, LedgerSeq,
     LinkKey, LinkMutation, LinkReadTarget, LinkState, LinkWrite, LogicalTime,
     ObservationAuthorization, ObservationEvent, ObservationId, Observed, OwnedRowsCommitProof,
-    Performed, Provenance, Timer, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
-    check_commit, check_commit_observed, check_commit_owned_rows,
+    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Provenance, Timer, TimerId,
+    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_observed,
+    check_commit_owned_rows,
 };
 use proptest::prelude::*;
 use proptest::test_runner::{TestError, TestRunner};
@@ -304,6 +305,44 @@ impl<E, C, I> MemoryCell<E, C, I> {
     }
 }
 
+impl<E, C, I> MemoryCell<E, C, I> {
+    /// The live objects of the queried type matching `predicate`, in key
+    /// order, at most `limit`; every object is in memory, so the
+    /// enumeration is always complete.
+    fn predicate_objects(&self, predicate: &PredicateQuery, limit: usize) -> Vec<PredicateObject> {
+        let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
+            .with_interfaces(&self.interfaces)
+            .with_property_types(&self.property_types);
+        let model = CommitModel::new(&catalog);
+        let candidates: Vec<(FactKey, FactVersion, &JsonObject)> = self
+            .facts
+            .iter()
+            .filter_map(|(key, state)| {
+                let values = state.values.as_ref()?;
+                let concrete = self.concrete.get(key)?;
+                model.is_a(concrete, &predicate.object_type).then(|| {
+                    (
+                        FactKey {
+                            object_type: concrete.clone(),
+                            key: key.key.clone(),
+                        },
+                        state.version,
+                        values,
+                    )
+                })
+            })
+            .collect();
+        norn_kernel::predicate_read::select_members(
+            predicate,
+            candidates
+                .iter()
+                .map(|(key, version, values)| (key, *version, *values)),
+            limit,
+        )
+    }
+}
+
 /// What a [`MemoryCell`] has committed, as [`check_commit`] reads it.
 struct MemoryView<'c, E, C, I>(&'c MemoryCell<E, C, I>);
 
@@ -374,6 +413,20 @@ impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
             });
         }
         Ok(Some(reads))
+    }
+
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
+        Ok(Some(
+            self.0
+                .predicate_objects(predicate, limit)
+                .iter()
+                .map(PredicateObject::member)
+                .collect(),
+        ))
     }
 
     fn has_link_target(
@@ -593,6 +646,17 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
             .with_property_types(&self.property_types);
         let canonical = CommitModel::new(&catalog).canonical_link(key);
         Ok(self.links.get(&canonical).cloned().unwrap_or_default())
+    }
+
+    fn read_predicate(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+    ) -> Result<Option<Vec<PredicateObject>>, Infallible> {
+        Ok(Some(self.predicate_objects(
+            predicate,
+            max_members.saturating_add(1),
+        )))
     }
 
     fn read_link_targets(
@@ -1768,6 +1832,7 @@ impl CellModel {
                         effects,
                         links,
                         link_reads: Vec::new(),
+                        predicate_reads: Vec::new(),
                     }
                 },
             )
@@ -1837,6 +1902,7 @@ impl CellModel {
                     effects,
                     links,
                     link_reads: Vec::new(),
+                    predicate_reads: Vec::new(),
                 },
             )
             .boxed()
@@ -1995,6 +2061,19 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
             max,
         },
         Error::InvalidLinkRead { source_key, link } => Error::InvalidLinkRead { source_key, link },
+        Error::PredicateReadConflict { object_type } => {
+            Error::PredicateReadConflict { object_type }
+        }
+        Error::UnsupportedPredicateRead { object_type } => {
+            Error::UnsupportedPredicateRead { object_type }
+        }
+        Error::InvalidPredicateRead {
+            object_type,
+            reason,
+        } => Error::InvalidPredicateRead {
+            object_type,
+            reason,
+        },
         Error::DanglingLink { key, missing } => Error::DanglingLink { key, missing },
         Error::LinkTarget { key } => Error::LinkTarget { key },
         Error::LinkCardinality { key, endpoint } => Error::LinkCardinality { key, endpoint },
