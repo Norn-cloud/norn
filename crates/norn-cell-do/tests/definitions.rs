@@ -1288,6 +1288,49 @@ fn constructed_command_records_are_refused() {
     }
 }
 
+/// Sol S1 (round 2): a second output column whose field the engine
+/// normalises onto `commands` (padded, or a nested path) would overwrite the
+/// checked column at run time, so the install refuses it.
+#[test]
+fn a_second_writer_to_commands_is_refused() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    for field in [" commands ", "commands.0"] {
+        let mut artifacts = lowered();
+        for artifact in &mut artifacts {
+            if artifact["kind"] != json!("rule") {
+                continue;
+            }
+            for node in artifact["payload"]["graph"]["nodes"]
+                .as_array_mut()
+                .unwrap()
+            {
+                if node["type"] != json!("decisionTableNode") {
+                    continue;
+                }
+                node["content"]["outputs"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({ "id": "o_shadow", "name": "shadow", "field": field }));
+                for rule in node["content"]["rules"].as_array_mut().unwrap() {
+                    rule["o_shadow"] = json!(
+                        "[{kind: 'perform', runId: key, step: 's', function: 'norn.uninstalled', functionVersion: '1', input: {}}]"
+                    );
+                }
+            }
+        }
+        let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &artifacts, None));
+        assert_eq!(status, 422, "{field:?}: {refused}");
+        assert!(
+            codes_of(&refused).contains(&"definition.flow_command_unverifiable".to_owned()),
+            "{field:?}: {refused}"
+        );
+    }
+}
+
 /// Sol S2: the performs are re-resolved under the write lock, so a function
 /// that resolved at validation but not at commit refuses the install. The
 /// route validates and commits in one call, so the change in between is
