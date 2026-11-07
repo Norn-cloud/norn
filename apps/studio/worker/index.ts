@@ -61,7 +61,9 @@ async function me(request: Request, env: Env): Promise<Response> {
   if (session === null) return refuse(401, "Sign in first.")
   const member = await activeMembership(auth(env), session.user.id, session.session.activeOrganizationId)
   return Response.json(
-    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role } },
+    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role },
+      // The caller's active workspace's data environment, from its server-provisioned metadata; null without one.
+      environmentId: member?.environmentId ?? null },
     { headers: { "cache-control": "no-store" } },
   )
 }
