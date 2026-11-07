@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements, waitForWorker } from "../../scripts/seed-demo-org.ts"
+import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements, waitForWorker, seedWhenReady } from "../../scripts/seed-demo-org.ts"
 import { hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
@@ -106,12 +106,12 @@ test("provisioning refuses an unverified pre-registered account, including an ex
   const { db, env, seed, verify } = stage()
   const email = "analyst@demo.norn.cloud"
   await signUp(env, email)
-  await expect(seed([`${email}=admin`])).rejects.toThrow()
+  await expect(seed([`${email}=admin`])).rejects.toThrow("NOT NULL constraint failed: member.id")
   expect(db.query(`select * from "member" where "organizationId" = ?`).all(DEMO_ORG.id)).toEqual([])
   verify(email)
   await seed([`${email}=viewer`])
   db.prepare(`update "user" set "emailVerified" = 0 where "email" = ?`).run(email)
-  await expect(seed([`${email}=admin`])).rejects.toThrow()
+  await expect(seed([`${email}=admin`])).rejects.toThrow("NOT NULL constraint failed: member.id")
   expect(db.query(`select "role" from "member" where "organizationId" = ?`).get(DEMO_ORG.id)).toEqual({ role: "viewer" })
   // Both membership writes remain guarded for an unverified account.
   const writes = seedStatements(parseMembers([`${email}=admin`]), new Date())
@@ -131,5 +131,22 @@ test("a later membership write failure rolls back all earlier grants", async () 
 
 test("provisioning fails promptly when Wrangler exits", async () => {
   const process = Bun.spawn([globalThis.process.execPath, "-e", "process.exit(27)"], { stdout: "ignore", stderr: "ignore" })
-  await expect(waitForWorker(process.exited, "http://127.0.0.1:1/seed", "test", [])).rejects.toThrow("exit 27")
+  await expect(waitForWorker(process.exited, "http://127.0.0.1:1/ready", "test")).rejects.toThrow("exit 27")
+})
+
+
+test("readiness retries never seed and the seed request is sent once", async () => {
+  const calls: string[] = []
+  let attempts = 0
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname
+    calls.push(`${request.method} ${path}`)
+    if (path === "/ready") return new Response(null, { status: ++attempts === 1 ? 503 : 204 })
+    return new Response("ok")
+  } })
+  try {
+    const response = await seedWhenReady(new Promise<number>(() => {}), `http://127.0.0.1:${server.port}`, "test", [])
+    expect(response.status).toBe(200)
+    expect(calls).toEqual(["GET /ready", "GET /ready", "POST /seed"])
+  } finally { server.stop(true) }
 })
