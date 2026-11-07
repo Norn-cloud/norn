@@ -1483,7 +1483,7 @@ fn a_flow_carries_its_title_and_step_labels() {
             ("definition.flow_shape_invalid", "/flow/owner"),
         ),
     ] {
-        let mut body = flow_body(FLOW_ID, &lowered(), Some(1));
+        let mut body = flow_body(FLOW_ID, &lowered(), None);
         for (key, value) in flow_edit.as_object().unwrap() {
             body["payload"]["flow"][key.as_str()] = value.clone();
         }
