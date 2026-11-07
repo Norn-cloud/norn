@@ -1,11 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { ChartLine, Plus } from "lucide-react"
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { list, modKey, type Issue } from "@/lib/editor"
+import { list, modKey, sameValue, type Issue } from "@/lib/editor"
 import { QuestionCard, questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
 import { RunQuestion } from "./run.tsx"
 
@@ -134,6 +134,24 @@ function Choice({ label, field, invalid, value, onChange, options }: { readonly 
 type QuestionIR = ReturnType<typeof buildQuestion>
 
 /** The draft a stored QuestionIR reopens as, so editing it loses nothing the builder can write. */
+/** Whether a stored question's window is whole UTC days, the only windows a draft can hold without changing them. */
+export const windowFitsDraft = (question: Partial<QuestionIR>): boolean =>
+  [question.window?.start, question.window?.end].every((iso) => iso === undefined || (typeof iso === "string" && iso === `${iso.slice(0, 10)}T00:00:00Z`))
+
+/**
+ * Whether a stored question survives a trip through the form unchanged: its
+ * window is whole days and the question the draft rebuilds is the same one,
+ * grouping, freshness and all (its name aside, which follows the title).
+ */
+export function questionFitsDraft(question: Partial<QuestionIR> & { readonly name?: string }, catalog: QuestionCatalog): boolean {
+  if (!windowFitsDraft(question)) return false
+  const { name: _built, ...rebuilt } = buildQuestion(draftOf(question), catalog)
+  const { name: _stored, ...stored } = question
+  return sameValue(JSON.parse(JSON.stringify(rebuilt)), JSON.parse(JSON.stringify(stored)))
+}
+
+export const UNEDITABLE = "This question cannot be edited without changing it."
+
 export function draftOf(question: Partial<QuestionIR> & { readonly name?: string }, title?: string): Draft {
   const day = (iso: unknown) => typeof iso === "string" ? iso.slice(0, 10) : ""
   const [by] = question.groupBy ?? []
@@ -153,19 +171,46 @@ export function initialDraft(catalog: QuestionCatalog): Draft {
   return { title: "", measures: catalog.metrics[0] ? [catalog.metrics[0].name] : [], by: time, grain: catalog.grains.includes("week") ? "week" : catalog.grains[0] ?? "", filters: [], start: "", end: "" }
 }
 
-export function QuestionBuilder({ catalog, guard, initial, onUse }: {
+/** The checker route is missing (404), has no host bound (503), or cannot be reached: nothing can be checked here. */
+export const checkerServedBy = (status: number | "unreachable"): boolean => status !== "unreachable" && status !== 404 && status !== 503
+
+export const CHECKER_UNSERVED = "The question checker isn't served here."
+
+// One probe per page: every builder (the page, each dashboard tile sheet) shares its answer.
+let checkerProbe: Promise<boolean> | undefined
+const probeChecker = () => checkerProbe ??= fetch("/api/questions/check", { method: "GET", headers: { accept: "application/json" } })
+  .then((response) => checkerServedBy(response.status), () => checkerServedBy("unreachable"))
+
+/** Whether this deployment serves the question checker: unknown until the one probe answers. */
+function useCheckerServed(): boolean | undefined {
+  const [served, setServed] = useState<boolean>()
+  useEffect(() => {
+    let current = true
+    void probeChecker().then((answer) => { if (current) setServed(answer) })
+    return () => { current = false }
+  }, [])
+  return served
+}
+
+export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, checkerServed }: {
   readonly catalog: QuestionCatalog
   readonly guard?: (dirty: boolean) => ReactNode
   /** The draft to open; a new question otherwise. */
   readonly initial?: Draft
   /** Offered once the checker admits the question: hands the admitted QuestionIR to the caller (e.g. a dashboard tile). */
   readonly onUse?: (question: QuestionIR, title: string) => void
+  /** Why the opened question cannot be used again from this form (its window is finer than days): "Use this question" stays off. */
+  readonly unsupported?: string
+  /** Overrides the probe (tests, or a caller that already knows). */
+  readonly checkerServed?: boolean
 }) {
+  const probed = useCheckerServed()
+  const served = checkerServed ?? probed
   const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog)) })
   // The editor revision each check ran at: a check shows only while the editor is still at that revision.
   const [ranAt, setRanAt] = useState<object>()
   const editor = useEditor<Draft>({ initial: initial ?? initialDraft(catalog), onRun: (draft) => run(draft) })
-  const run = (next: Draft) => { setRanAt(editor.revision); check.mutate(next) }
+  const run = (next: Draft) => { if (served === false) return; setRanAt(editor.revision); check.mutate(next) }
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const setFilter = (index: number, next: Partial<Condition>) => patch({ filters: draft.filters.map((filter, at) => at === index ? { ...filter, ...next } : filter) })
@@ -182,6 +227,8 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
       {guard?.(editor.dirty)}
       <Panel icon={ChartLine} label="Question" action={<EditorToolbar editor={editor} />}>
         <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); run(draft) }}>
+          {served === false && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{CHECKER_UNSERVED}</p>}
+          <fieldset disabled={served === false} className="contents">
           <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
           <div className="grid gap-2" data-field="measures">
             <span className={invalid("measures") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Measures</span>
@@ -215,10 +262,12 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
             <Field label="From" invalid={invalid("window")}><Input type="date" value={draft.start} aria-invalid={invalid("window") || undefined} onChange={(event) => patch({ start: event.target.value })} /></Field>
             <Field label="Until" invalid={invalid("window")}><Input type="date" value={draft.end} aria-invalid={invalid("window") || undefined} onChange={(event) => patch({ end: event.target.value })} /></Field>
           </div>
-          <Button type="submit" className="justify-self-start" title={`Check (${modKey()}Enter)`} disabled={check.isPending}>{check.isPending ? "Checking…" : "Check with the server"}</Button>
+          <Button type="submit" className="justify-self-start" title={`Check (${modKey()}Enter)`} disabled={check.isPending || served === false}>{check.isPending ? "Checking…" : "Check with the server"}</Button>
+          </fieldset>
         </form>
       </Panel>
       <div className="space-y-3">
+        {unsupported && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{unsupported}</p>}
         {checked.data === undefined && checked.error === null && !(check.isPending && check.variables === draft) && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
         {checked.error && <p role="alert" className="text-destructive">{checked.error.message}</p>}
         {/* One place for a refusal: the panel links each finding to its field; its codes are under Details. */}
@@ -227,7 +276,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
         {/* Only the question the checker admitted, and only while the form still shows it. */}
         {/* Run: the question exactly as the checker admitted it, while the form still shows it. */}
         {checked.data?.admitted && check.variables && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
-        {onUse && checked.data?.admitted && check.variables && <Button type="button" onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
+        {onUse && checked.data?.admitted && check.variables && <Button type="button" disabled={unsupported !== undefined} onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
         {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
       </div>
     </div>

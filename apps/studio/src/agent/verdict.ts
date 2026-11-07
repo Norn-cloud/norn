@@ -33,12 +33,31 @@ export const STAGE: Record<string, string> = {
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object"
 
-/** A tool output is a verdict only if it has the fields the Worker writes; anything else is shown as unreadable. */
+const isText = (value: unknown): value is string => typeof value === "string"
+const optionalText = (value: unknown) => value === undefined || value === null || isText(value)
+
+const isProposal = (value: unknown) => isObject(value) && isText(value.artifact) && isText(value.pointer)
+
+/** A law as the card reads it: its artifact, and plain-text name, rationale and expression where given. */
+const isLaw = (value: unknown) =>
+  isObject(value) && isText(value.artifactId) && optionalText(value.name) && optionalText(value.rationale) && optionalText(value.expression)
+
+const isRefusal = (value: unknown) =>
+  isObject(value) && isText(value.code) && isText(value.message) && optionalText(value.artifactId) &&
+  (value.law === undefined || value.law === null || isLaw(value.law))
+
+/**
+ * A tool output is a verdict only if every field the cards read has the shape
+ * the Worker writes (proposal, stage, receipt, each refusal and its law);
+ * anything else is shown as unreadable rather than crashing the card.
+ */
 export function verdictOf(output: unknown): Verdict | undefined {
-  if (!isObject(output) || !isObject(output.proposal)) return undefined
-  if (typeof output.error === "string") return output as unknown as Verdict
-  if (typeof output.admitted === "boolean" && Array.isArray(output.refusals) && output.refusals.every((refusal) => isObject(refusal) && typeof refusal.message === "string")) return output as unknown as Verdict
-  return undefined
+  if (!isObject(output) || !isProposal(output.proposal)) return undefined
+  if ("error" in output) return isText(output.error) ? output as unknown as Verdict : undefined
+  if (typeof output.admitted !== "boolean" || !isText(output.stage) || !Object.hasOwn(STAGE, output.stage)) return undefined
+  if (!(output.receiptSha256 === null || output.receiptSha256 === undefined || isText(output.receiptSha256))) return undefined
+  if (!Array.isArray(output.refusals) || !output.refusals.every(isRefusal)) return undefined
+  return output as unknown as Verdict
 }
 
 /** The tab's session storage, or undefined where the browser blocks it (reading the property can throw). */
