@@ -412,7 +412,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     workflow = yaml.load(source, Loader=WorkflowLoader)
     require(workflow.get("on", workflow.get(True)) == {
         "pull_request": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
-        "pull_request_target": None,
+        "pull_request_target": {"types": ["opened", "synchronize", "reopened", "edited"]},
         "issue_comment": {"types": ["created", "edited", "deleted"]},
         "push": {"branches": ["main"]}, "merge_group": None, "workflow_dispatch": None,
     }, "workflow must preserve every trigger and admit ready_for_review")
@@ -435,7 +435,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         "cancel-in-progress": False, "queue": "max",
     }, "trusted-policy: superseded approvals and revocations must share a cancelling group")
     require(" ".join(trusted.get("if", "").split()) == "!cancelled() && ( "
-            "github.event_name == 'pull_request_target' || "
+            "(github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == github.event.repository.default_branch && "
+            "(github.event.action != 'edited' || github.event.changes.base)) || "
             "(github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.type != 'Bot' && "
             "(contains(github.event.comment.body, '/approve-gates') || contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || "
             "(github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))",

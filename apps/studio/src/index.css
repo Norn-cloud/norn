@@ -30,6 +30,8 @@
   --accent-foreground: #0a0a0a;
   --surface-subtle: #f9fafb;
   --destructive: #ff3b30;
+  /* Text on destructive fills: 5.6:1 on light red; white would be 3.5:1. */
+  --destructive-foreground: #0a0a0a;
   --success: #1f7a4d;
   --warning: #ff9500;
   --border: #e5e7eb;
@@ -70,6 +72,7 @@
   --accent-foreground: #f5f5f7;
   --surface-subtle: #2a2a2e;
   --destructive: #ff453a;
+  --destructive-foreground: #0a0a0a;
   --success: #30d158;
   --warning: #ff9f0a;
   --border: #38383d;
@@ -124,6 +127,7 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
