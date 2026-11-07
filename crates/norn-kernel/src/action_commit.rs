@@ -67,7 +67,7 @@ use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_com
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, CommitReceipt, FactExpectation, FactKey, FactMutation,
     FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
-    LinkReadExpectation, LinkWrite, OwnedRowsCommitProof, PredicateObject,
+    LinkReadExpectation, LinkWrite, OwnedRowsCommitProof, PredicateObject, PredicateQuery,
     PredicateReadExpectation,
 };
 use crate::decision_commit::{
@@ -5824,7 +5824,9 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
         authorizer,
     } = *context;
     let mut values = JsonObject::new();
-    let mut reads = Vec::with_capacity(call.action.aggregates.len());
+    // Aggregates over the same predicate fold one snapshot: the commit pins
+    // each distinct predicate once.
+    let mut snapshots: Vec<(PredicateQuery, Vec<PredicateObject>)> = Vec::new();
     for aggregate in &call.action.aggregates {
         let unavailable = |reason: String| ActionRefusal::AggregateUnavailable {
             aggregate: aggregate.name.clone(),
@@ -5837,17 +5839,25 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
             crate::action_aggregate::predicate_query(aggregate, effective_input, catalog)
                 .map_err(unavailable)?;
         let max_items = usize::try_from(aggregate.max_items).unwrap_or(usize::MAX);
-        let objects = host
-            .read_predicate(&predicate, max_items)
-            .map_err(host_failure)?
-            .ok_or_else(|| unavailable("the host cannot enumerate every match".to_owned()))?;
+        if !snapshots.iter().any(|(read, _)| *read == predicate) {
+            let objects = host
+                .read_predicate(&predicate, max_items)
+                .map_err(host_failure)?
+                .ok_or_else(|| unavailable("the host cannot enumerate every match".to_owned()))?;
+            snapshots.push((predicate.clone(), objects));
+        }
+        let Some((_, objects)) = snapshots.iter().find(|(read, _)| *read == predicate) else {
+            return Err(unavailable(
+                "the predicate snapshot was not retained".to_owned(),
+            ));
+        };
         if objects.len() > max_items {
             return Err(ActionRefusal::AggregateBoundExceeded {
                 aggregate: aggregate.name.clone(),
                 max_items: aggregate.max_items,
             });
         }
-        for object in &objects {
+        for object in objects {
             authorizer
                 .authorize_read(&ActionReadAuthzRequest {
                     action: call.action,
@@ -5866,11 +5876,14 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
         )
         .map_err(|error| unavailable(error.to_string()))?;
         values.insert(aggregate.name.clone(), value);
-        reads.push(PredicateReadExpectation {
+    }
+    let reads = snapshots
+        .into_iter()
+        .map(|(predicate, objects)| PredicateReadExpectation {
             predicate,
             members: objects.iter().map(PredicateObject::member).collect(),
-        });
-    }
+        })
+        .collect();
     Ok((values, reads))
 }
 
