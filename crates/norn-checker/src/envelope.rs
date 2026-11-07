@@ -1190,6 +1190,7 @@ fn validate_action_payload(
             "ledgerCategory",
             "preconditions",
             "slice",
+            "aggregates",
             "derive",
             "commands",
             "writes",

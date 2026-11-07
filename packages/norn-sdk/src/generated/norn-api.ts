@@ -759,6 +759,33 @@ export interface components {
             /** @description Property whose JSON value is a serialized accounting leg. */
             legProperty: string;
         };
+        /** @description One bounded aggregate an action's preconditions read by `name`. */
+        NornIrActionAggregateInput: {
+            /** @description What is computed over the matched objects. */
+            aggregate: components["schemas"]["NornIrAggregateFunction"];
+            filter?: components["schemas"]["NornIrActionAggregateInputPropertyFilter"];
+            /**
+             * Format: uint32
+             * @description Most objects the fold may match; one more refuses the action.
+             */
+            maxItems: number;
+            /**
+             * @description The precondition environment member holding the result. Unique among
+             *     the action's aggregates and slice entries.
+             */
+            name: string;
+            /** @description The type whose stored objects are folded. */
+            objectType: string;
+            /** @description Optional window over one date or timestamp property. */
+            window?: components["schemas"]["NornIrAggregateWindow"] | null;
+        };
+        /**
+         * @description Equality filter: each scalar property must equal the named input
+         *     field. An empty filter matches every object of the type.
+         */
+        NornIrActionAggregateInputPropertyFilter: {
+            [key: string]: string;
+        };
         /** @description One declarative outbound command produced by an action call. */
         NornIrActionCommand: {
             /** @description Owner-scoped child-table replacements declared by this command. */
@@ -920,6 +947,7 @@ export interface components {
         NornIrActionPayload: {
             access?: components["schemas"]["NornIrAccessRef"];
             actionId: string;
+            aggregates?: components["schemas"]["NornIrActionAggregateInput"][];
             commands?: components["schemas"]["NornIrActionCommand"][];
             compensation?: components["schemas"]["NornIrActionCompensation"];
             createLinks?: components["schemas"]["NornIrActionCreateLink"][];
@@ -1047,6 +1075,39 @@ export interface components {
          * @enum {string}
          */
         NornIrAdditivityAxis: "time";
+        /** @description The fold computed over the matched objects. */
+        NornIrAggregateFunction: components["schemas"]["NornIrAggregateFunctionOneOf0"] | components["schemas"]["NornIrAggregateFunctionOneOf1"];
+        /**
+         * @description The exact sum of a non-nullable decimal or integer property, held at
+         *     the property's declared scale. An empty match set sums to zero.
+         */
+        NornIrAggregateFunctionOneOf0: {
+            /** @enum {string} */
+            kind: "sum";
+            /** @description The summed property. */
+            property: string;
+        };
+        /** @description The number of matched objects. */
+        NornIrAggregateFunctionOneOf1: {
+            /** @enum {string} */
+            kind: "count";
+        };
+        /**
+         * @description A window over one date or timestamp property. Both edges and their
+         *     inclusivity are declared; there is no default edge semantics.
+         */
+        NornIrAggregateWindow: {
+            /** @description The input field holding the end edge. */
+            end: string;
+            /** @description Whether an object exactly at `end` matches. */
+            endInclusive: boolean;
+            /** @description The date or timestamp property the window ranges over. */
+            property: string;
+            /** @description The input field holding the start edge. */
+            start: string;
+            /** @description Whether an object exactly at `start` matches. */
+            startInclusive: boolean;
+        };
         /** @description Structural validation rule for a resolved API key. */
         NornIrApiKeyFormat: components["schemas"]["NornIrApiKeyFormatOneOf0"] | components["schemas"]["NornIrApiKeyFormatOneOf1"];
         /** @description Accept any visible key value permitted by its placement. */
