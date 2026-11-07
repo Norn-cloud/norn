@@ -97,7 +97,8 @@ test("the canvas's titles reach the flow definition payload: the flow's title an
 })
 
 test("a second connection from one exit is named on the step it leaves, not only on where it lands", () => {
-  const doubled: Graph = { nodes: [...route.nodes, node("extra", "succeed", {})], edges: [...route.edges, { ...edge("remind", "next", "extra"), id: "remind.next.again" }] }
+  // Overdue's "next" already leads to Open; a second connection from it leads to Extra.
+  const doubled: Graph = { nodes: [...route.nodes, node("extra", "succeed", { outcome: "extra" })], edges: [...route.edges, { ...edge("overdue", "next", "extra"), id: "overdue.next.again" }] }
   const codes = lower(doubled, tools, meta).problems.map(({ code, node }) => `${code}@${node}`)
-  expect(codes).toContain("canvas.flow.exit_twice@remind")
+  expect(codes).toContain("canvas.flow.exit_twice@overdue")
 })
