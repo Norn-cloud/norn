@@ -1,16 +1,15 @@
 import { activeMembership, type Auth } from "./auth.ts"
 
 /**
- * The data environment (cell) a workspace's data lives in, from Worker-held configuration only: a JSON map from
- * organization id to environment id (`STUDIO_WORKSPACE_ENVIRONMENTS`), else the preview default. Nothing the client
- * sends is read. A malformed map, an unmapped workspace or an empty value fails closed: no environment.
+ * The data environment (cell) a workspace's data lives in, from the Worker's deploy-time binding only: a JSON map from
+ * organization id to environment id (`STUDIO_WORKSPACE_ENVIRONMENTS`, set per stage by alchemy.run.ts). Nothing the
+ * client sends is read, and the Worker has no default of its own. An unset or malformed map, an unmapped workspace or
+ * an empty value fails closed: no environment.
  */
-const DEFAULT_WORKSPACE_ENVIRONMENTS: Readonly<Record<string, string>> = { org_demo: "analytics" }
 export function workspaceEnvironment(orgId: string, configured?: string): string | null {
-  let mapping: unknown = DEFAULT_WORKSPACE_ENVIRONMENTS
-  if (configured !== undefined) {
-    try { mapping = JSON.parse(configured) } catch { return null }
-  }
+  if (configured === undefined) return null
+  let mapping: unknown
+  try { mapping = JSON.parse(configured) } catch { return null }
   if (typeof mapping !== "object" || mapping === null || Array.isArray(mapping) || !Object.hasOwn(mapping, orgId)) return null
   const value = (mapping as Record<string, unknown>)[orgId]
   return typeof value === "string" && value.trim() !== "" ? value : null

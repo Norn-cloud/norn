@@ -14,7 +14,7 @@ export interface Env {
   readonly EMAIL_FROM?: string
   /** "js" selects the pure-JS scrypt (set by the celld config); Cloudflare leaves it unset. */
   readonly AUTH_SCRYPT?: string
-  /** Server-held JSON map from workspace (organization) ids to their cell environments; unset means the preview default. */
+  /** Deploy-time JSON map from workspace (organization) ids to their cell environments (see deploy-target.ts); unset means none. */
   readonly STUDIO_WORKSPACE_ENVIRONMENTS?: string
   /** The Norn cell host (service binding); absent until a host is connected to this stage. */
   readonly NORN_HOST?: Fetcher

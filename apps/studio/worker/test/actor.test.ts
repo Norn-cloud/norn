@@ -143,8 +143,10 @@ test("a member removed from the organization, or switched to one they left, reac
 })
 
 test("a workspace's environment is server-held configuration and fails closed", () => {
-  expect(workspaceEnvironment("org_demo")).toBe("analytics")
-  expect(workspaceEnvironment("unknown")).toBeNull()
+  // No binding, no environment: the Worker has no default of its own.
+  expect(workspaceEnvironment("org_demo")).toBeNull()
+  expect(workspaceEnvironment("org_demo", JSON.stringify({ org_demo: "analytics" }))).toBe("analytics")
+  expect(workspaceEnvironment("unknown", JSON.stringify({ org_demo: "analytics" }))).toBeNull()
   expect(workspaceEnvironment("org_other", JSON.stringify({ org_other: "warehouse" }))).toBe("warehouse")
   expect(workspaceEnvironment("org_demo", JSON.stringify({ org_other: "warehouse" }))).toBeNull()
   expect(workspaceEnvironment("org_demo", "not-json")).toBeNull()
