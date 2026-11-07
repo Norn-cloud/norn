@@ -835,6 +835,7 @@ def studio_browser_phase_canaries() -> None:
         tools = {
             "cargo": "exit 0",
             "bun": "exit 0",
+            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
             "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; exit "$RUN_STATUS"',
         }
         for name, body in tools.items():
@@ -844,12 +845,15 @@ def studio_browser_phase_canaries() -> None:
         build.write_text("#!/bin/sh\nmkdir -p \"$1\"\n")
         build.chmod(0o755)
         config, e2e = tree / "apps/studio/playwright.config.ts", tree / "apps/studio/e2e"
-        for label, has_config, has_tests, listed, run_status, expected in (
-                ("no config, no tests", False, False, "0", 0, 0),
-                ("tests without a config", False, True, "0", 0, 1),
-                ("config, no tests found", True, True, "0", 0, 1),
-                ("config, rows pass", True, True, "99", 0, 0),
-                ("config, a row fails", True, True, "99", 1, 1)):
+        wasm_libdir = Path(directory) / "wasm32-lib"
+        wasm_libdir.mkdir()
+        for label, has_config, has_tests, listed, run_status, expected, libdir in (
+                ("no config, no tests", False, False, "0", 0, 0, ""),
+                ("tests without a config", False, True, "0", 0, 1, str(wasm_libdir)),
+                ("config, no wasm32 target", True, True, "99", 0, 1, str(Path(directory) / "absent")),
+                ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir)),
+                ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir)),
+                ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir))):
             config.unlink(missing_ok=True)
             if has_config:
                 config.write_text("export default {}\n")
@@ -863,9 +867,12 @@ def studio_browser_phase_canaries() -> None:
             result = subprocess.run(["bash", str(ROOT / "scripts/ci/core.sh"), "browser"], cwd=tree, capture_output=True,
                                     text=True, timeout=60, env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
                                                                 "CARGO_HOME": str(Path(directory) / "cargo-home"),
-                                                                "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status)})
+                                                                "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
+                                                                "WASM_LIBDIR": libdir})
             if result.returncode != expected:
                 raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")
+            if label == "config, no wasm32 target" and "run under the pinned CI toolchain" not in result.stderr:
+                raise AssertionError(f"browser phase must name the pinned toolchain when wasm32 is missing: {result.stderr[-300:]}")
 
 
 def workflow_trusted_policy_canaries(source: str) -> None:

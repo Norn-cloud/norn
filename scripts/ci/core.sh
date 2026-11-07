@@ -206,6 +206,14 @@ PY
         printf '::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\n'
         return 0
       fi
+      # The checker package needs the wasm32 target. CI's pinned toolchain step installs it;
+      # a hand run on a plain toolchain fails here, not deep inside the WASM build.
+      local wasm_lib
+      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=''
+      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then
+        printf 'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\n' "$(rustc --version 2> /dev/null || echo 'no rustc')" >&2
+        exit 1
+      fi
       cargo install --locked wasm-bindgen-cli --version 0.2.129
       crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
       (
