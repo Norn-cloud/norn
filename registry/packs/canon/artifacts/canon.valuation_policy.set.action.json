@@ -1,0 +1,99 @@
+{
+  "artifactId": "canon.valuation_policy.set.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Set stock valuation policy",
+  "namespace": "canon",
+  "payload": {
+    "actionId": "canon.valuation_policy.set",
+    "description": "Create or update a stock valuation policy.",
+    "effectProgram": {
+      "entityArtifactId": "canon.ValuationPolicy.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "canon.ValuationPolicy"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Policy code",
+          "type": "string"
+        },
+        "label": {
+          "description": "How the policy appears in reports.",
+          "title": "Name",
+          "type": "string"
+        },
+        "valuation_method": {
+          "description": "How stock on hand is valued: first in, first out, or a moving average.",
+          "enum": [
+            "fifo",
+            "moving_average"
+          ],
+          "title": "Valuation method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "valuation_method"
+      ],
+      "type": "object",
+      "x-norn": {
+        "groups": [
+          {
+            "fields": [
+              "/id",
+              "/label"
+            ],
+            "id": "policy",
+            "title": "Policy"
+          },
+          {
+            "fields": [
+              "/valuation_method"
+            ],
+            "id": "valuation",
+            "title": "Valuation"
+          }
+        ]
+      }
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Set stock valuation policy",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "canon.ValuationPolicy"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.valuation_policy.set.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
