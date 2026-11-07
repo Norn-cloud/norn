@@ -32,6 +32,8 @@
   --destructive: #ff3b30;
   /* Destructive as small text: 5.4:1 on the card (the fill colour is 3.6:1). */
   --destructive-text: #d70015;
+  /* Text on destructive fills: 5.6:1 on light red; white would be 3.5:1. */
+  --destructive-foreground: #0a0a0a;
   --success: #1f7a4d;
   --warning: #ff9500;
   --border: #e5e7eb;
@@ -100,6 +102,7 @@
   --destructive: #ff453a;
   /* Destructive as small text: 5.4:1 on the card (the fill colour is 4.5:1). */
   --destructive-text: #ff6961;
+  --destructive-foreground: #0a0a0a;
   --success: #30d158;
   --warning: #ff9f0a;
   --border: #38383d;
@@ -180,6 +183,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-text: var(--destructive-text);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

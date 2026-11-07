@@ -615,6 +615,7 @@ impl<X> ActionRefusal<X> {
             Self::IdempotencyConflict { .. } | Self::StalePreconditionRead { .. } => {
                 RefusalCategory::Conflict
             }
+            Self::ReceiptRefused { reason } => reason.category(),
             Self::InputBoundExceeded { .. } | Self::ExpressionBudgetExceeded { .. } => {
                 RefusalCategory::Limit
             }

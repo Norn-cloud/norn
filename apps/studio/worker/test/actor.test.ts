@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { HOST_TOKEN_SECONDS, hostToken, resolveActor } from "../actor.ts"
+import { HOST_TOKEN_SECONDS, hostToken, resolveActor, workspaceEnvironment } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 
@@ -140,4 +140,15 @@ test("a member removed from the organization, or switched to one they left, reac
   const setActive = await call(env, "/api/auth/organization/set-active", { method: "POST", headers: { cookie: memberCookie, origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ organizationId: owner?.orgId }) })
   expect(setActive.status).toBe(403)
   expect(seen).toHaveLength(0)
+})
+
+test("a workspace's environment is server-held configuration and fails closed", () => {
+  expect(workspaceEnvironment("org_demo")).toBe("analytics")
+  expect(workspaceEnvironment("unknown")).toBeNull()
+  expect(workspaceEnvironment("org_other", JSON.stringify({ org_other: "warehouse" }))).toBe("warehouse")
+  expect(workspaceEnvironment("org_demo", JSON.stringify({ org_other: "warehouse" }))).toBeNull()
+  expect(workspaceEnvironment("org_demo", "not-json")).toBeNull()
+  expect(workspaceEnvironment("org_demo", JSON.stringify(["analytics"]))).toBeNull()
+  expect(workspaceEnvironment("org_demo", JSON.stringify({ org_demo: " " }))).toBeNull()
+  expect(workspaceEnvironment("toString", "{}")).toBeNull()
 })
