@@ -224,6 +224,8 @@ test("bundle: steps of one step into one state draw as one; hover lights its sou
   // On the bundle's line, not its box's centre (a bundle's box is mostly empty canvas).
   await hoverEdge(page, (await page.locator('.react-flow__edge[data-id^="bundle:cancel:"]').first().getAttribute("data-id"))!)
   await expect.poll(ring).toContain("0px 0px 0px 4px")
+  // Hovering centred the bundle's line, which can leave its pill outside the canvas: bring the pill in before clicking it.
+  await reveal(page, bundle)
   await bundle.click()
   await expect(page.getByTestId("step-sources").locator("li")).toHaveCount(count)
   await expect(page.getByTestId("step-sources")).toContainText("Draft → Cancelled")
