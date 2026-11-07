@@ -2219,48 +2219,45 @@ fn commit_read(
     .map_err(|error| error.code().to_owned())
 }
 
-/// #1105/#1104: a predicate read selects by equality and a declared window,
-/// and the commit refuses any insert, move in or out, member change or
-/// delete since the read, while writes outside the predicate do not conflict.
-#[test]
-fn predicate_reads_select_by_declared_edges_and_refuse_phantoms() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let mut cell = open_entries(&dir.path().join("cell.sqlite"));
-    put_entry(
-        &mut cell,
-        "E1",
-        json!({ "account": "A", "booked_on": "2026-11-01" }),
-    );
-    put_entry(
-        &mut cell,
-        "E2",
-        json!({ "account": "A", "booked_on": "2026-11-30" }),
-    );
-    put_entry(
-        &mut cell,
-        "E3",
-        json!({ "account": "B", "booked_on": "2026-11-05" }),
-    );
-    put_entry(
-        &mut cell,
-        "E4",
-        json!({ "account": "A", "booked_on": "2026-12-01" }),
-    );
+fn seeded_entries(path: &Path) -> OrderCell {
+    let mut cell = open_entries(path);
+    for (id, account, on) in [
+        ("E1", "A", "2026-11-01"),
+        ("E2", "A", "2026-11-30"),
+        ("E3", "B", "2026-11-05"),
+        ("E4", "A", "2026-12-01"),
+    ] {
+        put_entry(
+            &mut cell,
+            id,
+            json!({ "account": account, "booked_on": on }),
+        );
+    }
+    cell
+}
 
+fn ids(members: &[PredicateReadMember]) -> Vec<String> {
+    members
+        .iter()
+        .map(|member| member.key.key.clone())
+        .collect()
+}
+
+const CONFLICT: &str = "commit.predicate_read_conflict";
+
+/// #1105/#1104: equality terms and each declared window edge select the
+/// members; writes outside the predicate never conflict.
+#[test]
+fn predicate_reads_select_by_declared_edges_and_ignore_writes_outside() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = seeded_entries(&dir.path().join("cell.sqlite"));
     let exclusive = november("A", false);
     let inclusive = november("A", true);
-    let ids = |members: &[PredicateReadMember]| -> Vec<String> {
-        members
-            .iter()
-            .map(|member| member.key.key.clone())
-            .collect()
-    };
     assert_eq!(ids(&read_members(&cell, &exclusive)), ["E1"]);
     assert_eq!(ids(&read_members(&cell, &inclusive)), ["E1", "E2"]);
 
     let members = read_members(&cell, &inclusive);
     assert_eq!(commit_read(&mut cell, &inclusive, &members), Ok(()));
-    // Writes outside the predicate never conflict.
     put_entry(
         &mut cell,
         "E3",
@@ -2272,42 +2269,75 @@ fn predicate_reads_select_by_declared_edges_and_refuse_phantoms() {
         json!({ "account": "A", "booked_on": "2026-12-02" }),
     );
     assert_eq!(commit_read(&mut cell, &inclusive, &members), Ok(()));
+}
 
-    let conflict = Err("commit.predicate_read_conflict".to_owned());
-    // A phantom insert inside the window.
+/// Completeness: an object that starts matching between the read and the
+/// commit (a phantom insert, or an update that moves it in) conflicts.
+#[test]
+fn predicate_reads_conflict_when_a_phantom_starts_matching() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = seeded_entries(&dir.path().join("cell.sqlite"));
+    let predicate = november("A", true);
+
+    let members = read_members(&cell, &predicate);
     put_entry(
         &mut cell,
         "E5",
         json!({ "account": "A", "booked_on": "2026-11-10" }),
     );
-    assert_eq!(commit_read(&mut cell, &inclusive, &members), conflict);
-    // An update that moves an object into the predicate.
-    let members = read_members(&cell, &inclusive);
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "a phantom insert inside the window"
+    );
+
+    let members = read_members(&cell, &predicate);
     put_entry(
         &mut cell,
         "E3",
         json!({ "account": "A", "booked_on": "2026-11-06" }),
     );
-    assert_eq!(commit_read(&mut cell, &inclusive, &members), conflict);
-    // An update that moves a member out of the window.
-    let members = read_members(&cell, &inclusive);
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "an update that moves an object into the predicate"
+    );
+}
+
+/// Membership revalidation: a member that leaves the set (moved out or
+/// deleted) or changes version conflicts.
+#[test]
+fn predicate_reads_conflict_when_a_member_leaves_or_changes_version() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = seeded_entries(&dir.path().join("cell.sqlite"));
+    let predicate = november("A", true);
+
+    let members = read_members(&cell, &predicate);
     put_entry(
         &mut cell,
         "E1",
         json!({ "account": "A", "booked_on": "2026-10-31" }),
     );
-    assert_eq!(commit_read(&mut cell, &inclusive, &members), conflict);
-    // A member changed in place.
-    let members = read_members(&cell, &inclusive);
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "a member moved out of the window"
+    );
+
+    let members = read_members(&cell, &predicate);
     put_entry(
         &mut cell,
         "E2",
         json!({ "account": "A", "booked_on": "2026-11-30", "note": "x" }),
     );
-    assert_eq!(commit_read(&mut cell, &inclusive, &members), conflict);
-    // A member deleted.
-    let members = read_members(&cell, &inclusive);
-    let key = FactKey::new("books.Entry", "E5");
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "a member changed version in place"
+    );
+
+    let members = read_members(&cell, &predicate);
+    let key = FactKey::new("books.Entry", "E2");
     let expected = cell.load(&key).expect("loads").version;
     cell.commit(CellCommit {
         writes: vec![FactWrite {
@@ -2318,10 +2348,14 @@ fn predicate_reads_select_by_declared_edges_and_refuse_phantoms() {
         ..CellCommit::empty()
     })
     .expect("member deleted");
-    assert_eq!(commit_read(&mut cell, &inclusive, &members), conflict);
-    let members = read_members(&cell, &inclusive);
-    assert_eq!(ids(&members), ["E2", "E3"]);
-    assert_eq!(commit_read(&mut cell, &inclusive, &members), Ok(()));
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "a member deleted"
+    );
+    let members = read_members(&cell, &predicate);
+    assert!(members.is_empty(), "{members:?}");
+    assert_eq!(commit_read(&mut cell, &predicate, &members), Ok(()));
 }
 
 #[test]
