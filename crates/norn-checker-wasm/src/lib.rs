@@ -1037,6 +1037,50 @@ pub fn check_agent_json(agent_json: &str, context_json: &str) -> Result<String, 
     .to_string())
 }
 
+/// The sub-decision closure of the rule `artifact_id` in `artifacts_json`
+/// (`norn_checker::rule_closure`, the closure admission bounds), for an
+/// offline evaluator that holds the same envelopes.
+///
+/// Returns `{"resolved": true, "closureDigest", "subDecisions": {key:
+/// {"artifactId", "version"}}}`, or `{"resolved": false, "refusal"}` when
+/// the closure is absent, ambiguous, skewed, cyclic or over its bounds.
+///
+/// # Errors
+///
+/// [`AbiError`] when `artifacts_json` is not a JSON array of decodable
+/// artifact envelopes.
+pub fn rule_closure_json(artifacts_json: &str, artifact_id: &str) -> Result<String, AbiError> {
+    let artifacts = parse_array("artifacts", artifacts_json)?;
+    let envelopes = decode_envelopes(&artifacts).map_err(|findings| {
+        invalid(
+            "artifacts",
+            findings
+                .iter()
+                .map(|finding| finding.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
+    })?;
+    Ok(match norn_checker::rule_closure(&envelopes, &[], artifact_id) {
+        Ok(closure) => json!({
+            "resolved": true,
+            "closureDigest": closure.digest,
+            "subDecisions": closure
+                .sub_decisions
+                .iter()
+                .map(|(key, artifact)| {
+                    (
+                        (*key).to_owned(),
+                        json!({ "artifactId": artifact.artifact_id, "version": artifact.version }),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>(),
+        }),
+        Err(refusal) => json!({ "resolved": false, "refusal": refusal.to_string() }),
+    }
+    .to_string())
+}
+
 /// The ABI and the formats and profiles it speaks, as JSON:
 /// `{"abi", "crateVersion", "checkerVersion", "diagnosticsFormat",
 /// "receiptFormat", "exprProfile"}`.
