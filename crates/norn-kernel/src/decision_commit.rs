@@ -1863,6 +1863,10 @@ impl<X> DecisionRefusal<X> {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exhaustive arm per commit error keeps every refusal mapping explicit"
+    )]
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
         use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
 
@@ -2291,9 +2295,7 @@ fn prepare_decision_with_limits_for<X>(
         writes,
         events,
         effects,
-        links: Vec::new(),
-        link_reads: Vec::new(),
-        predicate_reads: Vec::new(),
+        ..CellCommit::empty()
     })
 }
 
