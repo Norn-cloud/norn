@@ -85,6 +85,10 @@
     "title": "Set stock valuation policy",
     "writes": [
       {
+        "change": "created",
+        "entityKind": "canon.ValuationPolicy"
+      },
+      {
         "change": "modified",
         "entityKind": "canon.ValuationPolicy"
       }
