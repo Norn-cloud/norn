@@ -95,6 +95,13 @@ export function toFlow(graph: Graph, tools: readonly FnRef[], meta: FlowMeta): {
     const incoming = graph.edges.filter(({ target }) => target === node.id)
     if (incoming.length > 1) problems.push({ code: "canvas.flow.join", message: "Two paths join here; end each branch, or continue after the route", node: node.id })
   }
+  // One exit leads to one step: a second connection from the same exit is named on the step it leaves.
+  const exits = new Set<string>()
+  for (const { source, sourcePort } of graph.edges) {
+    const exit = `${source}\u0000${sourcePort}`
+    if (exits.has(exit)) problems.push({ code: "canvas.flow.exit_twice", message: `The "${sourcePort}" exit leads to two steps; keep one`, node: source })
+    exits.add(exit)
+  }
   const reached = new Set<string>()
   const out = (from: string, port: string): CanvasNode | undefined => {
     const edge = graph.edges.find(({ source, sourcePort }) => source === from && sourcePort === port)

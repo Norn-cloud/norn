@@ -95,3 +95,9 @@ test("the canvas's titles reach the flow definition payload: the flow's title an
   // Display-only: the untitled lowering runs exactly the same artifacts.
   expect(withoutLayout(lower(route, tools, meta, options).lowered?.artifacts ?? [])).toEqual(golden)
 })
+
+test("a second connection from one exit is named on the step it leaves, not only on where it lands", () => {
+  const doubled: Graph = { nodes: [...route.nodes, node("extra", "succeed", {})], edges: [...route.edges, { ...edge("remind", "next", "extra"), id: "remind.next.again" }] }
+  const codes = lower(doubled, tools, meta).problems.map(({ code, node }) => `${code}@${node}`)
+  expect(codes).toContain("canvas.flow.exit_twice@remind")
+})
