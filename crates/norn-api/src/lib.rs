@@ -17,6 +17,8 @@ pub use clock::{Clock, ManualClock};
 pub mod host;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+/// HOST-READ-3: the object grid query grammar and its evaluation.
+pub mod object_query;
 /// HOST-READ-2: authorized typed object pages and objects.
 pub mod object_routes;
 /// Typed object, link and source-lineage reads for the Data Explorer.
