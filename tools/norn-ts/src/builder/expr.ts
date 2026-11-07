@@ -295,7 +295,11 @@ export function render(expr: Expr, scope: Scope): string {
 
 function operand(expr: Expr, scope: Scope): string {
   const text = render(expr, scope)
-  return ["Literal", "Ref", "List", "Record", "Call"].includes(expr._tag) ? text : `(${text})`
+  // `dateBefore` is a call in the AST but renders as a comparison, so it is
+  // a compound operand like any other (#1109).
+  const atomic = ["Literal", "Ref", "List", "Record", "Call"].includes(expr._tag)
+    && !(expr._tag === "Call" && expr.fn === "dateBefore")
+  return atomic ? text : `(${text})`
 }
 
 /** FOLD-OPERANDS: contextual empty arrays retain their declared item schema. */

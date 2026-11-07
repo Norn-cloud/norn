@@ -50,6 +50,7 @@ export const studio = await Vite("studio", {
     AUTH_DB: authDb,
     BETTER_AUTH_SECRET: alchemy.secret(auth.secret),
     BETTER_AUTH_URL: auth.url,
+    ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
     // Magic links need a Cloudflare Email Service sender on the domain; without one they refuse.
     ...auth.emailFrom === undefined ? {} : { EMAIL: EmailSender({ allowedSenderAddresses: [auth.emailFrom] }), EMAIL_FROM: auth.emailFrom },
   },
