@@ -158,9 +158,9 @@ export function AgentButton() {
       <SheetContent className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-md">
         <SheetHeader className="border-b">
           <SheetTitle>Assistant</SheetTitle>
-          <SheetDescription>Proposes changes to a separate synthetic purchasing world (orders, receipts and their laws), not the Jewelry workspace. The server's checker admits or refuses each one.</SheetDescription>
-          {/* The world the server's checker loads (worker/world.ts); the label names it rather than the open workspace. */}
-          <Badge variant="outline" className="w-fit">World · Purchasing (synthetic)</Badge>
+          <SheetDescription>Proposes changes to the Jewelry world's definitions: melts of gold scrap and the law that fine mass is conserved. The server's checker admits or refuses each one; nothing is installed.</SheetDescription>
+          {/* The world the server's checker loads (worker/world.ts). */}
+          <Badge variant="outline" className="w-fit">World · Jewelry (synthetic)</Badge>
         </SheetHeader>
         <AgentPanel state={state} />
       </SheetContent>
