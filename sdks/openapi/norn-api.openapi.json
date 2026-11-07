@@ -1895,6 +1895,63 @@
         },
         "additionalProperties": false
       },
+      "NornIrActionAggregateInput": {
+        "type": "object",
+        "description": "One bounded aggregate an action's preconditions read by `name`.",
+        "required": [
+          "name",
+          "objectType",
+          "aggregate",
+          "maxItems"
+        ],
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/NornIrAggregateFunction",
+            "description": "What is computed over the matched objects."
+          },
+          "filter": {
+            "$ref": "#/components/schemas/NornIrActionAggregateInputPropertyFilter"
+          },
+          "maxItems": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Most objects the fold may match; one more refuses the action.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The precondition environment member holding the result. Unique among\nthe action's aggregates and slice entries."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The type whose stored objects are folded.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrAggregateWindow"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional window over one date or timestamp property."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrActionAggregateInputPropertyFilter": {
+        "type": "object",
+        "description": "Equality filter: each scalar property must equal the named input\nfield. An empty filter matches every object of the type.",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      },
       "NornIrActionCommand": {
         "type": "object",
         "description": "One declarative outbound command produced by an action call.",
@@ -2275,6 +2332,12 @@
           "actionId": {
             "type": "string"
           },
+          "aggregates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrActionAggregateInput"
+            }
+          },
           "commands": {
             "type": "array",
             "items": {
@@ -2597,6 +2660,90 @@
         "x-enumDescriptions": [
           "The declared time dimension."
         ]
+      },
+      "NornIrAggregateFunction": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrAggregateFunctionOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrAggregateFunctionOneOf1"
+          }
+        ],
+        "description": "The fold computed over the matched objects."
+      },
+      "NornIrAggregateFunctionOneOf0": {
+        "type": "object",
+        "description": "The exact sum of a non-nullable decimal or integer property, held at\nthe property's declared scale. An empty match set sums to zero.",
+        "required": [
+          "kind",
+          "property"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sum"
+            ]
+          },
+          "property": {
+            "type": "string",
+            "description": "The summed property.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrAggregateFunctionOneOf1": {
+        "type": "object",
+        "description": "The number of matched objects.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "count"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrAggregateWindow": {
+        "type": "object",
+        "description": "A window over one date or timestamp property. Both edges and their\ninclusivity are declared; there is no default edge semantics.",
+        "required": [
+          "property",
+          "start",
+          "end",
+          "startInclusive",
+          "endInclusive"
+        ],
+        "properties": {
+          "end": {
+            "type": "string",
+            "description": "The input field holding the end edge."
+          },
+          "endInclusive": {
+            "type": "boolean",
+            "description": "Whether an object exactly at `end` matches."
+          },
+          "property": {
+            "type": "string",
+            "description": "The date or timestamp property the window ranges over.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "start": {
+            "type": "string",
+            "description": "The input field holding the start edge."
+          },
+          "startInclusive": {
+            "type": "boolean",
+            "description": "Whether an object exactly at `start` matches."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrApiKeyFormat": {
         "oneOf": [
