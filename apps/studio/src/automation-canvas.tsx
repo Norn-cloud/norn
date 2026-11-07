@@ -1,41 +1,61 @@
-import { useQuery } from "@tanstack/react-query"
-import { useCallback } from "react"
-import { BaseEdge, EdgeLabelRenderer, Handle, MarkerType, Position, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStoreApi, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
+import { CARD, EDGE_PILL, InspectorHead, InspectorSection, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
-import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
+import { RunButton } from "./run-button.tsx"
+import { PlainWords } from "@/components/plain-words"
+import { FlowRoutesMissing, automationId, flowStore, nodeOfFinding, type FlowRestatement, type FlowFinding, type FlowPayload, type FlowStore, type FlowSummary } from "./lib/canvas/flows.ts"
+import { scopeOf } from "./lib/scope.ts"
+import { useAccount } from "./lib/session.ts"
+import { automationKinds, branchesOf, flowDefinitionPayload, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
 import { RISKS, decisionView, effectOf, nextOptionId, optionPort, optionsOf, setOptions, type DecisionOption } from "./lib/canvas/decision.ts"
 import { DecisionTree } from "./decision-tree.tsx"
+import { STEP_SPACING, tidy } from "./lib/canvas/layout.ts"
+import { LABEL_ROOM_MAX, exitLabel, exitLabels, formatCondition } from "./lib/canvas/exits.ts"
 import { words } from "./lib/format.ts"
 
 /** The automation's identity and display title (the frame's label); the title rides into the flow as display data. */
-const META = { id: "studio.automation", version: "0.1.0", title: "Automation" }
+/** One automation: its definition id (minted from its title at creation, kept for good) and its title. */
+export interface Automation { readonly id: string; readonly title: string }
+/** The automation the canvas opens with, drawn as the billing example until it is saved and reopened. */
+export const FIRST: Automation = { id: "studio.automation.invoice_follow_up", title: "Invoice follow-up" }
+/** A new automation starts with its start and one outcome, a flow that lowers and can be built on. */
+export const NEW_AUTOMATION: g.Graph = {
+  nodes: [{ id: "start", kind: "start", position: { x: 0, y: 120 }, config: {} }, { id: "done", kind: "succeed", position: { x: 280, y: 120 }, config: { outcome: "done" } }],
+  edges: [{ id: "start.next", source: "start", sourcePort: "next", target: "done", targetPort: "in", config: {} }],
+}
+const metaOf = (automation: Automation) => ({ id: automation.id, version: "0.1.0", title: automation.title })
 export const STEP_KINDS = { start: "Start", perform: "Tool", decide: "Ask a person", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
 export const RUN_BLOCKED = "Running happens in the cell with receipts; the run route is not live yet."
 
 type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly { readonly id: string; readonly label: string }[] }, "step">
 
+/** Exits sit this far apart down a step's right edge, so their labels (18px tall) never touch. */
+const EXIT_PITCH = 22
+/** The height a step needs for its exits stacked a pitch apart with a margin; a step grows only when that is taller than its content. */
+const exitsHeight = (outs: number) => outs > 1 ? (outs - 1) * EXIT_PITCH + 2 * 12 : undefined
+const outsOf = (node: g.CanvasNode) => (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").length
+
 export function StepBox({ data, selected }: NodeProps<StepNode>) {
-  const failing = data.issues.length > 0
   return (
-    <div title={data.issues.map(({ message }) => message).join("\n")} className={cn("relative w-44 rounded-lg border-2 bg-background px-3 py-2 text-sm", selected ? "border-primary ring-2 ring-primary/30" : "border-border", failing && "border-destructive")}>
-      {data.kind !== "start" && <Handle type="target" position={Position.Left} id="in" />}
-      <div className="text-meta text-muted-foreground">{STEP_KINDS[data.kind as keyof typeof STEP_KINDS] ?? data.kind}</div>
-      <div className="font-medium break-words">{data.title}</div>
-      {data.detail && <div className="truncate text-meta text-muted-foreground">{data.detail}</div>}
-      {failing && <div className="text-meta text-destructive">{data.issues.length} {data.issues.length === 1 ? "problem" : "problems"}</div>}
-      {data.outs.map((port, index) => (
-        <Handle key={port.id} type="source" position={Position.Right} id={port.id} title={port.label} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
-      ))}
+    <div title={data.issues.map(({ message }) => message).join("\n")}>
+      <NodeCard kind={data.kind} kindLabel={STEP_KINDS[data.kind as keyof typeof STEP_KINDS]} title={data.title} subtitle={data.detail} problems={data.issues.length} selected={selected} minHeight={exitsHeight(data.outs.length)}>
+        {data.kind !== "start" && <Handle className="canvas-pill" type="target" position={Position.Left} id="in" />}
+        {data.outs.map((port, index) => (
+          <Handle key={port.id} className="canvas-pill" type="source" position={Position.Right} id={port.id} title={port.label} style={{ top: `calc(50% + ${(index - (data.outs.length - 1) / 2) * EXIT_PITCH}px)` }} />
+        ))}
+      </NodeCard>
     </div>
   )
 }
@@ -48,39 +68,36 @@ type ExitEdgeData = { readonly label?: string; readonly full?: string }
  * A connection whose label sits at its exit, just past the step it leaves, so a long condition never lands on
  * the next step; the full condition is on hover.
  */
-export function ExitEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }: EdgeProps<Edge<ExitEdgeData, "exit">>) {
+export function ExitEdge({ id, source, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }: EdgeProps<Edge<ExitEdgeData, "exit">>) {
   const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  // A label is part of its edge: clicking it selects the edge, as clicking the line does.
+  const store = useStoreApi()
+  // The label never runs under a card: going forward it is clamped to the gap before the target card and ends at
+  // its edge (cut with an ellipsis, in full on hover); a gap too small for a word shows none, the exit's handle names it.
+  const forward = targetX > sourceX
+  const room = forward ? Math.min(LABEL_MAX, targetX - sourceX - 2 * LABEL_GAP) : LABEL_MAX
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
-      {data?.label && (
+      {data?.label && room >= LABEL_MIN && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute max-w-28 truncate rounded border bg-card px-1 text-[11px] leading-4 text-foreground"
-            style={{ transform: `translate(0, -50%) translate(${sourceX + 8}px, ${sourceY}px)` }}>{data.label}</div>
+          <div data-exit-label={id} data-exit-source={source} title={data.full} className={cn(EDGE_PILL, "cursor-pointer")} onClick={() => store.getState().addSelectedEdges([id])}
+            style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
     </>
   )
 }
 
+/** Exit labels: at most this wide, this far from either card, and none narrower than a short word. */
+const LABEL_MAX = LABEL_ROOM_MAX
+const LABEL_GAP = 8
+const LABEL_MIN = 32
+
 const EDGE_TYPES = { exit: ExitEdge }
 
-/** An edge label: the condition without its result prefix (`status == paid`), cut at 26 characters; the exit's hover has it in full. */
-const short = (text: string, length = 26) => {
-  const bare = text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\.(?=[A-Za-z_])/g, "")
-  return bare.length > length ? `${bare.slice(0, length - 1)}…` : bare
-}
+export { exitLabel }
 
-/** What an exit means in words: a route branch's own condition, a decision option's label, or otherwise. */
-export function exitLabel(node: g.CanvasNode | undefined, port: string): string | undefined {
-  if (!node || port === "next") return undefined
-  const branch = /^b(\d+)$/.exec(port)
-  if (branch && node.kind === "route") return formatCondition(branchesOf(node)[Number(branch[1])] ?? []) || "no condition yet"
-  if (port.startsWith("opt:") && node.kind === "decide") return optionsOf(node).find((option) => optionPort(option) === port)?.label ?? port.slice(4)
-  return port
-}
-
-const formatCondition = (all: readonly Condition[]) => all.map(({ left, op, right }) => `${left} ${op} ${right}`).join(" and ")
 const parseCondition = (line: string): Condition[] => line.split(/\s+and\s+/).map((part) => part.trim()).filter(Boolean).map((part) => {
   const [, left = part, op = "==", right = ""] = /^(\S+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/.exec(part) ?? []
   return { left, op: op as Condition["op"], right }
@@ -166,7 +183,7 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
   if (count === 0) return (
     <>
       <p className="text-muted-foreground">Select a step. Drag from a step's right edge to the next one, or drag a connection's end to reconnect it.</p>
-      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · Delete removes</p>
+      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · ⇧⌘L tidy up · Delete removes</p>
     </>
   )
   if (count > 1) return (
@@ -187,16 +204,17 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
   if (!node) return null
   const tool = RECORDED_TOOLS.find(({ id }) => id === node.config.tool)
   const field = (label: string, key: string, value: string | undefined, onSave: (text: string) => void, extra: { type?: string; placeholder?: string } = {}) => (
-    <label className="block space-y-1"><span className="text-meta text-muted-foreground">{label}</span>
+    <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">{label}</span>
       <Input aria-label={label} key={`${node.id}:${key}:${value ?? ""}`} defaultValue={value} onBlur={(event) => onSave(event.target.value)} {...extra} /></label>
   )
   return (
     <>
-      <div className="text-meta text-muted-foreground">{STEP_KINDS[node.kind as keyof typeof STEP_KINDS]} · {node.id}</div>
+      <InspectorHead kind={node.kind} kindLabel={STEP_KINDS[node.kind as keyof typeof STEP_KINDS]} id={node.id} />
+      {issues.filter((issue) => issue.node === node.id).map((issue, index) => <IssueCard key={index} issue={issue} />)}
       {node.kind === "start" && <p className="text-muted-foreground">Every automation has one start. Connect it to the first step.</p>}
       {node.kind === "perform" && <>
-        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Tool</span>
-          <select aria-label="Tool" className="w-full rounded-md border bg-background px-2 py-1" value={node.config.tool} onChange={(event) => edit(g.configureNode(graph, node.id, { tool: event.target.value, input: "{}" }))}>
+        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Tool</span>
+          <select aria-label="Tool" className="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50" value={node.config.tool} onChange={(event) => edit(g.configureNode(graph, node.id, { tool: event.target.value, input: "{}" }))}>
             {!tool && <option value={node.config.tool}>{node.config.tool} (not connected)</option>}
             {RECORDED_TOOLS.map(({ id }) => <option key={id} value={id}>{id}</option>)}
           </select></label>
@@ -207,20 +225,23 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
       </>}
       {node.kind === "route" && <Branches editing={editing} id={node.id} branches={branchesOf(node)} />}
       {node.kind === "decide" && <>
+        <InspectorSection title="The ask">
         {field("Question", "question", node.config.question, (text) => edit(g.configureNode(graph, node.id, { question: text.trim() })), { placeholder: "What should I do?" })}
-        <label className="block space-y-1"><span className="text-meta text-muted-foreground">Risk</span>
-          <select aria-label="Risk" className="w-full rounded-md border bg-background px-2 py-1" value={node.config.risk ?? "medium"} onChange={(event) => edit(g.configureNode(graph, node.id, { risk: event.target.value }))}>
+        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Risk</span>
+          <select aria-label="Risk" className="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50" value={node.config.risk ?? "medium"} onChange={(event) => edit(g.configureNode(graph, node.id, { risk: event.target.value }))}>
             {RISKS.map((risk) => <option key={risk} value={risk}>{words(risk)}</option>)}
           </select></label>
+        </InspectorSection>
+        <InspectorSection title="Who decides">
         {field("Who decides (roles, comma separated)", "roles", node.config.deciderRoles, (text) => edit(g.configureNode(graph, node.id, { deciderRoles: text.split(",").map((role) => role.trim()).filter(Boolean).join(",") })))}
         {field("Under law (optional)", "law", node.config.deciderLaw, (text) => edit(g.configureNode(graph, node.id, { deciderLaw: text.trim() })), { placeholder: "the law that makes this a person's call" })}
         {field("Expires after (hours, optional)", "expires", node.config.expiresInMs ? String(Number(node.config.expiresInMs) / 3_600_000) : "", (text) => edit(g.configureNode(graph, node.id, { expiresInMs: /^\d+(\.\d+)?$/.test(text.trim()) ? String(Math.round(Number(text) * 3_600_000)) : "" })), { type: "number" })}
+        </InspectorSection>
         <Options editing={editing} id={node.id} options={optionsOf(node)} pick={node.config.agentPick ?? ""} />
       </>}
       {node.kind === "sleep" && field("Wait (milliseconds)", "millis", node.config.millis, (text) => edit(g.configureNode(graph, node.id, { millis: text })), { type: "number" })}
       {node.kind === "succeed" && field("Outcome", "outcome", node.config.outcome, (text) => edit(g.configureNode(graph, node.id, { outcome: text })))}
-      {node.kind !== "start" && <Button size="sm" variant="outline" onClick={remove}><Trash2 />Delete</Button>}
-      {issues.filter((issue) => issue.node === node.id).map((issue, index) => <IssueCard key={index} issue={issue} />)}
+      {node.kind !== "start" && <div className="border-t border-node-border pt-3"><Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={remove}><Trash2 />Delete</Button></div>}
     </>
   )
 }
@@ -233,12 +254,17 @@ const DEFAULTS: Record<string, Record<string, string>> = {
   succeed: { outcome: "done" },
 }
 
+/** A step card's drawn height: its content, or taller when its exits need the room. */
+const stepHeight = (node: g.CanvasNode) => Math.max(cardHeight({ kindLine: node.kind !== "start", subtitle: node.kind !== "start" }), exitsHeight(outsOf(node)) ?? 0)
+
 /** The frame's props for an automation; the sheet renders the same props with fixed findings. */
-export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.Graph = EXAMPLE): CanvasFrameProps {
+export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.Graph = EXAMPLE, automation: Automation = FIRST): CanvasFrameProps {
   return {
-    draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
+    draftKey: `automation:${automation.id}`, label: automation.title, initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
     saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
     fixed: (node) => node.kind === "start",
+    tidy: (graph) => tidy(graph, STEP_SPACING, stepHeight),
+    nodeSize: (node) => ({ width: CARD.step, height: stepHeight(node) }),
     toNode: (node, found, selected): StepNode => ({
       id: node.id, type: "step", position: node.position, selected,
       data: {
@@ -248,23 +274,22 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
       },
     }),
     toEdge: (edge, found, selected, graph): Edge => {
-      const full = exitLabel(graph.nodes.find(({ id: node }) => node === edge.source), edge.sourcePort)
+      const source = graph.nodes.find(({ id: node }) => node === edge.source)
+      const drawn = source ? exitLabels(source).get(edge.sourcePort) : undefined
       return {
         id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected, type: "exit",
-        data: full === undefined ? {} : { label: short(full), full },
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: found.length > 0 ? { stroke: "var(--destructive)", strokeWidth: 2 } : selected ? { stroke: "var(--primary)", strokeWidth: 2 } : undefined,
+        data: drawn ? { label: drawn.label, full: drawn.full } : {},
       }
     },
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) =>
       ({ id: g.freshName(graph.edges.map(({ id }) => id), `${source}.${sourceHandle ?? "next"}`), source, target, sourcePort: sourceHandle ?? "next", targetPort: targetHandle ?? "in", config: {} }),
     palette: ({ graph, edit, select }) => Object.keys(DEFAULTS).map((kind) => (
-      <Button key={kind} size="sm" variant="outline" onClick={() => {
+      <Button key={kind} size="sm" variant="ghost" className="gap-1.5 pl-1.5" onClick={() => {
         const base = graph.nodes.some((node) => node.kind === "start") ? graph : g.addNode(graph, { id: "start", kind: "start", position: { x: 0, y: 120 }, config: {} })
         const id = g.freshId(base, kind === "perform" ? "call" : kind)
         edit(g.addNode(base, { id, kind, position: { x: 40, y: 360 + graph.nodes.length * 10 }, config: { ...DEFAULTS[kind] } }))
         select({ nodes: [id], edges: [] })
-      }}><Plus />{STEP_KINDS[kind as keyof typeof STEP_KINDS]}</Button>
+      }}><KindChip kind={kind} className="size-5 rounded-md" />{STEP_KINDS[kind as keyof typeof STEP_KINDS]}</Button>
     )),
     inspector: (editing, found) => <Inspector editing={editing} issues={found} />,
     below: ({ graph, selection }) => {
@@ -275,23 +300,166 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
 }
 
 /** Edit an automation: every change lowers it through lowerFlow and runs the checker over what it lowers to. */
-export function AutomationEditor() {
+/** Why saving an automation is unavailable, by what the server says about this workspace. */
+export const NO_CELL = "This workspace has no data cell yet"
+
+/**
+ * One automation, saved to and run in the cell (D66). Save lowers the drawing and sends it as a flow definition
+ * (admit, then install as the version after the one opened); the cell's refusals land on the steps they name. Run
+ * starts the saved version and opens its run. Retire takes it out of use; the cell keeps its history.
+ */
+export function AutomationEditor({ automation = FIRST, fresh, store: given }: {
+  readonly automation?: Automation
+  /** The drawing a newly created automation starts from (until it is saved). */
+  readonly fresh?: g.Graph
+  readonly store?: FlowStore | null
+} = {}) {
+  const meta = metaOf(automation)
+  const account = useAccount()
+  const scope = given !== undefined ? null : scopeOf(account.data)
+  const store = useMemo(() => given !== undefined ? given : scope ? flowStore(scope) : null, [given, scope?.orgId, scope?.environmentId])
+  const noCell = store === null && !account.isPending
+  const client = useQueryClient()
+  const stored = useQuery({ queryKey: ["flow", meta.id, scope?.orgId, scope?.environmentId], queryFn: async () => (await store!.get(meta.id)) ?? null, enabled: store !== null, retry: false })
+  const routesDown = stored.error instanceof FlowRoutesMissing
+  const [at, setAt] = useState<{ readonly version: number }>()
+  useEffect(() => { setAt(stored.data ? { version: stored.data.version } : undefined) }, [stored.data])
+  // The cell's refusal, held for the drawing it refused: any edit makes it stale, so it goes.
+  const [refused, setRefused] = useState<{ readonly drawing: string; readonly issues: readonly Issue[] } | null>(null)
+  const [notice, setNotice] = useState<{ readonly tone: "refusal" | "info"; readonly text: string } | null>(null)
+  // D59: the cell's words for the drawing being saved, and whether the person signed exactly those words.
+  const [words, setWords] = useState<{ readonly drawing: string; readonly value: FlowRestatement; readonly fromCell: boolean } | null>(null)
+  const [signed, setSigned] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  /** The last save's notice, shown again by the canvas that reopens on the saved version. */
+  const [landed, setLanded] = useState<{ readonly tone: "info"; readonly text: string } | null>(null)
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const issues = useCallback((graph: g.Graph) => {
-    const { lowered, problems } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
+    const { lowered, problems } = lower(graph, RECORDED_TOOLS, meta, RECORDED_SCOPE)
     const own: Issue[] = problems.map(({ code, message, node }) => ({ code, message, ...(node ? { node } : {}) }))
-    if (!lowered) return { issues: own, status: <Badge variant="destructive">{own.length} {own.length === 1 ? "finding" : "findings"}</Badge> }
-    if (checker.isError) return { issues: own, status: <span className="text-destructive" role="alert">Checker not loaded: lowering findings only</span> }
-    if (!checker.data) return { issues: own, status: <span role="status">Lowered; loading the checker…</span> }
+    const cell = refused && refused.drawing === JSON.stringify(graph) ? refused.issues : []
+    if (!lowered) return { issues: [...own, ...cell], status: <Badge variant="destructive">{own.length} {own.length === 1 ? "finding" : "findings"}</Badge> }
+    if (checker.isError) return { issues: [...own, ...cell], status: <span className="text-destructive" role="alert">Checker not loaded: lowering findings only</span> }
+    if (!checker.data) return { issues: [...own, ...cell], status: <span role="status">Lowered; loading the checker…</span> }
     // The checker's findings name generated states; each state belongs to the step that lowered to it.
     const owner = (message: string) => [...lowered.states].find(([, states]) => states.some((name) => message.includes(`"${name}"`)))?.[0]
-    const found: Issue[] = checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message }) => ({ code, message, ...(owner(message) ? { node: owner(message) } : {}) }))
+    const found: Issue[] = [...checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message }) => ({ code, message, ...(owner(message) ? { node: owner(message) } : {}) })), ...cell]
     return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no findings</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
-  }, [checker.isError, checker.data])
+  }, [checker.isError, checker.data, refused, meta.id, meta.title])
+  const save = async (graph: g.Graph) => {
+    if (!store) return { tone: "refusal" as const, text: NO_CELL }
+    const { lowered } = lower(graph, RECORDED_TOOLS, meta, RECORDED_SCOPE)
+    if (!lowered) return { tone: "refusal" as const, text: "The drawing does not lower to a flow; fix its findings first." }
+    // The flow, its artifacts, and the drawing itself, so it reopens exactly as it was left.
+    const payload: FlowPayload = { ...flowDefinitionPayload(lowered), layout: { nodes: graph.nodes, edges: graph.edges } }
+    const refuse = (findings: readonly FlowFinding[]) => {
+      const nodes = graph.nodes.map(({ id }) => id)
+      setRefused({ drawing: JSON.stringify(graph), issues: findings.map((finding) => ({ code: finding.code, message: finding.message, ...(nodeOfFinding(finding, nodes, lowered.states) ? { node: nodeOfFinding(finding, nodes, lowered.states)! } : {}) })) })
+      return { tone: "refusal" as const, text: `The cell refused the automation: ${findings.map(({ code }) => code).join(", ")}.` }
+    }
+    const drawing = JSON.stringify(graph)
+    const admission = await store.admit(meta.id, payload)
+    if (!admission.admitted) return refuse(admission.findings)
+    // Saving signs the cell's words for exactly this drawing: first read them and sign off, then save installs signed.
+    const current = admission.restatement
+    if (current && !(signed === current.sha256 && words?.drawing === drawing && words.value.sha256 === current.sha256)) {
+      if (words?.drawing !== drawing || words.value.sha256 !== current.sha256) { setWords({ drawing, value: current, fromCell: false }); setSigned(undefined) }
+      return { tone: "info" as const, text: "Read the automation in plain words below and sign off; then Save installs it, signed." }
+    }
+    const result = await store.install(meta.id, payload, at?.version, current ? signed : undefined)
+    if (result.installed) {
+      // The canvas reopens on the new version (its key), so the notice is handed to the reopened canvas too.
+      const done = { tone: "info" as const, text: `Saved as version ${result.version}; the cell admitted and installed it${result.receipt ? ` (receipt ${result.receipt.slice(0, 12)}…)` : ""}. Run starts it.` }
+      setRefused(null); setAt({ version: result.version }); setWords(null); setSigned(undefined); setLanded(done)
+      void client.invalidateQueries({ queryKey: ["flow", meta.id] }); void client.invalidateQueries({ queryKey: ["flows"] })
+      return done
+    }
+    if ("conflict" in result) return { tone: "refusal" as const, text: "Someone saved a newer version first. Reopen the automation to see it; your drawing is kept as a draft." }
+    if ("runsLive" in result) return { tone: "refusal" as const, text: "The cell refused: this flow has live runs." }
+    if ("signoff" in result) {
+      setSigned(undefined)
+      if (result.signoff === "unavailable") return { tone: "refusal" as const, text: "The cell cannot verify a sign-off yet; the automation was not saved." }
+      if (result.restatement) { setWords({ drawing, value: result.restatement, fromCell: true }); return { tone: "refusal" as const, text: "The cell reads this automation differently. Review its words and sign off again." } }
+      return { tone: "refusal" as const, text: "The cell rejected these words and sent none of its own; the automation was not saved." }
+    }
+    return refuse(result.findings)
+  }
+  const retire = async () => {
+    if (!store || !at || busy || !globalThis.confirm("Retire this automation? It stops being runnable; the cell keeps its history.")) return
+    setBusy(true); setNotice(null)
+    try {
+      const result = await store.retire(meta.id, at.version)
+      if (result.installed) { setAt(undefined); setNotice({ tone: "info", text: `Retired. The cell keeps versions 1 to ${result.version - 1} and their runs.` }); void client.invalidateQueries({ queryKey: ["flow", meta.id] }); void client.invalidateQueries({ queryKey: ["flows"] }) }
+      else setNotice({ tone: "refusal", text: "runsLive" in result ? "The cell refused: this automation has runs still going. Retire it once they end." : "conflict" in result ? "Someone changed it first; reopen it." : "findings" in result ? `The cell refused: ${result.findings.map(({ code }) => code).join(", ")}.` : "The cell refused to retire it." })
+    } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) }
+    finally { setBusy(false) }
+  }
+  const blocked = noCell ? NO_CELL : routesDown ? (stored.error as Error).message : SAVE_BLOCKED
+  const frame = automationFrame(issues, stored.data?.payload.layout ? { nodes: [...stored.data.payload.layout.nodes], edges: [...stored.data.payload.layout.edges] } : fresh ?? EXAMPLE, automation)
+  if (store && stored.isLoading) return <p role="status" className="text-sm text-muted-foreground">Opening the automation…</p>
   return (
     <div className="space-y-2">
-      <CanvasFrame {...automationFrame(issues)} />
-      <div className="flex justify-end"><Unavailable reason={RUN_BLOCKED}>Run in the cell</Unavailable></div>
+      {stored.isError && !routesDown && <p role="alert" className="text-destructive">{(stored.error as Error).message}</p>}
+      <CanvasFrame key={stored.data?.version ?? "new"} {...frame} draftKey={`automation:${meta.id}:${stored.data?.version ?? "new"}`} {...landed ? { initialNotice: landed } : {}} saveBlocked={blocked} {...store && !routesDown ? { save } : {}} />
+      {words && <PlainWords words={words.value} signed={signed === words.value.sha256} fromCell={words.fromCell} onSign={() => setSigned(words.value.sha256)} testId="automation-restatement" />}
+      {stored.data?.signoff && !words && (
+        <p className="text-meta text-muted-foreground" data-testid="automation-signoff">
+          Version {stored.data.version} signed off by {stored.data.signoff.signer}{stored.data.signoff.signedAtMs ? ` on ${new Date(stored.data.signoff.signedAtMs).toLocaleString()}` : ""}.
+          {stored.data.restatement && stored.data.restatement.sha256 !== stored.data.signoff.restatementSha256 && <span className="text-destructive"> The cell now reads it differently than the words signed; save it again to sign its current words.</span>}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-2" data-testid="automation-actions">
+        <span className="text-meta text-muted-foreground">{at ? `Saved in the cell · version ${at.version}` : "Not saved in the cell"}</span>
+        {notice && <span role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{notice.text}</span>}
+        {at && store ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void retire()}>Retire</Button> : null}
+        {at && store
+          ? <RunButton flow={meta.id} label="Run in the cell" />
+          : <Unavailable reason={noCell ? NO_CELL : "Save the automation to the cell first; a run starts the saved version."}>Run in the cell</Unavailable>}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The automations in this workspace: the one open, every one saved in the cell, and a new one by name. Each saves
+ * under its own definition id (`studio.automation.<slug>`), minted at creation and kept on reopen.
+ */
+export function AutomationsView() {
+  const account = useAccount()
+  const scope = scopeOf(account.data)
+  const store = useMemo(() => scope ? flowStore(scope) : null, [scope?.orgId, scope?.environmentId])
+  // Every page: a new automation's id must not take one a saved automation already holds, on any page.
+  const saved = useQuery({ queryKey: ["flows", scope?.orgId, scope?.environmentId], queryFn: async () => {
+    const items: FlowSummary[] = []
+    let cursor: string | undefined
+    do { const page = await store!.list(cursor); items.push(...page.items); cursor = page.cursor ?? undefined } while (cursor)
+    return { items }
+  }, enabled: store !== null, retry: false })
+  const [open, setOpen] = useState<{ readonly automation: Automation; readonly fresh?: g.Graph }>({ automation: FIRST })
+  const [name, setName] = useState("")
+  const create = () => {
+    const title = name.trim()
+    if (!title) return
+    const taken = [FIRST.id, open.automation.id, ...saved.data?.items.map(({ id }) => id) ?? []]
+    setOpen({ automation: { id: automationId(title, taken), title }, fresh: NEW_AUTOMATION })
+    setName("")
+  }
+  const items = saved.data?.items ?? []
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-node-border bg-card p-2 shadow-node" data-testid="automations">
+        <span className="px-1 text-sm font-medium">Automations</span>
+        {items.length === 0 && saved.isSuccess && <span className="text-meta text-muted-foreground">None saved in the cell yet</span>}
+        {items.map((item) => (
+          <Button key={item.id} size="sm" variant={item.id === open.automation.id ? "secondary" : "ghost"} aria-pressed={item.id === open.automation.id}
+            onClick={() => setOpen({ automation: { id: item.id, title: item.title || item.id } })}>{item.title || item.id}<span className="text-meta text-muted-foreground">v{item.version}</span></Button>
+        ))}
+        <span className="ms-auto flex items-center gap-2">
+          <Input aria-label="New automation name" className="h-8 w-48" placeholder="New automation" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") create() }} />
+          <Button size="sm" variant="outline" disabled={!name.trim()} onClick={create}><Plus />New automation</Button>
+        </span>
+      </div>
+      <AutomationEditor key={open.automation.id} automation={open.automation} {...open.fresh ? { fresh: open.fresh } : {}} />
     </div>
   )
 }

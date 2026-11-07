@@ -46,6 +46,24 @@ export function authDeploy(env: Readonly<Record<string, string | undefined>>, ta
   return { secret, url: `https://${target.domains[0]}`, ...emailFrom === undefined ? {} : { emailFrom } }
 }
 
+/** The preview stages' workspace map: the seeded demo workspace reads the recorded `analytics` cell. */
+export const PREVIEW_WORKSPACE_ENVIRONMENTS: Readonly<Record<string, string>> = { org_demo: "analytics" }
+
+/**
+ * The Worker's STUDIO_WORKSPACE_ENVIRONMENTS for a stage, as JSON: the operator's map when set (validated: an object of
+ * non-empty strings), else the preview map on a non-production stage, else none on production. Production never gets
+ * the preview default: its workspaces have no data environment until the map names them.
+ */
+export function workspaceEnvironments(env: Readonly<Record<string, string | undefined>>, target: DeployTarget): string {
+  const configured = env.STUDIO_WORKSPACE_ENVIRONMENTS
+  if (configured === undefined) return JSON.stringify(target.stage === "prod" ? {} : PREVIEW_WORKSPACE_ENVIRONMENTS)
+  let mapping: unknown
+  try { mapping = JSON.parse(configured) } catch { throw new Error("STUDIO_WORKSPACE_ENVIRONMENTS must be a JSON object from workspace id to environment id") }
+  if (typeof mapping !== "object" || mapping === null || Array.isArray(mapping) || !Object.values(mapping).every((value) => typeof value === "string" && value.trim() !== ""))
+    throw new Error("STUDIO_WORKSPACE_ENVIRONMENTS must be a JSON object from workspace id to environment id")
+  return JSON.stringify(mapping)
+}
+
 /** Environment variable names whose values are credentials. */
 // Not a bare AUTH: AUTH_URL or AUTH_MODE hold plain settings that would fail deploys falsely.
 export const SECRET_NAME = /TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|PRIVATE|AUTH_CONFIG/i

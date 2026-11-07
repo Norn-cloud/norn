@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { clickEdge, drag, edge, node, open, press } from "./canvas.ts"
+import { clear, clickEdge, drag, edge, edgeEnds, lefts, node, open, placed, press, shown } from "./canvas.ts"
 
 // One test per row of the automation canvas's verb matrix (see the PR body).
 const out = (page: Parameters<typeof node>[0], id: string, port: string) => node(page, id).locator(`.react-flow__handle[data-handleid="${port}"]`)
@@ -15,11 +15,12 @@ test("step: create, view, edit, delete, duplicate, move, undo/redo, validate, sa
   await page.getByLabel("Wait (milliseconds)").fill("5000")
   await page.getByLabel("Wait (milliseconds)").blur()
   await expect(node(page, "sleep")).toContainText("5000 ms")
-  const before = await node(page, "sleep").boundingBox()
-  await node(page, "sleep").hover()
-  await page.mouse.down(); await page.mouse.move((before?.x ?? 0) + 150, (before?.y ?? 0) + 60, { steps: 8 }); await page.mouse.up()
+  const before = await (await shown(page, "sleep")).boundingBox()
+  await (await shown(page, "sleep")).hover()
+  await page.mouse.down(); // From the grab point (the card's centre), 150px right.
+  await page.mouse.move((before?.x ?? 0) + (before?.width ?? 0) / 2 + 150, (before?.y ?? 0) + (before?.height ?? 0) / 2 + 60, { steps: 8 }); await page.mouse.up()
   expect((await node(page, "sleep").boundingBox())?.x).toBeGreaterThan((before?.x ?? 0) + 80)
-  await node(page, "sleep").click()
+  await (await shown(page, "sleep")).click()
   await press(page, "d")
   await expect(node(page, "sleep_copy")).toContainText("5000 ms")
   await page.keyboard.press("Delete")
@@ -29,7 +30,7 @@ test("step: create, view, edit, delete, duplicate, move, undo/redo, validate, sa
   await press(page, "Shift+z")
   await expect(node(page, "sleep_copy")).toHaveCount(0)
   // The start cannot be deleted or copied, and deleting with it selected keeps its connection.
-  await node(page, "start").click()
+  await (await shown(page, "start")).click()
   await page.keyboard.press("Delete")
   await expect(node(page, "start")).toBeVisible()
   await expect(edge(page, "start.next")).toHaveCount(1)
@@ -78,7 +79,7 @@ test("connection: create, view, delete, reconnect, undo/redo, validate, reopen",
 
 test("tool binding: view, edit tool and inputs, undo/redo, validate, reopen", async ({ page }) => {
   await open(page, "Automation")
-  await node(page, "remind").click()
+  await (await shown(page, "remind")).click()
   await expect(page.getByLabel("invoiceId (string)")).toHaveValue("invoice.id")
   await page.getByLabel("invoiceId (string)").fill("invoice.amountMinor")
   await page.getByLabel("invoiceId (string)").blur()
@@ -94,20 +95,21 @@ test("tool binding: view, edit tool and inputs, undo/redo, validate, reopen", as
   await expect(node(page, "remind")).toContainText("billing.load_invoice")
   await page.reload()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
-  await node(page, "remind").click()
+  await (await shown(page, "remind")).click()
   await expect(page.getByLabel("Tool")).toHaveValue("billing.load_invoice")
   await expect(page.getByLabel("Name its result")).toHaveValue("reminder")
 })
 
 test("route branches: create, edit, delete, reorder, undo/redo, validate, reopen", async ({ page }) => {
   await open(page, "Automation")
-  await node(page, "settled").click()
+  await (await shown(page, "settled")).click()
   await expect(page.getByLabel("Branch b0")).toHaveValue("invoice.status == paid")
   // reorder: b1 moves up and its exit follows it.
   await page.getByRole("button", { name: "Move b1 up" }).click()
   await expect(page.getByLabel("Branch b0")).toHaveValue("invoice.status == draft")
   // The exit is labelled with its branch's own condition, not b0/b1.
-  await expect(page.locator('[data-exit-label="settled.b1"]')).toContainText("status == draft")
+  // Sibling exits read by what differs; the full condition is on hover.
+  await expect(page.locator('[data-exit-label="settled.b1"]')).toHaveText("draft")
   await expect(page.locator('[data-exit-label="settled.b1"]')).toHaveAttribute("title", "invoice.status == draft")
   await expect(page.getByText("Checker: no findings")).toBeVisible()
   await press(page, "z")
@@ -126,17 +128,17 @@ test("route branches: create, edit, delete, reorder, undo/redo, validate, reopen
   await expect(node(page, "paid")).not.toContainText("problem")
   await page.reload()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
-  await node(page, "settled").click()
+  await (await shown(page, "settled")).click()
   await expect(page.getByLabel("Branch b2")).toBeVisible()
 })
 
 test("clipboard: states copied on a lifecycle are refused on the automation canvas", async ({ page }) => {
   await open(page)
-  await node(page, "draft").click()
+  await (await shown(page, "draft")).click()
   await press(page, "c")
   await expect(page.getByText("Copied 1 item.")).toBeVisible()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
-  await page.locator(".react-flow__pane").click({ position: { x: 10, y: 10 } })
+  await clear(page)
   await press(page, "v")
   await expect(page.getByText(/copied from another kind of canvas/)).toBeVisible()
   await expect(node(page, "draft_copy")).toHaveCount(0)
@@ -144,14 +146,47 @@ test("clipboard: states copied on a lifecycle are refused on the automation canv
 
 test("selection and problems: multi-select, copy/paste, delete selected, jump to a finding", async ({ page }) => {
   await open(page, "Automation")
-  await node(page, "paid").click()
-  await node(page, "draft").click({ modifiers: ["Shift"] })
+  await (await shown(page, "paid")).click()
+  await (await shown(page, "draft")).click({ modifiers: ["Shift"] })
   await expect(page.getByText("2 steps and 0 connections selected.")).toBeVisible()
   await press(page, "c")
   await press(page, "v")
   await expect(node(page, "paid_copy")).toBeVisible()
   await expect(node(page, "draft_copy")).toBeVisible()
-  await page.locator(".react-flow__pane").click({ position: { x: 10, y: 10 } })
+  await clear(page)
   await page.getByTestId("problem").first().click()
-  await expect(page.getByText(/^Outcome · (paid|draft)_copy$/)).toBeVisible()
+  await expect(page.getByRole("heading", { name: /^Outcome\s*·\s*(paid|draft)_copy$/ })).toBeVisible()
+})
+
+const boxes = (page: Parameters<typeof node>[0], selector: string) => page.locator(selector).evaluateAll((all) => all.map((one) => one.getBoundingClientRect().toJSON() as DOMRect))
+const overlap = (a: DOMRect, b: DOMRect) => a.x < b.x + b.width - 0.5 && a.x + a.width > b.x + 0.5 && a.y < b.y + b.height - 0.5 && a.y + a.height > b.y + 0.5
+
+test("tidy up: lays the whole graph out with room for labels, as one step undo puts back", async ({ page }) => {
+  await open(page, "Automation")
+  const before = await placed(page)
+  await page.getByRole("button", { name: "Tidy up" }).click()
+  await expect.poll(async () => JSON.stringify(await placed(page))).not.toBe(JSON.stringify(before))
+  const after = await placed(page)
+  await page.waitForTimeout(400)
+  // No label lies under a card or another label.
+  const labels = await boxes(page, "[data-exit-label]")
+  const nodes = await boxes(page, ".react-flow__node")
+  labels.forEach((label, index) => {
+    for (const card of nodes) expect(overlap(label, card)).toBe(false)
+    for (const other of labels.slice(index + 1)) expect(overlap(label, other)).toBe(false)
+  })
+  // The order holds: every connection runs left to right.
+  const x = await lefts(page)
+  const ends = await edgeEnds(page)
+  expect(ends.length).toBeGreaterThan(0)
+  for (const [source, target] of ends) expect(x[target]!).toBeGreaterThan(x[source]!)
+  // One undo restores the person's layout; redo tidies again. The shortcut does the same.
+  await press(page, "z")
+  await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(before))
+  await press(page, "Shift+z")
+  await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(after))
+  await press(page, "z")
+  await (await shown(page, "load")).click()
+  await press(page, "Shift+l")
+  await expect.poll(async () => JSON.stringify(await placed(page))).toBe(JSON.stringify(after))
 })

@@ -1,5 +1,6 @@
-import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
+import { forwardToHost, originAllowed, resolveActor, workspaceEnvironment } from "./actor.ts"
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
+import { passwordScrypt } from "./password.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -11,6 +12,10 @@ export interface Env {
   /** Cloudflare Email Service binding and sender; both absent until a sender is enabled. */
   readonly EMAIL?: { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> }
   readonly EMAIL_FROM?: string
+  /** "js" selects the pure-JS scrypt (set by the celld config); Cloudflare leaves it unset. */
+  readonly AUTH_SCRYPT?: string
+  /** Deploy-time JSON map from workspace (organization) ids to their cell environments (see deploy-target.ts); unset means none. */
+  readonly STUDIO_WORKSPACE_ENVIRONMENTS?: string
   /** The Norn cell host (service binding); absent until a host is connected to this stage. */
   readonly NORN_HOST?: Fetcher
 }
@@ -31,7 +36,7 @@ function auth(env: Env): Auth {
   const sendMagicLink = mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
     await mail.send({ to, from, subject: "Sign in to Norn Studio", text: `Sign in to Norn Studio: ${url}\n\nThe link expires in 10 minutes. If you did not ask for it, ignore this email.` })
   }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, ...sendMagicLink === undefined ? {} : { sendMagicLink } })
+  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...sendMagicLink === undefined ? {} : { sendMagicLink } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
@@ -54,7 +59,9 @@ async function me(request: Request, env: Env): Promise<Response> {
   if (session === null) return refuse(401, "Sign in first.")
   const member = await activeMembership(auth(env), session.user.id, session.session.activeOrganizationId)
   return Response.json(
-    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role } },
+    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role },
+      // The caller's active workspace's environment, from server configuration; null without a membership or a mapping.
+      environmentId: member === null ? null : workspaceEnvironment(member.organizationId, env.STUDIO_WORKSPACE_ENVIRONMENTS) },
     { headers: { "cache-control": "no-store" } },
   )
 }

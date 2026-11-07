@@ -3,6 +3,7 @@ import type { Artifact } from "./transport.ts"
 
 type PropertyType = Schemas["NornIrPropertyType"]
 type PropertyTypeDef = Schemas["NornIrPropertyTypeDef"]
+export type Lifecycle = Schemas["NornIrLifecycle"]
 
 export interface Field {
   readonly id: string
@@ -59,6 +60,8 @@ export interface Concept {
   readonly relationships: readonly Relationship[]
   readonly rules: readonly string[]
   readonly feeds: readonly Feed[]
+  /** The lifecycles an object type declares; interfaces declare none. */
+  readonly lifecycles: readonly Lifecycle[]
 }
 
 export interface SourceSystem {
@@ -189,6 +192,7 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],
       feeds: fed,
+      lifecycles: "lifecycles" in def ? def.lifecycles ?? [] : [],
     })
   }
   concepts.sort((a, b) => a.title.localeCompare(b.title))

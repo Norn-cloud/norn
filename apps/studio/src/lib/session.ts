@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 export interface Account {
   readonly user: { readonly id: string; readonly name: string; readonly email: string }
   readonly organization: { readonly id: string; readonly name: string; readonly role: string } | null
+  /** The organization's data environment, resolved by the server; null when the workspace has no data cell yet. */
+  readonly environmentId?: string | null
 }
 
 const SESSION = ["session"] as const

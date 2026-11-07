@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { node, open, press } from "./canvas.ts"
+import { node, open, press, shown } from "./canvas.ts"
 
 // Rows "Ask a person" and "Option" of the automation canvas's verb matrix, and the decider's preview.
 test("ask a person: create, view, edit, validate, undo/redo, save draft, reopen; preview follows every edit", async ({ page }) => {
@@ -22,7 +22,7 @@ test("ask a person: create, view, edit, validate, undo/redo, save draft, reopen;
   await press(page, "s")
   await page.reload()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
-  await node(page, "decide").click()
+  await (await shown(page, "decide")).click()
   await expect(page.getByTestId("decision-tree")).toContainText("Refund the order?")
 })
 
