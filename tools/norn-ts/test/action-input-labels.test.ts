@@ -42,7 +42,7 @@ describe("action input labels and groups", () => {
   })
 
   test("without labels or groups the input is emitted as authored", () => {
-    expect(lowered({})).toEqual(input)
+    expect<unknown>(lowered({})).toEqual(input)
   })
 })
 

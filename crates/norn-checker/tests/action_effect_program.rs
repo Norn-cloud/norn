@@ -380,7 +380,11 @@ fn upsert() -> serde_json::Value {
 fn with_input(edit: impl FnOnce(&mut serde_json::Value)) -> ArtifactEnvelope {
     let mut artifact = action_artifact(upsert());
     let mut payload = serde_json::to_value(&artifact.payload).expect("payload should encode");
-    edit(&mut payload["payload"]["inputSchema"]);
+    edit(
+        payload
+            .pointer_mut("/payload/inputSchema")
+            .expect("an action payload has an input schema"),
+    );
     artifact.payload = serde_json::from_value(payload).expect("payload should decode");
     artifact
 }
@@ -395,7 +399,7 @@ fn codes_at(artifact: &ArtifactEnvelope) -> Vec<(String, String)> {
         .collect()
 }
 
-/// D66: display-only labels and groups on ActionIR inputs.
+/// D66: display-only labels and groups on `ActionIR` inputs.
 #[test]
 fn input_labels_and_groups_are_admitted() {
     let artifact = with_input(|schema| {

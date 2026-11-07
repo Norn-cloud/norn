@@ -1509,14 +1509,14 @@ fn validate_closed_action_schema(
     );
 }
 
-/// The extension member an ActionIR input root may carry.
+/// The extension member an `ActionIR` input root may carry.
 const X_NORN: &str = "x-norn";
 /// The longest input title or group title, in characters after trimming.
 const MAX_INPUT_TITLE_CHARS: usize = 120;
 /// The longest input description, in characters after trimming.
 const MAX_INPUT_DESCRIPTION_CHARS: usize = 2000;
 
-/// Stable ActionIR input-dialect codes (D66).
+/// Stable `ActionIR` input-dialect codes (D66).
 pub mod input_codes {
     /// A `title` or `description` is not a bounded display string.
     pub const LABEL_INVALID: &str = "action.validation.input_label_invalid";
