@@ -186,6 +186,50 @@ requested world before index lookup. If the identity is absent, every verified
 indexed root for that key is checked conservatively; an interface name never
 causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
 
+## Receipt consumption (RECEIPT-CONSUME-1)
+
+RECEIPT-CONSUME-1: a `fire_transition` action that declares `acceptReceipt`
+(Core 04 RECEIPT-EFFECT-1) consumes one authenticated Function receipt and fires
+its run's resolving transition in one cell commit. Action input names the receipt
+only by its content digest (`FunctionReceipt::content_digest` under
+`RECEIPT_DOMAIN`); a body, object or mutable id refuses
+`action.receipt_body_forbidden` or `action.receipt_reference_invalid`. The cell
+host resolves the digest within its scope, world and the declared manifest, and
+re-runs RECEIPT-AUTH-BIND-1 against the persisted reconciliation acceptance. A
+host without receipt support refuses `action.receipt_effect_unsupported`.
+
+The kernel then checks the pins it can see. The receipt's manifest equals the
+declaration's. Its `run.id` equals the action's target object (RUN-BIND-1), and
+its `run.generation` equals both the reconciled record's generation and the
+command's current generation; any other run or generation refuses
+`action.receipt_run_mismatch` or `action.receipt_binding_mismatch`. A failure
+outcome refuses `action.receipt_not_accepted`, and a summary missing a bound member
+refuses `action.receipt_result_type`. Receipts whose acceptance pins predicates,
+collections or a written destination refuse `action.receipt_effect_unsupported`
+until those fences are qualified on this path.
+
+The commit carries, together: the declared transition, a `set` of the digest
+property to the receipt digest, a `set` of each bound property from the accepted
+summary, the action call record, every reconciliation pin as a compare-and-swap
+read, and the acceptance's delivery (`consumes: Result { command, generation }`).
+The host's pending-delivery check is the only consumption record. A second
+consumption, or a delivery of another generation, refuses
+`action.receipt_not_pending`. A refused transition guard, precondition or CAS
+leaves the delivery pending. A refused consumption fires no transition. An exact
+retry under the same idempotency key replays the original outcome and consumes
+nothing. A call that already consumes a delivery, or that is bound to a
+synchronous rule writer, refuses `action.unsupported_effect`. The receipt is
+evidence, not authority: the action's ordinary authorization, preconditions and
+lifecycle guards still decide.
+
+Named scenarios: **RECEIPT-CONSUME-ONCE** commits the transition, the bound values
+and the consumption as one ledger commit and replays an exact retry;
+**RECEIPT-CONSUME-REPLAY** refuses a consumed receipt under a new idempotency key
+with no commit; **RECEIPT-CONSUME-RUN** refuses a receipt of another run or
+generation with the delivery still pending; **RECEIPT-CONSUME-ATOMIC** shows no
+transition without consumption and no consumption without transition
+(`crates/norn-kernel/tests/receipt_effect.rs`).
+
 ## Observed canonical relation claims (#823)
 
 - **OBS-LINK-CLAIM-1:** the canonical concept owns its relation. Each admitted

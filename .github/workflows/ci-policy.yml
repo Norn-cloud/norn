@@ -4,6 +4,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_target:
+    # `edited` carries a retarget (base change); trusted-policy ignores every other edit.
+    types: [opened, synchronize, reopened, edited]
   # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.
   issue_comment:
     types: [created, edited, deleted]
@@ -27,17 +29,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   core:
+    # Boat: merge groups, and same-repository pull requests whose author, actor and
+    # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
+    # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
       NORN_CI_HEAD: ${{ github.event.merge_group.head_sha || github.sha }}
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
-        if: ${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}
+        if: ${{ runner.environment == 'github-hosted' }}
         run: |
           set -euo pipefail
           minimum=$((12 * 1024 * 1024))
@@ -119,7 +124,7 @@ jobs:
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
       PLAN: ${{ needs.plan.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false
@@ -331,11 +336,17 @@ jobs:
     # A bot-authored comment is never an approval or a rights event (a bot holds
     # neither), so it never re-evaluates. Keyed on the author, not the sender: any
     # edit or deletion of a human comment still re-evaluates, whoever makes it.
+    # A stacked pull request (base other than the default branch) cannot merge, so its
+    # head events never take the rights mutex. Every event carries its own base: a PR
+    # targeting main is always evaluated, and retargeting to main is an `edited` event
+    # with a base change, evaluated against the then-current head. Comment events
+    # (approvals and rights) are unchanged.
     # Evaluate relevant events without an implicit success() precondition.
     # A cancelled run still cannot begin another policy evaluation.
     if: >-
       !cancelled() && (
-      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      (github.event.action != 'edited' || github.event.changes.base)) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.type != 'Bot' &&
       (contains(github.event.comment.body, '/approve-gates') || contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') ||
       (github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))

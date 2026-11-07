@@ -816,23 +816,32 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "unrelated", "", True, False),
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
+        *(("pull_request_target", action, "", "", True, True) for action in ("opened", "synchronize", "reopened", "edited")),
     ):
         # A bot-authored comment never re-evaluates; a human one does, whoever edits or
         # deletes it (the condition keys on the author, so the sender is irrelevant).
-        for cancelled, author in itertools.product((False, True), ("User", "Bot", "Organization")):
+        # A pull_request_target event evaluates only for a main-targeted head, and an edit
+        # only when it changed the base (a retarget): stacked heads never take the mutex.
+        # Actions compares strings case-insensitively, so a case-variant base such as `Main`
+        # is evaluated too: the skip errs only towards an extra evaluation, never away from main.
+        for cancelled, author, base, retarget in itertools.product(
+                (False, True), ("User", "Bot", "Organization"), ("main", "feature/base", "Main", ""), (False, True)):
             condition = expression
             for key, value in {
                 "github.event_name": event, "github.event.action": action,
                 "github.event.comment.body": body, "github.event.changes.body.from": previous,
                 "github.event.issue.pull_request": is_pr, "github.event.comment.user.type": author,
+                "github.event.pull_request.base.ref": base.casefold(), "github.event.repository.default_branch": "main",
+                "github.event.changes.base": retarget,
             }.items():
                 condition = condition.replace(key, repr(value))
             condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
             condition = re.sub(r"!(?!=)", " not ", condition)
             accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
             bot = event == "issue_comment" and author == "Bot"
-            if bool(accepted) != (expected and not cancelled and not bot):
-                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}")
+            stacked = event == "pull_request_target" and (base.casefold() != "main" or (action == "edited" and not retarget))
+            if bool(accepted) != (expected and not cancelled and not bot and not stacked):
+                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}/{base}/{retarget}")
 
     reporter = next(step for step in job["steps"]
                     if step.get("name") == "Report trusted policy on the exact PR head")
@@ -1058,6 +1067,23 @@ def workflow_context_canaries(source: str) -> None:
                 raise AssertionError(f"trusted-policy bot mutation is a no-op: {label}")
             document["jobs"]["trusted-policy"]["if"] = changed
             rejected(f"trusted-policy bot comment {label}", document)
+        main_only = "github.event.pull_request.base.ref == github.event.repository.default_branch && "
+        retarget = "(github.event.action != 'edited' || github.event.changes.base)"
+        for label, before, after in (
+                ("unfiltered stacked heads", main_only, ""),
+                ("skip main", "base.ref == github.event.repository.default_branch", "base.ref != github.event.repository.default_branch"),
+                ("live base", "github.event.pull_request.base.ref", "github.base_ref || github.event.repository.default_branch"),
+                ("every edit", retarget, "true"),
+                ("no edits", retarget, "github.event.action != 'edited'")):
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["if"].replace(before, after)
+            if changed == document["jobs"]["trusted-policy"]["if"]:
+                raise AssertionError(f"trusted-policy stacked mutation is a no-op: {label}")
+            document["jobs"]["trusted-policy"]["if"] = changed
+            rejected(f"trusted-policy stacked {label}", document)
+        document = copy.deepcopy(workflow)
+        document["on"]["pull_request_target"]["types"].remove("edited")
+        rejected("retarget never re-evaluates", document)
         for change in ("concurrency", "if", "reporter"):
             document = copy.deepcopy(workflow)
             trusted = document["jobs"]["trusted-policy"]
@@ -1105,6 +1131,14 @@ def workflow_context_canaries(source: str) -> None:
         document["jobs"]["core"]["steps"][0]["run"] = document["jobs"]["core"]["steps"][0]["run"].replace(
             'if [ "$(available)" -lt "$minimum" ]; then', "if true; then")
         rejected("unconditional core cleanup", document)
+        for name in ("core", "test"):
+            # A Boat pull-request VM is self-hosted: cleanup keys on the hosted image alone.
+            for condition in ("${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
+                              "${{ runner.environment != 'self-hosted' }}",
+                              "${{ github.event_name != 'merge_group' }}"):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["steps"][0]["if"] = condition
+                rejected(f"{name} cleanup keyed off the hosted image", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["test"]["steps"][0]["run"] = workflow["jobs"]["core"]["steps"][0]["run"]
         rejected("threshold-only hosted bundle cleanup", document)
@@ -1113,30 +1147,69 @@ def workflow_context_canaries(source: str) -> None:
             return next(step for step in document["jobs"][job]["steps"]
                         if step.get("uses", "").startswith(action + "@"))
 
-        runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+        same_repo = "github.event.pull_request.head.repo.full_name == github.repository && "
         legacy = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
         expression = runner.removeprefix("${{ ").removesuffix(" }}")
+        boat_users = ("Youssef-Tarek-Ali-26", "dependabot[bot]", "other-maintainer")
         for event in ("merge_group", "pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
-            for variable in ("", "boat", "self-hosted", "other"):
-                concrete = expression.replace("github.event_name", repr(event)).replace(
-                    "vars.NORN_MERGE_RUNNER", repr(variable)).replace("&&", " and ").replace("||", " or ")
-                expected = "boat" if event == "merge_group" and variable == "boat" else "ubuntu-24.04"
+            # Boat CI runs public-repository jobs only for its allowlisted user: any
+            # other PR author, actor or re-runner (Dependabot included) stays hosted.
+            for merge_variable, pr_variable, head_repository, author, actor, rerunner in itertools.product(
+                    ("", "boat", "self-hosted", "other"), ("", "boat", "self-hosted", "other"),
+                    ("Norn-cloud/norn", "attacker/norn", ""), *[boat_users] * 3):
+                concrete = (expression.replace("github.event_name", repr(event))
+                            .replace("vars.NORN_MERGE_RUNNER", repr(merge_variable))
+                            .replace("vars.NORN_PR_RUNNER", repr(pr_variable))
+                            .replace("github.event.pull_request.head.repo.full_name", repr(head_repository))
+                            .replace("github.event.pull_request.user.login", repr(author))
+                            .replace("github.triggering_actor", repr(rerunner))
+                            .replace("github.actor", repr(actor))
+                            .replace("github.repository", repr("Norn-cloud/norn"))
+                            .replace("&&", " and ").replace("||", " or "))
+                expected = ("boat" if (event == "merge_group" and merge_variable == "boat")
+                            or (event == "pull_request" and pr_variable == "boat"
+                                and head_repository == "Norn-cloud/norn"
+                                and author == actor == rerunner == "Youssef-Tarek-Ali-26") else "ubuntu-24.04")
                 if eval(concrete, {"__builtins__": {}}, {}) != expected:
-                    raise AssertionError(f"Boat runner evaluation drift: {event}/{variable}")
-        for name in ("core", "plan", "test", "full", "trusted-policy"):
+                    raise AssertionError("Boat runner evaluation drift: " + "/".join(
+                        (event, merge_variable, pr_variable, head_repository, author, actor, rerunner)))
+        for name in ("core", "plan", "test", "full", "trusted-policy", "rights-capture", "rights-revocation"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
+                      "${{ vars.NORN_PR_RUNNER || 'ubuntu-24.04' }}",
                       runner.replace("github.event_name == 'merge_group' && ", ""),
-                      runner.replace("vars.NORN_MERGE_RUNNER == 'boat' && ", ""),
+                      runner.replace("github.event_name == 'pull_request' && ", ""),
+                      runner.replace(" && vars.NORN_MERGE_RUNNER == 'boat'", ""),
+                      runner.replace(" && vars.NORN_PR_RUNNER == 'boat'", ""),
+                      # Fork pull requests must never reach a Boat VM.
+                      runner.replace(same_repo, ""),
+                      runner.replace(same_repo, "github.event.pull_request.head.repo.fork == false && "),
+                      runner.replace("== github.repository", "!= ''"),
+                      runner.replace("vars.NORN_PR_RUNNER", "vars.NORN_MERGE_RUNNER"),
+                      # Bot- or other-user-triggered pull requests would queue forever on Boat.
+                      runner.replace(" && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace(" && github.actor == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace(" && github.triggering_actor == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace("github.actor == 'Youssef-Tarek-Ali-26'", "github.actor != 'dependabot[bot]'"),
+                      runner.replace("github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                                     "github.event.pull_request.user.type != 'Bot'"),
+                      runner.replace("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
                       runner.replace("== 'boat'", "== 'self-hosted'"),
                       runner.replace("|| 'ubuntu-24.04'", "|| 'boat'")]
             for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
+            for event in ("pull_request_target", "issue_comment", "push", "workflow_dispatch"):
+                unsafe.append(runner.replace("'pull_request'", repr(event)))
             if name in ("core", "test"):
-                unsafe.append("ubuntu-24.04")
+                unsafe += ["ubuntu-24.04", merge_only]
             else:
-                unsafe.append(runner)
+                # Rights authority and control jobs stay on hosted runners in every form.
+                unsafe += [runner, merge_only]
             for value in unsafe:
+                if value == workflow["jobs"][name]["runs-on"]:
+                    raise AssertionError(f"{name}: runner mutation is a no-op: {value}")
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
