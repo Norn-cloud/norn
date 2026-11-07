@@ -9,6 +9,7 @@ import "@xyflow/react/dist/style.css"
 import { StrictMode, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { Badge } from "@/components/ui/badge"
+import { NODE_KINDS, NodeCard } from "@/components/canvas/node-card"
 import { CanvasFrame, writeDraft, type Issue } from "./canvas-frame.tsx"
 import { CanvasPageView, StateBox, lifecycleFrame } from "./canvas.tsx"
 import { StepBox, automationFrame } from "./automation-canvas.tsx"
@@ -27,14 +28,14 @@ const ORDER_ENVELOPE = DEFINITIONS.find(({ artifactId }) => artifactId === ORDER
 
 function Box(data: { readonly label: string; readonly flags?: string; readonly issues?: readonly Issue[]; readonly selected?: boolean }) {
   const node: Node = { id: "s", type: "state", position: { x: 20, y: 20 }, selected: data.selected ?? false, data: { label: data.label, flags: data.flags ?? "", issues: data.issues ?? [] } }
-  return <div className="h-32 w-64"><ReactFlowProvider><ReactFlow nodes={[node]} edges={[]} nodeTypes={{ state: StateBox }} proOptions={{ hideAttribution: true }} panOnDrag={false} zoomOnScroll={false} /></ReactFlowProvider></div>
+  return <div className="h-32 w-64 bg-canvas-surface"><ReactFlowProvider><ReactFlow nodes={[node]} edges={[]} nodeTypes={{ state: StateBox }} proOptions={{ hideAttribution: true }} panOnDrag={false} zoomOnScroll={false} /></ReactFlowProvider></div>
 }
 
 function Step({ id, issues = [] }: { readonly id: string; readonly issues?: readonly Issue[] }) {
   const step = [...EXAMPLE.nodes, ...DECISION_EXAMPLE.nodes].find((one) => one.id === id)
   if (!step) return null
   const node: Node = automationFrame(() => ({ issues: [], status: null })).toNode({ ...step, position: { x: 20, y: 20 } }, issues, false)
-  return <div className="h-36 w-72"><ReactFlowProvider><ReactFlow nodes={[node]} edges={[]} nodeTypes={{ step: StepBox }} proOptions={{ hideAttribution: true }} panOnDrag={false} zoomOnScroll={false} /></ReactFlowProvider></div>
+  return <div className="h-36 w-72 bg-canvas-surface"><ReactFlowProvider><ReactFlow nodes={[node]} edges={[]} nodeTypes={{ step: StepBox }} proOptions={{ hideAttribution: true }} panOnDrag={false} zoomOnScroll={false} /></ReactFlowProvider></div>
 }
 
 const automation = (id: string, extra: Partial<Parameters<typeof CanvasFrame>[0]> = {}) =>
@@ -77,6 +78,13 @@ const SPECIMENS: Record<string, () => ReactNode> = {
   "automation/route-selected": () => automation("route", { initialSelection: { nodes: ["settled"], edges: [] } }),
   "automation/tool-selected": () => automation("tool", { initialSelection: { nodes: ["remind"], edges: [] } }),
   "step/ask": () => <Step id="chase" />,
+  "kinds/all": () => (
+    <div className="grid grid-cols-2 gap-4 bg-canvas-surface p-4 sm:grid-cols-4">
+      {(["perform", "decide", "route", "sleep", "succeed", "agent", "law", "state"] as const).map((kind) => (
+        <NodeCard key={kind} kind={kind} title={NODE_KINDS[kind]?.label ?? kind} subtitle="One muted line of detail" className="w-full" />
+      ))}
+    </div>
+  ),
   "decision/default": () => { const view = decisionView(DECISION_EXAMPLE, "chase"); return view && <DecisionTree view={view} /> },
   "decision/path": () => { const view = decisionView(DECISION_EXAMPLE, "chase"); return view && <DecisionTree view={view} initialPath={["o1", "o2"]} /> },
   "automation/ask-selected": () => automation("ask", { initial: DECISION_EXAMPLE, initialSelection: { nodes: ["chase"], edges: [] } }),
