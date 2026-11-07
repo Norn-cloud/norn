@@ -25,6 +25,11 @@ use crate::{Diagnostic, Span};
 
 /// Stable `lifecycle.validation.*` codes.
 pub mod codes {
+    /// Diagnostic selection must name a registered runtime error and retain inherited identity.
+    pub const INVALID_GUARD_DIAGNOSTIC: &str = "lifecycle.validation.invalid_guard_diagnostic";
+    /// An analytical publication failed its declared policy.
+    pub const PUBLICATION_GUARD: &str = "core.projection.publication_guard";
+
     /// A declared path reaches its target without the required state.
     pub const PATH_PROPERTY_VIOLATED: &str = "lifecycle.validation.path_property_violated";
 
@@ -100,6 +105,7 @@ pub(crate) struct Edge<'a> {
     pub(crate) to: &'a str,
     /// Every guard that applies (their conjunction), inherited ones first.
     pub(crate) guards: Vec<&'a str>,
+    pub(crate) guard_refusal_code: Option<&'a str>,
 }
 
 /// Effective machines of a type, by lifecycle property.
@@ -121,6 +127,7 @@ impl<'a> Machine<'a> {
                     id: &transition.id,
                     from: transition.from.iter().map(String::as_str).collect(),
                     to: transition.to.as_str(),
+                    guard_refusal_code: transition.guard_refusal_code.as_deref(),
                     guards: transition
                         .guards
                         .iter()
@@ -189,6 +196,7 @@ impl<'a> Machine<'a> {
                         description: None,
                         from: ordered(&edge.from),
                         to: edge.to.to_owned(),
+                        guard_refusal_code: edge.guard_refusal_code.map(str::to_owned),
                         guards: edge
                             .guards
                             .iter()

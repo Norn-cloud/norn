@@ -2641,3 +2641,32 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
         assert_eq!((host.evaluations, host.commits), (1, 1));
     }
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn declared_guard_diagnostic_preserves_guard_acceptance_and_evidence(amount in -1000_i64..1000) {
+        let mut types = types();
+        types[0].lifecycles[0].transitions[0].guard_refusal_code =
+            Some(norn_checker::lifecycles::codes::PUBLICATION_GUARD.to_owned());
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = cell();
+        let row = key(ORDER, "diagnostic");
+        cell.commit(CellCommit { writes: vec![FactWrite {
+            key: row.clone(), expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values: record(json!({
+                "order_no":"diagnostic", "status":"draft", "approver":"", "amount":amount
+            })) },
+        }], ..CellCommit::empty() }).unwrap();
+        let slice = load_slice(&cell, [row]).unwrap();
+        let command = output(json!({"facts":[transition(ORDER,"diagnostic","submit")], "commands":[], "timers":[]}));
+        let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("alias"), &command);
+        prop_assert_eq!(result.is_ok(), amount > 0);
+        if let Err(error) = result {
+            prop_assert_eq!(error.code(), norn_checker::lifecycles::codes::PUBLICATION_GUARD);
+            let reason = norn_kernel::Refusable::refusal(&error).reason.unwrap();
+            prop_assert_eq!(&reason.values["underlyingCode"], &JsonValue::from("decision.guard_false"));
+            prop_assert_eq!(&reason.values["guard"], &JsonValue::from("self.amount > 0"));
+        }
+    }
+}

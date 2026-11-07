@@ -64,6 +64,7 @@ mod effect;
 mod envelope;
 pub mod flow_identity;
 pub mod governing_laws;
+mod guard_diagnostic;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;

@@ -6651,6 +6651,11 @@ export interface components {
             /** @description The source states, non-empty and distinct; none is `to`. */
             from: string[];
             /**
+             * @description GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.
+             *     Omission inherits a parent's diagnostic; guard evidence is retained.
+             */
+            guardRefusalCode?: string;
+            /**
              * @description Boolean ZEN Expressions over the object's properties, evaluated on
              *     the state before the change; the transition may be taken only when
              *     every one holds (their conjunction). A subtype that redeclares the
