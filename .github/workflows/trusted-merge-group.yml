@@ -46,9 +46,16 @@ jobs:
       # first-parent path from the group head to its base. This records their
       # `/approve-gates` comments; the base-owned gate walks the same path in
       # git and decides.
+      # Transient GitHub API failures (5xx) are retried with backoff by github-script;
+      # 400, 401, 403, 404 and 422 are never retried. The publication probe re-reads only
+      # while its own checkpoint has not listed yet (a status just written can list late),
+      # at most three times. Anything it observes is sticky: a changed failure version, its
+      # own row with another digest, or another run's newer row refuses at once, even if a
+      # later listing omits it. Every refusal still fails closed.
       - name: Record admin approvals of the queued heads
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
+          retries: 3
           script: |
             const collect=async function collectRights(github, context, core, parameters, probe) {
               const fs=require('fs'), crypto=require('crypto'), {owner,repo}=context.repo;
@@ -82,10 +89,20 @@ jobs:
                   if (!row||row.state!=='success'||JSON.parse(row.description).d!==ledger.checkpoint.digest||failure(rows)!==ledger.failure_version)
                     throw new Error('Rights checkpoint changed before publication');
                 }
-                const p=probe.publication, rows=await statusRows(p.head_sha), row=checkpointRow(rows,p.tree_sha,'publication');
-                if (!row||row.state!=='success'||JSON.parse(row.description).d!==p.digest||failure(rows)!==p.failure_version)
-                  throw new Error('Publication checkpoint changed');
-                return probe;
+                const p=probe.publication, own=`rights-checkpoint/publication/${p.tree_sha}/${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`.toLowerCase();
+                let other=0;
+                for(let read=1;;read++){
+                  if(Date.now()>probe.authority_deadline)throw new Error('Rights publication expired');
+                  const rows=await statusRows(p.head_sha), row=checkpointRow(rows,p.tree_sha,'publication');
+                  if(failure(rows)!==p.failure_version)throw new Error('Publication checkpoint changed');
+                  if(row?.context.toLowerCase()===own){
+                    if(row.id>other&&row.state==='success'&&JSON.parse(row.description).d===p.digest)return probe;
+                    throw new Error('Publication checkpoint changed');
+                  }
+                  if(row)other=Math.max(other,row.id);
+                  if(read>=3)throw new Error('Publication checkpoint changed');
+                  await new Promise(resolve=>setTimeout(resolve,2000*read));
+                }
               }
               const sourceId=context.payload.workflow_run?.id||context.runId;
               const {data:source}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:sourceId});
@@ -336,7 +353,7 @@ jobs:
             fs.writeFileSync(prefix+'/rights-parameters.json',JSON.stringify(parameters));
             const opening=await collect(github,context,core,parameters);
             await collect(github,context,core,parameters,opening);
-            await github.rest.repos.createCommitStatus({...context.repo,sha:parameters.head,state:'failure',context:'trusted-policy',
+            await github.rest.repos.createCommitStatus({...context.repo,sha:parameters.head,state:'pending',context:'trusted-policy',
               description:JSON.stringify({v:4,d:opening.publication.digest,f:opening.publication.failure_version})});
             const evidence=await collect(github,context,core,parameters);
             fs.writeFileSync(prefix+'/maintainer-approval.json',JSON.stringify(evidence));

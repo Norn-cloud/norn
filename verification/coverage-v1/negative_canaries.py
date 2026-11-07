@@ -816,20 +816,32 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "unrelated", "", True, False),
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
+        *(("pull_request_target", action, "", "", True, True) for action in ("opened", "synchronize", "reopened", "edited")),
     ):
-        for cancelled in (False, True):
+        # A bot-authored comment never re-evaluates; a human one does, whoever edits or
+        # deletes it (the condition keys on the author, so the sender is irrelevant).
+        # A pull_request_target event evaluates only for a main-targeted head, and an edit
+        # only when it changed the base (a retarget): stacked heads never take the mutex.
+        # Actions compares strings case-insensitively, so a case-variant base such as `Main`
+        # is evaluated too: the skip errs only towards an extra evaluation, never away from main.
+        for cancelled, author, base, retarget in itertools.product(
+                (False, True), ("User", "Bot", "Organization"), ("main", "feature/base", "Main", ""), (False, True)):
             condition = expression
             for key, value in {
                 "github.event_name": event, "github.event.action": action,
                 "github.event.comment.body": body, "github.event.changes.body.from": previous,
-                "github.event.issue.pull_request": is_pr,
+                "github.event.issue.pull_request": is_pr, "github.event.comment.user.type": author,
+                "github.event.pull_request.base.ref": base.casefold(), "github.event.repository.default_branch": "main",
+                "github.event.changes.base": retarget,
             }.items():
                 condition = condition.replace(key, repr(value))
             condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
             condition = re.sub(r"!(?!=)", " not ", condition)
             accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
-            if bool(accepted) != (expected and not cancelled):
-                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}")
+            bot = event == "issue_comment" and author == "Bot"
+            stacked = event == "pull_request_target" and (base.casefold() != "main" or (action == "edited" and not retarget))
+            if bool(accepted) != (expected and not cancelled and not bot and not stacked):
+                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}/{base}/{retarget}")
 
     reporter = next(step for step in job["steps"]
                     if step.get("name") == "Report trusted policy on the exact PR head")
@@ -874,6 +886,16 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
     public = yaml.safe_load(source)
     group = yaml.safe_load((ROOT / ".github/workflows/trusted-merge-group.yml").read_text())
 
+    def status_calls(script: str) -> list[str]:
+        calls = []
+        for match in re.finditer(r"createCommitStatus\(", script):
+            depth, end = 1, match.end()
+            while depth and end < len(script):
+                depth += {"(": 1, ")": -1}.get(script[end], 0)
+                end += 1
+            calls.append(script[match.end():end])
+        return calls
+
     def check(document: dict[str, Any]) -> None:
         trigger = document.get("on", document.get(True))
         if trigger != {"workflow_run": {"workflows": [public["name"]], "types": ["requested"]}}:
@@ -893,6 +915,14 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
+        # The merge queue ejects a group on any failing required status, so only the
+        # final reporter, after its own evaluation, may write a non-pending verdict:
+        # every other trusted-policy write, before or after validation, is pending.
+        others = [step for step in job["steps"] if step.get("name") != "Report trusted policy on the group head"]
+        interim = [call for step in others for call in status_calls(step.get("with", {}).get("script", ""))
+                   if "trusted-policy" in call]
+        if len(interim) != 1 or "state:'pending'" not in interim[0] or "context:'trusted-policy'" not in interim[0]:
+            raise AssertionError("merge-group collector must write trusted-policy only as pending")
         reporters = [step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head"]
         if len(reporters) != 1:
             raise AssertionError("merge-group required status publisher is missing")
@@ -910,7 +940,8 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
                 raise AssertionError("merge-group required context/head/fail-closed verdict was lost")
 
     check(group)
-    for mutation in ("trigger", "event", "permission", "validation", "reporter", "reporter-if", "context", "head", "state"):
+    for mutation in ("trigger", "event", "permission", "validation", "reporter", "reporter-if", "context", "head", "state",
+                     "interim-failure", "interim-error", "interim-success", "interim-duplicate"):
         document = copy.deepcopy(group)
         job = document["jobs"]["trusted-policy"]
         reporter = next(step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head")
@@ -926,6 +957,16 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
             job["steps"].remove(reporter)
         elif mutation == "reporter-if":
             reporter["if"] = "success()"
+        elif mutation.startswith("interim-"):
+            collector = next(step for step in job["steps"] if step.get("name") == "Record admin approvals of the queued heads")
+            before = "state:'pending',context:'trusted-policy'"
+            if collector["with"]["script"].count(before) != 1:
+                raise AssertionError(f"merge-group mutation target drifted: {mutation}")
+            if mutation == "interim-duplicate":
+                collector["with"]["script"] += "await github.rest.repos.createCommitStatus({state:'failure',\ncontext:'trusted-policy'});\n"
+            else:
+                collector["with"]["script"] = collector["with"]["script"].replace(
+                    before, f"state:'{mutation.removeprefix('interim-')}',context:'trusted-policy'")
         else:
             before, after = {
                 "context": ("context:'trusted-policy'", "context:'different-status'"),
@@ -1015,6 +1056,34 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
             rejected(f"renamed control check {name}", document)
+        bot_clause = "github.event.comment.user.type != 'Bot' && "
+        for label, before, after in (("sender", "github.event.comment.user.type", "github.event.sender.type"),
+                                     ("actor", "github.event.comment.user.type != 'Bot'", "github.actor != 'coderabbitai[bot]'"),
+                                     ("inverted", "!= 'Bot'", "== 'Bot'"),
+                                     ("dropped", bot_clause, "")):
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["if"].replace(before, after)
+            if changed == document["jobs"]["trusted-policy"]["if"]:
+                raise AssertionError(f"trusted-policy bot mutation is a no-op: {label}")
+            document["jobs"]["trusted-policy"]["if"] = changed
+            rejected(f"trusted-policy bot comment {label}", document)
+        main_only = "github.event.pull_request.base.ref == github.event.repository.default_branch && "
+        retarget = "(github.event.action != 'edited' || github.event.changes.base)"
+        for label, before, after in (
+                ("unfiltered stacked heads", main_only, ""),
+                ("skip main", "base.ref == github.event.repository.default_branch", "base.ref != github.event.repository.default_branch"),
+                ("live base", "github.event.pull_request.base.ref", "github.base_ref || github.event.repository.default_branch"),
+                ("every edit", retarget, "true"),
+                ("no edits", retarget, "github.event.action != 'edited'")):
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["if"].replace(before, after)
+            if changed == document["jobs"]["trusted-policy"]["if"]:
+                raise AssertionError(f"trusted-policy stacked mutation is a no-op: {label}")
+            document["jobs"]["trusted-policy"]["if"] = changed
+            rejected(f"trusted-policy stacked {label}", document)
+        document = copy.deepcopy(workflow)
+        document["on"]["pull_request_target"]["types"].remove("edited")
+        rejected("retarget never re-evaluates", document)
         for change in ("concurrency", "if", "reporter"):
             document = copy.deepcopy(workflow)
             trusted = document["jobs"]["trusted-policy"]
@@ -1928,7 +1997,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
   process.env.GITHUB_WORKFLOW_SHA='e'.repeat(40);
   const path=process.env.RUNNER_TEMP+'/maintainer-approval.json', evidence={};
   let runs,jobs,history,live,payloads,clock,nextRun,modeShared,unavailable=false,readFailure=false,paging=false,shifted=false;
-  let outputs={}, admission=0, groupAdmission=0, virtualNow=0;
+  let outputs={}, admission=0, groupAdmission=0, virtualNow=0, lagMs=0, injectFailure=false, flickerArm=null, flicker=null;
   let objects,retained,objectCounter,jobReads=0,largeHistory=false,releasing=0,releaseReads=0;
   Date.now=()=>virtualNow;
   globalThis.setTimeout=(callback,ms)=>{virtualNow+=ms;queueMicrotask(callback);return 0};
@@ -1943,7 +2012,12 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     getCollaboratorPermissionLevel:async({username})=>({data:{permission:username==='owner'?'admin':'read'}}),
     createCommitStatus:async value=>{
       if(unavailable)throw {status:503};
-      history.push({...value,id:history.length+1,created_at:clock,creator:{login:'github-actions[bot]'}});
+      history.push({...value,id:history.length+1,created_at:clock,at:virtualNow,creator:{login:'github-actions[bot]'}});
+      // Arm a one-read flicker: the next listing shows one extra row that later listings omit.
+      if(flickerArm&&value.sha===groupHead&&value.context.startsWith('rights-checkpoint/publication/')){flicker={kind:flickerArm,tree:value.context.split('/').slice(0,3).join('/')};flickerArm=null}
+      // A concurrent verdict lands right after the evaluation fixed its publication checkpoint.
+      if(injectFailure&&value.sha===groupHead&&value.context.startsWith('rights-checkpoint/publication/')){injectFailure=false;
+        history.push({sha:groupHead,state:'failure',context:'trusted-policy',description:'{}',target_url:'concurrent',id:history.length+1,created_at:clock,at:virtualNow,creator:{login:'github-actions[bot]'}})}
     },
     listCommitStatusesForRef:async({ref,page=1})=>({data:history.filter(row=>row.sha===ref).slice().reverse().slice((page-1)*100,page*100)}),
     getContent:async({ref,path})=>{
@@ -1980,7 +2054,13 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     listJobsForWorkflowRunAttempt:function attemptJobs(){}
   }},
   paginate:async(method,args)=>{
-    if(method===github.rest.repos.listCommitStatusesForRef)return history.filter(row=>row.sha===args.ref).slice().reverse();
+    if(method===github.rest.repos.listCommitStatusesForRef){
+      const listed=history.filter(row=>row.sha===args.ref&&!(lagMs&&row.context.startsWith('rights-checkpoint/publication/')&&virtualNow-row.at<lagMs)).slice().reverse();
+      if(flicker&&args.ref===groupHead){const {kind,tree}=flicker;flicker=null;
+        listed.unshift(kind==='failure'?{sha:groupHead,state:'failure',context:'trusted-policy',description:'{}',target_url:'flicker',id:1e6+history.length,creator:{login:'github-actions[bot]'}}
+          :{sha:groupHead,state:'success',context:tree+'/999/1',description:JSON.stringify({v:4,d:'f'.repeat(64),f:0}),id:1e6+history.length,creator:{login:'github-actions[bot]'}})}
+      return listed;
+    }
     if(method===github.rest.actions.listJobsForWorkflowRunAttempt){
       jobReads++;
       if(args.run_id===releasing&&++releaseReads===2){
@@ -2095,6 +2175,56 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     await snapshot(prefix+'partial');assert.deepEqual(pending(evidence[prefix+'partial'].pr),[removedRun]);
     clock='2026-11-03T03:02:01Z';await record(removedRun,payloads.get(removedRun),2);
     await snapshot(prefix+'reconciled');assert.deepEqual(pending(evidence[prefix+'reconciled'].pr),[]);
+    // A lone queue entry survives: the queue ejects a group on its first failing required
+    // status, so one clean group evaluation must publish pending, then success, never failure.
+    {
+      const start=history.length;
+      await collect('group');
+      context.runId=admission;context.payload={workflow_run:{id:groupAdmission}};process.env.GITHUB_RUN_ATTEMPT='1';
+      await execute(programs.groupSuccess);
+      const verdicts=history.slice(start).filter(row=>row.sha===groupHead&&row.context==='trusted-policy').map(row=>row.state);
+      assert(verdicts.length>=2&&verdicts.slice(0,-1).every(state=>state==='pending'),'lone group must only see pending before its verdict: '+verdicts);
+      assert.equal(verdicts.at(-1),'success','a clean lone group must publish success');
+    }
+    // A publication checkpoint that lists late is re-read, at most three times with backoff:
+    // the same lone group still publishes success.
+    {
+      lagMs=3000;const start=history.length;
+      await collect('group');
+      context.runId=admission;context.payload={workflow_run:{id:groupAdmission}};process.env.GITHUB_RUN_ATTEMPT='1';
+      await execute(programs.groupSuccess);lagMs=0;
+      const verdicts=history.slice(start).filter(row=>row.sha===groupHead&&row.context==='trusted-policy').map(row=>row.state);
+      assert.equal(verdicts.at(-1),'success','a lagging checkpoint read must recover within the bounded retry');
+      assert(verdicts.slice(0,-1).every(state=>state==='pending'));
+    }
+    // A checkpoint that never lists within the bound fails closed after exactly the bounded wait.
+    {
+      lagMs=60000;const before=virtualNow;
+      await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);lagMs=0;
+      assert(virtualNow-before>=6000&&virtualNow-before<60000,'probe must retry with backoff, then stop');
+    }
+    // What the probe observes is sticky. While its own checkpoint has not listed yet (3 s
+    // lag), a failure verdict or another run's newer checkpoint lists once and is omitted by
+    // every later listing. The probe still refuses: a later, staler listing can never turn
+    // an observed change back into success.
+    for(const kind of ['failure','newer']){
+      flickerArm=kind;lagMs=3000;const before=virtualNow;
+      await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);lagMs=0;
+      assert(!flickerArm&&!flicker,'the flicker must have been listed once');
+      if(kind==='failure')assert.equal(virtualNow,before,'an observed failure-version change refuses at once');
+    }
+    // A real change between evaluation and publication (here a new failure verdict) is never
+    // retried into success: the probe refuses, and the final reporter publishes failure.
+    {
+      injectFailure=true;
+      await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);
+      assert(!injectFailure,'the change must have been injected');
+      const start=history.length;
+      context.runId=admission;context.payload={workflow_run:{id:groupAdmission}};process.env.GITHUB_RUN_ATTEMPT='1';
+      await execute(programs.groupSuccess);
+      const verdicts=history.slice(start).filter(row=>row.sha===groupHead&&row.context==='trusted-policy').map(row=>row.state);
+      assert.equal(verdicts.at(-1),'failure','a changed checkpoint must never publish success');
+    }
     clock='2026-11-03T03:03:00Z';
     const fresh=comment(4,'/ack-rights '+head,clock);live.set(4,fresh);await record(nextRun++,payload(fresh,'created',true,undefined,modeShared?8:7));
     await snapshot(prefix+'fresh');
@@ -2208,6 +2338,10 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     const markedRevoke=nextRun++;await record(markedRevoke,payload(comment(31,'/revoke-rights '+head,clock)),1,true);
     runs.find(r=>r.id===markedRevoke).display_title='issue_comment bot 31';
     await snapshot(prefix+'marked');assert(pending(evidence[prefix+'marked'].pr).includes(markedRevoke));
+    // No collector path, in any scenario above (refusals, throws, races), publishes a
+    // failing group verdict: only the final reporter, which carries target_url, may.
+    for(const row of history.filter(row=>row.sha===groupHead&&row.context==='trusted-policy'))
+      assert(row.target_url||row.state==='pending','collector published a non-pending group verdict: '+row.state);
   }
   console.log(JSON.stringify(evidence));
 })().catch(error=>{console.error(error);process.exit(1)});"""
