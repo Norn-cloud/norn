@@ -63,10 +63,17 @@ export interface AgentState {
   readonly nextExample: MutableRefObject<number>
   /** Whether the Worker serves the example checker: unknown until the one probe answers. */
   readonly examplesServed: boolean | undefined
+  /** Whether this deployment serves the agent route: unknown until the one probe answers. */
+  readonly agentServed?: boolean
 }
 
 /** The example route is missing (404) or has no agent service bound (503), or could not be reached: examples cannot run here. */
 export const examplesServedBy = (status: number | "unreachable"): boolean => status !== "unreachable" && status !== 404 && status !== 503
+
+/** The agent route is missing (404), has no agent service bound (503), or cannot be reached: the assistant cannot answer here. */
+export const agentServedBy = (status: number | "unreachable"): boolean => status !== "unreachable" && status !== 404 && status !== 503
+
+export const AGENT_UNSERVED = "The assistant needs the agent service, which this deployment does not serve yet."
 
 export function useAgentState(): AgentState {
   const [chat] = useState(() => new Chat<UIMessage>({ transport: new DefaultChatTransport({ api: "/api/agent", headers: () => ({ "x-norn-session": sessionId(tabStorage()) }) }) }))
@@ -83,7 +90,16 @@ export function useAgentState(): AgentState {
       .then((status) => { if (current) setExamplesServed(examplesServedBy(status)) })
     return () => { current = false }
   }, [])
-  return { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample, examplesServed }
+  const [agentServed, setAgentServed] = useState<boolean>()
+  // Probe the agent route once per page; it takes only POST, so any answer but 404 or 503 means it is served.
+  useEffect(() => {
+    let current = true
+    fetch("/api/agent", { method: "GET", headers: { accept: "application/json" } })
+      .then((response) => response.status, () => "unreachable" as const)
+      .then((status) => { if (current) setAgentServed(agentServedBy(status)) })
+    return () => { current = false }
+  }, [])
+  return { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample, examplesServed, agentServed }
 }
 
 /** The assistant (AI SDK chat; scrolling and markdown from use-stick-to-bottom and streamdown): ask for a change in plain words; the server's checker admits or refuses what it proposes. */
@@ -91,7 +107,7 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
   const { chat, input, setInput, stopped, setStopped, examples, setExamples, nextExample, examplesServed } = state
   const { messages, sendMessage, status, error, stop, regenerate, clearError } = useChat({ chat })
   const busy = status === "submitted" || status === "streaming"
-  const send = (text: string) => { if (text.trim() === "" || busy) return; clearError(); void sendMessage({ text }); setInput("") }
+  const send = (text: string) => { if (text.trim() === "" || busy || state.agentServed === false) return; clearError(); void sendMessage({ text }); setInput("") }
   const submit = (event: FormEvent) => { event.preventDefault(); send(input) }
   const last = messages.at(-1)
   // Example proposals are checked by the server as recorded, without the model.
@@ -146,9 +162,10 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
         </StickToBottom.Content>
       </StickToBottom>
       <div className="space-y-2 border-t p-3">
+        {state.agentServed === false && <p role="status" className="text-meta text-muted-foreground">{AGENT_UNSERVED}</p>}
         <div className="flex flex-wrap gap-2">
           {/* The model's suggestions open a conversation; the example proposals stay offered throughout. */}
-          {messages.length === 0 && SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}
+          {messages.length === 0 && SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" disabled={state.agentServed === false} className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}
           {examplesServed === false && <p className="w-full text-meta text-muted-foreground">Examples need the agent service.</p>}
           {EXAMPLES.map((chip) => (
             <Button key={chip} size="sm" variant="outline" disabled={examplesServed !== true} className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => void runExample(chip)} title="Sends this recorded proposal straight to the checker, without the model.">
@@ -156,6 +173,7 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
             </Button>
           ))}
         </div>
+        <fieldset disabled={state.agentServed === false} className="contents">
         <form onSubmit={submit} className="flex items-end gap-2">
           <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. record each melt's purity" rows={2} className="min-h-0 resize-none"
             onKeyDown={(event) => { if (sendsOnEnter(event)) { event.preventDefault(); send(input) } }} />
@@ -163,6 +181,7 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
             ? <Button type="button" variant="outline" onClick={() => void stop()}>Stop</Button>
             : <Button type="submit" disabled={input.trim() === ""}>Send</Button>}
         </form>
+        </fieldset>
       </div>
     </div>
   )
