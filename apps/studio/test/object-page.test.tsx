@@ -8,7 +8,7 @@ import { readDocument } from "../src/lib/exact.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { ObjectPage, SourcesItemPage } = await import("../src/objects.tsx")
+const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
 const { ObjectTypePage } = await import("../src/sources.tsx")
 const { ViewProvider } = await import("../src/lib/view.tsx")
 
@@ -74,5 +74,50 @@ test("the object type's own URL still opens the type, not an empty record", asyn
   await router.load()
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
   expect(html).not.toContain("This record is not available yet")
-  expect(html).toContain("canon.Holding")
+  expect(html).toContain("Owner and location partitioned holding")
+  expect(html).toContain("Facts recorded")
+})
+
+test("the overview says in one sentence what the record is and what its stored links show, and lists who points at it", async () => {
+  const html = await page("canon.Item", "demo/item/gold")
+  expect(html).toContain("Gold scrap is an item record, read from ERPNext by mapping erpnext.three.mapping. Its one declared relation has no stored link in this snapshot.")
+  expect(html).toContain("Holding records (item)")
+  expect(html).toContain("none in this snapshot")
+})
+
+test("when the server returned only the first page of links, the summary does not claim the snapshot has none", () => {
+  const concept = { name: "canon.Item", title: "Item", relationships: [] } as unknown as Parameters<typeof summaryOf>[0]
+  const holding = { name: "canon.Holding", title: "Holding", relationships: [{ id: "item", target: "canon.Item" }] } as unknown as Parameters<typeof summaryOf>[0]
+  const reads = (hasMore: boolean, items: unknown[]) => ({
+    object: { document: { id: "demo/item/gold", objectType: "canon.Item", values: { label: "Gold scrap" } } },
+    links: { document: { objectType: "canon.Item", id: "demo/item/gold", items, hasMore } },
+    source: null,
+  }) as unknown as Parameters<typeof summaryOf>[1]
+  const edge = { sourceType: "canon.Holding", link: "item", source: "h1", targetType: "canon.Item", target: "demo/item/gold", version: 1 }
+  expect(summaryOf(concept, reads(true, []), [holding])).toContain("No stored link appears on the first page the server returned; more may exist.")
+  expect(summaryOf(concept, reads(true, [edge]), [holding])).toContain("At least 1 stored link connects it to other records.")
+  expect(summaryOf(concept, reads(false, []), [holding])).toContain("Its one declared relation has no stored link in this snapshot.")
+})
+
+test("Business shows a type's plain summary only; Technical shows the registry's description and the type's id", async () => {
+  const { catalogOf } = await import("../src/lib/catalog.ts")
+  const catalog = catalogOf((fixture("three-systems.definitions.json") as { document: Parameters<typeof catalogOf>[0] }).document)
+  expect(catalog.byName.get("canon.Holding")).toMatchObject({ summary: "Owner and location partitioned holding", description: undefined })
+  expect(catalog.byName.get("core.Resource")?.summary).toBeUndefined()
+  expect(catalog.byName.get("core.Resource")?.description).toContain("valuation_method")
+  const render = async (view: string) => {
+    globalThis.localStorage = { getItem: () => view, setItem: () => {} } as unknown as Storage
+    const client = new QueryClient()
+    client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
+    const root = createRootRoute()
+    const router = createRouter({ routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage })]), history: createMemoryHistory({ initialEntries: ["/sources/core.Resource"] }) })
+    await router.load()
+    return renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><RouterProvider router={router} /></ViewProvider></QueryClientProvider>)
+  }
+  const business = await render("business")
+  expect(business).not.toContain("valuation_method")
+  expect(business).not.toContain(">core.Resource<")
+  const technical = await render("technical")
+  expect(technical).toContain("valuation_method")
+  expect(technical).toContain(">core.Resource<")
 })
