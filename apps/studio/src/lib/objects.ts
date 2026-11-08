@@ -1,4 +1,4 @@
-import type { Field } from "./catalog.ts"
+import type { Field, Lifecycle } from "./catalog.ts"
 import { member, type Read } from "./exact.ts"
 import type { LinkPage, ObjectPage, ObjectRecord } from "./transport.ts"
 
@@ -13,8 +13,8 @@ export function factText(field: Field, record: ObjectRecord, numbers: ReadonlyMa
     const per = field.decimal.perUnit ? ` per ${field.decimal.perUnit}` : ""
     return unit ? `${text} ${unit}${per}` : `${text}${per}`
   }
-  // Server values are shown as sent: codes and identifiers are never reworded.
-  return typeof value === "string" ? value : JSON.stringify(value)
+  // Server values are shown as sent: codes and identifiers are never reworded, and nested numbers keep their exact text.
+  return typeof value === "string" ? value : exactJson(value, numbers, `${at}/values/${member(field.id)}`)
 }
 
 /** The record's own name when its concept declares one, else its identity. */
@@ -99,3 +99,55 @@ export const shouldReadNext = (state: {
   readonly pagesRead: number
 }, maxPages: number): boolean =>
   state.hasNextPage && !state.isFetchingNextPage && !state.isFetchNextPageError && state.pagesRead < maxPages
+
+/** A lifecycle's states in the order the declared transitions first reach them from the initial states. */
+export function lifecycleStates(lifecycle: Lifecycle): readonly string[] {
+  const order = [...lifecycle.initial]
+  for (let index = 0; index < order.length; index += 1) {
+    for (const transition of lifecycle.transitions ?? []) {
+      if (transition.from.includes(order[index] ?? "") && !order.includes(transition.to)) order.push(transition.to)
+    }
+  }
+  return order
+}
+
+/** The record's position in a lifecycle and the steps the definition declares from there. */
+export function lifecycleOf(lifecycle: Lifecycle, record: ObjectRecord) {
+  const value = record.values[lifecycle.property]
+  const state = typeof value === "string" ? value : undefined
+  return {
+    states: lifecycleStates(lifecycle),
+    state,
+    terminal: state !== undefined && (lifecycle.terminal ?? []).includes(state),
+    next: state === undefined ? [] : (lifecycle.transitions ?? []).filter(({ from }) => from.includes(state)),
+  }
+}
+
+/**
+ * A parsed JSON value as text, with every number at or below `pointer` written
+ * as the exact token the server sent (`numbers`, keyed by RFC 6901 pointer)
+ * rather than as JavaScript re-serializes it.
+ */
+export function exactJson(value: unknown, numbers: ReadonlyMap<string, string>, pointer: string): string {
+  if (Array.isArray(value)) return `[${value.map((item, index) => exactJson(item, numbers, `${pointer}/${index}`)).join(",")}]`
+  if (typeof value === "number") return numbers.get(pointer) ?? String(value)
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value).map(([key, item]) => `${JSON.stringify(key)}:${exactJson(item, numbers, `${pointer}/${member(key)}`)}`).join(",")}}`
+  }
+  return JSON.stringify(value)
+}
+
+/** `exactJson`, indented two spaces a level, for reading. */
+export function exactPretty(value: unknown, numbers: ReadonlyMap<string, string>, pointer: string, depth = 0): string {
+  const pad = "  ".repeat(depth + 1)
+  const end = "  ".repeat(depth)
+  if (Array.isArray(value)) {
+    return value.length === 0 ? "[]" : `[\n${value.map((item, index) => pad + exactPretty(item, numbers, `${pointer}/${index}`, depth + 1)).join(",\n")}\n${end}]`
+  }
+  if (typeof value === "number") return numbers.get(pointer) ?? String(value)
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value)
+    return entries.length === 0 ? "{}" : `{\n${entries.map(([key, item]) => `${pad}${JSON.stringify(key)}: ${exactPretty(item, numbers, `${pointer}/${member(key)}`, depth + 1)}`).join(",\n")}\n${end}}`
+  }
+  return JSON.stringify(value)
+}

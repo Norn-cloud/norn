@@ -37,7 +37,39 @@ declaration), **METRIC-RATIO-AVERAGE** (stored-ratio aggregation refuses),
 **METRIC-BALANCE-TIME** (an additive metric cannot bypass a balance's time
 restriction), **METRIC-DECLARED-SUM** (explicit additive quantities use the same
 keyed compute admission). Conservation-derived candidates and their law
-provenance are a separate slice; this admission change grants no law exemption.
+provenance use the following checked derivation contract.
+
+**METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
+properties, direct/single-link scalar dimensions and existing calendar grains.
+Candidates are uncertified; deriving one does not declare a governed KPI or
+authorize execution outside the existing compute profile. Missing additivity
+still refuses unless an admitted conservation law supplies its provenance.
+
+At an explicitly selected law root, an unconditional, error-severity `always`
+law of the form `self.input == self.output + self.loss` supplies additive terms
+and one ratio of sums for each output/input pair. The bounded structural
+recognizer accepts distinct same-type/same-unit terms, not coefficients,
+conditionals or nonlinear algebra. Rates, nullable/computed terms, explicit conflicting
+additivity, state-limited laws and other law roots supply no such contract.
+Generated definitions retain the canonical law-envelope digest; changes to a
+law change the generated ratio identity. Artifact order does not change identity.
+Reordering terms within a law expression does change identity.
+The original ontology and every property contract carried by the compute plan
+remain unchanged. Only the checker-owned catalog contains the law admission
+evidence, and every selection lowers through `compute::admit`. In particular,
+law evidence cannot make the plan fail the native cell's model-contract guard.
+
+Named scenarios: **METRIC-RATE-UNKNOWN** (rate terms supply no conservation
+additivity), **METRIC-CONSERVATION** (no metric declarations yield recovered
+and loss ratios), **METRIC-LAW-SCOPE** (conditional/advisory/other-scope laws
+supply no additivity), **METRIC-LAW-PIN** (deterministic derivation retains the
+exact governing law), **METRIC-SCRAP-PARITY** (all 80 pinned scrap-yield rows
+produce the same contributions as the existing compute path, with showcase
+totals 294/300 and ratio 0.980000), and **METRIC-NONLINEAR-UNKNOWN** (unsupported
+equalities create no conservation candidate). Unsupported calendar grains,
+link execution and snapshot evaluation keep their existing refusals.
+**METRIC-MODEL-PARITY** requires every law-derived plan property to retain the
+same native model contract as the original, undeclared ontology.
 
 ## Typed question construction (#658, #528)
 
@@ -157,3 +189,7 @@ checks that reusing an answer context re-derives pins at the historical frontier
 `EXPR-STRUCTURAL-SUM-1`: `norn-expr` recognizes a bounded AST equality of one direct `self` property to the sum of 2–64 distinct direct properties. Parentheses and literal member notation retain their AST meaning. Coefficients, subtraction, repeated terms, the total on the right, conditionals and other reads return no shape; malformed or over-budget source returns an expression error. Extraction grants no type, unit, scope, additivity or conservation authority: the consuming checker must establish those independently.
 
 Named scenarios: `structural_sum_accepts_parentheses_and_literal_members`, `structural_sum_refuses_other_operations_and_reads`, `structural_sum_bounds_and_malformed_source_fail_closed`, `structural_sum_preserves_generated_terms`. Evidence is structural and sampled, not algebraic proof.
+
+## Host read authority
+
+**HOST-READ-1:** configured host reads distinguish Population, Values and Sources. Metadata/action grants imply none of them. The shared authorizer receives only physical-cell scope, and mismatched original bindings still deny. Authorization and explicit scope admission both execute before storage access under one held definition epoch; every failed read gate returns identical static 403 bytes. Named correspondences: `metadata_grants_do_not_grant_read_capabilities`, `read_gate_checks_policy_and_scope_before_reading`, `physical_scope_is_the_only_policy_scope`, and `denied_read_documents_do_not_reveal_the_physical_scope`.

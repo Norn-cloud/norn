@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "./components/ui/shadcn.css";
 @import "@fontsource-variable/inter";
+@source "../node_modules/streamdown/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -30,6 +31,8 @@
   --accent-foreground: #0a0a0a;
   --surface-subtle: #f9fafb;
   --destructive: #ff3b30;
+  /* Text on destructive fills: 5.6:1 on light red; white would be 3.5:1. */
+  --destructive-foreground: #0a0a0a;
   --success: #1f7a4d;
   --warning: #ff9500;
   --border: #e5e7eb;
@@ -70,6 +73,7 @@
   --accent-foreground: #f5f5f7;
   --surface-subtle: #2a2a2e;
   --destructive: #ff453a;
+  --destructive-foreground: #0a0a0a;
   --success: #30d158;
   --warning: #ff9f0a;
   --border: #38383d;
@@ -124,6 +128,7 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -156,3 +161,8 @@
   body { @apply bg-canvas text-foreground antialiased; font-size: 0.875rem; line-height: 1.45; }
   h1, h2, h3 { letter-spacing: -0.02em; }
 }
+
+/* Shiki's dual themes: each token carries both colours; the page's scheme picks one. */
+.code pre { background: transparent !important; }
+.code span { color: var(--shiki-light); }
+.dark .code span { color: var(--shiki-dark); }

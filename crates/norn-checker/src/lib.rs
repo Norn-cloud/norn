@@ -24,6 +24,7 @@
 // TODO(rust-safety): these downgrades were moved with the code from norn-ir
 // (docs/platform/rust-safety-baseline.md) and keep the same staged burn-down.
 pub mod action_set;
+pub mod agent;
 pub mod artifact_set;
 pub mod classification;
 pub mod codes;
@@ -88,6 +89,7 @@ pub mod metric_interchange;
 )]
 pub mod posting;
 pub mod table_analysis;
+pub mod tool_effect;
 mod unit_admission;
 mod unit_codes;
 pub use metric::check_metrics_and_questions;
@@ -111,6 +113,7 @@ pub mod obligations;
     clippy::large_futures
 )]
 pub mod ontology;
+mod predicate_property;
 pub mod property_codec;
 pub mod property_types;
 #[allow(
@@ -147,12 +150,14 @@ pub mod rule_bindings;
 pub mod sealing;
 mod source_commands;
 pub mod source_schema;
+pub mod tool_ports;
 pub mod typed_roots;
 pub mod ui_interaction;
 pub mod verification;
 pub mod widget_ux;
 
 pub use action_set::{check_action_firing, check_action_set};
+pub use agent::{AgentContext, check_agent};
 pub use artifact_set::{
     ResolvedArtifactSet, check_artifact_set, may_reference, resolve_artifact_set, scope_conflict,
 };
@@ -183,6 +188,7 @@ pub use entity_model::{
 };
 pub use envelope::{ArtifactValidation, plan_graph_load, validate_artifact};
 pub use flow_source_map::validate_flow_source_map;
+pub use jdm_profile::{RuleClosure, RuleClosureError, rule_closure};
 pub use layout::{
     PreparedArtifact, extract_inline_layout, hydrate_inline_layout,
     layout_merge_conflict_diagnostic, prepare_artifact_source, prune_layout,

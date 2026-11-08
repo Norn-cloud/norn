@@ -1,0 +1,7 @@
+{
+  "code": "cli.project.invalid_manifest",
+  "message": "Invalid norn.json; use norn-project/1 with explicit sources, scope, dev and cell, and remove unknown keys.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

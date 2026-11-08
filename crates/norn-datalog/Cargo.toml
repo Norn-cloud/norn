@@ -1,0 +1,18 @@
+[package]
+name = "norn-datalog"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+norn-canonical = { path = "../norn-canonical" }
+norn-graph = { path = "../norn-graph" }
+norn-ir = { path = "../norn-ir" }
+serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.150"
+
+[lints]
+workspace = true

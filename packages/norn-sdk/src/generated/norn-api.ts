@@ -759,6 +759,33 @@ export interface components {
             /** @description Property whose JSON value is a serialized accounting leg. */
             legProperty: string;
         };
+        /** @description One bounded aggregate an action's preconditions read by `name`. */
+        NornIrActionAggregateInput: {
+            /** @description What is computed over the matched objects. */
+            aggregate: components["schemas"]["NornIrAggregateFunction"];
+            filter?: components["schemas"]["NornIrActionAggregateInputPropertyFilter"];
+            /**
+             * Format: uint32
+             * @description Most objects the fold may match; one more refuses the action.
+             */
+            maxItems: number;
+            /**
+             * @description The precondition environment member holding the result. Unique among
+             *     the action's aggregates and slice entries.
+             */
+            name: string;
+            /** @description The type whose stored objects are folded. */
+            objectType: string;
+            /** @description Optional window over one date or timestamp property. */
+            window?: components["schemas"]["NornIrAggregateWindow"] | null;
+        };
+        /**
+         * @description Equality filter: each scalar property must equal the named input
+         *     field. An empty filter matches every object of the type.
+         */
+        NornIrActionAggregateInputPropertyFilter: {
+            [key: string]: string;
+        };
         /** @description One declarative outbound command produced by an action call. */
         NornIrActionCommand: {
             /** @description Owner-scoped child-table replacements declared by this command. */
@@ -920,6 +947,7 @@ export interface components {
         NornIrActionPayload: {
             access?: components["schemas"]["NornIrAccessRef"];
             actionId: string;
+            aggregates?: components["schemas"]["NornIrActionAggregateInput"][];
             commands?: components["schemas"]["NornIrActionCommand"][];
             compensation?: components["schemas"]["NornIrActionCompensation"];
             createLinks?: components["schemas"]["NornIrActionCreateLink"][];
@@ -1047,6 +1075,39 @@ export interface components {
          * @enum {string}
          */
         NornIrAdditivityAxis: "time";
+        /** @description The fold computed over the matched objects. */
+        NornIrAggregateFunction: components["schemas"]["NornIrAggregateFunctionOneOf0"] | components["schemas"]["NornIrAggregateFunctionOneOf1"];
+        /**
+         * @description The exact sum of a non-nullable decimal or integer property, held at
+         *     the property's declared scale. An empty match set sums to zero.
+         */
+        NornIrAggregateFunctionOneOf0: {
+            /** @enum {string} */
+            kind: "sum";
+            /** @description The summed property. */
+            property: string;
+        };
+        /** @description The number of matched objects. */
+        NornIrAggregateFunctionOneOf1: {
+            /** @enum {string} */
+            kind: "count";
+        };
+        /**
+         * @description A window over one date or timestamp property. Both edges and their
+         *     inclusivity are declared; there is no default edge semantics.
+         */
+        NornIrAggregateWindow: {
+            /** @description The input field holding the end edge. */
+            end: string;
+            /** @description Whether an object exactly at `end` matches. */
+            endInclusive: boolean;
+            /** @description The date or timestamp property the window ranges over. */
+            property: string;
+            /** @description The input field holding the start edge. */
+            start: string;
+            /** @description Whether an object exactly at `start` matches. */
+            startInclusive: boolean;
+        };
         /** @description Structural validation rule for a resolved API key. */
         NornIrApiKeyFormat: components["schemas"]["NornIrApiKeyFormatOneOf0"] | components["schemas"]["NornIrApiKeyFormatOneOf1"];
         /** @description Accept any visible key value permitted by its placement. */
@@ -5409,6 +5470,13 @@ export interface components {
         NornIrRelationPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /** @description Exact pinned calendar identity. */
+        NornIrRequirementCalendarPin: {
+            /** @description Calendar artifact identity. */
+            id: string;
+            /** @description Exact calendar version. */
+            version: string;
+        };
         /**
          * @description The normative grade is separate from the temporal wrapper in `law`.
          * @enum {string}
@@ -5624,12 +5692,16 @@ export interface components {
             permission: string;
             prohibition: string;
             sameCommit: string;
+            /** @description Required to render a `within` requirement; other timings never read it. */
+            within?: string | null;
         };
         /**
-         * @description Closed safety fragment. No event activation, clocks, fairness or progress.
-         * @enum {string}
+         * @description Closed safety fragment plus one event-activated deadline form. No fairness,
+         *     unbounded progress or wall-clock reads.
          */
-        NornIrRequirementRequirementTiming: "every_committed_state" | "same_commit";
+        NornIrRequirementRequirementTiming: "every_committed_state" | "same_commit" | {
+            within: components["schemas"]["NornIrRequirementWithinTiming"];
+        };
         /**
          * @description LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
          *     Wording is never executable and does not change the law's semantic identity.
@@ -5637,6 +5709,8 @@ export interface components {
         NornIrRequirementRequirementWording: {
             [key: string]: components["schemas"]["NornIrRequirementLocalizedRequirement"];
         };
+        /** @enum {string} */
+        NornIrRequirementRetriggerPolicy: "keep_first" | "restart";
         NornIrRequirementRuleByteRange: {
             /** Format: uint32 */
             end: number;
@@ -5671,6 +5745,26 @@ export interface components {
         NornIrRequirementView: {
             locale: string;
             requirement: components["schemas"]["NornIrRequirementStructuredRequirement"];
+        };
+        /** @description Activation policy for `within`; the duration stays in `law.timing`. */
+        NornIrRequirementWithinTiming: {
+            /** @description Principal or role answerable for discharge; grants no authority. */
+            accountable: string;
+            /** @description Business calendar for the deadline. No calendar is admitted yet: refuses. */
+            calendar?: components["schemas"]["NornIrRequirementCalendarPin"] | null;
+            /** @description Optional committed-state predicate that closes an open activation unpaid. */
+            cancel?: components["schemas"]["NornIrRequirementZenExpression"] | null;
+            /**
+             * @description What a trigger does while an activation is already open.
+             * @enum {string}
+             */
+            retrigger: "keep_first" | "restart";
+            /**
+             * @description Lifecycle transition identity on the subject that opens an activation.
+             *     Admission (norn-checker) checks it is nonblank; resolving it against the
+             *     subject's lifecycle is catalog admission (TARGET).
+             */
+            trigger: string;
         };
         /**
          * @description Source text of one ZEN Expression (the IR's single expression language,

@@ -5915,6 +5915,195 @@ fn mapping_bundle_processing_refuses_delete_and_diagnostics_without_consumption(
     }
 }
 
+/// MAPPING-PLAN-1: a warm plan equals a cold derivation, and a changed row misses.
+#[test]
+fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("plan.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let input = bundle_input();
+    store
+        .inject_mapping_bundle(&bundle_raw("WARM", "1.250"), &input)
+        .expect("first capture builds the plan");
+    store
+        .inject_mapping_bundle(&bundle_raw("REUSED", "1.500"), &input)
+        .expect("second capture reuses the plan");
+    let pending = store.read().pending_observations().expect("inbox");
+    assert_eq!(pending.len(), 2);
+    let bundles: Vec<norn_cell::mapping_bundle::MappingBundle> = pending
+        .iter()
+        .map(|row| {
+            let observed: norn_kernel::Observed<Value> =
+                norn_ir::runtime::decode(&row.observed).expect("observed");
+            norn_ir::runtime::decode(&observed.input).expect("bundle")
+        })
+        .collect();
+    let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("cold connection");
+    for bundle in &bundles {
+        store
+            .read()
+            .recheck_mapping_bundle(bundle)
+            .expect("warm plan");
+        cold.read()
+            .recheck_mapping_bundle(bundle)
+            .expect("cold plan");
+    }
+    drop(cold);
+    let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
+    tamper
+        .execute(
+            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
+            &[SqlValue::from("[]")],
+        )
+        .expect("tamper retained artifact bytes");
+    drop(tamper);
+    assert!(
+        store.read().recheck_mapping_bundle(&bundles[0]).is_err(),
+        "a changed retained row must not reuse the plan"
+    );
+}
+
+/// Warm a store's mapping plan, apply `tamper` to the database file, and return
+/// the refusal from the warm store and from a cold store (opened before the
+/// tamper, never evaluated a bundle) on the same file. A store opened after the
+/// tamper must also refuse, at open or at recheck.
+fn warm_and_fresh_refusals(
+    tamper: impl FnOnce(&CellStore, &NativeEngine, u64),
+) -> (String, String) {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("plan.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    store
+        .inject_mapping_bundle(&bundle_raw("WARM", "1.250"), &bundle_input())
+        .expect("capture builds the plan");
+    let row = store
+        .read()
+        .pending_observations()
+        .expect("inbox")
+        .pop()
+        .expect("pending");
+    let observed: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&row.observed).expect("observed");
+    let bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&observed.input).expect("bundle");
+    store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect("warm plan before tamper");
+    let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("cold connection");
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
+    tamper(&store, &engine, bundle.definitions_version);
+    drop(engine);
+    let warm = store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect_err("warm store must refuse the tampered evidence");
+    let cold = cold
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect_err("cold store must refuse the tampered evidence");
+    if let Ok(reopened) = CellStore::open(&path, store.model().clone(), StoreOptions::default()) {
+        assert!(
+            reopened.read().recheck_mapping_bundle(&bundle).is_err(),
+            "a store opened after the tamper must refuse"
+        );
+    }
+    (format!("{warm:?}"), format!("{cold:?}"))
+}
+
+/// MAPPING-PLAN-REUSE: every check the full retained proof performs refuses a
+/// warm plan exactly as it refuses a fresh store, for keyed columns, columns
+/// outside the old key, and the journal and receipt rows outside the table.
+#[test]
+fn mapping_plan_hit_refuses_like_a_fresh_store() {
+    const COMMIT: &str =
+        "(SELECT \"commit_seq\" FROM \"_norn_definition_version\" WHERE \"version\" = ?V)";
+    let cases = [
+        (
+            "model_hash",
+            "UPDATE \"_norn_definition_version\" SET \"model_hash\" = 'f' || \"model_hash\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "receipt_sha256",
+            "UPDATE \"_norn_definition_version\" SET \"receipt_sha256\" = 'f' || \"receipt_sha256\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "ddl_hash",
+            "UPDATE \"_norn_definition_version\" SET \"ddl_hash\" = 'f' || \"ddl_hash\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "receipt tamper",
+            format!("UPDATE \"_norn_receipt\" SET \"receipt_hash\" = 'f' || \"receipt_hash\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+        (
+            "receipt delete",
+            format!("DELETE FROM \"_norn_receipt\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+        (
+            "journal delete",
+            format!("DELETE FROM \"_norn_export_journal\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+    ];
+    for (name, tamper) in cases {
+        let (warm, cold) = warm_and_fresh_refusals(|_, engine, version| {
+            engine
+                .execute(&tamper.replace("?V", &version.to_string()), &[])
+                .expect("tamper");
+        });
+        assert_eq!(warm, cold, "{name}: warm and cold refusals differ");
+    }
+    // The only hit-specific guard: the installed row, journal record hash and
+    // receipt all still verify, but the journal's model snapshot differs from
+    // the one the plan was proven on.
+    let (warm, cold) = warm_and_fresh_refusals(|store, engine, version| {
+        let commit = store
+            .read()
+            .installed_definitions(Some(version))
+            .expect("definitions")
+            .expect("installed")
+            .commit_seq;
+        let record = store
+            .export_record(commit)
+            .expect("journal")
+            .expect("install record");
+        let mut value = serde_json::to_value(&record).expect("record JSON");
+        let properties = value["definitionInstall"]["model"]["objectTypes"][0]["properties"]
+            .as_array_mut()
+            .expect("snapshot properties");
+        assert!(
+            properties.pop().is_some(),
+            "snapshot has a property to drop"
+        );
+        let tampered: norn_cell::export::ExportRecord =
+            serde_json::from_value(value).expect("tampered record");
+        assert_ne!(
+            tampered.definition_install.as_ref().map(|i| &i.model),
+            record.definition_install.as_ref().map(|i| &i.model)
+        );
+        engine
+            .execute(
+                "UPDATE \"_norn_export_journal\" SET \"record\" = ?1, \"hash\" = ?2 WHERE \"commit_seq\" = ?3",
+                &[
+                    SqlValue::from(serde_json::to_string(&tampered).expect("record text")),
+                    SqlValue::from(tampered.hash().expect("record hash")),
+                    SqlValue::from(i64::try_from(commit).expect("commit")),
+                ],
+            )
+            .expect("rewrite the journal model snapshot");
+        assert_eq!(
+            store
+                .export_record(commit)
+                .expect("the rewritten journal record still verifies")
+                .expect("install record"),
+            tampered,
+            "only the model snapshot may differ, so the hit-specific guard is what refuses"
+        );
+    });
+    assert_eq!(warm, cold, "model snapshot: warm and cold refusals differ");
+}
+
 #[test]
 fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
     let dir = tempfile::tempdir().expect("directory");
@@ -6747,6 +6936,21 @@ norn_testkit::proptest::proptest! {
         stale.reads.push(norn_kernel::FactExpectation { key: key.clone(), expected });
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
         let mut written = norn_kernel::CellCommit::empty();
+        let predicate: norn_kernel::PredicateQuery = serde_json::from_value(serde_json::json!({"objectType": "quality.Measurement"})).expect("predicate");
+        // A disputed stored object refuses the governed read; without one there is nothing to match.
+        if first_nfc {
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4, u64::MAX), Err(CellError::SourceIdentityDisputed)));
+        } else {
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4, u64::MAX), Ok(Some(ref objects)) if objects.is_empty()));
+        }
+        let mut pinned = norn_kernel::CellCommit::empty();
+        pinned.predicate_reads.push(norn_kernel::PredicateReadExpectation { predicate, members: vec![norn_kernel::PredicateReadMember { key: key.clone(), version: expected }] });
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, pinned), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
+        if first_nfc {
+            let mut unpinned = norn_kernel::CellCommit::empty();
+            unpinned.predicate_reads.push(norn_kernel::PredicateReadExpectation { predicate: serde_json::from_value(serde_json::json!({"objectType": "quality.Measurement"})).expect("predicate"), members: Vec::new() });
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, unpinned), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
+        }
         written.writes.push(norn_kernel::FactWrite { key, expected, mutation: norn_kernel::FactMutation::Put { values:BTreeMap::from([("purity".into(), Value::from_json_text("0.90").expect("value"))]) } });
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
         drop(cell);

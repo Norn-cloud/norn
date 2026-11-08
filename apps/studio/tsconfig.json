@@ -8,10 +8,11 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["vite/client", "bun"],
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src", "test", "vite.config.ts", "alchemy.run.ts", "deploy-target.ts"]
+  "include": ["src", "test", "e2e", "playwright.config.ts", "vite.config.ts", "alchemy.run.ts", "deploy-target.ts", "celld-config.ts", "scripts"]
 }
