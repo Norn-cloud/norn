@@ -738,6 +738,34 @@ pub fn fold_step_graph_supported(graph: &norn_ir::jdm::JdmGraph) -> bool {
     })
 }
 
+/// The catalog's builtin records and property-backed fields, as the starting
+/// record set for an action environment.
+fn catalog_input_records(
+    catalog: Option<&crate::ZenTypeEnv>,
+) -> BTreeMap<String, BTreeMap<String, crate::Type>> {
+    use crate::{FieldSource, RecordKind};
+    catalog.map_or_else(BTreeMap::new, |catalog| {
+        catalog
+            .records()
+            .iter()
+            .map(|(name, record)| {
+                (
+                    name.clone(),
+                    record
+                        .fields
+                        .iter()
+                        .filter(|(_, field)| {
+                            record.kind == RecordKind::Builtin
+                                || matches!(field.source, FieldSource::Property { .. })
+                        })
+                        .map(|(name, field)| (name.clone(), field.ty.clone()))
+                        .collect(),
+                )
+            })
+            .collect()
+    })
+}
+
 /// VAL-EXACT-1: one action environment for admission and runtime binding.
 /// `completed` identifies the ordered derivation prefix already materialized.
 ///
@@ -748,30 +776,10 @@ pub fn action_environment(
     catalog: Option<&crate::ZenTypeEnv>,
     completed: usize,
 ) -> Result<crate::ZenTypeEnv, String> {
-    use crate::{EnvOptions, FieldSource, RecordKind, Type, ZenTypeEnv};
+    use crate::{EnvOptions, Type, ZenTypeEnv};
     let schema = Schema::parse_action(&JsonValue::Object(action.input_schema.clone()), "input")
         .map_err(|e| e.reason)?;
-    let mut records: BTreeMap<String, BTreeMap<String, Type>> =
-        catalog.map_or_else(BTreeMap::new, |catalog| {
-            catalog
-                .records()
-                .iter()
-                .map(|(name, record)| {
-                    (
-                        name.clone(),
-                        record
-                            .fields
-                            .iter()
-                            .filter(|(_, field)| {
-                                record.kind == RecordKind::Builtin
-                                    || matches!(field.source, FieldSource::Property { .. })
-                            })
-                            .map(|(name, field)| (name.clone(), field.ty.clone()))
-                            .collect(),
-                    )
-                })
-                .collect()
-        });
+    let mut records = catalog_input_records(catalog);
     let root = schema.expression_type("exact.action.input", &mut records);
     let Type::Record(name) = root else {
         return Err("action input must be a record".into());
