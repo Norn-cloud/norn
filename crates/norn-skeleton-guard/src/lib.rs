@@ -139,10 +139,25 @@ pub const CRATES: &[CrateRule] = &[
         &["norn-ir"],
         &["zen-expression", "chrono", "chrono-tz"],
     ),
+    // Bounded inheritance classification: Ascent (vendored, clock-free profile)
+    // at runtime; norn-datalog and quote only at build time.
     r0(
         "norn-checker",
-        &["norn-ir", "norn-expr", "norn-canonical", "norn-graph"],
-        &["serde_json", "sha2", "regex-lite", "serde_path_to_error"],
+        &[
+            "norn-ir",
+            "norn-expr",
+            "norn-canonical",
+            "norn-graph",
+            "norn-datalog",
+        ],
+        &[
+            "serde_json",
+            "sha2",
+            "regex-lite",
+            "serde_path_to_error",
+            "ascent",
+            "quote",
+        ],
     ),
     r0(
         "norn-decisions",

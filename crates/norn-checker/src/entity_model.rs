@@ -223,7 +223,9 @@ fn check_one_local(model: &EntityModel<'_>, prefix: &str, subtype: bool) -> Vec<
         .into_iter()
         .filter(|finding| !depends_on_other_definitions(finding.code.as_str(), subtype))
         .map(|mut finding| {
-            if let Some(span) = &mut finding.span
+            if finding.code.as_str() == crate::inheritance::BUDGET_EXHAUSTED {
+                finding.span = Some(crate::Span::pointer(""));
+            } else if let Some(span) = &mut finding.span
                 && let Some(rest) = span.pointer.strip_prefix(prefix)
             {
                 span.pointer = rest.to_owned();
@@ -237,6 +239,10 @@ fn check_one_local(model: &EntityModel<'_>, prefix: &str, subtype: bool) -> Vec<
 /// artifact of the missing context (see [`check_object_type_local`]);
 /// `subtype` when the definition is an object type that `extends` another.
 fn depends_on_other_definitions(code: &str, subtype: bool) -> bool {
+    // A stopped validation pass must never disappear through local/T3 filtering.
+    if code == crate::inheritance::BUDGET_EXHAUSTED {
+        return false;
+    }
     crate::codes::lookup(code).is_none_or(|entry| entry.tier != crate::Tier::T2)
         || code == crate::property_types::codes::UNKNOWN_REF
         || code == codes::RESERVED_MEMBER_SEPARATOR
@@ -264,7 +270,9 @@ pub(crate) fn check(
 /// (inherited, overridden, interface-constrained, and extension members), so
 /// instance validation never re-derives inheritance. It does not check the
 /// model: callers must reject a model with findings first
-/// ([`crate::entity_instance::EffectiveCatalog`] does).
+/// ([`crate::entity_instance::EffectiveCatalog`] does). A classification budget
+/// refusal returns no effective tables; callers must retain the preceding
+/// model-check refusal rather than treating this empty view as admission.
 #[must_use]
 pub fn effective_object_types(
     model: &EntityModel<'_>,
@@ -278,7 +286,10 @@ pub fn effective_object_types(
 > {
     let mut checker = Checker::new(model, context, &Roots::DOCUMENT);
     checker.register();
-    checker.find_cycles();
+    if !checker.find_cycles() {
+        return BTreeMap::new();
+    }
+    checker.expression_env = has_invariants(model, context).then(|| expression_env(model, context));
     checker.register_inverses();
     let mut out = BTreeMap::new();
     for (index, def) in model.object_types.iter().enumerate() {
@@ -297,11 +308,10 @@ pub fn effective_object_types(
 
 impl<'a, 'r> Checker<'a, 'r> {
     fn new(model: &EntityModel<'a>, context: &EntityContext<'a>, roots: &'r Roots) -> Self {
-        let expression_env = has_invariants(model, context).then(|| expression_env(model, context));
         Checker {
             model: *model,
             context: *context,
-            expression_env,
+            expression_env: None,
             roots,
             types: BTreeMap::new(),
             interfaces: BTreeMap::new(),
@@ -659,7 +669,11 @@ fn expression_env(
 impl<'a> Checker<'a, '_> {
     fn run(&mut self) {
         self.register();
-        self.find_cycles();
+        if !self.find_cycles() {
+            return;
+        }
+        self.expression_env = has_invariants(&self.model, &self.context)
+            .then(|| expression_env(&self.model, &self.context));
         self.register_inverses();
         let roles = crate::concept_roles::resolve(self.model, self.context.base);
         let definitions = self
@@ -863,25 +877,26 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    fn find_cycles(&mut self) {
-        for &start in self.types.keys() {
-            let mut seen = BTreeSet::new();
-            let mut current = start;
-            while let Some(parent) = self
-                .types
-                .get(current)
-                .and_then(|entry| entry.def.extends.as_ref())
-                .and_then(|parent| self.types.get_key_value(parent))
-                .map(|(name, _)| *name)
-            {
-                if parent == start {
-                    self.cyclic.insert(start);
-                    break;
-                }
-                if !seen.insert(parent) {
-                    break;
-                }
-                current = parent;
+    fn find_cycles(&mut self) -> bool {
+        let entries = self
+            .types
+            .iter()
+            .map(|(&name, entry)| (name, entry.def.extends.as_ref()));
+        match crate::inheritance::classify(entries, crate::inheritance::Budget::default()) {
+            Ok(classification) => {
+                self.cyclic = classification.cyclic;
+                true
+            }
+            Err(refusal) => {
+                self.out.push(error(
+                    crate::inheritance::BUDGET_EXHAUSTED,
+                    format!(
+                        "inheritance classification exhausted its {} budget (limit {}); catalog validation stopped before ancestry resolution",
+                        refusal.dimension, refusal.limit
+                    ),
+                    crate::Span::from_segments(self.roots.object_types.iter().copied()),
+                ));
+                false
             }
         }
     }

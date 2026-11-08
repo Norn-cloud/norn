@@ -60,6 +60,7 @@ mod finite;
 pub mod flow_source_map;
 pub mod function;
 mod graph;
+mod inheritance;
 /// Closure-keyed structural admission evidence reuse.
 pub mod incremental;
 pub mod interfaces;
@@ -164,7 +165,7 @@ pub use definitions_diff::{
 };
 pub use diagnostic::{
     DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
-    SourceSpan, Span, diagnostics_to_json,
+    SourceSpan, Span, StructuralEvidence, diagnostics_to_json,
 };
 pub use entity_artifacts::{
     EntityArtifactSetContext, TenantLayer, check_artifact_set_entity_model, check_entity_artifacts,
