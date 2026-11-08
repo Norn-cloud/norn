@@ -49,7 +49,7 @@ code generation and WellDB integration are later work.
 - Ring 0: pure, synchronous, sans-IO, portable to wasm32-unknown-unknown.
 - Only Norn edges: norn-canonical (canonical encoding), norn-graph (bounded
   traversal/order), norn-ir (shared fact data/schema). Third party: existing
-  serde only; serde_json is test-only. See docs/architecture/decisions/2026-10-24-datalog-contract.md; the machine-checked rules are in `boundary.json`.
+  serde only; serde_json is test-only. See docs/platform/datalog-contract.md; the machine-checked rules are in `boundary.json`.
 - Rule AST, shared validator/diagnostic codes, provenance shape and fixed AST
   packs only. No executor, Ascent generation, DB/service, permission inference,
   authorization, findings plumbing, host API, or kernel commit integration.
