@@ -491,3 +491,8 @@ and the existing discovery coefficient/work ceilings. Named scenarios: true
 fractional candidate with full evidence, holdout near-miss with exact residual,
 no-signal control, duplicate record, unit separation, oversize window and measured
 256-record fixture. Law drift, misfit rules and statistical guards remain open.
+
+
+## Shared reviewed locale selection
+
+**REVIEWED-LOCALE-1:** laws and question-view consumers use the same reviewed locale-map decoding, completeness validation, BCP 47 syntax and case-insensitive exact selection. Duplicate wire keys or case variants refuse before collection; an incomplete unselected translation refuses too. No fallback is introduced. Existing law wire types, schemas, wording error codes and EN/AR display bytes remain unchanged. Named scenarios: `reviewed_locale_rejects_duplicate_wire_keys_and_incomplete_unselected_entries`, generated `reviewed_locale_selection_is_exact_without_fallback`, and the existing law locale scenarios. This refactoring changes no law or execution semantics.
