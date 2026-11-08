@@ -18,7 +18,7 @@ import { writeSecretConfig } from "../celld-config.ts"
 // Environment: CELLD_BUCKET, S3_ENDPOINT, AWS_REGION, AWS_ACCESS_KEY_ID,
 // AWS_SECRET_ACCESS_KEY (the stage's own bucket credentials), NORN_LINEAGE_KEY,
 // NORN_PROBE_EMAIL + NORN_PROBE_PASSWORD (a stage account), NORN_CELLD_SSH (the
-// host, default "hetzner"). Secrets travel in the 0600 config file, stdin or the
+// ssh host of the stage node; required). Secrets travel in the 0600 config file, stdin or the
 // environment, never argv or logs.
 
 /** What one stage's cell deploy touches, derived from its name alone. */
@@ -70,7 +70,7 @@ function s3(method: "GET" | "PUT", key: string, bodyFile?: string): string {
 
 /** POST /reload on the stage node's internal listener, over ssh; the listener is loopback-only. */
 function reload(stage: CellStage): void {
-  const host = process.env.NORN_CELLD_SSH ?? "hetzner"
+  const host = env("NORN_CELLD_SSH")
   // The unit name is derived from the validated stage name: nothing here comes from input text.
   // The internal listener is the node's other loopback socket: not its public --listen address.
   const remote = [
