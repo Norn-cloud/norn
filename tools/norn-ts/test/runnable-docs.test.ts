@@ -32,15 +32,19 @@ releaseTest("the runnable guide executes and native/WASM admission receipts agre
   } finally { rmSync(scratch, {recursive: true, force: true}) }
 }, 90_000)
 
+const STATUS_ROWS = 8
+const STATUS_COMMAND_TIMEOUT_MS = 600_000
+const STATUS_TEST_TIMEOUT_MS = STATUS_ROWS * STATUS_COMMAND_TIMEOUT_MS + 60_000
+
 releaseTest("each core status row executes one named release test", () => {
   const matrix = readFileSync(join(root, "docs/authoring/runnable/status.md"), "utf8")
   const commands = [...matrix.matchAll(/`(cargo test --locked -p [a-z-]+ --test [a-z_]+ [a-z_]+ -- --exact)`/g)]
-  expect(commands).toHaveLength(8)
+  expect(commands).toHaveLength(STATUS_ROWS)
   for (const [, command] of commands) {
-    const run = spawnSync("bash", ["-euo", "pipefail", "-c", command!], {cwd: root, encoding: "utf8", timeout: 600_000})
+    const run = spawnSync("bash", ["-euo", "pipefail", "-c", command!], {cwd: root, encoding: "utf8", timeout: STATUS_COMMAND_TIMEOUT_MS})
     expect(run.error).toBeUndefined()
     if (run.status !== 0) throw new Error(run.stderr + run.stdout)
     expect(run.stdout).toContain("1 passed; 0 failed")
     expect(run.stdout).not.toContain("1 ignored")
   }
-}, 600_000)
+}, STATUS_TEST_TIMEOUT_MS)
