@@ -207,6 +207,22 @@ impl NornLinkPage {
     }
 }
 
+/// HOST-READ-4: one page of the links touching an object that the caller may
+/// see at both ends (D67); links to rows it cannot see are neither listed nor
+/// counted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornObjectLinkPage {
+    /// The requested object's type.
+    pub object_type: String,
+    /// The requested object's identity.
+    pub id: String,
+    /// Visible links, in the cell's stable order.
+    pub items: Vec<NornLinkEdge>,
+    /// The cursor for the next page, when one exists.
+    pub next: Option<String>,
+}
+
 /// The exact admitted mapping declaration that produced an object version.
 #[derive(Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

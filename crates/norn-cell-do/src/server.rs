@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::host::DevHost;
+use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
@@ -93,15 +94,7 @@ pub fn handle_with<E: SqlEngine>(
         .and_then(|rest| rest.split_once('/'))
         .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
-    let object = path
-        .strip_prefix("/v1/objects/")
-        .map(|rest| {
-            rest.split_once('/')
-                .map_or((rest, None), |(kind, id)| (kind, Some(id)))
-        })
-        .filter(|(kind, id)| {
-            !kind.is_empty() && id.is_none_or(|id| !id.is_empty() && !id.contains('/'))
-        });
+    let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let known = path == "/v1/definitions"
         || ad_hoc
         || object.is_some()
@@ -126,7 +119,7 @@ pub fn handle_with<E: SqlEngine>(
         match (question, questions) {
             (None, _) if object.is_some() => object.map_or_else(
                 || Err(norn_api::authz::read_denied()),
-                |(kind, id)| objects(host, actor, kind, id, query),
+                |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
             ),
             (None, _) => definitions_query(query)
                 .and_then(|query| get_defs(host, &query, actor))
@@ -215,13 +208,29 @@ fn ad_hoc_question<E: SqlEngine>(
     }
 }
 
-/// HOST-READ-3: `GET /v1/objects/{type}` (a grid query) and
-/// `GET /v1/objects/{type}/{id}`, scoped by the query string.
+/// The segments of an object route after `/v1/objects/`: a type, an optional
+/// id, and for an id an optional `links` or `lineage` leaf. No segment is empty.
+fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
+    let mut segments = rest.split('/');
+    let kind = segments.next().filter(|kind| !kind.is_empty())?;
+    let id = segments.next();
+    let leaf = segments.next();
+    if segments.next().is_some()
+        || id.is_some_and(str::is_empty)
+        || leaf.is_some_and(|leaf| !matches!(leaf, "links" | "lineage"))
+    {
+        return None;
+    }
+    Some((kind, id, leaf))
+}
+
+/// HOST-READ-3/4: `GET /v1/objects/{type}` (a grid query),
+/// `GET /v1/objects/{type}/{id}` and its `/links` and `/lineage`, scoped by
+/// the query string.
 fn objects<E: SqlEngine>(
     host: &DevHost<E>,
     actor: Option<&str>,
-    object_type: &str,
-    id: Option<&str>,
+    (object_type, id, leaf): (&str, Option<&str>, Option<&str>),
     query: &str,
 ) -> Result<String, Refusal> {
     // Path segments decode percent escapes only: `&`, `=` and `+` are literal
@@ -234,6 +243,53 @@ fn objects<E: SqlEngine>(
             .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
     };
     let object_type = decoded(object_type)?;
+    if let (Some(id), Some("links")) = (id, leaf) {
+        let mut fields = parse(
+            query,
+            &[
+                "orgId",
+                "environmentId",
+                "direction",
+                "link",
+                "limit",
+                "after",
+            ],
+        )?;
+        let scope = ScopeQuery {
+            org_id: fields.remove("orgId"),
+            environment_id: fields.remove("environmentId"),
+        };
+        let params = ObjectLinkParams {
+            direction: fields.remove("direction"),
+            link: fields.remove("link"),
+            limit: fields.remove("limit"),
+            after: fields.remove("after"),
+        };
+        return document_json(&get_object_links(
+            host,
+            &scope,
+            actor,
+            &object_type,
+            &decoded(id)?,
+            &params,
+            &CellObjectAccess,
+        )?);
+    }
+    if let (Some(id), Some(_lineage)) = (id, leaf) {
+        let fields = parse(query, &["orgId", "environmentId"])?;
+        let scope = ScopeQuery {
+            org_id: fields.get("orgId").cloned(),
+            environment_id: fields.get("environmentId").cloned(),
+        };
+        return document_json(&get_object_lineage(
+            host,
+            &scope,
+            actor,
+            &object_type,
+            &decoded(id)?,
+            &CellObjectAccess,
+        )?);
+    }
     if let Some(id) = id {
         let fields = parse(query, &["orgId", "environmentId"])?;
         let scope = ScopeQuery {
