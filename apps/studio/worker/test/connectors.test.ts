@@ -398,7 +398,7 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   const seen: { url: string; auth: string | null; body: string }[] = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
-    if (!request.url.startsWith(GATEWAY)) return real(input, init)
+    if (new URL(request.url).origin !== GATEWAY) return real(input, init)
     const body = await request.text()
     seen.push({ url: request.url, auth: request.headers.get("authorization"), body })
     if (request.url.endsWith("/oauth2/token")) {
