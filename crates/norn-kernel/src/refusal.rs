@@ -182,11 +182,14 @@ impl<X> CommitError<X> {
             | Self::ObservationAuthorization
             | Self::UnsupportedLinkRead { .. }
             | Self::DuplicateLinkRead { .. }
-            | Self::InvalidLinkRead { .. } => RefusalCategory::Invalid,
+            | Self::InvalidLinkRead { .. }
+            | Self::UnsupportedPredicateRead { .. }
+            | Self::InvalidPredicateRead { .. } => RefusalCategory::Invalid,
             Self::NotPending { .. }
             | Self::Conflict { .. }
             | Self::LinkConflict { .. }
-            | Self::LinkReadConflict { .. } => RefusalCategory::Conflict,
+            | Self::LinkReadConflict { .. }
+            | Self::PredicateReadConflict { .. } => RefusalCategory::Conflict,
             Self::IdentityReuse
             | Self::IdentityCollision { .. }
             | Self::DanglingLink { .. }
@@ -280,7 +283,10 @@ impl<X> Refusable for CommitError<X> {
         }
         refusal.retryable = matches!(
             self,
-            Self::Conflict { .. } | Self::LinkConflict { .. } | Self::LinkReadConflict { .. }
+            Self::Conflict { .. }
+                | Self::LinkConflict { .. }
+                | Self::LinkReadConflict { .. }
+                | Self::PredicateReadConflict { .. }
         );
         refusal
     }
@@ -615,6 +621,7 @@ impl<X> ActionRefusal<X> {
             Self::IdempotencyConflict { .. } | Self::StalePreconditionRead { .. } => {
                 RefusalCategory::Conflict
             }
+            Self::ReceiptRefused { reason } => reason.category(),
             Self::InputBoundExceeded { .. } | Self::ExpressionBudgetExceeded { .. } => {
                 RefusalCategory::Limit
             }

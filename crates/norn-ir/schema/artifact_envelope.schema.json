@@ -520,6 +520,58 @@
         "legProperty"
       ]
     },
+    "ActionAggregateInput": {
+      "description": "One bounded aggregate an action's preconditions read by `name`.",
+      "type": "object",
+      "properties": {
+        "aggregate": {
+          "description": "What is computed over the matched objects.",
+          "$ref": "#/$defs/AggregateFunction"
+        },
+        "filter": {
+          "description": "Equality filter: each scalar property must equal the named input\nfield. An empty filter matches every object of the type.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "string"
+            }
+          }
+        },
+        "maxItems": {
+          "description": "Most objects the fold may match; one more refuses the action.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "description": "The precondition environment member holding the result. Unique among\nthe action's aggregates and slice entries.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The type whose stored objects are folded.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "window": {
+          "description": "Optional window over one date or timestamp property.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AggregateWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "objectType",
+        "aggregate",
+        "maxItems"
+      ]
+    },
     "ActionCommand": {
       "description": "One declarative outbound command produced by an action call.",
       "type": "object",
@@ -871,6 +923,12 @@
         "actionId": {
           "type": "string"
         },
+        "aggregates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAggregateInput"
+          }
+        },
         "commands": {
           "type": "array",
           "items": {
@@ -1159,6 +1217,78 @@
       "required": [
         "entityKind",
         "change"
+      ]
+    },
+    "AggregateFunction": {
+      "description": "The fold computed over the matched objects.",
+      "oneOf": [
+        {
+          "description": "The exact sum of a non-nullable decimal or integer property, held at\nthe property's declared scale. An empty match set sums to zero.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sum"
+            },
+            "property": {
+              "description": "The summed property.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property"
+          ]
+        },
+        {
+          "description": "The number of matched objects.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "count"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "AggregateWindow": {
+      "description": "A window over one date or timestamp property. Both edges and their\ninclusivity are declared; there is no default edge semantics.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "The input field holding the end edge.",
+          "type": "string"
+        },
+        "endInclusive": {
+          "description": "Whether an object exactly at `end` matches.",
+          "type": "boolean"
+        },
+        "property": {
+          "description": "The date or timestamp property the window ranges over.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "start": {
+          "description": "The input field holding the start edge.",
+          "type": "string"
+        },
+        "startInclusive": {
+          "description": "Whether an object exactly at `start` matches.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "start",
+        "end",
+        "startInclusive",
+        "endInclusive"
       ]
     },
     "ApiKeyFormat": {

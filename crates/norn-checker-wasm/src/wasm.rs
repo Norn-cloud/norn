@@ -100,9 +100,51 @@ pub fn function_contract(
     .map_err(JsError::from)
 }
 
+/// `toolPort(schemaJson)`: see [`crate::tool_port_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = toolPort)]
+pub fn tool_port(schema_json: &str) -> Result<String, JsError> {
+    crate::tool_port_json(schema_json).map_err(JsError::from)
+}
+
+/// `toolEdge(sourceSchemaJson, targetSchemaJson)`: see [`crate::tool_edge_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = toolEdge)]
+pub fn tool_edge(source_schema_json: &str, target_schema_json: &str) -> Result<String, JsError> {
+    crate::tool_edge_json(source_schema_json, target_schema_json).map_err(JsError::from)
+}
+
 /// `version()`: see [`crate::version_json`].
 #[wasm_bindgen]
 #[must_use]
 pub fn version() -> String {
     crate::version_json()
+}
+
+/// `restateQuestion(questionJson, metricsJson)`: see
+/// [`crate::restate_question_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = restateQuestion)]
+pub fn restate_question(question_json: &str, metrics_json: &str) -> Result<String, JsError> {
+    crate::restate_question_json(question_json, metrics_json).map_err(JsError::from)
+}
+
+/// `restateDashboard(payloadJson, metricsJson)`: see
+/// [`crate::restate_dashboard_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = restateDashboard)]
+pub fn restate_dashboard(payload_json: &str, metrics_json: &str) -> Result<String, JsError> {
+    crate::restate_dashboard_json(payload_json, metrics_json).map_err(JsError::from)
 }

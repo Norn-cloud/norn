@@ -111,6 +111,7 @@ pub mod obligations;
     clippy::large_futures
 )]
 pub mod ontology;
+mod predicate_property;
 pub mod property_codec;
 pub mod property_types;
 #[allow(
@@ -147,6 +148,7 @@ pub mod rule_bindings;
 pub mod sealing;
 mod source_commands;
 pub mod source_schema;
+pub mod tool_ports;
 pub mod typed_roots;
 pub mod ui_interaction;
 pub mod verification;
@@ -183,6 +185,7 @@ pub use entity_model::{
 };
 pub use envelope::{ArtifactValidation, plan_graph_load, validate_artifact};
 pub use flow_source_map::validate_flow_source_map;
+pub use jdm_profile::{RuleClosure, RuleClosureError, rule_closure};
 pub use layout::{
     PreparedArtifact, extract_inline_layout, hydrate_inline_layout,
     layout_merge_conflict_diagnostic, prepare_artifact_source, prune_layout,

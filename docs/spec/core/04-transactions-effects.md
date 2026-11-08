@@ -66,7 +66,8 @@ an immutable Function manifest digest, a writable digest property and typed resu
 Admission rejects unknown, computed, reserved and lifecycle binding targets.
 Both destinations exclude objectIdField and every effective identity-key component; a result destination cannot equal digestProperty. The exact writer closure remains required; catalogs preserve the declaration.
 Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
-Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
+Execution is open only on the single-commit path of Core 07 RECEIPT-CONSUME-1:
+consumption and effects commit atomically, with no partial persistence on refusal.
 
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 

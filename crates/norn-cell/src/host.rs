@@ -35,8 +35,9 @@ use norn_kernel::{
     CommitVersions, CommitView, Consumed, DueTimer, Effect, FactKey, FactMutation, FactState,
     FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget, LinkState,
     LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
-    OwnedRowsCommitProof, Performed, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
-    check_commit, check_commit_identifiers, check_commit_observed, check_commit_owned_rows,
+    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember, TimerId,
+    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_identifiers,
+    check_commit_observed, check_commit_owned_rows,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -534,6 +535,65 @@ fn version_of<S: SqlEngine>(
         .map(FactVersion)
 }
 
+/// The live objects of `predicate`'s type that match it, in key order, at
+/// most `limit` ([`norn_kernel::predicate_read`]). The cell has no property
+/// index for arbitrary predicates, so it examines at most the slice
+/// profile's record count of objects of the type; a larger type is an
+/// incomplete enumeration (`None`), which fails the read closed.
+fn predicate_objects<S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    predicate: &PredicateQuery,
+    limit: usize,
+) -> Result<Option<Vec<PredicateObject>>, CellError> {
+    let scan_cap = usize::try_from(
+        norn_ir::ResourceLimitProfile::norn_limits_v1()
+            .slice
+            .max_records,
+    )
+    .unwrap_or(usize::MAX);
+    // Interfaces have no stored table chain; a predicate over one is
+    // unsupported on every host.
+    if !reader
+        .model()
+        .object_types()
+        .any(|defined| defined.name == predicate.object_type)
+    {
+        return Ok(None);
+    }
+    let records = reader.list_after(
+        MAIN_WORLD,
+        predicate.object_type.as_str(),
+        None,
+        scan_cap.saturating_add(1),
+    )?;
+    if records.len() > scan_cap {
+        return Ok(None);
+    }
+    let candidates: Vec<(FactKey, FactVersion, JsonObject)> = records
+        .into_iter()
+        .map(|record| {
+            let values = record
+                .values
+                .into_iter()
+                // A stored null is an absent property.
+                .filter(|(_, value)| !value.is_null())
+                .collect::<JsonObject>();
+            (
+                FactKey::new(record.object_type, record.id),
+                FactVersion(record.version),
+                values,
+            )
+        })
+        .collect();
+    Ok(Some(norn_kernel::predicate_read::select_members(
+        predicate,
+        candidates
+            .iter()
+            .map(|(key, version, values)| (key, *version, values)),
+        limit,
+    )))
+}
+
 /// The committed state of link `key` as the kernel sees it.
 fn link_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
@@ -636,6 +696,23 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
             .collect();
         links.sort();
         Ok(links)
+    }
+
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, CellError> {
+        let Some(objects) = predicate_objects(self.0, predicate, limit)? else {
+            return Ok(None);
+        };
+        // OBS-EVIDENCE-1: a governed read never consumes a disputed source
+        // subject, so a disputed current match refuses the commit rather
+        // than being compared as an ordinary member.
+        for object in &objects {
+            self.0.refuse_disputed_subject(&object.key)?;
+        }
+        Ok(Some(objects.iter().map(PredicateObject::member).collect()))
     }
 
     fn has_link_target(
@@ -1548,6 +1625,19 @@ where
                             .map_err(CommitError::Host)?;
                     }
                 }
+                for member in commit.predicate_reads.iter().flat_map(|read| &read.members) {
+                    // A member of no stored type holds no subject to dispute;
+                    // the kernel's shape check refuses it.
+                    if reader
+                        .model()
+                        .object_types()
+                        .any(|defined| defined.name == member.key.object_type)
+                    {
+                        reader
+                            .refuse_disputed_subject(&member.key)
+                            .map_err(CommitError::Host)?;
+                    }
+                }
             }
             let model = reader.model();
             let catalog = TypeCatalog::new(model.object_types())
@@ -1726,6 +1816,21 @@ where
         self.store.read().refuse_disputed_subject(&key.source)?;
         self.store.read().refuse_disputed_subject(&key.target)?;
         link_state(&self.store.read(), key)
+    }
+
+    fn read_predicate(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+    ) -> Result<Option<Vec<PredicateObject>>, CellError> {
+        let reader = self.store.read();
+        let objects = predicate_objects(&reader, predicate, max_members.saturating_add(1))?;
+        if let Some(objects) = &objects {
+            for object in objects {
+                reader.refuse_disputed_subject(&object.key)?;
+            }
+        }
+        Ok(objects)
     }
 
     fn read_link_targets(

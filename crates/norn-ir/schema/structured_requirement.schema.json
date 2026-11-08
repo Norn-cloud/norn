@@ -21,6 +21,25 @@
     "wording"
   ],
   "$defs": {
+    "CalendarPin": {
+      "description": "Exact pinned calendar identity.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Calendar artifact identity.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact calendar version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ]
+    },
     "DeonticModality": {
       "description": "The normative grade is separate from the temporal wrapper in `law`.",
       "type": "string",
@@ -710,6 +729,14 @@
         "sameCommit": {
           "type": "string",
           "pattern": "\\S"
+        },
+        "within": {
+          "description": "Required to render a `within` requirement; other timings never read it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "\\S"
         }
       },
       "additionalProperties": false,
@@ -728,7 +755,7 @@
       ]
     },
     "RequirementTiming": {
-      "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
+      "description": "Closed safety fragment plus one event-activated deadline form. No fairness,\nunbounded progress or wall-clock reads.",
       "oneOf": [
         {
           "description": "Condition and response are evaluated at every applicable committed state.",
@@ -739,6 +766,19 @@
           "description": "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit.",
           "type": "string",
           "const": "same_commit"
+        },
+        {
+          "description": "LAW-WITHIN-1: a committed trigger transition opens an activation that a\nlater satisfying commit must discharge before `law.timing`'s deadline.",
+          "type": "object",
+          "properties": {
+            "within": {
+              "$ref": "#/$defs/WithinTiming"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "within"
+          ]
         }
       ]
     },
@@ -749,6 +789,20 @@
         "$ref": "#/$defs/LocalizedRequirement"
       },
       "minProperties": 1
+    },
+    "RetriggerPolicy": {
+      "oneOf": [
+        {
+          "description": "A trigger while open is recorded as ignored; the first deadline stands.",
+          "type": "string",
+          "const": "keep_first"
+        },
+        {
+          "description": "A trigger while open restarts the window from the triggering commit.",
+          "type": "string",
+          "const": "restart"
+        }
+      ]
     },
     "RuleByteRange": {
       "type": "object",
@@ -823,6 +877,52 @@
       "enum": [
         "ltr",
         "rtl"
+      ]
+    },
+    "WithinTiming": {
+      "description": "Activation policy for `within`; the duration stays in `law.timing`.",
+      "type": "object",
+      "properties": {
+        "accountable": {
+          "description": "Principal or role answerable for discharge; grants no authority.",
+          "type": "string"
+        },
+        "calendar": {
+          "description": "Business calendar for the deadline. No calendar is admitted yet: refuses.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CalendarPin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cancel": {
+          "description": "Optional committed-state predicate that closes an open activation unpaid.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ZenExpression"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retrigger": {
+          "description": "What a trigger does while an activation is already open.",
+          "$ref": "#/$defs/RetriggerPolicy"
+        },
+        "trigger": {
+          "description": "Lifecycle transition identity on the subject that opens an activation.\nAdmission (norn-checker) checks it is nonblank; resolving it against the\nsubject's lifecycle is catalog admission (TARGET).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "trigger",
+        "retrigger",
+        "accountable"
       ]
     },
     "ZenExpression": {

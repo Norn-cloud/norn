@@ -9,6 +9,8 @@ import { authDeploy, deployTarget, scanState } from "./deploy-target.ts"
 // client-side routes fall back to index.html. Credentials come from
 // CLOUDFLARE_* in the environment. State lives in ALCHEMY_STATE_DIR (outside
 // the repository) or the ignored `.alchemy`.
+// ALCHEMY_STAGE must name the stage: unset, the deploy refuses rather than
+// meaning production, and prod also needs NORN_DEPLOY_PROD=1.
 // Each stage has its own Worker (production keeps the live one), and a fresh
 // state store adopts its stage's existing Worker instead of failing to create it.
 // `vite build` runs before this script (see the deploy script), never inside
@@ -50,6 +52,7 @@ export const studio = await Vite("studio", {
     AUTH_DB: authDb,
     BETTER_AUTH_SECRET: alchemy.secret(auth.secret),
     BETTER_AUTH_URL: auth.url,
+    ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
     // Magic links need a Cloudflare Email Service sender on the domain; without one they refuse.
     ...auth.emailFrom === undefined ? {} : { EMAIL: EmailSender({ allowedSenderAddresses: [auth.emailFrom] }), EMAIL_FROM: auth.emailFrom },
   },

@@ -10,6 +10,7 @@ const MIGRATION: string = readFileSync(join(import.meta.dir, "../migrations/0001
 function stage(): Env {
   const db = new Database(":memory:")
   db.exec(MIGRATION)
+  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
   return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN }
 }
@@ -136,4 +137,150 @@ test("sign-up answers a registered address byte for byte like a new one, apart f
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "another horse battery" })).status).toBe(401)
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "correct horse battery" })).status).toBe(200)
   expect((await post(env, "/api/auth/sign-in/email", { email: "ha@example.com", password: "another horse battery" })).status).toBe(200)
+})
+
+
+test("a failed membership insert is retried safely on the next sign-in", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  expect((await enroll(env, "recover@example.com", "Recover")).status).toBe(200)
+  db.run(`delete from "member"`)
+  db.run(`delete from "organization"`)
+  db.run(`update "workspace_provisioning" set "status" = 'pending'`)
+  db.exec(`create trigger fail_member before insert on "member" begin select raise(abort, 'injected membership failure'); end`)
+  const failed = await post(env, "/api/auth/sign-in/email", { email: "recover@example.com", password: "correct horse battery" })
+  expect(failed.status).not.toBe(200)
+  expect(db.query(`select count(*) as n from "organization"`).get()).toEqual({ n: 0 })
+  expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 0 })
+  db.exec(`drop trigger fail_member`)
+  const recovered = await post(env, "/api/auth/sign-in/email", { email: "recover@example.com", password: "correct horse battery" })
+  expect(recovered.status).toBe(200)
+  const me = await (await call(env, "/api/me", { headers: { cookie: cookieOf(recovered) } })).json() as { organization: { role: string; name: string } }
+  expect(me.organization).toMatchObject({ role: "owner", name: "Recover's workspace" })
+  expect(db.query(`select count(*) as n from "organization"`).get()).toEqual({ n: 1 })
+})
+
+test("recovery refuses a workspace whose server ownership proof is altered", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  expect((await enroll(env, "proof@example.com", "Proof")).status).toBe(200)
+  db.run(`delete from "member"`)
+  db.run(`update "workspace_provisioning" set "status" = 'pending'`)
+  db.run(`update "organization" set "metadata" = ?`, ['{"norn.provisioningProof":"forged"}'])
+  const response = await post(env, "/api/auth/sign-in/email", { email: "proof@example.com", password: "correct horse battery" })
+  expect(response.status).not.toBe(200)
+  expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 0 })
+})
+
+
+test("client organization metadata cannot assign or replace reserved cell bindings", async () => {
+  const env = { ...stage(), STUDIO_DEFAULT_ENVIRONMENT_ID: "server-cell" }
+  const db = env.AUTH_DB as unknown as Database
+  const signedIn = await enroll(env, "scope@example.com", "Scope")
+  const cookie = cookieOf(signedIn)
+  const own = db.query(`select "organizationId" from "member"`).get() as { organizationId: string }
+  const stored = () => JSON.parse((db.query(`select "metadata" from "organization" where "id" = ?`).get(own.organizationId) as { metadata: string }).metadata) as Record<string, unknown>
+  expect(stored().environmentId).toBe("server-cell")
+  const created = await post(env, "/api/auth/organization/create", { name: "Other", slug: "other-workspace", metadata: { environmentId: "analytics", "norn.test": "forged", label: "kept" } }, { cookie })
+  expect(created.status).toBe(200)
+  const row = db.query(`select "metadata" from "organization" where "slug" = 'other-workspace'`).get() as { metadata: string }
+  expect(JSON.parse(row.metadata)).toEqual({ label: "kept" })
+  const updated = await post(env, "/api/auth/organization/update", { organizationId: own.organizationId, data: { metadata: { environmentId: "analytics", "norn.provisioningProof": "forged", "norn.test": "forged", label: "changed" } } }, { cookie })
+  expect(updated.status).toBe(200)
+  expect(stored().environmentId).toBe("server-cell")
+  expect(stored()["norn.provisioningProof"]).not.toBe("forged")
+  expect(stored()["norn.test"]).toBeUndefined()
+  expect(stored().label).toBe("changed")
+})
+
+
+test("removing a completed workspace owner does not restore membership on sign-in", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  expect((await enroll(env, "removed@example.com", "Removed")).status).toBe(200)
+  db.run(`delete from "member"`)
+  const response = await post(env, "/api/auth/sign-in/email", { email: "removed@example.com", password: "correct horse battery" })
+  expect(response.status).toBe(200)
+  expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 0 })
+  expect(db.query(`select "status" from "workspace_provisioning"`).get()).toEqual({ status: "complete" })
+})
+
+test("concurrent recovery creates one owner membership", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  expect((await enroll(env, "race@example.com", "Race")).status).toBe(200)
+  db.run(`delete from "member"`)
+  db.run(`update "workspace_provisioning" set "status" = 'pending'`)
+  const signIn = () => post(env, "/api/auth/sign-in/email", { email: "race@example.com", password: "correct horse battery" })
+  const responses = await Promise.all([signIn(), signIn()])
+  expect(responses.map((response) => response.status)).toEqual([200, 200])
+  expect(db.query(`select count(*) as n from "member"`).get()).toEqual({ n: 1 })
+  expect(db.query(`select "status" from "workspace_provisioning"`).get()).toEqual({ status: "complete" })
+})
+
+
+test("workspace migration deduplicates by role, creation time, then id", () => {
+  const db = new Database(":memory:")
+  db.exec(MIGRATION)
+  db.exec(`insert into "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") values ('u', 'User', 'u@example.com', 1, '2020', '2020');
+    insert into "organization" ("id", "name", "slug", "createdAt") values ('o', 'Org', 'org', '2020');
+    insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values
+      ('viewer', 'o', 'u', 'viewer', '2010'), ('new-owner', 'o', 'u', 'owner', '2022'),
+      ('b-owner', 'o', 'u', 'owner', '2020'), ('a-owner', 'o', 'u', 'owner', '2020')`)
+  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
+  expect(db.query(`select "id", "role" from "member"`).all()).toEqual([{ id: "a-owner", role: "owner" }])
+  expect(() => db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('duplicate', 'o', 'u', 'member', '2025')`)).toThrow()
+})
+
+
+test("failure to initialize provisioning rolls back user creation and a retry succeeds", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  db.exec(`create trigger fail_provisioning_marker before insert on "workspace_provisioning" begin select raise(abort, 'injected marker failure'); end`)
+  const body = { email: "marker@example.com", password: "correct horse battery", name: "Marker" }
+  const failed = await post(env, "/api/auth/sign-up/email", body)
+  expect(failed.status).not.toBe(200)
+  expect(db.query(`select count(*) as n from "user" where "email" = ?`).get(body.email)).toEqual({ n: 0 })
+  expect(db.query(`select count(*) as n from "workspace_provisioning"`).get()).toEqual({ n: 0 })
+  db.exec(`drop trigger fail_provisioning_marker`)
+  expect((await post(env, "/api/auth/sign-up/email", body)).status).toBe(200)
+  const signedIn = await post(env, "/api/auth/sign-in/email", { email: body.email, password: body.password })
+  expect(signedIn.status).toBe(200)
+  const me = await (await call(env, "/api/me", { headers: { cookie: cookieOf(signedIn) } })).json() as { organization: { role: string } }
+  expect(me.organization.role).toBe("owner")
+})
+
+const meOf = async (env: Env, cookie: string, extra: HeadersInit = {}, query = "") =>
+  await (await call(env, `/api/me${query}`, { headers: { cookie, ...extra } })).json() as { organization: { id: string } | null; environmentId: string | null }
+
+test("/api/me gives the active workspace's provisioned environment, and none for a workspace without one", async () => {
+  const env = { ...stage(), STUDIO_DEFAULT_ENVIRONMENT_ID: "server-cell" }
+  const db = env.AUTH_DB as unknown as Database
+  const cookie = cookieOf(await enroll(env, "cell@example.com", "Cell"))
+  const own = (db.query(`select "organizationId" from "member"`).get() as { organizationId: string }).organizationId
+  expect(await meOf(env, cookie)).toMatchObject({ organization: { id: own }, environmentId: "server-cell" })
+  // A workspace provisioned without a default environment, or with malformed metadata, has none.
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ label: "x" }), own])
+  expect((await meOf(env, cookie)).environmentId).toBeNull()
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, ["not-json", own])
+  expect((await meOf(env, cookie)).environmentId).toBeNull()
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: " " }), own])
+  expect((await meOf(env, cookie)).environmentId).toBeNull()
+})
+
+test("/api/me never takes the environment from the client, and gives none for a workspace the caller is not a member of", async () => {
+  const env = { ...stage(), STUDIO_DEFAULT_ENVIRONMENT_ID: "server-cell" }
+  const db = env.AUTH_DB as unknown as Database
+  const cookie = cookieOf(await enroll(env, "claims@example.com", "Claims"))
+  const user = (db.query(`select "id" from "user" where "email" = 'claims@example.com'`).get() as { id: string }).id
+  // Whatever the request claims, the answer is the server's.
+  expect((await meOf(env, cookie, { "x-norn-environment": "warehouse" }, "?environmentId=warehouse&orgId=org_other")).environmentId).toBe("server-cell")
+  // A client's own metadata write cannot set it (reserved keys are stripped), so /api/me still reads the provisioned one.
+  const own = (db.query(`select "organizationId" from "member"`).get() as { organizationId: string }).organizationId
+  expect((await post(env, "/api/auth/organization/update", { organizationId: own, data: { metadata: { environmentId: "warehouse" } } }, { cookie })).status).toBe(200)
+  expect((await meOf(env, cookie)).environmentId).toBe("server-cell")
+  // An active workspace the caller does not belong to (a stale or forged session value): no workspace, no environment.
+  db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_other', 'Other', 'other', ?, ?)`, [JSON.stringify({ environmentId: "warehouse" }), Date.now()])
+  db.run(`update "session" set "activeOrganizationId" = 'org_other' where "userId" = ?`, [user])
+  expect(await meOf(env, cookie)).toMatchObject({ organization: null, environmentId: null })
 })

@@ -36,6 +36,7 @@ use serde_json::value::RawValue;
 
 pub mod access;
 pub mod action;
+pub mod aggregate_input;
 pub mod business_pack;
 pub mod connector;
 pub mod customization;
@@ -78,6 +79,7 @@ pub mod runtime;
 pub mod sealing;
 pub mod setting;
 pub mod source_schema;
+pub mod source_tree;
 pub mod technical_view;
 pub mod theorem_input;
 pub mod view;
@@ -92,6 +94,7 @@ pub use action::{
     ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
     ActionUiEffects, ActionWrite, McpTool, McpToolAnnotations, WriteChange,
 };
+pub use aggregate_input::{ActionAggregateInput, AggregateFunction, AggregateWindow};
 pub use business_pack::{
     BusinessPackKind, BusinessPackRoot, CompositionPackKind, CompositionPackRoot,
     CorrespondenceRelation, LinkResidual, LinkedPack, MappingRelation, OntologyLinkKind,
@@ -1221,6 +1224,7 @@ define_payload_root!(ActionPayload {
         ledger_category => "ledgerCategory" as String,
         preconditions => "preconditions" as Vec<ZenExpression>,
         slice => "slice" as Vec<SliceDeclaration>,
+        aggregates => "aggregates" as Vec<ActionAggregateInput>,
         derive => "derive" as Vec<ActionInputDerivation>,
         commands => "commands" as Vec<ActionCommand>,
         synchronous_rule => "synchronousRule" as action::ActionRuleRef,

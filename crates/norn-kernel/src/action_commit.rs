@@ -40,6 +40,13 @@
 //!    input's `set` changes. Both go through [`crate::prepare_decision`]. The
 //!    target's prepared `put` is canonicalized with the shared effective-value
 //!    builder, then authorized as the proposed state.
+//!    **Receipt acceptance** (RECEIPT-EFFECT-1 / RECEIPT-CONSUME-1, Core 07):
+//!    a `fire_transition` declaring `acceptReceipt` resolves its input's
+//!    receipt digest through [`CellHost::resolve_accepted_receipt`], checks the
+//!    receipt is bound to the target run and its current generation, and adds
+//!    the digest and bound result `set`s plus the acceptance's delivery and
+//!    pins to the same commit. The host's pending check refuses a second
+//!    consumption; no transition commits without its consumption.
 //! 9. **Commit**: the prepared writes and call record commit atomically. A
 //!    concurrent call that commits first makes this one stale; if that call
 //!    had the same idempotency key and binding, this one replays after current
@@ -748,6 +755,14 @@ pub enum ActionRefusal<X> {
         /// Why the target failed the mode.
         reason: String,
     },
+    /// RECEIPT-EFFECT-1: the referenced receipt cannot be consumed by this
+    /// call (unknown, replayed, bound to another run or generation, not an
+    /// accepted success, or its result does not fit the declared bindings).
+    #[error("the action's receipt was refused: {}", reason.code())]
+    ReceiptRefused {
+        /// Why.
+        reason: crate::receipt_binding::ReceiptRefusal,
+    },
     /// The transition was refused by the decision-commit path.
     #[error(transparent)]
     Decision(DecisionRefusal<X>),
@@ -775,6 +790,7 @@ impl<X> ActionRefusal<X> {
             Self::KindMismatch { .. } => "artifact_set.action.effect_kind_mismatch",
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
+            Self::ReceiptRefused { reason } => reason.code(),
             Self::Decision(refusal) => refusal.code(),
         }
     }
@@ -907,6 +923,14 @@ where
     let action = call.action;
     // TXN-RULE-1: a declared closure never degrades to its primary effect.
     crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
+    // #1105: aggregate inputs are admitted ahead of their commit-time
+    // evaluation; until it lands, an action reading one refuses instead of
+    // committing on a fold it never computed.
+    if !action.aggregates.is_empty() {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
+    }
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())
         && matches!(
             action.effect_program,
@@ -933,19 +957,16 @@ where
         )?,
     };
     match action.effect_program.as_ref() {
-        // RECEIPT-EFFECT-1: refuse until consumption and effects share one commit.
-        Some(ActionEffectProgram::FireTransition {
-            accept_receipt: Some(_),
-            ..
-        })
-        | None => Err(ActionRefusal::UnsupportedEffect {
+        None => Err(ActionRefusal::UnsupportedEffect {
             action_id: action.action_id.clone(),
         }),
+        // RECEIPT-EFFECT-1: an accepted receipt is consumed in the transition's commit.
         Some(ActionEffectProgram::FireTransition {
             object_id_field,
             object_kind,
             lifecycle,
             transition,
+            accept_receipt,
             ..
         }) => commit_transition(
             host,
@@ -957,6 +978,7 @@ where
             object_kind,
             lifecycle,
             transition,
+            accept_receipt.as_ref(),
             limits,
             meter,
         ),
@@ -1020,6 +1042,7 @@ fn commit_transition<H>(
     object_kind: &str,
     lifecycle: &norn_ir::PropertyId,
     transition: &norn_ir::TransitionId,
+    accept_receipt: Option<&norn_ir::ReceiptAcceptance>,
     limits: &EnvelopeLimits,
     meter: Option<&mut TurnEnvelopeMeter>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
@@ -1030,6 +1053,15 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
+    if accept_receipt.is_some()
+        && (action.synchronous_rule.is_some() || call.turn.consumes.is_some())
+    {
+        // One commit consumes at most one delivery, and a rule writer's
+        // closure has not been qualified against receipt-bound values.
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
+    }
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
         return Err(ActionRefusal::InvalidInput {
@@ -1148,6 +1180,15 @@ where
     } else {
         Vec::new()
     };
+    let receipt = match accept_receipt {
+        Some(declaration) => {
+            let accepted =
+                resolve_receipt_effect(host, &preparation.effective_input, declaration, &target)?;
+            changes.extend(accepted.changes);
+            Some(accepted.acceptance)
+        }
+        None => None,
+    };
     let change = FactChange::Transition {
         object_type,
         key: object_id.clone(),
@@ -1173,9 +1214,83 @@ where
             recorded,
             record,
             series_candidate: None,
+            receipt,
         },
         EnvelopePolicy { limits, meter },
     )
+}
+
+/// The property changes and delivery a receipt-accepting transition commits.
+struct ReceiptEffect {
+    changes: Vec<FactChange>,
+    acceptance: crate::result_reconciliation::Acceptance,
+}
+
+/// RECEIPT-EFFECT-1: resolve the input's receipt reference through the host and
+/// turn the authenticated result into the declared property changes. Nothing
+/// is consumed here; [`commit_effect`] consumes the acceptance's delivery in
+/// the same commit as the transition.
+fn resolve_receipt_effect<H: CellHost + ?Sized>(
+    host: &H,
+    effective_input: &JsonObject,
+    declaration: &norn_ir::ReceiptAcceptance,
+    target: &FactKey,
+) -> Result<ReceiptEffect, ActionRefusal<H::Error>> {
+    use crate::receipt_binding::{ReceiptReference, ReceiptRefusal};
+    let refuse = |reason| ActionRefusal::ReceiptRefused { reason };
+    let reference = effective_input
+        .get(&declaration.reference_field)
+        .ok_or_else(|| ActionRefusal::InvalidInput {
+            field: declaration.reference_field.clone(),
+        })?;
+    let reference = ReceiptReference::parse(reference).map_err(|error| refuse(error.into()))?;
+    let binding = match host.resolve_accepted_receipt(&reference, &declaration.manifest_digest) {
+        Ok(Some(binding)) => binding,
+        Ok(None) => return Err(refuse(ReceiptRefusal::EffectUnsupported)),
+        Err(error) => return Err(error.into_refusal().map_or_else(host_failure, refuse)),
+    };
+    // The host authenticates; the kernel re-checks the pins it can see.
+    if binding.manifest() != &declaration.manifest_digest {
+        return Err(refuse(ReceiptRefusal::BindingMismatch));
+    }
+    // RUN-BIND-1: a receipt resolves only the run it was dispatched under.
+    if binding.run().id != target.key {
+        return Err(refuse(ReceiptRefusal::RunMismatch));
+    }
+    let run_generation = binding.run().generation;
+    let (digest, result, acceptance) = binding.into_parts();
+    if acceptance.record.generation.0 != run_generation
+        || acceptance.state.generation.0 != run_generation
+    {
+        return Err(refuse(ReceiptRefusal::RunMismatch));
+    }
+    if acceptance.requires_cell_lane || acceptance.destination.is_some() {
+        // Predicate pins and written destinations need their own fences.
+        return Err(refuse(ReceiptRefusal::EffectUnsupported));
+    }
+    let mut changes = Vec::with_capacity(declaration.result_bindings.len().saturating_add(1));
+    changes.push(FactChange::Set {
+        object_type: target.object_type.clone(),
+        key: target.key.clone(),
+        property: declaration.digest_property.clone(),
+        value: RuntimeValue::String(digest.0),
+    });
+    for (property, member) in &declaration.result_bindings {
+        let value = result
+            .get(member.as_str())
+            .cloned()
+            .ok_or_else(|| refuse(ReceiptRefusal::ResultType))?;
+        changes.push(FactChange::Set {
+            object_type: target.object_type.clone(),
+            key: target.key.clone(),
+            property: property.clone(),
+            value,
+        });
+    }
+    Ok(ReceiptEffect {
+        changes,
+        acceptance,
+    })
 }
 
 fn upsert_stored_input(
@@ -1449,6 +1564,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            receipt: None,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -3176,6 +3292,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: link_writes,
         link_reads: action_slice.link_reads,
+        predicate_reads: Vec::new(),
     };
     if let Some(meter) = meter.as_deref() {
         meter.check(counts).map_err(|exceeded| {
@@ -3213,6 +3330,7 @@ where
                     | CommitError::LinkConflict { .. }
                     | CommitError::LinkReadConflict { .. }
                     | CommitError::UnsupportedLinkRead { .. }
+                    | CommitError::PredicateReadConflict { .. }
                     | CommitError::NotPending { .. }
             ) && let Some(outcome) = replay_parent_rows_after_race(
                 host,
@@ -3425,6 +3543,7 @@ where
             record,
             series_candidate: Some(candidate),
             remaining_fuel: preparation.remaining_fuel,
+            receipt: None,
         };
         let outcome = commit_effect(
             host,
@@ -3584,6 +3703,8 @@ struct Pending {
     recorded: FactState,
     record: ActionCallRecord,
     series_candidate: Option<SeriesCandidate>,
+    /// RECEIPT-EFFECT-1: the receipt delivery this commit consumes.
+    receipt: Option<crate::result_reconciliation::Acceptance>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.
@@ -3695,6 +3816,7 @@ where
         recorded,
         record,
         series_candidate,
+        receipt,
     } = pending;
     let generated_key = series_candidate.is_some();
     let additional_events = usize::from(generated_key);
@@ -3809,14 +3931,25 @@ where
             values: record.to_values(),
         },
     });
+    let mut consumes = prepared.consumes;
+    let receipt_delivery = match receipt {
+        Some(acceptance) => {
+            let delivery =
+                consume_receipt::<H::Error>(consumes.is_some(), &acceptance, &writes, &mut reads)?;
+            consumes = Some(delivery.clone());
+            Some(delivery)
+        }
+        None => None,
+    };
     let commit = CellCommit {
-        consumes: prepared.consumes,
+        consumes,
         reads,
         writes,
         events: events.into_iter().map(Into::into).collect(),
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: created_links,
         link_reads,
+        predicate_reads: Vec::new(),
     };
     check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
     let quantity = super::action_quantity::prepare_quantity_action(call, &effective_input)?;
@@ -3872,8 +4005,59 @@ where
                 precondition_reads: &precondition_reads,
                 generated_key,
             },
-        ),
+        )
+        .map_err(|refusal| {
+            // RECEIPT-EFFECT-1: the receipt's delivery was already consumed
+            // or is not the run's current generation; nothing committed.
+            if let ActionRefusal::Decision(DecisionRefusal::NotPending { consumed }) = &refusal
+                && receipt_delivery.as_ref() == Some(consumed)
+            {
+                ActionRefusal::ReceiptRefused {
+                    reason: crate::receipt_binding::ReceiptRefusal::NotPending,
+                }
+            } else {
+                refusal
+            }
+        }),
     }
+}
+
+/// RECEIPT-EFFECT-1: the receipt's delivery joins the transition's commit, with
+/// every reconciliation pin as a compare-and-swap read. The host's pending
+/// check makes this the receipt's only consumption; a refused commit applies
+/// neither the transition nor the consumption.
+fn consume_receipt<X>(
+    already_consumes: bool,
+    acceptance: &crate::result_reconciliation::Acceptance,
+    writes: &[FactWrite],
+    reads: &mut Vec<FactExpectation>,
+) -> Result<crate::cell_host::Consumed, ActionRefusal<X>> {
+    let mismatch = ActionRefusal::ReceiptRefused {
+        reason: crate::receipt_binding::ReceiptRefusal::BindingMismatch,
+    };
+    if already_consumes {
+        return Err(mismatch);
+    }
+    for pin in &acceptance.reads {
+        if let Some(write) = writes.iter().find(|write| write.key == pin.key) {
+            if write.expected != pin.expected {
+                return Err(ActionRefusal::StalePreconditionRead {
+                    key: pin.key.clone(),
+                    link: None,
+                });
+            }
+        } else if let Some(read) = reads.iter().find(|read| read.key == pin.key) {
+            if read.expected != pin.expected {
+                return Err(ActionRefusal::StalePreconditionRead {
+                    key: pin.key.clone(),
+                    link: None,
+                });
+            }
+        } else {
+            reads.push(pin.clone());
+        }
+    }
+    Ok(acceptance.consumed.clone())
 }
 
 /// Kernel-owned attribution for direct reference validation. It cannot cross a
@@ -4190,6 +4374,7 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         CommitError::Conflict { .. }
             | CommitError::LinkReadConflict { .. }
             | CommitError::UnsupportedLinkRead { .. }
+            | CommitError::PredicateReadConflict { .. }
             | CommitError::NotPending { .. }
     ) {
         // A concurrent call committed first (it changed the target,
@@ -4288,6 +4473,9 @@ fn precondition_read_refusal<X>(
         | CommitError::DuplicateLinkRead { .. }
         | CommitError::LinkReadTooLarge { .. }
         | CommitError::InvalidLinkRead { .. }
+        | CommitError::PredicateReadConflict { .. }
+        | CommitError::UnsupportedPredicateRead { .. }
+        | CommitError::InvalidPredicateRead { .. }
         | CommitError::DanglingLink { .. }
         | CommitError::LinkTarget { .. }
         | CommitError::LinkCardinality { .. }
@@ -4324,6 +4512,9 @@ fn precondition_read_refusal<X>(
         | CommitError::DuplicateLinkRead { .. }
         | CommitError::LinkReadTooLarge { .. }
         | CommitError::InvalidLinkRead { .. }
+        | CommitError::PredicateReadConflict { .. }
+        | CommitError::UnsupportedPredicateRead { .. }
+        | CommitError::InvalidPredicateRead { .. }
         | CommitError::DanglingLink { .. }
         | CommitError::LinkTarget { .. }
         | CommitError::LinkCardinality { .. }
