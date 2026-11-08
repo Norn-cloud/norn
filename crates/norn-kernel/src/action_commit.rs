@@ -5375,6 +5375,12 @@ fn action_slice_key<X>(
                 .saturating_add(1);
             (depth, None)
         }
+        SliceKey::Parameter { .. } => {
+            return Err(ActionRefusal::SliceUnavailable {
+                entry: entry.name.clone(),
+                reason: "parameter slice execution is not qualified in this cut".to_owned(),
+            });
+        }
         SliceKey::TriggerObject
         | SliceKey::TriggerBefore
         | SliceKey::TriggerAfter
