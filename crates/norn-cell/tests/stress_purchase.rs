@@ -98,7 +98,8 @@ fn action_input(
         .to_json_value()
         .decode::<norn_ir::ActionRoot>()
         .expect("action IR");
-    (action, serde_json::from_value(exact_decimals(&action, input)).expect("input"))
+    let input = serde_json::from_value(exact_decimals(&action, input)).expect("input");
+    (action, input)
 }
 /// Sends each decimal-typed number as exact text, the action wire's decimal form.
 fn exact_decimals(action: &norn_ir::ActionRoot, mut input: Value) -> Value {
