@@ -512,7 +512,8 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    check_versions(commit, model, view, authorization)?;
+    // An immutability violation can never succeed on retry, so it outranks the retryable
+    // stale-version `Conflict` that `check_versions` reports.
     for write in &commit.writes {
         let concrete = view
             .concrete(&model.canonical(&write.key))
@@ -526,6 +527,7 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
+    check_versions(commit, model, view, authorization)?;
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;
     check_endpoints(commit, model, view, &links)?;

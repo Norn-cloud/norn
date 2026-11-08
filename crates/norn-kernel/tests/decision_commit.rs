@@ -2747,6 +2747,42 @@ fn inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically() {
     }
 }
 
+#[test]
+fn a_stale_write_to_an_immutable_object_is_refused_as_immutable_not_as_a_conflict() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let mut host = cell().with_types(definitions);
+    let key = FactKey::new(BIG, "append-only");
+    let values =
+        record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
+    host.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: values.clone(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    // `ABSENT` is stale now: the object exists. The write can never succeed, so the
+    // permanent refusal wins over the retryable version conflict.
+    for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.immutable_object");
+    }
+}
+
 proptest! {
     #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(64))]
     #[test]
