@@ -6,6 +6,9 @@ import { QuestionTreePage } from "./question-tree.tsx"
 import { DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
 import { GuaranteesPage } from "./guarantees.tsx"
 import { PAGES, type PagePath } from "./lib/pages.ts"
+import { RecordsPage } from "./grid/records-page.tsx"
+import { DecisionsPage } from "./decisions/inbox.tsx"
+import { RunPage } from "./runs/run-page.tsx"
 import { SourcesItemPage } from "./objects.tsx"
 import { QuestionPage, QuestionsPage } from "./questions.tsx"
 import { ObjectTypePage, SourcesPage } from "./sources.tsx"
@@ -20,6 +23,9 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/sources": SourcesPage,
   "/sources/$concept": ObjectTypePage,
   "/sources/$concept/$": SourcesItemPage,
+  "/objects/$type": RecordsPage,
+  "/decisions": DecisionsPage,
+  "/runs/$id": RunPage,
   "/questions": QuestionsPage,
   "/questions/new": QuestionBuilderPage,
   "/questions/build": QuestionTreePage,
