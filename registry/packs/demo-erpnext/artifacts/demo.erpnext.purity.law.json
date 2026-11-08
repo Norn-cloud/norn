@@ -10,7 +10,7 @@
   ],
   "irVersion": "0.1",
   "kind": "law",
-  "lifecycle": "draft",
+  "lifecycle": "active",
   "name": "Measurement purity is within zero and one",
   "namespace": "demo",
   "payload": {
@@ -42,12 +42,9 @@
     "subject": "demo.erpnext.StockEntryMeasurement"
   },
   "provenance": {
-    "source": "authoring_sdk",
-    "sourcePath": "registry/packs/demo-erpnext/measurements.ts"
+    "source": "system",
+    "sourcePath": "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json"
   },
-  "scope": {
-    "environmentId": "dev",
-    "orgId": "org_demo"
-  },
+  "scope": {},
   "version": "0.1.0"
 }
