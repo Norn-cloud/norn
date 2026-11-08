@@ -1,4 +1,4 @@
-# Shared Datalog contract — 2026-10-24
+# Shared Datalog contract
 
 Scope: the layering for generated proof backends (Norn-cloud/norn#565);
 this records that direction, with no executor or runtime OWL admission.
