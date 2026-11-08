@@ -21,7 +21,7 @@ pub trait PrincipalResolver {
 pub struct FixturePrincipals(pub &'static [&'static str]);
 
 /// The demo's fixture principals.
-pub const DEMO_PRINCIPALS: FixturePrincipals = FixturePrincipals(&["viewer@demo"]);
+pub const DEMO_PRINCIPALS: FixturePrincipals = FixturePrincipals(&["viewer@demo", "guest@demo"]);
 
 impl PrincipalResolver for FixturePrincipals {
     fn resolve(&self, authorization: Option<&str>) -> Option<String> {
