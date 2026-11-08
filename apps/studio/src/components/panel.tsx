@@ -32,8 +32,8 @@ export function Well({ children, className }: { children: ReactNode; className?:
 }
 
 /** What a well shows when the server has nothing for it: an icon, "No data yet" and one plain sentence. */
-/** An empty section: what is missing, in the section's own words (`title`), and what to do about it. */
-export function EmptyState({ icon: Icon, title = "No data yet", children }: { icon: LucideIcon; title?: string; children: ReactNode }) {
+/** An empty well: an icon, a short title ("No data yet" unless given) and a line saying why. */
+export function EmptyState({ icon: Icon, title = "No data yet", children }: { icon: LucideIcon; title?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
       <Icon aria-hidden className="size-5 text-muted-foreground" />

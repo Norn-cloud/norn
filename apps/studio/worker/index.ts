@@ -1,7 +1,7 @@
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
-import { connectors } from "./connectors.ts"
 import { passwordScrypt } from "./password.ts"
+import { connectors } from "./connectors.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -77,8 +77,6 @@ export async function publicSignUp(response: Response): Promise<Response> {
   const body = { token: null, user: { id: crypto.randomUUID(), email: user.email, name: user.name, emailVerified: false } }
   return Response.json(body, { status: 200, headers: { "cache-control": "no-store" } })
 }
-
-/** Server-held workspace-to-cell configuration. Unmapped workspaces have no data cell. */
 
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
 async function me(request: Request, env: Env): Promise<Response> {

@@ -1,5 +1,7 @@
 import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
 import { QuestionBuilderPage } from "./builder.tsx"
+import { CanvasPage } from "./canvas.tsx"
+import { ConnectionsPage } from "./connections.tsx"
 import { QuestionTreePage } from "./question-tree.tsx"
 import { DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
 import { GuaranteesPage } from "./guarantees.tsx"
@@ -11,7 +13,10 @@ import { SourcesItemPage } from "./objects.tsx"
 import { QuestionPage, QuestionsPage } from "./questions.tsx"
 import { ObjectTypePage, SourcesPage } from "./sources.tsx"
 import { StatusPage } from "./status.tsx"
+import { ToolBindings } from "./tool-bindings.tsx"
 import { WorkflowsPage } from "./workflows.tsx"
+
+const ConnectionsWithBindings = () => <ConnectionsPage><ToolBindings /></ConnectionsPage>
 
 /** Every page's component: one for each entry of PAGES, and no other (checked by the type). */
 export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
@@ -29,7 +34,9 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/dashboards/new": DashboardEditorPage,
   "/dashboards/$id": DashboardEditorPage,
   "/workflows": WorkflowsPage,
+  "/canvas": CanvasPage,
   "/guarantees": GuaranteesPage,
+  "/connections": ConnectionsWithBindings,
   "/status": StatusPage,
 }
 

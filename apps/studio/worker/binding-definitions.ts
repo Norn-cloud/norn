@@ -80,17 +80,36 @@ export class BindingDefinitions {
     return `${path}?${scopeQuery({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
   }
 
-  private async post(path: string, body: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {
+  private async call(method: "GET" | "POST", path: string, body?: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {
     const { host } = this
     if (host === undefined) return null
-    const headers = new Headers({ authorization: `Bearer ${await hostToken(this.auth, this.actor)}`, "content-type": "application/json", accept: "application/json" })
+    const headers = new Headers({ authorization: `Bearer ${await hostToken(this.auth, this.actor)}`, accept: "application/json" })
+    if (body !== undefined) headers.set("content-type", "application/json")
     let response: Response
     try {
-      response = await host.fetch(new Request(`https://norn-host${this.scoped(path)}`, { method: "POST", headers, body: JSON.stringify(body) }))
+      response = await host.fetch(new Request(`https://norn-host${this.scoped(path)}`, { method, headers, ...body === undefined ? {} : { body: JSON.stringify(body) } }))
     } catch {
       throw new CellUnavailable("The cell could not be reached; the binding was not saved.")
     }
     return { status: response.status, body: await response.json().catch(() => null) as unknown }
+  }
+
+  private post(path: string, body: unknown) {
+    return this.call("POST", path, body)
+  }
+
+  /**
+   * What the cell holds for a definition id: its version and payload, `absent` when it holds none
+   * (or does not serve the kind or the route), or `local` without a cell host. Reconciliation
+   * reads it to settle a binding whose save did not finish.
+   */
+  async get(id: string): Promise<{ readonly kind: "found"; readonly version: number; readonly payload: Record<string, unknown> } | { readonly kind: "absent" } | { readonly kind: "local" }> {
+    const answer = await this.call("GET", `/v1/definitions/${encodeURIComponent(id)}`)
+    if (answer === null) return { kind: "local" }
+    const b = answer.body as { version?: unknown; payload?: unknown; code?: unknown } | null
+    if (answer.status === 200 && typeof b?.version === "number") return { kind: "found", version: b.version, payload: (typeof b.payload === "object" && b.payload !== null ? b.payload : {}) as Record<string, unknown> }
+    if (answer.status === 404 || (answer.status === 422 && b?.code === "definition.kind_unknown")) return { kind: "absent" }
+    throw new CellUnavailable(`The cell answered ${answer.status} reading ${id}.`)
   }
 
   private static outcome(answer: { readonly status: number; readonly body: unknown } | null): Install {

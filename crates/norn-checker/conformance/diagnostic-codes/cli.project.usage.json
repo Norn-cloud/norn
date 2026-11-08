@@ -1,0 +1,7 @@
+{
+  "code": "cli.project.usage",
+  "message": "Usage: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

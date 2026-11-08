@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createAuth, gatewaySubject } from "../auth.ts"
-import { connectors, type ConnectorDeps } from "../connectors.ts"
+import { connectors, PENDING_CREATE_LEASE_MS, type ConnectorDeps } from "../connectors.ts"
 import { canonicalJson, connectorVersion, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
 import { Gateway } from "../gateway.ts"
 import { cellScope, scopeQuery } from "../scope.ts"
@@ -16,13 +16,19 @@ const ISSUES = { type: "object", properties: { repo: { type: "string" }, state: 
 const migration = (name: string): string => readFileSync(join(import.meta.dir, "../migrations", name), "utf8")
 
 /** The D1 calls the policy table makes, over bun:sqlite. */
+/** Set to make the next matching write fail once, as a D1 outage between two steps would. */
+const failures: { next: RegExp | null } = { next: null }
+
 function d1(db: Database): D1Database {
   type Statement = { sql: string; args: unknown[] }
   const statement = (sql: string, args: unknown[] = []) => ({
     sql, args,
     bind: (...next: unknown[]) => statement(sql, next),
     all: async () => ({ results: db.query(sql).all(...(args as never[])) }),
-    run: async () => { db.query(sql).run(...(args as never[])); return { success: true } },
+    run: async () => {
+      if (failures.next?.test(sql)) { failures.next = null; throw new Error("D1_ERROR: injected failure") }
+      db.query(sql).run(...(args as never[])); return { success: true }
+    },
   })
   const batch = async (list: Statement[]) => { db.transaction(() => { for (const s of list) db.query(s.sql).run(...(s.args as never[])) })(); return [] }
   return { prepare: (sql: string) => statement(sql), batch } as unknown as D1Database
@@ -33,9 +39,10 @@ function stage(gatewayClient = false) {
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   db.exec(migration("0002_workspace_provisioning.sql"))
-  db.exec(migration("0002_connector_binding.sql"))
-  db.exec(migration("0003_connector_binding_manifest.sql"))
-  db.exec(migration("0004_connector_binding_definition.sql"))
+  db.exec(migration("0003_connector_binding.sql"))
+  db.exec(migration("0004_connector_binding_manifest.sql"))
+  db.exec(migration("0005_connector_binding_definition.sql"))
+  db.exec(migration("0006_connector_binding_state.sql"))
   const env: Env = {
     ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
     AUTH_DB: db as unknown as D1Database,
@@ -53,12 +60,19 @@ function stage(gatewayClient = false) {
     if (pathname === "/api/organizations/gw-org/apps/github/tools/list_issues") return Response.json({ name: "list_issues", inputSchema: ISSUES, version: "dpl_1" })
     return answer(request)
   }) as typeof fetch
-  const deps: ConnectorDeps = { db: d1(db), grant: async () => TOKEN, fetch: fetcher }
+  // The cell host: the stand-in PDP in front of a cell that keeps the definitions it installs.
+  const cell = liveCell()
+  // `clock.offset` moves the connectors' clock forward, past the pending-create lease.
+  const clock = { offset: 0 }
+  const deps: ConnectorDeps = { db: d1(db), grant: async () => TOKEN, fetch: fetcher, host: standInHost(cell.host), now: () => Date.now() + clock.offset }
   const send = async (path: string, init: RequestInit & { cookie?: string } = {}, overrides: Partial<ConnectorDeps> = {}, gateway: string | null = GATEWAY) => {
     const headers = new Headers(init.headers)
     if (init.cookie !== undefined) headers.set("cookie", init.cookie)
     if (init.method !== undefined && init.method !== "GET") headers.set("origin", ORIGIN)
-    const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { TOOL_GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides })
+    // A test that brings its own cell keeps the same stand-in PDP in front of it.
+    const given = overrides.host as (Fetcher & { raw?: boolean }) | undefined
+    const host = "host" in overrides ? (given === undefined ? undefined : given.raw === true ? given : standInHost(given)) : deps.host
+    const response = await connectors(new Request(`${ORIGIN}/api/connectors${path}`, { ...init, headers }), { TOOL_GATEWAY_URL: gateway ?? undefined, BETTER_AUTH_URL: ORIGIN }, auth, path, { ...deps, ...overrides, ...host === undefined ? { host: undefined } : { host } })
     const text = await response.text()
     expect(text).not.toContain(TOKEN)
     return { status: response.status, body: JSON.parse(text) as Record<string, unknown>, cookies: response.headers.getSetCookie() }
@@ -72,11 +86,11 @@ function stage(gatewayClient = false) {
     if (colleagueOf !== undefined) db.query(`UPDATE member SET organizationId = (SELECT organizationId FROM member WHERE userId = ${member}) WHERE userId = ${member}`).run(colleagueOf, email)
     const response = await call("/api/auth/sign-in/email", { email, password: "correct horse battery" })
     db.query(`UPDATE member SET role = ? WHERE userId = (SELECT id FROM user WHERE email = ?)`).run(role, email)
-    // The organization's cell environment, added to its server-provisioned metadata (reserved keys are written only server-side).
-    if (environment) db.query(`UPDATE organization SET metadata = json_set(coalesce(metadata, '{}'), '$.environmentId', ?) WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?))`).run("analytics", email)
+    // The organization's cell environment, as the demo organization's metadata declares it.
+    if (environment) db.query(`UPDATE organization SET metadata = json_set(coalesce(metadata, '{}'), '$.environmentId', 'analytics') WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)) AND json_extract(coalesce(metadata, '{}'), '$.environmentId') IS NULL`).run(email)
     return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   }
-  return { send, signUp, calls, answer: (next: (request: Request) => Response) => { answer = next } }
+  return { send, signUp, calls, cell, clock, answer: (next: (request: Request) => Response) => { answer = next } }
 }
 
 const body = (method: string, value: unknown) => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
@@ -174,7 +188,7 @@ test("tool bindings: an admin adds, edits and removes them; the mapping is check
   const member = await signUp("member@example.com", "member", "owner@example.com")
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: member })).body).toMatchObject({ code: "connectors.forbidden", action: { kind: "ask_admin" } })
   expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: member })).status).toBe(403)
-  expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: owner })).body).toEqual({ removed: binding.id, retired: null })
+  expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: owner })).body).toEqual({ removed: binding.id, retired: `studio.binding.${binding.id}` })
   expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: owner })).body.code).toBe("connectors.binding_not_found")
 })
 
@@ -233,6 +247,7 @@ test("expired sign-ins and missing scopes come back typed, with the fix", async 
 test("the Worker routes /api/connectors/ through the server-side actor", async () => {
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
+  db.exec(migration("0002_workspace_provisioning.sql"))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY }
   const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env)
   expect([response.status, ((await response.json()) as { code: string }).code]).toEqual([401, "connectors.sign_in"])
@@ -287,6 +302,7 @@ test("an unreachable gateway, a malformed path and a third-party sign-in are typ
   expect(await send("/bindings/%E0%A4%A", { method: "DELETE", cookie: owner })).toMatchObject({ status: 400, body: { code: "connectors.invalid_request" } })
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
+  db.exec(migration("0002_workspace_provisioning.sql"))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
   for (const path of ["/api/auth/sign-in/social", "/api/auth/sign-in/oauth2"]) {
     const response = await worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ provider: "executor", providerId: "executor" }) }) as Parameters<typeof worker.fetch>[0], env)
@@ -298,17 +314,13 @@ test("a fixed value for a property without a declared type is left to the gatewa
   const schema = { type: "object", properties: { filter: {}, choice: { anyOf: [{ type: "string" }, { type: "integer" }] }, n: { type: "integer" } } }
   expect(readDraft({ app: "github", tool: "t", inputMapping: { filter: { fixed: { any: "thing" } }, choice: { fixed: 3 } } }, schema)).toMatchObject({ inputMapping: { filter: { fixed: { any: "thing" } } } })
   expect(readDraft({ app: "github", tool: "t", inputMapping: { n: { fixed: "x" } } }, schema)).toMatchObject({ field: "inputMapping.n" })
-  // Prototype names are not declared properties.
-  expect(readDraft({ app: "github", tool: "t", inputMapping: { constructor: { fixed: "x" } } }, schema)).toMatchObject({ field: "inputMapping.constructor" })
-  // ...and an input field with such a name is not "fixed by the binding".
-  expect(runInput({ inputMapping: { n: { fixed: 1 } } } as never, { toString: "x" })).toMatchObject({ ok: true })
 })
 
 /** A cell host that answers DEFS's definition writes from `answer`, recording each request. */
 function cellHost(answer: (path: string, body: Record<string, unknown>) => Response) {
   const seen: { path: string; query: string; body: Record<string, unknown>; bearer: boolean }[] = []
   const host = { fetch: async (request: Request) => {
-    const body = (await request.json()) as Record<string, unknown>
+    const body = request.method === "GET" ? {} : (await request.json()) as Record<string, unknown>
     const url = new URL(request.url)
     const path = url.pathname
     seen.push({ path, query: url.search, body, bearer: (request.headers.get("authorization") ?? "").startsWith("Bearer ") })
@@ -381,8 +393,8 @@ test("a tool with no gateway version gets sha256- and the first 12 hex of its di
 
 test("the whole link round trip: state cookie, basic client auth, resource, introspection, then a linked grant", async () => {
   const db = new Database(":memory:")
-  for (const file of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0002_connector_binding.sql", "0003_connector_binding_manifest.sql", "0004_connector_binding_definition.sql"]) db.exec(migration(file))
-  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
+  for (const file of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0003_connector_binding.sql", "0004_connector_binding_manifest.sql", "0005_connector_binding_definition.sql", "0006_connector_binding_state.sql"]) db.exec(migration(file))
+  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32), NORN_HOST: standInHost(liveCell().host) }
   const jar = new Map<string, string>()
   const keep = (response: Response) => { for (const line of response.headers.getSetCookie()) { const [pair] = line.split(";"); const [name, ...rest] = (pair ?? "").split("="); if (name) jar.set(name, rest.join("=")) } return response }
   const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ")
@@ -393,19 +405,23 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   const json = (value: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
   await call("/api/auth/sign-up/email", json({ email: "ada@example.com", password: "correct horse battery", name: "Ada" }))
   await call("/api/auth/sign-in/email", json({ email: "ada@example.com", password: "correct horse battery" }))
+  db.query("UPDATE organization SET metadata = ?").run('{"environmentId":"analytics"}')
   // The gateway's token and introspection endpoints, as Executor answers them.
   const real = globalThis.fetch
-  const seen: { url: string; auth: string | null; body: string }[] = []
+  const seen: { path: string; auth: string | null; body: string }[] = []
+  const gatewayOrigin = new URL(GATEWAY).origin
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
-    if (!request.url.startsWith(GATEWAY)) return real(input, init)
+    // Only the gateway's own origin is faked, compared parsed, never as a URL prefix.
+    const url = new URL(request.url)
+    if (url.origin !== gatewayOrigin) return real(input, init)
     const body = await request.text()
-    seen.push({ url: request.url, auth: request.headers.get("authorization"), body })
-    if (request.url.endsWith("/oauth2/token")) {
+    seen.push({ path: url.pathname, auth: request.headers.get("authorization"), body })
+    if (url.pathname === "/api/auth/oauth2/token") {
       if (body.includes("client_secret=")) return Response.json({ error: "invalid_client", error_description: "client registered for client_secret_basic cannot use client_secret_post" }, { status: 400 })
       return Response.json({ access_token: TOKEN, refresh_token: "r", token_type: "Bearer", expires_in: 3600, scope: "executor offline_access" })
     }
-    if (request.url.endsWith("/oauth2/introspect")) return Response.json({ active: true, sub: "gw_user_1" })
+    if (url.pathname === "/api/auth/oauth2/introspect") return Response.json({ active: true, sub: "gw_user_1" })
     return new Response("not found", { status: 404 })
   }) as typeof fetch
   try {
@@ -414,11 +430,11 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
     const back = await call(`/api/auth/callback/executor?code=abc&state=${encodeURIComponent(state)}`)
     expect(back.status).toBe(302)
     expect(back.headers.get("location") ?? "").not.toContain("error")
-    const token = seen.find((r) => r.url.endsWith("/oauth2/token"))
+    const token = seen.find((r) => r.path === "/api/auth/oauth2/token")
     expect(token?.auth).toBe(`Basic ${btoa(`studio:${"s".repeat(32)}`)}`)
     expect(token?.body).toContain(`resource=${encodeURIComponent(`${GATEWAY}/api`)}`)
     expect(token?.body).not.toContain("client_secret=")
-    expect(seen.some((r) => r.url.endsWith("/oauth2/introspect"))).toBe(true)
+    expect(seen.some((r) => r.path === "/api/auth/oauth2/introspect")).toBe(true)
     // The grant is now linked to this person, and never leaves the server.
     const status = await call("/api/connectors/status")
     const text = await status.text()
@@ -452,6 +468,7 @@ test("every definitions call carries the session's orgId and environmentId; no e
 test("the cell scope is the organization's declared environment, or null", async () => {
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
+  db.exec(migration("0002_workspace_provisioning.sql"))
   const auth = createAuth({ database: db, secret: "t".repeat(40), baseURL: ORIGIN })
   const add = (id: string, metadata: string | null) => db.query("INSERT INTO organization (id, name, slug, createdAt, metadata) VALUES (?, ?, ?, ?, ?)").run(id, id, id, Date.now(), metadata)
   add("org_demo", '{"environmentId":"analytics"}')
@@ -461,4 +478,189 @@ test("the cell scope is the organization's declared environment, or null", async
   expect(await cellScope(auth, "org_demo")).toEqual({ orgId: "org_demo", environmentId: "analytics" })
   for (const id of ["org_none", "org_bad", "org_text", "org_missing"]) expect(await cellScope(auth, id)).toEqual({ orgId: id, environmentId: null })
   expect(scopeQuery({ orgId: "org_demo", environmentId: "analytics" })).toBe("orgId=org_demo&environmentId=analytics")
+})
+
+/** A cell that keeps what it installs, answers reads of it, and can be taken down. */
+function liveCell() {
+  const held = new Map<string, { version: number; payload: Record<string, unknown> }>()
+  const state = { down: false }
+  const { host, seen } = cellHost((path, body) => {
+    if (state.down) throw new TypeError("connect refused")
+    const read = /^\/v1\/definitions\/([^:/]+)$/.exec(path)
+    if (read !== null) {
+      const definition = held.get(decodeURIComponent(read[1] ?? ""))
+      return definition === undefined ? Response.json({ code: "definition.not_found" }, { status: 404 }) : Response.json({ id: read[1], version: definition.version, payload: definition.payload })
+    }
+    if (path === "/v1/definitions:install") {
+      const id = String(body.id)
+      const version = (held.get(id)?.version ?? 0) + 1
+      held.set(id, { version, payload: body.payload as Record<string, unknown> })
+      return Response.json({ installed: true, id, version, receipt: {} })
+    }
+    return Response.json({ installed: true, id: "x", version: 1, receipt: {} })
+  })
+  return { host, seen, held, state }
+}
+
+test("a save never ends half-done: each failure point is settled against the cell", async () => {
+  const { send, signUp, clock } = stage()
+  const owner = await signUp("ada@example.com")
+  const cell = liveCell()
+  const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
+  type Binding = { id: string; state: string; definition: { id: string; version: number } | null }
+
+  // 1. Create: the cell installs it, then writing the result locally fails. The row is left
+  //    "creating"; the next read adopts the cell's definition.
+  failures.next = /^UPDATE connector_binding SET label/
+  const failed = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "One" }), cookie: owner }, { host: cell.host })
+  expect(failed).toMatchObject({ status: 500, body: { code: "connectors.internal" } })
+  // Within its lease the create may still be installing elsewhere, so it is left alone.
+  expect((await list())[0]).toMatchObject({ label: "One", state: "pending" })
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  const [one] = await list()
+  expect(one).toMatchObject({ label: "One", state: "ready", definition: { version: 1 } })
+  expect(cell.held.size).toBe(1)
+
+  // 2. Edit: the cell installs version 2, then the local write fails. The read adopts version 2 and its fields.
+  failures.next = /^UPDATE connector_binding SET label/
+  expect((await send(`/bindings/${one?.id}`, { ...body("PATCH", { label: "One, edited" }), cookie: owner }, { host: cell.host })).status).toBe(500)
+  expect((await list())[0]).toMatchObject({ label: "One, edited", state: "ready", definition: { version: 2 } })
+
+  // 3. Create while the cell is down: the outcome is unknown, so the row stays "creating" and
+  //    cannot run or change; once the cell answers that it holds nothing, the create is undone.
+  clock.offset = 0
+  cell.state.down = true
+  const unknown = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Two" }), cookie: owner }, { host: cell.host })
+  expect(unknown.body.code).toBe("connectors.cell_unavailable")
+  const pending = (await list()).find((b) => b.label === "Two")
+  expect(pending?.state).toBe("pending")
+  expect((await send(`/bindings/${pending?.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: cell.host })).body.code).toBe("connectors.binding_pending")
+  expect((await send(`/bindings/${pending?.id}`, { method: "DELETE", cookie: owner }, { host: cell.host })).body.code).toBe("connectors.binding_pending")
+  cell.state.down = false
+  // Still within its lease: the create is kept pending even though the cell holds nothing.
+  expect((await list()).find((b) => b.label === "Two")?.state).toBe("pending")
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  expect((await list()).map((b) => b.label)).toEqual(["One, edited"])
+
+  // 4. Edit while the cell is down, which never received it: once the cell answers, the edit is
+  //    undone and the binding is back as it was (version 2, its label).
+  cell.state.down = true
+  await send(`/bindings/${one?.id}`, { ...body("PATCH", { label: "Lost edit" }), cookie: owner }, { host: cell.host })
+  cell.state.down = false
+  expect((await list())[0]).toMatchObject({ label: "One, edited", state: "ready", definition: { version: 2 } })
+
+  // 5. Create refused by the cell: the intent is undone at once, nothing is left.
+  const refusing = cellHost(() => Response.json({ code: "definition.refused", diagnostics: [{ code: "binding.role_undeclared", message: "no such role", span: { pointer: "/payload/runRole" } }] }, { status: 422 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Three" }), cookie: owner }, { host: refusing.host })).body.code).toBe("connectors.binding_refused")
+  expect((await list()).map((b) => b.label)).toEqual(["One, edited"])
+})
+
+test("a create still installing is never reconciled away by another read", async () => {
+  const { send, signUp, clock } = stage()
+  const owner = await signUp("ada@example.com")
+  const cell = liveCell()
+  // The cell holds the install until released, as a slow install does.
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const slow = { fetch: async (request: Request) => { if (new URL(request.url).pathname === "/v1/definitions:install") await gate; return cell.host.fetch(request) } } as unknown as Fetcher
+  const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as { label: string; state: string; definition: { version: number } | null }[]
+
+  const saving = send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Slow" }), cookie: owner }, { host: slow })
+  // Another page loads Connections mid-install: the row is shown pending, not deleted.
+  for (let attempt = 0; attempt < 100 && (await list()).length === 0; attempt++) await Bun.sleep(10)
+  expect((await list())).toMatchObject([{ label: "Slow", state: "pending" }])
+  release()
+  expect((await saving).status).toBe(200)
+  expect(await list()).toMatchObject([{ label: "Slow", state: "ready", definition: { version: 1 } }])
+  expect(cell.held.size).toBe(1)
+
+  // A create that never finishes is settled only after its lease: here the cell has nothing.
+  cell.state.down = true
+  await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Lost" }), cookie: owner }, { host: cell.host })
+  cell.state.down = false
+  expect((await list()).map((b) => b.label)).toEqual(["Lost", "Slow"])
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  expect((await list()).map((b) => b.label)).toEqual(["Slow"])
+})
+
+test("field names that are prototype members are not inputs, fixed or overridden", async () => {
+  expect(readDraft({ app: "github", tool: "t", inputMapping: { toString: { fixed: 1 }, constructor: { fixed: 1 } } }, { properties: {} })).toMatchObject({ field: "inputMapping.toString" })
+  expect(readDraft({ app: "github", tool: "t", inputMapping: { constructor: { fixed: 1 } } }, { properties: {} })).toMatchObject({ field: "inputMapping.constructor" })
+  const binding = { inputMapping: { owner: { fixed: "a" } } } as unknown as Parameters<typeof runInput>[0]
+  expect(runInput(binding, { toString: "x" })).toMatchObject({ ok: true })
+  expect(runInput(binding, { owner: "x" })).toMatchObject({ ok: false })
+})
+
+/**
+ * A stand-in for the host's POST /v1/access:decide (#1036), exactly to its contract: the
+ * principal is the verified host token's (its org and role claims), a foreign org gets the shared
+ * 403, and connector.run reads runRole from the binding's own cell definition. Every other path
+ * goes to `cell`. The policy is the initial one the design states.
+ */
+function standInHost(cell: Fetcher, options: { down?: boolean } = {}): Fetcher {
+  return { fetch: async (request: Request) => {
+    const url = new URL(request.url)
+    if (url.pathname !== "/v1/access:decide") return cell.fetch(request)
+    if (options.down) throw new TypeError("connect refused")
+    const token = (request.headers.get("authorization") ?? "").replace(/^Bearer /, "")
+    const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { norn?: { org?: string; role?: string } }
+    if (claims.norn?.org !== url.searchParams.get("orgId") || url.searchParams.get("environmentId") === null) return Response.json({ format: "norn/refusal@2", code: "authz.denied" }, { status: 403 })
+    const role = claims.norn?.role ?? ""
+    const { checks } = (await request.json()) as { checks: { action: string; resource: { type: string; id: string } }[] }
+    const decisions = await Promise.all(checks.map(async (check) => {
+      let rule: string | null = null
+      if (check.action === "connector.read" && ["viewer", "member", "admin", "owner"].includes(role)) rule = "connector-read"
+      if (check.action === "connector.bind" && ["admin", "owner"].includes(role)) rule = "connector-bind"
+      if (check.action === "connector.run") {
+        const held = await cell.fetch(new Request(`https://norn-host/v1/definitions/${encodeURIComponent(check.resource.id)}${url.search}`, { headers: request.headers }))
+        const runRole = held.ok ? ((await held.json()) as { payload?: { runRole?: string } }).payload?.runRole : undefined
+        if (runRole === "member" && ["member", "admin", "owner"].includes(role)) rule = "run-member"
+        if (runRole === "admin" && ["admin", "owner"].includes(role)) rule = "run-admin"
+      }
+      return { ...check, decision: rule === null ? "deny" : "permit", rule }
+    }))
+    return Response.json({ decisions })
+  } } as unknown as Fetcher
+}
+
+/** A host given as is: the test controls its access:decide answers too. */
+const raw = (host: Fetcher) => Object.assign(host, { raw: true })
+
+test("every connector verb is the host PDP's decision; the Worker keeps no role table", async () => {
+  const { send, signUp, answer } = stage()
+  const owner = await signUp("owner@example.com")
+  const viewer = await signUp("viewer@example.com", "viewer", "owner@example.com")
+  const member = await signUp("member@example.com", "member", "owner@example.com")
+  answer(() => Response.json({ issues: [] }))
+  // Read is permitted to a viewer; bind is not, and the binding list says so (manage: false).
+  expect((await send("/bindings", { cookie: viewer })).body).toMatchObject({ bindings: [], manage: false })
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: viewer })).body).toMatchObject({ code: "connectors.forbidden", action: { kind: "ask_admin" } })
+  // Run is decided on the binding's cell definition: its runRole, read by the host, never sent by the Worker.
+  const forMembers = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", inputMapping: { repo: { fixed: "norn" } } }), cookie: owner })).body.binding as { id: string }
+  const forAdmins = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", runRole: "admin", inputMapping: { repo: { fixed: "norn" } } }), cookie: owner })).body.binding as { id: string }
+  expect((await send(`/bindings/${forMembers.id}/run`, { ...body("POST", { input: {} }), cookie: member })).status).toBe(200)
+  expect((await send(`/bindings/${forAdmins.id}/run`, { ...body("POST", { input: {} }), cookie: member })).body.code).toBe("connectors.forbidden")
+  expect((await send(`/bindings/${forAdmins.id}/run`, { ...body("POST", { input: {} }), cookie: owner })).status).toBe(200)
+  expect((await send(`/bindings/${forMembers.id}/run`, { ...body("POST", { input: {} }), cookie: viewer })).body.code).toBe("connectors.forbidden")
+})
+
+test("the PDP failing closed: unreachable, foreign scope and out-of-contract answers", async () => {
+  const { send, signUp } = stage()
+  const owner = await signUp("ada@example.com")
+  const down = raw({ fetch: async () => { throw new TypeError("connect refused") } } as unknown as Fetcher)
+  expect((await send("/bindings", { cookie: owner }, { host: down })).body).toMatchObject({ code: "connectors.access_unavailable" })
+  const foreign = raw({ fetch: async () => Response.json({ format: "norn/refusal@2", code: "authz.denied" }, { status: 403 }) } as unknown as Fetcher)
+  expect((await send("/bindings", { cookie: owner }, { host: foreign })).body).toMatchObject({ code: "connectors.forbidden" })
+  const wrongOrder = raw({ fetch: async () => Response.json({ decisions: [{ action: "connector.bind", resource: { type: "studio.Workspace", id: "x" }, decision: "permit", rule: "r" }] }) } as unknown as Fetcher)
+  expect((await send("/bindings", { cookie: owner }, { host: wrongOrder })).body).toMatchObject({ code: "connectors.access_unavailable" })
+  expect((await send("/bindings", { cookie: owner }, { host: undefined })).body).toMatchObject({ code: "connectors.access_unavailable" })
+})
+
+test("a binding kept only in Studio cannot run: who may run it is the cell's to decide", async () => {
+  const { send, signUp } = stage()
+  const owner = await signUp("ada@example.com")
+  const noKind = cellHost(() => Response.json({ code: "definition.kind_unknown" }, { status: 422 }))
+  const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", inputMapping: { repo: { fixed: "norn" } } }), cookie: owner }, { host: noKind.host })).body.binding as { id: string; definition: unknown }
+  expect(local.definition).toBeNull()
+  expect((await send(`/bindings/${local.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: noKind.host })).body.code).toBe("connectors.binding_not_in_cell")
 })
