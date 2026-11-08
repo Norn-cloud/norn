@@ -1,0 +1,7 @@
+{
+  "code": "connector.effect.key_fixed",
+  "message": "a command's providerKey must not be fixed by the binding; the cell fills it for each operation",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

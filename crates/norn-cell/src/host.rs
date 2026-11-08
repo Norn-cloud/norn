@@ -535,15 +535,25 @@ fn version_of<S: SqlEngine>(
         .map(FactVersion)
 }
 
+/// The slice profile's canonical byte ceiling, the read bound for a predicate
+/// no caller narrowed.
+fn slice_bytes() -> u64 {
+    norn_ir::ResourceLimitProfile::norn_limits_v1()
+        .slice
+        .max_canonical_bytes
+}
+
 /// The live objects of `predicate`'s type that match it, in key order, at
 /// most `limit` ([`norn_kernel::predicate_read`]). The cell has no property
 /// index for arbitrary predicates, so it examines at most the slice
-/// profile's record count of objects of the type; a larger type is an
-/// incomplete enumeration (`None`), which fails the read closed.
+/// profile's record count of objects of the type, and at most `max_bytes`
+/// of stored candidate bytes; a larger type is an incomplete enumeration
+/// (`None`), which fails the read closed.
 fn predicate_objects<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     predicate: &PredicateQuery,
     limit: usize,
+    max_bytes: u64,
 ) -> Result<Option<Vec<PredicateObject>>, CellError> {
     let scan_cap = usize::try_from(
         norn_ir::ResourceLimitProfile::norn_limits_v1()
@@ -560,12 +570,21 @@ fn predicate_objects<S: SqlEngine>(
     {
         return Ok(None);
     }
-    let records = reader.list_after(
+    // Candidate bytes are charged before each object is decoded, matching
+    // or not: the scan stops at the byte bound instead of loading every
+    // candidate first.
+    let mut limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    limits.max_candidate_bytes_per_commit = max_bytes;
+    let mut budget = DecodeBudget::new(&limits);
+    let Some(records) = reader.list_after_with_budget(
         MAIN_WORLD,
         predicate.object_type.as_str(),
-        None,
         scan_cap.saturating_add(1),
-    )?;
+        &mut budget,
+    )?
+    else {
+        return Ok(None);
+    };
     if records.len() > scan_cap {
         return Ok(None);
     }
@@ -703,7 +722,7 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
         predicate: &PredicateQuery,
         limit: usize,
     ) -> Result<Option<Vec<PredicateReadMember>>, CellError> {
-        let Some(objects) = predicate_objects(self.0, predicate, limit)? else {
+        let Some(objects) = predicate_objects(self.0, predicate, limit, slice_bytes())? else {
             return Ok(None);
         };
         // OBS-EVIDENCE-1: a governed read never consumes a disputed source
@@ -1793,9 +1812,11 @@ where
         &self,
         predicate: &PredicateQuery,
         max_members: usize,
+        max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, CellError> {
         let reader = self.store.read();
-        let objects = predicate_objects(&reader, predicate, max_members.saturating_add(1))?;
+        let objects =
+            predicate_objects(&reader, predicate, max_members.saturating_add(1), max_bytes)?;
         if let Some(objects) = &objects {
             for object in objects {
                 reader.refuse_disputed_subject(&object.key)?;

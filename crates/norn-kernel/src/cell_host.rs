@@ -1076,8 +1076,11 @@ pub trait CellHost {
     /// Reads every live object matching `predicate`, in canonical key order,
     /// for a turn that folds or lists them ([`crate::predicate_read`]).
     /// Returns at most `max_members + 1` objects so the caller can refuse an
-    /// over-bound set. `None` means this host cannot provide a complete,
-    /// atomicity-safe enumeration; callers must fail closed.
+    /// over-bound set. `max_bytes` bounds the stored candidate bytes the host
+    /// may read while enumerating, so a large record cannot exhaust memory
+    /// before the caller sees it. `None` means this host cannot provide a
+    /// complete, atomicity-safe enumeration within those bounds; callers must
+    /// fail closed.
     ///
     /// # Errors
     ///
@@ -1086,8 +1089,9 @@ pub trait CellHost {
         &self,
         predicate: &PredicateQuery,
         max_members: usize,
+        max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
-        let _ = (predicate, max_members);
+        let _ = (predicate, max_members, max_bytes);
         Ok(None)
     }
 
