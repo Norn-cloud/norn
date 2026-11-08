@@ -125,7 +125,7 @@ fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
         &serde_json::to_value(document).expect("interpretation"),
     );
     second.dependencies = first.dependencies.clone();
-    let findings = norn_checker::mapping::check_mapping_artifacts(&[first, second], &base);
+    let findings = norn_checker::mapping::check_mapping_artifacts(&[first, second], &base, &std::collections::BTreeSet::new());
     assert_eq!(
         findings
             .iter()
@@ -212,7 +212,7 @@ fn member_findings(
         serde_json::from_value(serde_json::to_value(document).expect("wire")).expect("JSON tree"),
     )
     .expect("mapping root");
-    norn_checker::mapping::check_mapping_artifacts(&[artifact], base)
+    norn_checker::mapping::check_mapping_artifacts(&[artifact], base, &std::collections::BTreeSet::new())
 }
 
 #[test]
@@ -820,7 +820,7 @@ fn map_pins_refuse_stale_versions_and_mismatched_hashes() {
             &serde_json::to_value(changed).expect("interpretation"),
         );
         invalid.dependencies = candidate.dependencies.clone();
-        let findings = norn_checker::mapping::check_mapping_artifacts(&[invalid], &base);
+        let findings = norn_checker::mapping::check_mapping_artifacts(&[invalid], &base, &std::collections::BTreeSet::new());
         assert!(
             findings
                 .iter()
@@ -840,6 +840,7 @@ fn map_pins_refuse_missing_ambiguous_edited_or_candidate_only_layers() {
         let findings = norn_checker::mapping::check_mapping_artifacts(
             std::slice::from_ref(&candidate),
             &retained,
+            &std::collections::BTreeSet::new(),
         );
         assert!(
             findings
@@ -849,7 +850,7 @@ fn map_pins_refuse_missing_ambiguous_edited_or_candidate_only_layers() {
     }
     let mut candidates = base;
     candidates.push(candidate);
-    let findings = norn_checker::mapping::check_mapping_artifacts(&candidates, &[]);
+    let findings = norn_checker::mapping::check_mapping_artifacts(&candidates, &[], &std::collections::BTreeSet::new());
     assert!(
         findings
             .iter()
@@ -873,7 +874,7 @@ fn map_pins_require_unique_required_exact_dependencies() {
                 .dependencies
                 .extend(candidate.dependencies.clone()),
         }
-        let findings = norn_checker::mapping::check_mapping_artifacts(&[candidate], &base);
+        let findings = norn_checker::mapping::check_mapping_artifacts(&[candidate], &base, &std::collections::BTreeSet::new());
         assert!(
             findings
                 .iter()
