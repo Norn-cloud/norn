@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { TOOL_ROOT } from "../src/profile.ts"
 import pins from "./existing-cli-pins.json"
 
-// Pins captured before adding init/fmt, against main 2859d63d4.
+// Pins captured against main 2a6c17a7ae; the same outputs were verified on the tree with init/fmt.
 test("existing_cli_output_unchanged", async () => {
   for (const pin of pins) {
     const child = Bun.spawn([process.execPath, "tools/norn-ts/src/cli.ts", pin.command, pin.input, "--org", "org_demo", "--env", "dev"], {
