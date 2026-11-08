@@ -213,7 +213,10 @@ impl<E: SqlEngine> CellStore<E> {
 /// identities, mapping pin and field provenance carry no values and follow their
 /// own Sources grant.
 fn withhold_restricted_bucket(contributions: &mut [NumericContribution]) {
-    if !contributions.iter().any(|contribution| contribution.restricted) {
+    if !contributions
+        .iter()
+        .any(|contribution| contribution.restricted)
+    {
         return;
     }
     for contribution in contributions {
