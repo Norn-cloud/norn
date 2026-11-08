@@ -60,7 +60,11 @@ category and licence. A change updates that record's hash, a new file adds a
 record, and a deleted file deletes it. The path comes from the record's file
 name, so it is not a field. `.github/ci/provenance/manifest.json` holds the
 version and software sources; nothing else lives in that directory.
-`cargo xtask ci provenance` enforces this, and
+`python3 scripts/record_new_files.py` writes the records and source enrollments
+an authored change needs (`--check` lists them); it refuses vendored or
+unplaceable files, which need records by hand, and a new file in a
+mixed-origin directory unless you declare it yours with `--authored <path>`. `cargo xtask ci provenance`
+enforces this, and
 the trusted policy lane checks pull requests against the base branch's rules.
 Symlinks, customer data, credentials, vendor schemas and copied GPL-family code
 are refused.
