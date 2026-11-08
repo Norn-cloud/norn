@@ -144,7 +144,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 
 Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,function}.rs`, `crates/norn-kernel/src/effect.rs`, `crates/norn-cell/src/host.rs`, `registry/packs/{erpnext,shopify,odoo}/`. Source contracts and outbox/freshness machinery exist, not complete CDC/quarantine/reconciliation or public Function execution. #69's `norn-metrics` temporal tables are pending, not general ML publication. #270/#308–#312 host/surfaces must use this same authority boundary.
 
-## Work breakdown (each PR ≤400 lines; demo priority first)
+## Work breakdown (one coherent unit per PR; demo priority first)
 
 1. **Demo priority:** feed/cursor/observation contract, then atomic dedup/checkpoint capture, then FEED-RESTART tests.
 2. **Demo priority:** ERPNext/Shopify synthetic mappings + role/provenance/gap declarations, then OBS-BAD quarantine/finding evaluation; [beat 6](../acceptance/data-engineering.md).

@@ -94,7 +94,7 @@ refuse with `core.graph.catalog_write` at ordinary checker admission.
 
 Present: `crates/norn-ir/src/entity_v2/`, `definition_catalog.rs`, `crates/norn-checker/src/entity_model/`, `interfaces.rs`, `crates/norn-kernel/src/decision_commit.rs`; typed builders in `tools/norn-ts/src/builder/`. Main has effective interfaces, links, flat lifecycles and read-only catalog substrate. General defined concepts, full containment-law closure and coordinated graph migration are gaps. #227 is an open lane C application of these contracts, not new graph semantics; #316 adds structured requirements, not graph authority.
 
-## Work breakdown (each PR ≤400 lines)
+## Work breakdown (one coherent unit per PR)
 
 1. Name graph-role/facet projections using existing entity/member IDs; GRAPH-CATALOG conformance, no new root kind (CI + core laws).
 2. Add pure defined-concept schema/admission and cycle diagnostics; depends on 03 expression typing.
