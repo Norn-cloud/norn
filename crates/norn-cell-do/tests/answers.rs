@@ -232,8 +232,8 @@ fn a_restarted_analytics_cell_answers_identically_without_reloading() {
 }
 
 /// The analytics cell with its runtime keyed by `secret`, or unkeyed.
-fn cell_keyed(secret: Option<&[u8]>) -> (DevHost<NativeEngine>, DemoQuestions) {
-    let (host, _) = cell(NativeEngine::open_in_memory().unwrap());
+fn cell_keyed(secret: Option<&[u8]>) -> Cell {
+    let (host, _, principals) = cell(NativeEngine::open_in_memory().unwrap());
     let scope = analytics::analytics_scope();
     let plan = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope)
         .unwrap()
@@ -245,6 +245,7 @@ fn cell_keyed(secret: Option<&[u8]>) -> (DevHost<NativeEngine>, DemoQuestions) {
             Some(secret) => runtime.with_handle_key(secret),
             None => runtime,
         },
+        principals,
     )
 }
 
