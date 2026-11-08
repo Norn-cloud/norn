@@ -103,6 +103,7 @@ fn defs_at(demo: &Demo, authorization: Option<&str>, now: u64) -> server::Respon
         query: SCOPE,
         authorization,
         now,
+        body: "",
     };
     server::handle(&demo.host, &demo.tokens, &request)
 }
@@ -209,6 +210,7 @@ fn access(demo: &Demo, query: &str, authorization: Option<&str>) -> server::Resp
         query,
         authorization,
         now: NOW,
+        body: "",
     };
     server::access(
         &demo.host,
