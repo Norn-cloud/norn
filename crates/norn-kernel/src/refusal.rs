@@ -482,6 +482,10 @@ fn lifecycle_guard(
 }
 
 impl<X> DecisionRefusal<X> {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one exhaustive match keeps every refusal variant mapped to its lifecycle reason"
+    )]
     fn lifecycle_reason_parts(&self) -> Option<(&str, &FactKey, BTreeMap<String, RuntimeValue>)> {
         match self {
             Self::NotFromState {

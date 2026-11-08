@@ -907,6 +907,10 @@ where
     commit_action_inner(host, catalog, call, authorizer, None, &limits, Some(meter))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dispatch resolves closure, scope, input and effect program before any commit"
+)]
 fn commit_action_inner<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
