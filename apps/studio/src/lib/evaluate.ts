@@ -1,6 +1,6 @@
 import type { Answer } from "./transport.ts"
 import { readDocument, type Read } from "./exact.ts"
-import type { Fetch, LiveRead, Refusal, Trace } from "./live.ts"
+import { isAnswer, isTrace, type Fetch, type LiveRead, type Refusal, type Trace } from "./live.ts"
 import { CellUnavailable, NO_DATA_CELL, StudioScopeError, readStudioScope, scopedHostFetch } from "./definitions.ts"
 
 /**
@@ -54,7 +54,7 @@ export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch
   if ("noCell" in response) return { kind: "unavailable", status: 0, reason: "no-cell" }
   if ("scopeStatus" in response) return { kind: "unavailable", status: response.scopeStatus }
   const { status, text } = response
-  if (status === 200 && parse(text) !== undefined) return { kind: "answer", read: readDocument<Answer>(text, "live") }
+  if (status === 200) return isAnswer(parse(text)) ? { kind: "answer", read: readDocument<Answer>(text, "live") } : { kind: "unavailable", status }
   if (status === 422) {
     const body = parse(text) as { code?: unknown; diagnostics?: readonly { code?: unknown; severity?: unknown; message?: unknown; span?: { pointer?: unknown } | null }[] } | undefined
     if (body?.code === "question.refused" && Array.isArray(body.diagnostics)) {
@@ -78,7 +78,7 @@ export async function traceQuestion(question: unknown, lineageRef: string, bucke
   if ("noCell" in response) return { kind: "unavailable", status: 0, reason: "no-cell" }
   if ("scopeStatus" in response) return { kind: "unavailable", status: response.scopeStatus }
   const { status, text } = response
-  if (status === 200 && parse(text) !== undefined) return { kind: "read", read: readDocument<Trace>(text, "live") }
+  if (status === 200) return isTrace(parse(text)) ? { kind: "read", read: readDocument<Trace>(text, "live") } : { kind: "unavailable", status }
   const refusal = refusalOf(status, text)
   return refusal ? { kind: "refused", refusal } : { kind: "unavailable", status }
 }

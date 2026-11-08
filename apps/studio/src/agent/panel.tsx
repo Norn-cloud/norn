@@ -160,11 +160,15 @@ export function useAgentState(): AgentState {
   const [examplesServed, setExamplesServed] = useState<boolean>()
   // Probe the example route once per page; it accepts only POST, so any answer but 404 or 503 means it is served.
   useEffect(() => {
-    let current = true
-    fetch("/api/agent/example", { method: "GET", headers: { accept: "application/json" } })
+    const controller = new AbortController()
+    let timedOut = false
+    // Fails closed: no answer within the deadline means not served. An abort from unmount settles nothing.
+    const deadline = setTimeout(() => { timedOut = true; controller.abort() }, PROBE_DEADLINE_MS)
+    fetch("/api/agent/example", { method: "GET", headers: { accept: "application/json" }, signal: controller.signal })
       .then((response) => response.status, () => "unreachable" as const)
-      .then((status) => { if (current) setExamplesServed(examplesServedBy(status)) })
-    return () => { current = false }
+      .then((status) => { if (timedOut || !controller.signal.aborted) setExamplesServed(examplesServedBy(status)) })
+      .finally(() => clearTimeout(deadline))
+    return () => { clearTimeout(deadline); controller.abort() }
   }, [])
   const [agentServed, setAgentServed] = useState<boolean>()
   // Probe the agent route once per page; it takes only POST, so any answer but 404 or 503 means it is served.
@@ -192,7 +196,8 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
     try {
       const response = await fetch("/api/agent/example", { method: "POST", headers: { "content-type": "application/json", "x-norn-session": sessionId(tabStorage()) }, body: JSON.stringify({ chip }) })
       const body: unknown = await response.json().catch(() => null)
-      settle((response.ok ? verdictOf(body) : undefined) ?? reason(new Error(JSON.stringify(body))))
+      const verdict = response.ok ? verdictOf(body) : undefined
+      settle(verdict ?? (response.ok ? "The checker's answer could not be read." : reason(new Error(JSON.stringify(body)))))
     } catch {
       settle("The checker could not be reached.")
     }
