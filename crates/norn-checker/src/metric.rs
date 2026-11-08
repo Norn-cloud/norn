@@ -7,6 +7,8 @@ pub mod compute;
 pub mod derive;
 pub mod restate;
 
+pub mod question_display;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::metric::{

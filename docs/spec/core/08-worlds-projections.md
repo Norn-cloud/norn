@@ -142,3 +142,8 @@ DATA-LINEAGE scenarios use the unchanged scrap-yield CSV through a typed source
 mapping, all four combinations of value/source grants, non-bundle facts,
 redelivery and restart, source-budget exhaustion and corrupt source journal
 refusal. Generated disclosure cases preserve exact sums and member identities.
+
+
+## Admitted question locale views
+
+**QUESTION-LOCALE-1:** render an already admitted plan through #496's shared complete reviewed locale map, with explicit direction, no fallback and isolated semantic expressions. Every locale retains the original QuestionIR, its canonical digest, stable semantic slot IDs, numerator/denominator quantities and units, population, filters, dimensions, effective-time window and declared knowledge/freshness policy. A separate display binding digest pins metric definitions and numeric contracts. This view neither executes nor authenticates a cutoff; historical results retain their authenticated frontier/receipt-clock provenance through the host seam. AsOf stays AsOf. Named scenarios: generated `question_locale_identity` and `question_locale_identity_refuses_unknown_or_incomplete_wording_and_retains_denominator`. Ambiguity still refuses before plan admission; only Diag's shared typed hook may remove those refusals.
