@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ActionCallRecord",
+  "description": "The idempotency record of a committed call (the values of its\n[`ACTION_CALL_TYPE`] object).",
+  "type": "object",
+  "properties": {
+    "actionId": {
+      "description": "The action.",
+      "type": "string"
+    },
+    "actionArtifactId": {
+      "description": "The action artifact that was admitted when the call committed. Missing\nonly on records written before action attribution was recorded.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "actionVersion": {
+      "description": "The action artifact version that was admitted when the call committed.\nMissing only on records written before action attribution was recorded.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "effectKind": {
+      "description": "The effect program that committed this call. Missing in legacy records\nwritten before effect attribution and interpreted as `fire_transition`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ruleBinding": {
+      "description": "TXN-RULE-1: exact writer closure, action, scope and world identity.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "object": {
+      "description": "The target object.",
+      "$ref": "#/$defs/FactKey"
+    },
+    "input": {
+      "description": "The call's input.",
+      "type": "object",
+      "additionalProperties": {
+        "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+      }
+    },
+    "effectiveInput": {
+      "description": "The final input after ordered derivations. Legacy records use `input`.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+      }
+    },
+    "derivedValues": {
+      "description": "The values produced by each derivation, in declaration order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActionDerivedValue"
+      }
+    },
+    "preconditionOutcomes": {
+      "description": "Successful precondition results, in declaration order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActionPreconditionOutcome"
+      }
+    },
+    "actor": {
+      "description": "The actor.",
+      "type": "string"
+    },
+    "turn": {
+      "description": "The turn the call committed in.",
+      "type": "string"
+    },
+    "transition": {
+      "description": "The fired transition.",
+      "type": "string"
+    },
+    "from": {
+      "description": "The state it left.",
+      "type": "string"
+    },
+    "to": {
+      "description": "The state it entered.",
+      "type": "string"
+    },
+    "rowOperations": {
+      "description": "Normalized row operations committed by a parent-and-rows action.",
+      "type": "array",
+      "items": {
+        "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "actionId",
+    "object",
+    "input",
+    "actor",
+    "turn",
+    "transition",
+    "from",
+    "to"
+  ],
+  "$defs": {
+    "FactKey": {
+      "description": "Identity of one ontology object in a cell: its type and identity key.",
+      "type": "object",
+      "properties": {
+        "objectType": {
+          "description": "The object type.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "key": {
+          "description": "The object's identity key value.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "key"
+      ]
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "ActionDerivedValue": {
+      "description": "One field produced by an ordered action input derivation.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "description": "The derived field.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The exact runtime value written to the effective input."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "value"
+      ]
+    },
+    "ActionPreconditionOutcome": {
+      "description": "The successful outcome of one action precondition.",
+      "type": "object",
+      "properties": {
+        "expression": {
+          "description": "The expression evaluated.",
+          "type": "string"
+        },
+        "satisfied": {
+          "description": "Whether it held (successful records contain only `true`).",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "expression",
+        "satisfied"
+      ]
+    }
+  }
+}
