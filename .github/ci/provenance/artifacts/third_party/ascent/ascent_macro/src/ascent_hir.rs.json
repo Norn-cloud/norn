@@ -1,0 +1,35 @@
+{
+  "sha256": "0aa1189a52af32192c0d4500679ea2f4da295b00facbb7fc25b09a1f9275c930",
+  "origin": "derived",
+  "category": "software",
+  "license": "MIT",
+  "sources": [
+    {
+      "id": "software.ascent",
+      "revision": "e52c84b4419c56976413de1cbf15d56c8c136a5c",
+      "evidence": {
+        "path": "third_party/ascent/PATCHES.md",
+        "sha256": "30fbc19dba8a521f01a8b5e4c19cfcedaa3a142f2774e345b62f85b63e623993"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "third_party/ascent/PATCHES.md",
+      "sha256": "30fbc19dba8a521f01a8b5e4c19cfcedaa3a142f2774e345b62f85b63e623993"
+    },
+    {
+      "path": "third_party/ascent/LICENSE",
+      "sha256": "351332fea36f5ad5247c57d0e4afe9630ed4337d456de32e7d9a78f5c1255dbd"
+    }
+  ],
+  "notices": [
+    {
+      "path": "third_party/ascent/LICENSE",
+      "sha256": "351332fea36f5ad5247c57d0e4afe9630ed4337d456de32e7d9a78f5c1255dbd"
+    }
+  ],
+  "connector": null
+}

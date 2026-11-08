@@ -18,6 +18,15 @@
         "path": "apps/studio/src/components/ui/provenance.json",
         "sha256": "8c70c6591a8d4677eaed13470fbc17ecb473f39e27ec6b838b5ab991e47c4920"
       }
+    },
+    {
+      "id": "software.ascent",
+      "revision": "e52c84b4419c56976413de1cbf15d56c8c136a5c",
+      "license": "MIT",
+      "evidence": {
+        "path": "third_party/ascent/PATCHES.md",
+        "sha256": "30fbc19dba8a521f01a8b5e4c19cfcedaa3a142f2774e345b62f85b63e623993"
+      }
     }
   ]
 }
