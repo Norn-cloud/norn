@@ -114,6 +114,8 @@ export const AGENT_UNSERVED = "The assistant needs the agent service, which this
 
 /** How long the probe waits before the route counts as not served. */
 export const PROBE_DEADLINE_MS = 5_000
+/** An example proposal is checked server-side, so it gets a longer deadline than the route probes. */
+export const EXAMPLE_DEADLINE_MS = 30_000
 
 /**
  * The one probe: whether the agent route is served. It always settles, and
@@ -193,13 +195,18 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
     const id = nextExample.current++
     setExamples((list) => [...list, { id, chip, after: messages.length, verdict: "pending" }])
     const settle = (verdict: Verdict | string) => setExamples((list) => settleExample(list, id, verdict))
+    // Aborting also bounds the body read, so a stalled response settles the entry instead of leaving it pending.
+    const controller = new AbortController()
+    const deadline = setTimeout(() => controller.abort(), EXAMPLE_DEADLINE_MS)
     try {
-      const response = await fetch("/api/agent/example", { method: "POST", headers: { "content-type": "application/json", "x-norn-session": sessionId(tabStorage()) }, body: JSON.stringify({ chip }) })
+      const response = await fetch("/api/agent/example", { method: "POST", headers: { "content-type": "application/json", "x-norn-session": sessionId(tabStorage()) }, body: JSON.stringify({ chip }), signal: controller.signal })
       const body: unknown = await response.json().catch(() => null)
       const verdict = response.ok ? verdictOf(body) : undefined
       settle(verdict ?? (response.ok ? "The checker's answer could not be read." : reason(new Error(JSON.stringify(body)))))
     } catch {
       settle("The checker could not be reached.")
+    } finally {
+      clearTimeout(deadline)
     }
   }
   return (
