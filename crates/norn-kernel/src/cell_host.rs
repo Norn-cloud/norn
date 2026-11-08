@@ -66,6 +66,9 @@ pub type JsonValue = norn_ir::RuntimeValue;
 
 use crate::effect::{CommandId, Effect, Generation, Timer, TimerId};
 use crate::observations::LogicalTime;
+pub use crate::predicate_read::{
+    PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember,
+};
 use crate::snapshot_observe::{ObservationAuthorization, ObservationEvent};
 
 /// One-use in-process authority for the kernel's atomic owned-row commit.
@@ -81,6 +84,7 @@ pub struct OwnedRowsCommitProof {
     writes: Vec<FactWrite>,
     links: Vec<LinkWrite>,
     link_reads: Vec<LinkReadExpectation>,
+    predicate_reads: Vec<PredicateReadExpectation>,
 }
 
 impl OwnedRowsCommitProof {
@@ -97,6 +101,7 @@ impl OwnedRowsCommitProof {
             writes: commit.writes.clone(),
             links: commit.links.clone(),
             link_reads: commit.link_reads.clone(),
+            predicate_reads: commit.predicate_reads.clone(),
         }
     }
 
@@ -131,6 +136,10 @@ impl OwnedRowsCommitProof {
 
     pub(crate) fn link_reads(&self) -> &[LinkReadExpectation] {
         &self.link_reads
+    }
+
+    pub(crate) fn predicate_reads(&self) -> &[PredicateReadExpectation] {
+        &self.predicate_reads
     }
 }
 
@@ -524,6 +533,10 @@ pub struct CellCommit<E, C, T> {
     /// additions/removals at commit. Omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_reads: Vec<LinkReadExpectation>,
+    /// Complete bounded predicate reads by the turn, guarded against phantom
+    /// matches at commit ([`crate::predicate_read`]). Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predicate_reads: Vec<PredicateReadExpectation>,
 }
 
 impl<E, C, T> CellCommit<E, C, T> {
@@ -538,6 +551,7 @@ impl<E, C, T> CellCommit<E, C, T> {
             effects: Vec::new(),
             links: Vec::new(),
             link_reads: Vec::new(),
+            predicate_reads: Vec::new(),
         }
     }
 
@@ -746,6 +760,27 @@ pub enum CommitError<X> {
         /// The declared link.
         link: String,
     },
+    /// The members of a predicate read changed before commit: an object
+    /// moved into or out of the predicate, or a member changed.
+    #[error("objects matching a predicate read over {object_type:?} changed")]
+    PredicateReadConflict {
+        /// The predicate's type.
+        object_type: ObjectTypeName,
+    },
+    /// A host cannot verify the complete member set of a predicate read.
+    #[error("host cannot verify a predicate read over {object_type:?}")]
+    UnsupportedPredicateRead {
+        /// The predicate's type.
+        object_type: ObjectTypeName,
+    },
+    /// A predicate read is malformed or exceeds its bounds.
+    #[error("predicate read over {object_type:?} is invalid: {reason}")]
+    InvalidPredicateRead {
+        /// The predicate's type.
+        object_type: ObjectTypeName,
+        /// What is wrong.
+        reason: &'static str,
+    },
     /// A link would be added to an object that does not exist once the
     /// commit's object writes apply.
     #[error("link {key} would dangle: {missing} does not exist")]
@@ -899,6 +934,9 @@ impl<X> CommitError<X> {
             Self::DuplicateLinkRead { .. } => "commit.duplicate_link_read",
             Self::LinkReadTooLarge { .. } => "commit.link_read_too_large",
             Self::InvalidLinkRead { .. } => "commit.invalid_link_read",
+            Self::PredicateReadConflict { .. } => "commit.predicate_read_conflict",
+            Self::UnsupportedPredicateRead { .. } => "commit.unsupported_predicate_read",
+            Self::InvalidPredicateRead { .. } => "commit.invalid_predicate_read",
             Self::DanglingLink { .. } => "commit.dangling_link",
             Self::LinkTarget { .. } => "commit.link_target",
             Self::LinkCardinality { .. } => "commit.link_cardinality",
@@ -1046,6 +1084,24 @@ pub trait CellHost {
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, Self::Error> {
         let _ = (source, link, max_targets, max_key_bytes);
+        Ok(None)
+    }
+
+    /// Reads every live object matching `predicate`, in canonical key order,
+    /// for a turn that folds or lists them ([`crate::predicate_read`]).
+    /// Returns at most `max_members + 1` objects so the caller can refuse an
+    /// over-bound set. `None` means this host cannot provide a complete,
+    /// atomicity-safe enumeration; callers must fail closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host read failure.
+    fn read_predicate(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+    ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
+        let _ = (predicate, max_members);
         Ok(None)
     }
 
