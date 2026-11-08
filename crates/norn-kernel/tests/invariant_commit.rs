@@ -64,6 +64,130 @@ const TEMPORAL_ITEM: &str = "invariant.TemporalItem";
 const SEASON_ITEM: &str = "invariant.SeasonWindow";
 
 type CommandCell = MemoryCell<FactEvent, JsonObject, JsonObject>;
+
+fn link_domain_type(scale: u32, nested: bool, default: Option<Value>) -> ObjectTypeDef {
+    let decimal = json!({"kind":"decimal", "scale":scale});
+    let domain = if nested {
+        json!({"kind":"record", "members":[{"id":"amount", "type":decimal}]})
+    } else {
+        decimal
+    };
+    let mut property = json!({"id":"reading", "type":domain});
+    if let Some(default) = default {
+        property["default"] = default;
+    }
+    serde_json::from_value(json!({"name":"demo.LinkDomain", "links":[{
+        "id":"related", "target":"demo.LinkDomain",
+        "cardinality":{"to":"many", "from":"many"}, "properties":[property]
+    }]}))
+    .unwrap()
+}
+
+#[test]
+fn decimal_and_record_link_values_and_defaults_refuse_atomically() {
+    for nested in [false, true] {
+        for use_default in [false, true] {
+            for (text, valid) in [("1.234", true), ("1.2345", false)] {
+                let wrap = |number: Value| {
+                    if nested {
+                        json!({"amount":number})
+                    } else {
+                        number
+                    }
+                };
+                let value = wrap(serde_json::from_str(text).unwrap());
+                let definition =
+                    link_domain_type(3, nested, use_default.then(|| wrap(json!(text))));
+                let mut cell = CommandCell::new(|command| command.payload.clone())
+                    .with_types(vec![definition]);
+                let source = FactKey::new("demo.LinkDomain", "source");
+                let target = FactKey::new("demo.LinkDomain", "target");
+                cell.commit(CellCommit {
+                    writes: [source.clone(), target.clone()]
+                        .into_iter()
+                        .map(|key| FactWrite {
+                            key,
+                            expected: FactVersion::ABSENT,
+                            mutation: FactMutation::Put {
+                                values: JsonObject::new(),
+                            },
+                        })
+                        .collect(),
+                    ..CellCommit::empty()
+                })
+                .unwrap();
+                let link = LinkKey::new(source.clone(), "related", target.clone());
+                let side = FactKey::new("demo.LinkDomain", "side-effect");
+                let before = (
+                    cell.load(&source).unwrap(),
+                    cell.load(&target).unwrap(),
+                    cell.ledger().len(),
+                );
+                let values = if use_default {
+                    JsonObject::new()
+                } else {
+                    object(json!({"reading":value}))
+                };
+                let result = cell.commit(CellCommit {
+                    writes: vec![FactWrite {
+                        key: side.clone(),
+                        expected: FactVersion::ABSENT,
+                        mutation: FactMutation::Put {
+                            values: JsonObject::new(),
+                        },
+                    }],
+                    links: vec![LinkWrite {
+                        key: link.clone(),
+                        expected: FactVersion::ABSENT,
+                        mutation: LinkMutation::Add { values },
+                    }],
+                    ..CellCommit::empty()
+                });
+                if valid {
+                    result.expect("representable link domain admits");
+                    assert!(cell.load_link(&link).unwrap().exists());
+                } else {
+                    assert_eq!(
+                        result.expect_err("excess scale refuses").code(),
+                        "commit.effective_values"
+                    );
+                    assert!(!cell.load_link(&link).unwrap().exists());
+                    assert!(!cell.load(&side).unwrap().exists());
+                    assert_eq!(
+                        before,
+                        (
+                            cell.load(&source).unwrap(),
+                            cell.load(&target).unwrap(),
+                            cell.ledger().len()
+                        )
+                    );
+                    assert!(cell.outbox().is_empty());
+                }
+            }
+        }
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn generated_link_decimal_domains_enforce_declared_scale(scale in 0_u32..9, mantissa in 1_i64..10000, nested in norn_testkit::proptest::bool::ANY) {
+        let definitions = [link_domain_type(scale, nested, None)];
+        let catalog = TypeCatalog::new(&definitions);
+        let source = ObjectTypeName("demo.LinkDomain".into());
+        let value = |scale: u32| {
+            let places = usize::try_from(scale).unwrap();
+            let digits = format!("{:0>width$}", mantissa * 10 + 1, width = places + 1);
+            let (whole, fraction) = digits.split_at(digits.len() - places);
+            let text = if scale == 0 { whole.to_owned() } else { format!("{whole}.{fraction}") };
+            let number = RuntimeValue::Number(norn_ir::Decimal::parse(&text).unwrap());
+            let reading = if nested { RuntimeValue::Object(BTreeMap::from([("amount".into(), number)])) } else { number };
+            BTreeMap::from([("reading".into(), reading)])
+        };
+        norn_testkit::proptest::prop_assert!(catalog.effective_link_values(&source, "related", &value(scale)).is_ok());
+        norn_testkit::proptest::prop_assert!(catalog.effective_link_values(&source, "related", &value(scale + 1)).is_err());
+    }
+}
+
 type ObservationCell = MemoryCell<ObservationEvent, JsonObject, JsonObject>;
 
 fn definitions() -> (Vec<ObjectTypeDef>, Vec<InterfaceDef>) {
@@ -3058,6 +3182,158 @@ fn concrete_implementers_of_child_interfaces_are_valid_parent_link_targets() {
     assert!(cell.load_link(&key).unwrap().values.is_some());
 }
 
+fn property_domain_fixture(
+    scale: u64,
+    minimum: &str,
+) -> (ObjectTypeDef, InterfaceDef, Vec<PropertyTypeDef>) {
+    let value_type = json!({"kind":"ref","name":"test.amount"});
+    (
+        serde_json::from_value(json!({"name":"test.Quantity","implements":["test.Bounded"],"properties":[
+            {"id":"amount","type":value_type},
+            {"id":"reading","type":{"kind":"record","members":[{"id":"amount","type":value_type}]}}
+        ]})).unwrap(),
+        serde_json::from_value(json!({"name":"test.Bounded","properties":[
+            {"id":"amount","type":value_type,"constraints":{"max":"10"}}
+        ]})).unwrap(),
+        vec![serde_json::from_value(json!({"name":"test.amount","type":{"kind":"decimal","scale":scale},"constraints":{"min":minimum}})).unwrap()],
+    )
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn property_rule_pin_catalog_permutations_are_equivalent(reverse_types: bool, reverse_extensions: bool) {
+        let (definition, interface, mut property_types) = property_domain_fixture(3,"0");
+        let mut extra = property_types[0].clone();
+        extra.name = norn_ir::PropertyTypeName("test.other".into());
+        property_types.push(extra);
+        let mut extensions: Vec<norn_ir::ObjectTypeExtension> = [("alpha", "first"), ("alpha", "second"), ("beta", "third")].into_iter().map(|(namespace, member)| {
+            serde_json::from_value(json!({"namespace":namespace,"target":"test.Quantity",
+                "properties":[{"id":format!("{namespace}__{member}"),"type":{"kind":"decimal","scale":3}}]})).unwrap()
+        }).collect();
+        let rule = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&property_types)
+            .with_extensions(&extensions).property_domain_rule_ref(&definition.name,&norn_ir::PropertyId("reading".into())).unwrap();
+        if reverse_types { property_types.reverse(); }
+        if reverse_extensions { extensions.reverse(); }
+        let permuted = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&property_types)
+            .with_extensions(&extensions).property_domain_rule_ref(&definition.name,&norn_ir::PropertyId("reading".into())).unwrap();
+        norn_testkit::proptest::prop_assert_eq!(rule,permuted);
+    }
+
+    #[test]
+    fn property_rule_pin_generated_declaration_changes_invalidate_references(scale in 0_u64..9, changed in 0_u64..9) {
+        norn_testkit::proptest::prop_assume!(scale != changed);
+        let (definition, interface, property_types) = property_domain_fixture(scale,"0");
+        let catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&property_types);
+        let rule = catalog.property_domain_rule_ref(&definition.name,&norn_ir::PropertyId("reading".into())).unwrap().unwrap();
+        norn_testkit::proptest::prop_assert_eq!(catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Builtin);
+        let (_,_,changed_types) = property_domain_fixture(changed,"0");
+        let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&changed_types);
+        norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+        let (_,_,changed_bounds) = property_domain_fixture(scale,"1");
+        let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&changed_bounds);
+        norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+        let mut changed_interface = interface.clone();
+        changed_interface.properties[0].constraints.max = Some(norn_ir::DecimalLiteral("9".into()));
+        let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&changed_interface]).with_property_types(&property_types);
+        norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+        let forged = DataQualityRuleRef::Builtin {id:norn_kernel::decision_commit::PROPERTY_DOMAIN_RULE_ID.into(),version:"free-text-is-not-a-pin".into()};
+        norn_testkit::proptest::prop_assert_eq!(catalog.classify_data_quality_rule(&forged).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+    }
+}
+
+#[test]
+fn property_rule_pin_empty_catalog_forms_are_equivalent() {
+    let definition: ObjectTypeDef =
+        serde_json::from_value(json!({"name":"test.Simple","properties":[
+            {"id":"amount","type":{"kind":"decimal","scale":3}}
+        ]}))
+        .unwrap();
+    let catalog = TypeCatalog::new([&definition]);
+    let rule = catalog
+        .property_domain_rule_ref(&definition.name, &norn_ir::PropertyId("amount".into()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        TypeCatalog::new([&definition])
+            .with_property_types(&[])
+            .classify_data_quality_rule(&rule)
+            .unwrap(),
+        norn_kernel::DataQualityRuleClassification::Builtin
+    );
+}
+
+#[test]
+fn property_rule_pin_observations_are_classifiable_and_native_writes_refuse() {
+    let (definition, interface, property_types) = property_domain_fixture(3, "0");
+    let catalog = TypeCatalog::new([&definition])
+        .with_interfaces([&interface])
+        .with_property_types(&property_types);
+    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
+        .with_types(vec![definition.clone()])
+        .with_interfaces(vec![interface.clone()])
+        .with_property_types(property_types.clone());
+    let key = FactKey::new("test.Quantity", "observed");
+    let values = object(json!({"amount":1.2345,"reading":{"amount":1.2345}}));
+    assert!(matches!(
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: values.clone()
+                }
+            }],
+            ..CellCommit::empty()
+        }),
+        Err(CommitError::InvariantViolation { .. })
+    ));
+    assert!(cell.ledger().is_empty());
+    let slice = load_slice(&cell, [key.clone()]).unwrap();
+    let provenance = source_provenance();
+    let snapshot = ObservedSnapshot {
+        key: &key,
+        values: &values,
+        lifecycles: &[],
+        provenance: &provenance,
+    };
+    commit_observed_snapshot(
+        &mut cell,
+        &catalog,
+        &slice,
+        &turn("property-domain"),
+        snapshot,
+    )
+    .unwrap();
+    let findings: Vec<_> = cell
+        .ledger()
+        .last()
+        .unwrap()
+        .events
+        .iter()
+        .filter_map(|event| {
+            if let ObservationEvent::DataQualityFinding { fact } = event {
+                Some(fact)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(findings.len(), 2);
+    for finding in findings {
+        assert!(
+            matches!(&finding.rule_ref, DataQualityRuleRef::Builtin {id,version} if id==norn_kernel::decision_commit::PROPERTY_DOMAIN_RULE_ID && version.starts_with("sha256:"))
+        );
+        assert_eq!(
+            catalog
+                .classify_data_quality_rule(&finding.rule_ref)
+                .unwrap(),
+            norn_kernel::DataQualityRuleClassification::Builtin
+        );
+    }
+    assert!(cell.load(&key).unwrap().exists());
+    assert!(cell.outbox().is_empty());
+}
+
 #[test]
 fn val_exact_invariants_admit_products_and_refuse_unqualified_division() {
     for (source, refused) in [
@@ -3737,4 +4013,47 @@ fn law_supported_temporal_semantics_refuse_even_when_activation_is_false() {
     assert!(
         matches!(refusal, ObservationRefusal::Law(ref error) if error.code() == "core.laws.unsupported_semantics")
     );
+}
+
+#[test]
+fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
+    let definition: ObjectTypeDef = serde_json::from_value(json!({
+        "name":"test.UnsupportedRecord",
+        "properties":[{"id":"reading","type":{"kind":"record","members":[
+            {"id":"elapsed","type":{"kind":"duration"}}
+        ]}}]
+    }))
+    .unwrap();
+    let key = FactKey::new("test.UnsupportedRecord", "unsupported");
+    let values = object(json!({"reading":{"elapsed":"PT1S"}}));
+    let catalog = TypeCatalog::new([&definition]);
+    assert!(matches!(
+        norn_kernel::evaluate_invariants(
+            &catalog,
+            &key,
+            &values,
+            &mut EvaluationBudget::default().units()
+        ),
+        Err(norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_))
+    ));
+    let mut native =
+        CommandCell::new(|command| command.payload.clone()).with_types(vec![definition]);
+    let refusal = native
+        .commit(CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put { values },
+            }],
+            ..CellCommit::empty()
+        })
+        .expect_err("unsupported members cannot become validity findings");
+    let CommitError::EffectiveValues { reason, .. } = refusal else {
+        panic!("expected unsupported effective values");
+    };
+    assert!(reason.contains("unsupported"));
+    assert!(reason.contains("duration"));
+    assert!(native.load(&key).unwrap().values.is_none());
+    assert!(native.ledger().is_empty());
+    assert!(native.outbox().is_empty());
 }

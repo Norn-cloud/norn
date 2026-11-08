@@ -7,6 +7,7 @@
 use norn_checker::obligations::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use norn_checker::verification::LawWriter;
 use serde_json::{Value, json};
+use sha2::Digest;
 use std::collections::BTreeSet;
 
 fn pool() -> Vec<Value> {
@@ -1065,7 +1066,7 @@ fn public_induction_goals_bind_exact_law_and_transition_commitments() {
             right.bind_submission(left.body()),
             Err(ChallengeError::InvalidSubmission)
         );
-        assert_eq!(left.body()["generator"], "norn.application-obligations/8");
+        assert_eq!(left.body()["generator"], "norn.application-obligations/9");
         assert_eq!(
             left.body()["inductionRules"]["profile"],
             "norn.induction-statements/2"
@@ -1242,4 +1243,309 @@ fn conjunctive_layer_cannot_weaken_a_protected_base_law() {
         )
         .is_err()
     );
+}
+
+struct LayerFixture {
+    source: DefinitionSource,
+    source_sha256: String,
+    receipt: String,
+    receipt_sha256: String,
+}
+
+fn retained_fixture() -> Vec<LayerFixture> {
+    let mut base = Vec::new();
+    let original = pool();
+    let mut candidates = vec![vec![original[0].clone()]];
+    for namespace in ["acme", "other"] {
+        let mut extension = original[0].clone();
+        extension["artifactId"] = json!(format!("{namespace}.SalesOrder.extension"));
+        extension["namespace"] = json!(namespace);
+        extension["payload"] = json!({"entityVersion":"2.0", "objectTypeExtension":{
+            "namespace":namespace, "target":"erpnext.SalesOrder",
+            "properties":[{"id":format!("{namespace}__flag"), "type":{"kind":"boolean"}}]
+        }});
+        candidates.push(vec![extension]);
+    }
+    candidates
+        .into_iter()
+        .map(|candidate| {
+            let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+                serde_json::from_value(json!(candidate)).expect("typed");
+            let source =
+                DefinitionSource::parse(&json!(candidate).to_string(), &json!(base).to_string())
+                    .expect("exact");
+            let checked = norn_checker::check_artifact_set_with_receipt(
+                &norn_checker::ReceiptSources::new(
+                    &artifacts
+                        .iter()
+                        .map(|a| norn_ir::runtime::encode(a).expect("native source"))
+                        .collect::<Vec<_>>(),
+                    &base
+                        .iter()
+                        .map(|a| norn_ir::runtime::encode(a).expect("native base"))
+                        .collect::<Vec<_>>(),
+                )
+                .expect("receipt sources"),
+                &norn_checker::EntityArtifactSetContext {
+                    registry: &BTreeSet::new(),
+                    base: &base,
+                    tenant: None,
+                },
+                &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+            )
+            .expect("receipt");
+            assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+            base.extend(artifacts);
+            LayerFixture {
+                source_sha256: source.exact_digest().to_owned(),
+                source,
+                receipt: String::from_utf8(checked.receipt.canonical_json().expect("canonical"))
+                    .expect("UTF-8"),
+                receipt_sha256: checked.receipt.content_sha256().expect("hash"),
+            }
+        })
+        .collect()
+}
+
+fn verify_layers(
+    layers: &[LayerFixture],
+) -> Result<norn_checker::obligations::RetainedLayers, ChallengeError> {
+    let retained: Vec<_> = layers
+        .iter()
+        .map(|layer| norn_checker::obligations::RetainedLayer {
+            source: &layer.source,
+            source_sha256: &layer.source_sha256,
+            receipt: &layer.receipt,
+            receipt_sha256: &layer.receipt_sha256,
+        })
+        .collect();
+    norn_checker::obligations::RetainedLayers::verify(&retained, &BTreeSet::new())
+}
+
+#[test]
+fn layers_chain_retains_exact_order_without_enabling_flat_challenges() {
+    let layers = retained_fixture();
+    let checked = verify_layers(&layers).expect("three retained layers");
+    assert_eq!(checked.artifacts().len(), 3);
+    assert!(checked.registry().is_empty());
+    assert_eq!(checked.exact_digest().len(), 64);
+    assert_eq!(
+        checked.exact_digest(),
+        verify_layers(&layers).expect("repeat").exact_digest()
+    );
+    let source =
+        DefinitionSource::parse("[]", &json!(checked.artifacts()).to_string()).expect("source");
+    assert_eq!(
+        ApprovedContract::approve(
+            &source,
+            &BTreeSet::new(),
+            json!({"semantics":1}),
+            json!({"assumptions":1}),
+            json!({"assurance":1})
+        )
+        .err(),
+        Some(ChallengeError::MultiLayerBaseRequiresRetainedInput)
+    );
+}
+
+#[test]
+fn layers_exact_source_bytes_are_retained_separately_from_receipt_semantics() {
+    let mut layers = retained_fixture();
+    let original = verify_layers(&layers)
+        .expect("original")
+        .exact_digest()
+        .to_owned();
+    let candidate = format!(" {}", json!([pool()[0].clone()]));
+    layers[0].source = DefinitionSource::parse(&candidate, "[]").expect("whitespace source");
+    assert!(
+        verify_layers(&layers).is_err(),
+        "old exact commitment refuses byte edit"
+    );
+    layers[0].source_sha256 = layers[0].source.exact_digest().to_owned();
+    assert_ne!(
+        verify_layers(&layers)
+            .expect("new authority retains source edit")
+            .exact_digest(),
+        original
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn layers_forged_reordered_missing_receipts_never_construct_authority(index in 0usize..3, mutation in 0u8..5) {
+        let mut layers = retained_fixture();
+        match mutation {
+            0 => layers[index].receipt.clear(),
+            1 => { layers.swap(0, if index == 0 { 1 } else { 2 }); }
+            2 => { layers[index].receipt_sha256 = "0".repeat(64); }
+            3 => {
+                let mut receipt: Value = serde_json::from_str(&layers[index].receipt).expect("receipt");
+                receipt["admitted"] = json!(false);
+                let bytes = norn_canonical::canonical_json_of(&receipt).expect("canonical");
+                layers[index].receipt_sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
+                layers[index].receipt = String::from_utf8(bytes).expect("UTF-8");
+            }
+            4 => { layers.remove(0); }
+            _ => unreachable!(),
+        }
+        proptest::prop_assert!(verify_layers(&layers).is_err());
+    }
+}
+
+fn retained_candidate(
+    candidate: &[Value],
+    retained: &norn_checker::obligations::RetainedLayers,
+) -> DefinitionSource {
+    DefinitionSource::parse(
+        &json!(candidate).to_string(),
+        &json!(retained.artifacts()).to_string(),
+    )
+    .expect("candidate")
+}
+
+fn retained_law() -> Value {
+    let mut law = pool()[3].clone();
+    law["payload"]["scope"]["root"] = json!({"kind":"company", "id":"org_demo"});
+    law
+}
+
+fn approve_layers(
+    source: &DefinitionSource,
+    retained: &norn_checker::obligations::RetainedLayers,
+) -> ApprovedContract {
+    ApprovedContract::approve_retained(
+        source,
+        retained,
+        json!({"semantics":1}),
+        json!({"assumptions":1}),
+        json!({"assurance":"unknown"}),
+    )
+    .expect("retained approval")
+}
+
+#[test]
+fn layers_challenge_binds_checked_authority_and_refuses_substituted_base() {
+    let layers = retained_fixture();
+    let retained = verify_layers(&layers).expect("authority");
+    let source = retained_candidate(&[retained_law()], &retained);
+    let approved = approve_layers(&source, &retained);
+    let challenge = approved
+        .challenge_retained(&source, &retained)
+        .expect("retained challenge");
+    assert_eq!(
+        challenge.body()["retainedLayers"],
+        json!(retained.exact_digest())
+    );
+    assert_eq!(
+        challenge.body()["generator"],
+        json!(norn_checker::obligations::GENERATOR_PROFILE)
+    );
+    assert!(approved.challenge(&source, &BTreeSet::new()).is_err());
+    let other = verify_layers(&layers[..2]).expect("checked prefix");
+    assert_eq!(
+        approved.challenge_retained(&source, &other).err(),
+        Some(ChallengeError::InvalidSubmission)
+    );
+    let substituted =
+        DefinitionSource::parse(&json!([retained_law()]).to_string(), "[]").expect("source");
+    assert!(
+        ApprovedContract::approve_retained(
+            &substituted,
+            &retained,
+            json!({"s":1}),
+            json!({"a":1}),
+            json!({"p":1})
+        )
+        .is_err()
+    );
+    let unsupported = retained_candidate(&[pool()[3].clone()], &retained);
+    assert_eq!(
+        ApprovedContract::approve_retained(
+            &unsupported,
+            &retained,
+            json!({"s":1}),
+            json!({"a":1}),
+            json!({"p":1})
+        )
+        .err(),
+        Some(ChallengeError::NotAdmitted),
+        "unresolved app refuses"
+    );
+}
+
+#[test]
+fn writer_new_regenerates_retained_goals_and_omissions_refuse() {
+    let retained = verify_layers(&retained_fixture()).expect("authority");
+    let source = retained_candidate(&[retained_law()], &retained);
+    let approved = approve_layers(&source, &retained);
+    let original = approved
+        .challenge_retained(&source, &retained)
+        .expect("challenge");
+    let source = retained_candidate(&[retained_law(), rule("erpnext.new_writer")], &retained);
+    let changed = approved
+        .challenge_retained(&source, &retained)
+        .expect("new writer");
+    assert_ne!(original.sha256(), changed.sha256());
+    assert!(changed.writers().contains(&LawWriter::Artifact {
+        artifact_id: "erpnext.new_writer".into()
+    }));
+    assert!(
+        changed.body()["obligations"]
+            .as_array()
+            .expect("goals")
+            .len()
+            > original.body()["obligations"]
+                .as_array()
+                .expect("goals")
+                .len()
+    );
+    assert_eq!(
+        changed.bind_submission(original.body()),
+        Err(ChallengeError::InvalidSubmission)
+    );
+    let count = changed.body()["obligations"]
+        .as_array()
+        .expect("goals")
+        .len();
+    for index in 0..count {
+        let mut omitted = changed.body().clone();
+        omitted["obligations"]
+            .as_array_mut()
+            .expect("goals")
+            .remove(index);
+        assert_eq!(
+            changed.bind_submission(&omitted),
+            Err(ChallengeError::InvalidSubmission)
+        );
+    }
+    let mut forged = changed.body().clone();
+    forged["obligations"][0]["assessment"] = json!("proved");
+    assert_eq!(
+        changed.bind_submission(&forged),
+        Err(ChallengeError::InvalidSubmission)
+    );
+    let mut weakened = retained_law();
+    weakened["payload"]["response"]["expression"] = json!("false");
+    let changed_law = retained_candidate(&[weakened], &retained);
+    assert_eq!(
+        approved.challenge_retained(&changed_law, &retained).err(),
+        Some(ChallengeError::LawChanged)
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(8))]
+    #[test]
+    fn retained_challenge_source_spellings_change_commitment_without_changing_goals(padding in "[ \n\t]{1,8}") {
+        let retained = verify_layers(&retained_fixture()).expect("authority");
+        let source = retained_candidate(&[retained_law()], &retained);
+        let approved = approve_layers(&source, &retained);
+        let original = approved.challenge_retained(&source, &retained).expect("original");
+        let edited = DefinitionSource::parse(&(padding + &json!([retained_law()]).to_string()), &json!(retained.artifacts()).to_string()).expect("source bytes");
+        let changed = approved.challenge_retained(&edited, &retained).expect("same typed definitions");
+        proptest::prop_assert_ne!(original.sha256(), changed.sha256());
+        proptest::prop_assert_eq!(&original.body()["obligations"], &changed.body()["obligations"]);
+        proptest::prop_assert_eq!(changed.bind_submission(original.body()), Err(ChallengeError::InvalidSubmission));
+    }
 }

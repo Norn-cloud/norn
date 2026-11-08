@@ -50,6 +50,7 @@ export type PropertyType =
   | { readonly kind: "text"; readonly format?: TextFormat }
   | { readonly kind: "integer"; readonly additivity?: PropertyAdditivity }
   | { readonly kind: "decimal"; readonly additivity?: PropertyAdditivity; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource; readonly perUnit?: UnitRef; readonly rounding?: Rounding }
+  | { readonly kind: "decimal-binding"; readonly group: string }
   | { readonly kind: "boolean" }
   | { readonly kind: "timestamp"; readonly timezone: TimezonePolicy }
   | { readonly kind: "date" }
@@ -67,6 +68,7 @@ export const money = (scale: number, currency: string | CurrencySource): Propert
   scale,
   currencySource: typeof currency === "string" ? { links: [], property: currency } : { links: [...currency.links], property: currency.property },
 })
+export const boundDecimal = (group: string): PropertyType => ({ kind: "decimal-binding", group })
 /** VAL-RATE: currency per one declared quantity unit at a single exact scale. */
 export const rate = (scale: number, currency: string | CurrencySource, perUnit: UnitRef, rounding?: Rounding): PropertyType => ({
   kind: "decimal", scale,

@@ -61,7 +61,7 @@ fn constitution_ten_goal_inventory_golden() {
     );
     assert_eq!(
         challenge.sha256(),
-        "2d116687af5f4dda4b23813edfb04e91ac3f839c8071b49e93ef2205d2df63fc"
+        "891aa8d83690605ec68c1fe54915d784db46db80af4e9b2f861f911a1accb8ff"
     );
 }
 

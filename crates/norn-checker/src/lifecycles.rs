@@ -462,6 +462,7 @@ fn enum_values(property_type: &PropertyType) -> Option<Vec<String>> {
         | PropertyType::Duration { .. }
         | PropertyType::Record { .. }
         | PropertyType::JsonExt { .. }
+        | PropertyType::DecimalBinding { .. }
         | PropertyType::Ref { .. } => None,
     }
 }
