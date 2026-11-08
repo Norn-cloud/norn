@@ -1,0 +1,3 @@
+# Preserve the exact archive bytes of the two upstream CRLF files.
+ascent/README.MD -text
+ascent_macro/src/scratchpad_template.rs -text

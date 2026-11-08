@@ -16196,6 +16196,9 @@
       "NornIrSliceKey": {
         "oneOf": [
           {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf0"
+          },
+          {
             "type": "string",
             "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
             "enum": [
@@ -16224,15 +16227,100 @@
             ]
           },
           {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf4"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5"
           },
           {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf6"
           }
         ],
         "description": "Where a [`SliceDeclaration`]'s key comes from."
       },
-      "NornIrSliceKeyOneOf4": {
+      "NornIrSliceKeyOneOf0": {
+        "type": "object",
+        "description": "A unique effective parameter selected from an earlier authorized link list.",
+        "required": [
+          "parameter"
+        ],
+        "properties": {
+          "parameter": {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf0PropertyParameter"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf0PropertyParameter": {
+        "type": "object",
+        "required": [
+          "from",
+          "settingKey",
+          "effectiveAt",
+          "precedence"
+        ],
+        "properties": {
+          "defaultFrom": {
+            "type": "string",
+            "description": "Earlier single-object slice holding an explicit default setting."
+          },
+          "effectiveAt": {
+            "type": "string",
+            "description": "Action input field carrying the declared effective timestamp.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "from": {
+            "type": "string",
+            "description": "Earlier list slice containing the candidate setting facts."
+          },
+          "precedence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems"
+            },
+            "description": "Explicit scope precedence, highest first."
+          },
+          "settingKey": {
+            "type": "string",
+            "description": "Stable parameter key."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems": {
+        "type": "object",
+        "properties": {
+          "businessUnitId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orgId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspaceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf5": {
         "type": "object",
         "description": "A text property of an earlier slice entry (a link by key).",
         "required": [
@@ -16240,12 +16328,12 @@
         ],
         "properties": {
           "property": {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf4PropertyProperty"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5PropertyProperty"
           }
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf4PropertyProperty": {
+      "NornIrSliceKeyOneOf5PropertyProperty": {
         "type": "object",
         "required": [
           "from",
@@ -16264,7 +16352,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf5": {
+      "NornIrSliceKeyOneOf6": {
         "type": "object",
         "description": "Every target of link `link`, declared on the type of earlier\nsingle-object entry `from`, loaded as a list ordered by target key\nand bounded by the limit profile's slice records (#3079).",
         "required": [
@@ -16272,12 +16360,12 @@
         ],
         "properties": {
           "link": {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5PropertyLink"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf6PropertyLink"
           }
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf5PropertyLink": {
+      "NornIrSliceKeyOneOf6PropertyLink": {
         "type": "object",
         "required": [
           "from",

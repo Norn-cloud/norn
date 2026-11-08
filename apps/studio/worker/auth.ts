@@ -45,6 +45,7 @@ export interface AuthConfig {
   readonly baseURL: string
   /** Optional server-held default cell for newly provisioned workspaces. */
   readonly defaultEnvironmentId?: string
+  readonly trustedOrigins?: readonly string[]
   /** Absent when this deployment has no mail sender: magic links then refuse. */
   readonly sendMagicLink?: (mail: MagicLinkMail) => Promise<void>
   /**
@@ -113,6 +114,38 @@ export async function gatewaySubject(gateway: GatewayClient, accessToken: string
   if (!response.ok || body?.active !== true || typeof body.sub !== "string") return null
   return { id: body.sub, name: "Tool gateway", email: `${encodeURIComponent(body.sub)}@gateway.invalid`, emailVerified: false }
 }
+/** Bind the one-time Better Auth token to the origin that requested it. */
+async function originProof(secret: string, token: string, origin: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(`studio-magic-link\n${origin}\n${token}`))
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+/** Callback URLs must stay on the origin that will receive the session cookie. */
+function callbackOnOrigin(value: string, origin: string): string | null {
+  try { const callback = new URL(value, origin); return callback.origin === origin && !callback.username && !callback.password ? callback.href : null } catch { return null }
+}
+
+/** Refuse a verification URL moved to another host before Better Auth consumes its token. */
+export async function verifyMagicLinkOrigin(request: Request, secret: string, trustedOrigins: readonly string[]): Promise<boolean> {
+  const url = new URL(request.url)
+  const token = url.searchParams.get("token")
+  const proof = url.searchParams.get("studioOriginProof")
+  if (!trustedOrigins.includes(url.origin) || !token || !proof || !/^[0-9a-f]{64}$/.test(proof)) return false
+  if (!url.searchParams.has("callbackURL")) return false
+  for (const name of ["callbackURL", "newUserCallbackURL", "errorCallbackURL"]) {
+    const values = url.searchParams.getAll(name)
+    // Issued links contain absolute callbacks. A modified relative callback would be
+    // resolved by Better Auth against its primary baseURL, not the requesting host.
+    if (values.length > 1 || (values[0] !== undefined && callbackOnOrigin(values[0], url.origin) !== values[0])) return false
+  }
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"])
+  const bytes = Uint8Array.from(proof.match(/../g) ?? [], (hex) => Number.parseInt(hex, 16))
+  return crypto.subtle.verify("HMAC", key, bytes, encoder.encode(`studio-magic-link\n${url.origin}\n${token}`))
+}
+
 
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
@@ -182,7 +215,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     baseURL: config.baseURL,
     basePath: "/api/auth",
     // Better Auth refuses state-changing requests whose Origin is not listed (its CSRF check).
-    trustedOrigins: [config.baseURL],
+    trustedOrigins: [...(config.trustedOrigins ?? [config.baseURL])],
     // No sign-in on sign-up: Better Auth then answers a registered address exactly as a new one
     // (no session either way), so sign-up does not reveal which emails have accounts.
     emailAndPassword: {
@@ -255,9 +288,22 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       magicLink({
         expiresIn: 10 * MINUTE,
         disableSignUp: true,
-        sendMagicLink: async ({ email, url }) => {
+        sendMagicLink: async ({ email, url, token }, ctx) => {
           if (config.sendMagicLink === undefined) throw new APIError("SERVICE_UNAVAILABLE", { message: "Email sign-in is not available on this deployment." })
-          await config.sendMagicLink({ to: email, url })
+          const origin = ctx?.headers?.get("origin") ?? ctx?.request?.headers.get("origin")
+          if (!origin || !(config.trustedOrigins ?? [config.baseURL]).includes(origin)) throw new APIError("FORBIDDEN", { message: "Untrusted sign-in origin." })
+          const link = new URL(url)
+          const requested = new URL(origin)
+          link.protocol = requested.protocol; link.host = requested.host
+          for (const name of ["callbackURL", "newUserCallbackURL", "errorCallbackURL"]) {
+            const value = link.searchParams.get(name)
+            if (value === null) continue
+            const callback = callbackOnOrigin(value, origin)
+            if (callback === null) throw new APIError("FORBIDDEN", { message: "Untrusted magic-link callback." })
+            link.searchParams.set(name, callback)
+          }
+          link.searchParams.set("studioOriginProof", await originProof(config.secret, token, origin))
+          await config.sendMagicLink({ to: email, url: link.toString() })
         },
       }),
       // Short-lived tokens the Worker mints for the Norn host (#817); the host verifies them against /api/auth/jwks.

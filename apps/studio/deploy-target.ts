@@ -39,6 +39,8 @@ export interface AuthDeploy {
   readonly secret: string
   /** The origin users sign in on: the stage's first domain. */
   readonly url: string
+  /** The exact HTTPS origins served by this stage. */
+  readonly origins: readonly string[]
   /** Optional Cloudflare Email Service sender for magic links. */
   readonly emailFrom?: string
   /** Optional organization members' sessions start in, e.g. `org_demo` on preview. */
@@ -53,7 +55,7 @@ export function authDeploy(env: Readonly<Record<string, string | undefined>>, ta
   if (emailFrom !== undefined && !/^[^@\s]+@[a-z0-9.-]+$/.test(emailFrom)) throw new Error("STUDIO_EMAIL_FROM must be an email address")
   const defaultOrg = env.STUDIO_DEFAULT_ORG
   if (defaultOrg !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(defaultOrg)) throw new Error("STUDIO_DEFAULT_ORG must be an organization id")
-  return { secret, url: `https://${target.domains[0]}`, ...emailFrom === undefined ? {} : { emailFrom }, ...defaultOrg === undefined ? {} : { defaultOrg } }
+  return { secret, url: `https://${target.domains[0]}`, origins: target.domains.map((domain) => `https://${domain}`), ...emailFrom === undefined ? {} : { emailFrom }, ...defaultOrg === undefined ? {} : { defaultOrg } }
 }
 
 /** Environment variable names whose values are credentials. */

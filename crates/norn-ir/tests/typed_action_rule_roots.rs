@@ -582,6 +582,30 @@ fn rule_ir_v2_contract_is_closed_and_rejections_are_checker_findings() {
 }
 
 #[test]
+fn parameter_slice_contract_is_closed_and_lossless() {
+    let wire = serde_json::json!({"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"effectiveAt","precedence":[{"orgId":"org_demo"},{}],"defaultFrom":"defaultRate"}});
+    let decoded: norn_ir::SliceKey =
+        serde_json::from_value(wire.clone()).expect("parameter binding");
+    assert_eq!(serde_json::to_value(decoded).expect("wire"), wire);
+    for field in ["unknown", "precedence/0/unknown"] {
+        let mut bad = wire.clone();
+        let (parent, key) = field.rsplit_once('/').unwrap_or(("", field));
+        let path = format!("/parameter/{parent}");
+        let parent = if parent.is_empty() {
+            "/parameter"
+        } else {
+            &path
+        };
+        bad.pointer_mut(parent)
+            .expect("object")
+            .as_object_mut()
+            .expect("object")
+            .insert(key.into(), serde_json::json!(true));
+        assert!(serde_json::from_value::<norn_ir::SliceKey>(bad).is_err());
+    }
+}
+
+#[test]
 fn composed_link_source_is_optional_closed_and_object_only() {
     let valid = serde_json::json!({"link":"parent","targetType":"example.Parent","targetIdField":"parent","source":{"objectType":"example.Child","idField":"child"}});
     let binding: norn_ir::ActionCreateLink =

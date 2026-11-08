@@ -118,6 +118,10 @@ pub(crate) fn validate_rule_bindings(
             );
         }
         match &entry.key {
+            SliceKey::Parameter { .. } => invalid(
+                "parameter selection is not supported for rule bindings".into(),
+                &format!("{path}.key"),
+            ),
             SliceKey::TriggerObject => {
                 // Every trigger must name an object of exactly this type, so
                 // the key is never applied to an unrelated type.
@@ -257,7 +261,8 @@ pub(crate) fn validate_rule_bindings(
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
-            | SliceKey::Property { .. } => "object",
+            | SliceKey::Property { .. }
+            | SliceKey::Parameter { .. } => "object",
         };
         // A link list holds object records; triggerChanges holds strings.
         let items = member
@@ -272,7 +277,8 @@ pub(crate) fn validate_rule_bindings(
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
-            | SliceKey::Property { .. } => None,
+            | SliceKey::Property { .. }
+            | SliceKey::Parameter { .. } => None,
         };
         if kind != Some(expected) || expected_items.is_some_and(|expected| items != Some(expected))
         {
