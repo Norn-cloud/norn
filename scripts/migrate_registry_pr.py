@@ -152,8 +152,8 @@ def migrate(root, base, head):
         record = RECORDS + path + ".json"
         raw = current(record)
         metadata = (template if raw is MISSING else object_bytes(raw)).copy()
-        if raw is MISSING:
-            metadata.pop("sha256", None)
+        if value is not MISSING:
+            metadata["sha256"] = hashlib.sha256(value).hexdigest()
         plan[record] = json_bytes(metadata) if value is not MISSING else MISSING
     def apply(before, after, prefix, template):
         ranks = {}

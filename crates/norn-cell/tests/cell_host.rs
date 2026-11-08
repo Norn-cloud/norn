@@ -34,7 +34,8 @@ use norn_kernel::{
     CellCommit, CellHost, Command, CommandId, CommitError, CommitReceipt, Consumed, DueTimer,
     Effect, FactKey, FactMutation, FactState, FactVersion, FactWrite, FreshnessPolicy, Generation,
     IdempotencyKey, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation, LinkState, LinkWrite,
-    LogicalTime, Observed, OwnedRowsCommitProof, Performed, Timer, TimerId,
+    LogicalTime, Observed, OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery,
+    PredicateReadExpectation, PredicateReadMember, Timer, TimerId,
 };
 use norn_testkit::Settings;
 use norn_testkit::cell_host::{
@@ -390,6 +391,7 @@ impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
             effects,
             links: commit.links,
             link_reads: commit.link_reads,
+            predicate_reads: commit.predicate_reads,
         });
         self.after_write();
         receipt
@@ -422,6 +424,7 @@ impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
                 effects,
                 links: commit.links,
                 link_reads: commit.link_reads,
+                predicate_reads: commit.predicate_reads,
             },
             proof,
         );
@@ -2140,4 +2143,408 @@ fn a_narrowed_link_target_is_enforced() {
         ..CellCommit::empty()
     })
     .expect("admitted targets commit");
+}
+
+fn open_entries(path: &Path) -> OrderCell {
+    let entry = serde_json::from_value(json!({
+        "name": "books.Entry",
+        "properties": [
+            { "id": "account", "type": { "kind": "text" } },
+            { "id": "booked_on", "type": { "kind": "date" } },
+            { "id": "posted_at", "type": { "kind": "timestamp", "timezone": "offset" },
+                "constraints": { "nullable": true } },
+            { "id": "note", "type": { "kind": "text" }, "constraints": { "nullable": true } }
+        ]
+    }))
+    .expect("decodes");
+    SqliteCell::open(
+        path,
+        common::model_of(&[entry]),
+        StoreOptions::default(),
+        "org_demo/dev",
+        charge_responder,
+    )
+    .expect("opens")
+}
+
+fn put_entry(cell: &mut OrderCell, id: &str, values: serde_json::Value) {
+    let key = FactKey::new("books.Entry", id);
+    let expected = cell.load(&key).expect("loads").version;
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key,
+            expected,
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(values).expect("values"),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .expect("entry written");
+}
+
+fn november(account: &str, end_inclusive: bool) -> PredicateQuery {
+    serde_json::from_value(json!({
+        "objectType": "books.Entry",
+        "filter": { "account": account },
+        "window": { "property": "booked_on", "kind": "date",
+            "start": "2026-11-01", "end": "2026-11-30",
+            "startInclusive": true, "endInclusive": end_inclusive }
+    }))
+    .expect("predicate")
+}
+
+fn read_members(cell: &OrderCell, predicate: &PredicateQuery) -> Vec<PredicateReadMember> {
+    cell.read_predicate(predicate, 16)
+        .expect("reads")
+        .expect("the store enumerates bounded types")
+        .iter()
+        .map(PredicateObject::member)
+        .collect()
+}
+
+fn commit_read(
+    cell: &mut OrderCell,
+    predicate: &PredicateQuery,
+    members: &[PredicateReadMember],
+) -> Result<(), String> {
+    cell.commit(CellCommit {
+        predicate_reads: vec![PredicateReadExpectation {
+            predicate: predicate.clone(),
+            members: members.to_vec(),
+        }],
+        ..CellCommit::empty()
+    })
+    .map(|_| ())
+    .map_err(|error| error.code().to_owned())
+}
+
+fn seeded_entries(path: &Path) -> OrderCell {
+    let mut cell = open_entries(path);
+    for (id, account, on) in [
+        ("E1", "A", "2026-11-01"),
+        ("E2", "A", "2026-11-30"),
+        ("E3", "B", "2026-11-05"),
+        ("E4", "A", "2026-12-01"),
+    ] {
+        put_entry(
+            &mut cell,
+            id,
+            json!({ "account": account, "booked_on": on }),
+        );
+    }
+    cell
+}
+
+fn ids(members: &[PredicateReadMember]) -> Vec<String> {
+    members
+        .iter()
+        .map(|member| member.key.key.clone())
+        .collect()
+}
+
+const CONFLICT: &str = "commit.predicate_read_conflict";
+
+/// #1105/#1104: equality terms and each declared window edge select the
+/// members; writes outside the predicate never conflict.
+#[test]
+fn predicate_reads_select_by_declared_edges_and_ignore_writes_outside() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = seeded_entries(&dir.path().join("cell.sqlite"));
+    let exclusive = november("A", false);
+    let inclusive = november("A", true);
+    assert_eq!(ids(&read_members(&cell, &exclusive)), ["E1"]);
+    assert_eq!(ids(&read_members(&cell, &inclusive)), ["E1", "E2"]);
+
+    let members = read_members(&cell, &inclusive);
+    assert_eq!(commit_read(&mut cell, &inclusive, &members), Ok(()));
+    put_entry(
+        &mut cell,
+        "E3",
+        json!({ "account": "B", "booked_on": "2026-11-06" }),
+    );
+    put_entry(
+        &mut cell,
+        "E4",
+        json!({ "account": "A", "booked_on": "2026-12-02" }),
+    );
+    assert_eq!(commit_read(&mut cell, &inclusive, &members), Ok(()));
+}
+
+/// Completeness: an object that starts matching between the read and the
+/// commit (a phantom insert, or an update that moves it in) conflicts.
+#[test]
+fn predicate_reads_conflict_when_a_phantom_starts_matching() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = seeded_entries(&dir.path().join("cell.sqlite"));
+    let predicate = november("A", true);
+
+    let members = read_members(&cell, &predicate);
+    put_entry(
+        &mut cell,
+        "E5",
+        json!({ "account": "A", "booked_on": "2026-11-10" }),
+    );
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "a phantom insert inside the window"
+    );
+
+    let members = read_members(&cell, &predicate);
+    put_entry(
+        &mut cell,
+        "E3",
+        json!({ "account": "A", "booked_on": "2026-11-06" }),
+    );
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "an update that moves an object into the predicate"
+    );
+}
+
+/// Membership revalidation: a member that leaves the set (moved out or
+/// deleted) or changes version conflicts.
+#[test]
+fn predicate_reads_conflict_when_a_member_leaves_or_changes_version() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = seeded_entries(&dir.path().join("cell.sqlite"));
+    let predicate = november("A", true);
+
+    let members = read_members(&cell, &predicate);
+    put_entry(
+        &mut cell,
+        "E1",
+        json!({ "account": "A", "booked_on": "2026-10-31" }),
+    );
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "a member moved out of the window"
+    );
+
+    let members = read_members(&cell, &predicate);
+    put_entry(
+        &mut cell,
+        "E2",
+        json!({ "account": "A", "booked_on": "2026-11-30", "note": "x" }),
+    );
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "a member changed version in place"
+    );
+
+    let members = read_members(&cell, &predicate);
+    let key = FactKey::new("books.Entry", "E2");
+    let expected = cell.load(&key).expect("loads").version;
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key,
+            expected,
+            mutation: FactMutation::Delete,
+        }],
+        ..CellCommit::empty()
+    })
+    .expect("member deleted");
+    assert_eq!(
+        commit_read(&mut cell, &predicate, &members),
+        Err(CONFLICT.to_owned()),
+        "a member deleted"
+    );
+    let members = read_members(&cell, &predicate);
+    assert!(members.is_empty(), "{members:?}");
+    assert_eq!(commit_read(&mut cell, &predicate, &members), Ok(()));
+}
+
+#[test]
+fn predicate_reads_bound_members_and_compare_timestamps_by_instant() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = open_entries(&dir.path().join("cell.sqlite"));
+    for (id, posted_at) in [
+        ("T1", "2026-11-01T01:30:00+02:00"),
+        ("T2", "2026-11-01T00:00:00Z"),
+        ("T3", "2026-10-31T23:59:59Z"),
+    ] {
+        put_entry(
+            &mut cell,
+            id,
+            json!({ "account": "A", "booked_on": "2026-11-01", "posted_at": posted_at }),
+        );
+    }
+    let predicate: PredicateQuery = serde_json::from_value(json!({
+        "objectType": "books.Entry",
+        "window": { "property": "posted_at", "kind": "timestamp",
+            "start": "2026-10-31T23:00:00Z", "end": "2026-11-01T00:00:00Z",
+            "startInclusive": false, "endInclusive": false }
+    }))
+    .expect("predicate");
+    // T1 is 23:30Z and T3 23:59:59Z; T2 sits on the exclusive end.
+    let members: Vec<String> = cell
+        .read_predicate(&predicate, 16)
+        .expect("reads")
+        .expect("complete")
+        .into_iter()
+        .map(|object| object.key.key)
+        .collect();
+    assert_eq!(members, ["T1", "T3"]);
+    let bounded = cell
+        .read_predicate(&predicate, 1)
+        .expect("reads")
+        .expect("complete");
+    assert_eq!(bounded.len(), 2, "one over the bound lets callers refuse");
+}
+
+#[test]
+fn malformed_predicate_reads_are_refused_before_the_host_is_read() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = open_entries(&dir.path().join("cell.sqlite"));
+    put_entry(
+        &mut cell,
+        "E1",
+        json!({ "account": "A", "booked_on": "2026-11-02" }),
+    );
+    put_entry(
+        &mut cell,
+        "E2",
+        json!({ "account": "A", "booked_on": "2026-11-03" }),
+    );
+    let predicate = november("A", true);
+    let members = read_members(&cell, &predicate);
+    let invalid = Err("commit.invalid_predicate_read".to_owned());
+
+    let mut reversed = members.clone();
+    reversed.reverse();
+    assert_eq!(commit_read(&mut cell, &predicate, &reversed), invalid);
+
+    let mut backwards = predicate.clone();
+    if let Some(window) = backwards.window.as_mut() {
+        std::mem::swap(&mut window.start, &mut window.end);
+    }
+    assert_eq!(commit_read(&mut cell, &backwards, &[]), invalid);
+
+    let mut stranger = members.clone();
+    stranger[0].key = FactKey::new("shop.Order", "E1");
+    assert_eq!(commit_read(&mut cell, &predicate, &stranger), invalid);
+
+    let twice = cell
+        .commit(CellCommit {
+            predicate_reads: vec![
+                PredicateReadExpectation {
+                    predicate: predicate.clone(),
+                    members: members.clone(),
+                },
+                PredicateReadExpectation { predicate, members },
+            ],
+            ..CellCommit::empty()
+        })
+        .expect_err("one predicate is read once");
+    assert_eq!(twice.code(), "commit.invalid_predicate_read");
+}
+
+fn parity_definitions() -> (Vec<norn_ir::ObjectTypeDef>, Vec<norn_ir::InterfaceDef>) {
+    let types = serde_json::from_value(json!([{
+        "name": "books.Entry",
+        "implements": ["books.Dated"],
+        "properties": [
+            { "id": "account", "type": { "kind": "text" } },
+            { "id": "booked_on", "type": { "kind": "date" } }
+        ]
+    }]))
+    .expect("types");
+    let interfaces =
+        serde_json::from_value(json!([{ "name": "books.Dated" }])).expect("interfaces");
+    (types, interfaces)
+}
+
+/// Sol on #1118: the SQLite cell and the memory cell agree on predicate
+/// reads: identical members and versions for an object type, and an
+/// interface predicate is unsupported on both, at read and at commit.
+#[test]
+fn predicate_reads_agree_across_hosts_and_refuse_interfaces_on_both() {
+    let (types, interfaces) = parity_definitions();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut native = SqliteCell::open(
+        &dir.path().join("cell.sqlite"),
+        Model::from_definitions_with_interfaces(&types, &[], &interfaces).expect("model"),
+        StoreOptions::default(),
+        "org_demo/dev",
+        charge_responder,
+    )
+    .expect("opens");
+    let mut memory = norn_testkit::cell_host::MemoryCell::<OrderEvent, Charge, OrderInput>::new(
+        charge_responder,
+    )
+    .with_types(types)
+    .with_interfaces(interfaces);
+    for (id, account, on) in [
+        ("E1", "A", "2026-11-01"),
+        ("E2", "A", "2026-11-30"),
+        ("E3", "B", "2026-11-05"),
+        ("E4", "A", "2026-12-01"),
+    ] {
+        let write = || CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("books.Entry", id),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: serde_json::from_value(json!({ "account": account, "booked_on": on }))
+                        .expect("values"),
+                },
+            }],
+            ..CellCommit::empty()
+        };
+        native.commit(write()).expect("native write");
+        memory.commit(write()).expect("memory write");
+    }
+
+    let concrete = november("A", true);
+    let members = |objects: Option<Vec<PredicateObject>>| -> Vec<PredicateReadMember> {
+        objects
+            .expect("an object type is enumerable")
+            .iter()
+            .map(PredicateObject::member)
+            .collect()
+    };
+    let from_native = members(native.read_predicate(&concrete, 16).expect("native read"));
+    let from_memory = members(memory.read_predicate(&concrete, 16).expect("memory read"));
+    assert_eq!(ids(&from_native), ["E1", "E2"]);
+    assert_eq!(from_native, from_memory, "members and versions agree");
+
+    let interface: PredicateQuery =
+        serde_json::from_value(json!({ "objectType": "books.Dated" })).expect("predicate");
+    assert_eq!(
+        native.read_predicate(&interface, 16).expect("native read"),
+        None
+    );
+    assert_eq!(
+        memory.read_predicate(&interface, 16).expect("memory read"),
+        None
+    );
+    let pinned = || CellCommit {
+        predicate_reads: vec![PredicateReadExpectation {
+            predicate: interface.clone(),
+            members: Vec::new(),
+        }],
+        ..CellCommit::empty()
+    };
+    let native_refusal = native.commit(pinned()).expect_err("native refuses");
+    let memory_refusal = memory.commit(pinned()).expect_err("memory refuses");
+    assert_eq!(native_refusal.code(), "commit.invalid_predicate_read");
+    assert_eq!(memory_refusal.code(), native_refusal.code());
+
+    let pinned_concrete = |members: &[PredicateReadMember]| CellCommit {
+        predicate_reads: vec![PredicateReadExpectation {
+            predicate: concrete.clone(),
+            members: members.to_vec(),
+        }],
+        ..CellCommit::empty()
+    };
+    native
+        .commit(pinned_concrete(&from_native))
+        .expect("native commits an unchanged read");
+    memory
+        .commit(pinned_concrete(&from_memory))
+        .expect("memory commits an unchanged read");
 }
