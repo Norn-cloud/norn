@@ -1144,3 +1144,84 @@ proptest::proptest! {
         proptest::prop_assert_eq!(findings.iter().any(|d| d.code == codes::UNDECLARED_ADDITIVITY), !additive);
     }
 }
+
+fn question_wording() -> norn_checker::metric::question_display::QuestionWording {
+    use norn_checker::metric::question_display::{QuestionLabels, QuestionWording};
+    use norn_ir::deontic::TextDirection;
+    QuestionWording(std::collections::BTreeMap::from([
+        (
+            "en".into(),
+            QuestionLabels {
+                direction: TextDirection::Ltr,
+                population: "Population".into(),
+                measure: "Measure".into(),
+                by: "By".into(),
+                filters: "Where".into(),
+                effective_time: "Effective time".into(),
+                knowledge_time: "Knowledge policy".into(),
+            },
+        ),
+        (
+            "ar".into(),
+            QuestionLabels {
+                direction: TextDirection::Rtl,
+                population: "مجتمع البيانات".into(),
+                measure: "المقياس".into(),
+                by: "التجميع حسب".into(),
+                filters: "الشروط".into(),
+                effective_time: "وقت السريان".into(),
+                knowledge_time: "سياسة المعرفة".into(),
+            },
+        ),
+    ]))
+}
+
+proptest::proptest! {
+    #[test]
+    fn question_locale_identity(age in 1u64..=10000, pinned in proptest::bool::ANY) {
+        use norn_checker::metric::{compute::admit, question_display::render_question};
+        let (definitions,mut question,catalog) = keyed_compute_fixture();
+        question.freshness = if pinned { norn_ir::metric::FreshnessPolicy::AsOf { at:norn_ir::UtcTimestamp("2026-11-02T00:00:00Z".to_owned()) } } else { norn_ir::metric::FreshnessPolicy::Live { max_age_ms:norn_ir::WholeNumber(age) } };
+        let plan = admit(&definitions,&question,&catalog,100).expect("plan");
+        let wording = question_wording();
+        let en = render_question(&plan,&wording,"EN").expect("English");
+        let ar = render_question(&plan,&wording,"ar").expect("Arabic");
+        proptest::prop_assert_eq!(&en.question,&question);
+        proptest::prop_assert_eq!(&ar.question,&question);
+        proptest::prop_assert_eq!(&en.question_digest,&ar.question_digest);
+        proptest::prop_assert_eq!(&en.binding_digest,&ar.binding_digest);
+        proptest::prop_assert_eq!(en.slots.iter().map(|s|(&s.id,&s.text)).collect::<Vec<_>>(),ar.slots.iter().map(|s|(&s.id,&s.text)).collect::<Vec<_>>());
+        proptest::prop_assert_ne!(en.direction,ar.direction);
+        proptest::prop_assert!(en.slots[1].text.contains("kg"));
+        proptest::prop_assert!(en.slots[4].text.contains(&question.time_window.start.0));
+        let policy = if pinned { "as_of" } else { "live" };
+        proptest::prop_assert!(en.slots[5].text.contains(policy));
+    }
+}
+
+#[test]
+fn question_locale_identity_refuses_unknown_or_incomplete_wording_and_retains_denominator() {
+    use norn_checker::metric::{compute::admit, question_display::render_question};
+    let (mut definitions, mut question, catalog) = keyed_compute_fixture();
+    let mut denominator = definitions[0].clone();
+    denominator.name = "erpnext.other".into();
+    let mut rate: MetricDefinition = decode(&ratio());
+    rate.norn.time_dimension = definitions[0].norn.time_dimension.clone();
+    question.metrics[0].metric.clone_from(&rate.name);
+    definitions.extend([denominator, rate]);
+    let plan = admit(&definitions, &question, &catalog, 100).expect("ratio plan");
+    let mut wording = question_wording();
+    let en = render_question(&plan, &wording, "en").expect("English");
+    assert_eq!(en.slots[1].text.matches("Σ(").count(), 2);
+    assert_eq!(en.slots[1].text.matches("kg").count(), 2);
+    assert!(en.slots[1].text.contains(" / "));
+    assert_eq!(
+        render_question(&plan, &wording, "fr").expect_err("no fallback"),
+        "law.wording.unknown_locale"
+    );
+    wording.0.get_mut("ar").expect("Arabic").measure.clear();
+    assert_eq!(
+        render_question(&plan, &wording, "en").expect_err("all translations complete"),
+        "law.wording.incomplete_locale"
+    );
+}
