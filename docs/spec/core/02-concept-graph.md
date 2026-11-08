@@ -101,3 +101,5 @@ Present: `crates/norn-ir/src/entity_v2/`, `definition_catalog.rs`, `crates/norn-
 3. Evaluate authoritative classification and dependency capture; GRAPH-CLASSIFY plus incomplete-input refusals.
 4. Complete graph-wide required-link/owned-draft validation in 04 commit; GRAPH-DRAFT/STATE negatives.
 5. Connect effective member origins to 05 B2 law instantiation; GRAPH-DIAMOND, then lane C #227 core-aligned definitions.
+
+**VAL-DECIMAL-BIND-1:** An interface `decimal-binding` member obtains its exact unit and scale solely from the implementing type's concrete Decimal declaration, and same-group members require identical units/scales; missing bindings refuse `core.values.unit_binding_required`, mismatches refuse `core.values.unit_mismatch`, with no scalar or sibling-unit fallback.

@@ -6857,7 +6857,9 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
             PropertyType::Record { .. } | PropertyType::JsonExt { .. } | PropertyType::Ref { .. },
         )
         | EffectiveKind::Registry(_) => Type::Json,
-        EffectiveKind::Unresolved => return None,
+        EffectiveKind::Base(PropertyType::DecimalBinding { .. }) | EffectiveKind::Unresolved => {
+            return None;
+        }
     };
     Some(if property.nullable { ty.optional() } else { ty })
 }

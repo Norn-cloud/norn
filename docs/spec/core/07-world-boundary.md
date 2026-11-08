@@ -190,6 +190,8 @@ addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of a conservative retained declaration closure (inherited, referenced-type and interface constraints, plus every catalog interface, shared property type and extension, so changing any of them invalidates the pin), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
+
 OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
 in-memory subject index only while the native engine's private SQLite change
 counters remain unchanged; local writes, rollbacks and external commits invalidate

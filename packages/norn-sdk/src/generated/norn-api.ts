@@ -5130,7 +5130,7 @@ export interface components {
             propertyId: string;
         };
         /** @description The value kind of a property, tagged by `kind`. */
-        NornIrPropertyType: components["schemas"]["NornIrPropertyTypeOneOf0"] | components["schemas"]["NornIrPropertyTypeOneOf1"] | components["schemas"]["NornIrPropertyTypeOneOf2"] | components["schemas"]["NornIrPropertyTypeOneOf3"] | components["schemas"]["NornIrPropertyTypeOneOf4"] | components["schemas"]["NornIrPropertyTypeOneOf5"] | components["schemas"]["NornIrPropertyTypeOneOf6"] | components["schemas"]["NornIrPropertyTypeOneOf7"] | components["schemas"]["NornIrPropertyTypeOneOf8"] | components["schemas"]["NornIrPropertyTypeOneOf9"] | components["schemas"]["NornIrPropertyTypeOneOf10"];
+        NornIrPropertyType: components["schemas"]["NornIrPropertyTypeOneOf0"] | components["schemas"]["NornIrPropertyTypeOneOf1"] | components["schemas"]["NornIrPropertyTypeOneOf2"] | components["schemas"]["NornIrPropertyTypeOneOf3"] | components["schemas"]["NornIrPropertyTypeOneOf4"] | components["schemas"]["NornIrPropertyTypeOneOf5"] | components["schemas"]["NornIrPropertyTypeOneOf6"] | components["schemas"]["NornIrPropertyTypeOneOf7"] | components["schemas"]["NornIrPropertyTypeOneOf8"] | components["schemas"]["NornIrPropertyTypeOneOf9"] | components["schemas"]["NornIrPropertyTypeOneOf10"] | components["schemas"]["NornIrPropertyTypeOneOf11"];
         /**
          * @description EntityIR v2 payload of an `entity` artifact that carries a catalog of
          *     shared property types (non-empty; checker rule).
@@ -5188,8 +5188,20 @@ export interface components {
             /** @enum {string} */
             kind: "integer";
         };
-        /** @description The shared property type (local or registry) with this name. */
+        /**
+         * @description Opaque JSON (an extension payload), optionally described by a JSON
+         *     Schema document the checker does not interpret.
+         */
         NornIrPropertyTypeOneOf10: {
+            /** @enum {string} */
+            kind: "json-ext";
+            schema?: components["schemas"]["NornIrPropertyTypeOneOf10PropertySchema"];
+        };
+        NornIrPropertyTypeOneOf10PropertySchema: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /** @description The shared property type (local or registry) with this name. */
+        NornIrPropertyTypeOneOf11: {
             /** @enum {string} */
             kind: "ref";
             /** @description The referenced [`PropertyTypeDef`] name. */
@@ -5226,13 +5238,20 @@ export interface components {
             scale: number;
             unit?: components["schemas"]["NornIrUnitRef"];
         };
-        /** @description `true` or `false`. */
+        /** @description VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale. */
         NornIrPropertyTypeOneOf3: {
+            /** @description Same-name members in one interface bind identically. */
+            group: string;
+            /** @enum {string} */
+            kind: "decimal-binding";
+        };
+        /** @description `true` or `false`. */
+        NornIrPropertyTypeOneOf4: {
             /** @enum {string} */
             kind: "boolean";
         };
         /** @description An instant in time with an explicit timezone policy. */
-        NornIrPropertyTypeOneOf4: {
+        NornIrPropertyTypeOneOf5: {
             /** @enum {string} */
             kind: "timestamp";
             /**
@@ -5242,7 +5261,7 @@ export interface components {
             timezone: "utc" | "offset";
         };
         /** @description An ISO 8601 calendar date (`YYYY-MM-DD`) with no time and no zone. */
-        NornIrPropertyTypeOneOf5: {
+        NornIrPropertyTypeOneOf6: {
             /** @enum {string} */
             kind: "date";
         };
@@ -5250,12 +5269,12 @@ export interface components {
          * @description An exact elapsed duration (fixed-length units only; calendar periods
          *     such as months are not durations).
          */
-        NornIrPropertyTypeOneOf6: {
+        NornIrPropertyTypeOneOf7: {
             /** @enum {string} */
             kind: "duration";
         };
         /** @description One of a closed set of string values. */
-        NornIrPropertyTypeOneOf7: {
+        NornIrPropertyTypeOneOf8: {
             /** @enum {string} */
             kind: "enum";
             /** @description Declared values, in presentation order; unique and non-empty. */
@@ -5265,22 +5284,10 @@ export interface components {
          * @description A closed structured value. Every member is present; nullability of
          *     the containing property applies to the whole record.
          */
-        NornIrPropertyTypeOneOf8: {
+        NornIrPropertyTypeOneOf9: {
             /** @enum {string} */
             kind: "record";
             members: components["schemas"]["NornIrRecordMember"][];
-        };
-        /**
-         * @description Opaque JSON (an extension payload), optionally described by a JSON
-         *     Schema document the checker does not interpret.
-         */
-        NornIrPropertyTypeOneOf9: {
-            /** @enum {string} */
-            kind: "json-ext";
-            schema?: components["schemas"]["NornIrPropertyTypeOneOf9PropertySchema"];
-        };
-        NornIrPropertyTypeOneOf9PropertySchema: {
-            [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /**
          * @description Who proposed a definition.
