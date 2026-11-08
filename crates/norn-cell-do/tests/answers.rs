@@ -293,15 +293,26 @@ fn answers_need_the_stage_lineage_key_and_handles_are_per_secret() {
 /// The analytics cell as the Worker's constructor builds it: the runtime keyed
 /// through [`DemoQuestions::try_with_handle_key`] from the configured
 /// `NORN_LINEAGE_KEY` (a string in the Worker `env`), or refused.
-fn cell_configured(lineage_key: Option<&str>) -> Result<Cell, norn_cell_do::seed::SeedError> {
+fn cell_configured(lineage_key: Option<&str>) -> Result<Cell, String> {
+    let (host, plan, scope, principals) = unkeyed_parts();
+    let questions = DemoQuestions::new(plan, scope)
+        .try_with_handle_key(lineage_key.map(str::as_bytes))
+        .map_err(|refusal| refusal.to_string())?;
+    Ok((host, questions, principals))
+}
+
+fn unkeyed_parts() -> (
+    DevHost<NativeEngine>,
+    norn_checker::metric::compute::QuestionPlan,
+    norn_api::scope::CellScope,
+    FixturePrincipals,
+) {
     let (host, _, principals) = cell(NativeEngine::open_in_memory().unwrap());
     let scope = analytics::analytics_scope();
     let plan = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope)
         .unwrap()
         .plan;
-    let questions = DemoQuestions::new(plan, scope)
-        .try_with_handle_key(lineage_key.map(str::as_bytes))?;
-    Ok((host, questions, principals))
+    (host, plan, scope, principals)
 }
 
 /// S2: the Worker passes `NORN_LINEAGE_KEY` into the constructor. A missing or
@@ -315,7 +326,7 @@ fn the_configured_lineage_key_serves_authenticated_answers_and_traces() {
             panic!("{short:?} must refuse to open");
         };
         assert!(
-            refusal.0.contains("NORN_LINEAGE_KEY") && refusal.0.contains("32 bytes"),
+            refusal.contains("NORN_LINEAGE_KEY") && refusal.contains("32 bytes"),
             "{refusal}"
         );
     }
@@ -327,7 +338,10 @@ fn the_configured_lineage_key_serves_authenticated_answers_and_traces() {
     // A keyed handle: 64 lowercase hex digits (HMAC-SHA-256), not the content hash.
     let handle = answer["lineageRef"].as_str().unwrap();
     assert!(
-        handle.len() == 64 && handle.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+        handle.len() == 64
+            && handle
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
         "{handle}"
     );
     let trace = format!("/v1/questions/{QUESTION}/trace");
