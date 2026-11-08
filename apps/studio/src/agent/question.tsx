@@ -9,7 +9,8 @@ export interface QuestionVerdict {
   readonly question: unknown
   readonly admitted: boolean
   readonly plan: { readonly grain: string; readonly question: QuestionShape; readonly sums: readonly { readonly metric: string; readonly property: string }[]; readonly metrics: readonly { readonly name: string; readonly label: string }[] } | null
-  readonly findings: readonly { readonly code: string; readonly message: string }[]
+  /** Each finding as the checker wrote it, with its JSON pointer into the checked document when it names one. */
+  readonly findings: readonly { readonly code: string; readonly message: string; readonly pointer?: string | null }[]
 }
 
 interface QuestionShape {
@@ -20,6 +21,13 @@ interface QuestionShape {
   readonly window?: { readonly start?: string; readonly end?: string }
 }
 
+/** A finding the builder can place: a string code and message, and a pointer that is absent, null or a string. */
+const isFinding = (finding: unknown): boolean => {
+  if (finding === null || typeof finding !== "object") return false
+  const { code, message, pointer } = finding as Record<string, unknown>
+  return typeof code === "string" && typeof message === "string" && (pointer === undefined || pointer === null || typeof pointer === "string")
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
 /** A plan with the fields the card reads. */
@@ -28,13 +36,14 @@ const isPlan = (plan: unknown) =>
 
 /** A tool output is a question verdict only in the Worker's shape: an admitted one carries its plan, a refused one none. */
 export function questionVerdictOf(output: unknown): QuestionVerdict | undefined {
-  if (!isRecord(output) || output.kind !== "question" || typeof output.admitted !== "boolean" || !Array.isArray(output.findings)) return undefined
+  if (!isRecord(output) || output.kind !== "question" || typeof output.admitted !== "boolean" || !Array.isArray(output.findings) || !output.findings.every(isFinding)) return undefined
   if (output.admitted ? !isPlan(output.plan) : output.plan !== null) return undefined
   return output as unknown as QuestionVerdict
 }
 
 const words = (property: string | undefined) => (property ?? "").replaceAll("_", " ")
-const OPERATORS: Record<string, string> = { eq: "is", ne: "is not", lt: "is below", lte: "is at most", gt: "is above", gte: "is at least" }
+// The IR's filter operators (`norn_ir::metric::FilterOperator`).
+const OPERATORS: Record<string, string> = { eq: "is", ne: "is not", lt: "is below", le: "is at most", gt: "is above", ge: "is at least" }
 
 /** The checked plan in Business words: what it measures, of what, by what, for which records and over which window. */
 export function planWords(plan: NonNullable<QuestionVerdict["plan"]>): readonly [string, string][] {
