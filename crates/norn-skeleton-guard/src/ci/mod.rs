@@ -606,11 +606,7 @@ mod tests {
             }
         }
         // Trusted-policy evaluation stays hosted.
-        for job in [
-            "trusted-policy",
-            "phase",
-            "unknown",
-        ] {
+        for job in ["trusted-policy", "phase", "unknown"] {
             assert!(!super::runner_is_admitted(
                 path,
                 job,
