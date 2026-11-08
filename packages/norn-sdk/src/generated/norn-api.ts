@@ -245,6 +245,7 @@ export interface components {
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
+            flow?: null | components["schemas"]["FlowSummary"];
             /** @description The definition id. */
             id: string;
             /** @description Its kind. */
@@ -301,6 +302,8 @@ export interface components {
             kind: string;
             /** @description `active` or `retired`. */
             lifecycle: string;
+            /** @description With `uses`: the binding version this flow's performs are pinned to. */
+            pinnedVersion?: string | null;
             /** @description Its title. */
             title: string;
             /**
@@ -322,6 +325,17 @@ export interface components {
              */
             question: Record<string, never>;
         };
+        /** @description What a flow's install, read and list report. */
+        FlowSummary: {
+            /** @description The flow id, also the definition id. */
+            flowId: string;
+            /** @description The `decide` rule's artifact id. */
+            ruleArtifactId: string;
+            /** @description The Run object type. */
+            runType: string;
+            /** @description The flow's authored version. */
+            version: string;
+        };
         /** @description `POST /v1/definitions:install`. */
         InstallDefinitionRequest: {
             /**
@@ -339,6 +353,7 @@ export interface components {
         };
         /** @description An installed (or retired) version. */
         InstallDefinitionResponse: {
+            flow?: null | components["schemas"]["FlowSummary"];
             /** @description The definition id. */
             id: string;
             /** @description Always true. */
@@ -8677,8 +8692,10 @@ export interface operations {
                 include?: string;
                 /** @description Page size, 1–100 (default 50). */
                 limit?: number;
-                /** @description The previous page's cursor, bound to `kind` and `include`. */
+                /** @description The previous page's cursor, bound to `kind`, `include` and `uses`. */
                 cursor?: string;
+                /** @description With `kind=flow`: only flows whose performs use this binding id. */
+                uses?: string;
             };
             header?: never;
             path?: never;

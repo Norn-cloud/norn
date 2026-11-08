@@ -97,22 +97,9 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics
     let object = object_type()?;
     let units: ArtifactEnvelope = serde_json::from_str(UNITS).map_err(|e| fail("core.units", e))?;
     // The unit catalog is the trusted base its masses are admitted against.
-    let (model, mut input) = crate::seed::admit_set(&[units, entity(&object, scope)?])?;
     // At the K1 clock, so an upgraded cell's install never precedes its rows.
-    input.installed_at = CLOCK;
-    let mut store = CellStore::from_engine(engine, model.clone()).map_err(|e| fail("open", e))?;
-    store
-        .bind("scope", &scope.key())
-        .map_err(|e| fail("scope", e))?;
-    let installed = store
-        .read()
-        .installed_definitions(None)
-        .map_err(|e| fail("definitions", e))?;
-    if installed.is_none() {
-        store
-            .install_definitions(model, input, Some(0), &scope.key())
-            .map_err(|e| fail("definitions v1", e))?;
-    }
+    let mut store =
+        crate::seed::open_governed(engine, scope, &[units, entity(&object, scope)?], CLOCK)?;
     // A fresh cell's first commit is v1 and its second the K1 load; an
     // upgraded cell's first was the K1 load. One commit means no K1 yet.
     if store

@@ -420,6 +420,7 @@ fn definitions<E: SqlEngine>(
             "include",
             "limit",
             "cursor",
+            "uses",
         ],
         DefinitionsRoute::Get(_) => &["orgId", "environmentId", "version"],
         DefinitionsRoute::Admit | DefinitionsRoute::Install | DefinitionsRoute::Retire(_) => {
@@ -483,6 +484,7 @@ fn definitions<E: SqlEngine>(
                 include: fields.remove("include"),
                 limit,
                 cursor: fields.remove("cursor"),
+                uses: fields.remove("uses"),
             };
             document_json(&definition_routes::list_definitions(host, &query, actor)?)
         }

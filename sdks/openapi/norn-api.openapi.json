@@ -501,7 +501,16 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "The previous page's cursor, bound to `kind` and `include`.",
+            "description": "The previous page's cursor, bound to `kind`, `include` and `uses`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uses",
+            "in": "query",
+            "description": "With `kind=flow`: only flows whose performs use this binding id.",
             "required": false,
             "schema": {
               "type": "string"
@@ -1093,6 +1102,17 @@
           "restatementSha256"
         ],
         "properties": {
+          "flow": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FlowSummary",
+                "description": "For a flow: its id, version, rule and Run type."
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "description": "The definition id."
@@ -1220,6 +1240,13 @@
             "type": "string",
             "description": "`active` or `retired`."
           },
+          "pinnedVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `uses`: the binding version this flow's performs are pinned to."
+          },
           "title": {
             "type": "string",
             "description": "Its title."
@@ -1251,6 +1278,34 @@
           }
         },
         "additionalProperties": false
+      },
+      "FlowSummary": {
+        "type": "object",
+        "description": "What a flow's install, read and list report.",
+        "required": [
+          "flowId",
+          "version",
+          "ruleArtifactId",
+          "runType"
+        ],
+        "properties": {
+          "flowId": {
+            "type": "string",
+            "description": "The flow id, also the definition id."
+          },
+          "ruleArtifactId": {
+            "type": "string",
+            "description": "The `decide` rule's artifact id."
+          },
+          "runType": {
+            "type": "string",
+            "description": "The Run object type."
+          },
+          "version": {
+            "type": "string",
+            "description": "The flow's authored version."
+          }
+        }
       },
       "InstallDefinitionRequest": {
         "type": "object",
@@ -1306,6 +1361,17 @@
           "receipt"
         ],
         "properties": {
+          "flow": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FlowSummary",
+                "description": "For a flow: its id, version, rule and Run type."
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "description": "The definition id."
