@@ -240,7 +240,13 @@ fn a_retained_save_keeps_earlier_cutoffs_evaluable() {
     };
     let version = store.read().active_definitions_version().expect("read");
     store
-        .install_retained_definition(&kernel, version, "synthetic", &save)
+        .install_retained_definition(
+            store.model().clone(),
+            &kernel,
+            version,
+            "synthetic",
+            &save,
+        )
         .expect("retained save");
     let after = store
         .evaluate_question_known_at(&plan, context, point, |_| Ok(true))

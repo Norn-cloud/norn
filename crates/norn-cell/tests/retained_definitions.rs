@@ -312,12 +312,24 @@ fn a_retained_revision_cannot_change_the_kernel_set_or_receipt() {
     other_set.canonical_set = "[]".to_owned();
     for changed in [other_receipt, other_set] {
         assert!(matches!(
-            store.install_retained_definition(&changed, Some(1), SCOPE, &dashboard),
+            store.install_retained_definition(
+                store.model().clone(),
+                &changed,
+                Some(1),
+                SCOPE,
+                &dashboard
+            ),
             Err(CellError::DefinitionReceiptInvalid(_))
         ));
     }
     let installed = store
-        .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &dashboard)
+        .install_retained_definition(
+            store.model().clone(),
+            &input(&canonical, 20),
+            Some(1),
+            SCOPE,
+            &dashboard,
+        )
         .expect("unchanged kernel");
     let before = store
         .read()
