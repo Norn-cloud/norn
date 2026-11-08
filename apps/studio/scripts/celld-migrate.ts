@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process"
 // host, through its operator project, over the controller's existing SSH. Run it on the
 // controller BEFORE the deploy (expand first), so the deploy VM needs no host access.
 //
-//   bun scripts/celld-migrate.ts --commit <app commit> --stage next [--host hetzner]
+//   bun scripts/celld-migrate.ts --commit <app commit> --stage next [--host <ssh host>] (default: $NORN_CELLD_SSH)
 //
 // Migration files come from the app commit (`apps/studio/worker/migrations/NNNN_*.sql`). A file
 // the operator project already holds must be byte-identical: an applied migration is never
@@ -71,8 +71,8 @@ export function commitMigrations(commit: string, git: (...args: string[]) => str
 if (import.meta.main) {
   const argv = process.argv.slice(2)
   const value = (flag: string) => { const at = argv.indexOf(flag); return at < 0 ? undefined : argv[at + 1] }
-  const commit = value("--commit"), stage = value("--stage"), host = value("--host") ?? "hetzner"
-  if (commit === undefined || !/^[0-9a-f]{40}$/.test(commit) || stage === undefined) throw new Error("usage: celld-migrate.ts --commit <full sha> --stage <stage> [--host hetzner]")
+  const commit = value("--commit"), stage = value("--stage"), host = value("--host") ?? process.env.NORN_CELLD_SSH
+  if (commit === undefined || !/^[0-9a-f]{40}$/.test(commit) || stage === undefined || host === undefined || host === "") throw new Error("usage: celld-migrate.ts --commit <full sha> --stage <stage> [--host <ssh host>], with --host or NORN_CELLD_SSH set")
   // Keep the exact bytes git holds (git show adds no newline of its own).
   const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })
   const remote: Remote = (command, input) => {

@@ -38,7 +38,7 @@ test("an applied migration that changed is refused before anything is applied", 
 test("an unreachable D1 is its own refusal, so the deploy stops before shipping", () => {
   const refused = host({}, { status: 1, output: "error: connect to http://127.0.0.1:39673/runtime/__D1Database: Connection refused (os error 111)\n" })
   expect(() => migrate(refused.remote, "next", [m])).toThrow(D1Unreachable)
-  const noHost: Remote = () => ({ status: 255, output: "ssh: connect to host hetzner port 22: Connection timed out" })
+  const noHost: Remote = () => ({ status: 255, output: "ssh: connect to host cell-node port 22: Connection timed out" })
   expect(() => migrate(noHost, "next", [m])).toThrow(D1Unreachable)
   const broken = host({}, { status: 1, output: "near \"ALTR\": syntax error\n" })
   expect(() => migrate(broken.remote, "next", [m])).toThrow("migrations apply failed")
