@@ -1,7 +1,13 @@
 {
   "name": "@norn/authoring",
   "types": "./profile/norn-authoring.d.ts",
-  "exports": { ".": { "types": "./profile/norn-authoring.d.ts" } },
+  "exports": {
+    ".": {
+      "types": "./profile/norn-authoring.d.ts"
+    },
+    "./tsconfig.authoring.json": "./tsconfig.authoring.json",
+    "./schema/norn-project.schema.json": "./schema/norn-project.schema.json"
+  },
   "private": true,
   "description": "norn-effect/1 authoring profile: pinned effect + TypeScript Compiler API, symbol-resolution checker, conformance/rejection corpus (T7-EFX-1)",
   "license": "Apache-2.0",
