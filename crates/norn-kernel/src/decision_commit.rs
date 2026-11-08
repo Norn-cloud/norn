@@ -1879,7 +1879,11 @@ impl<X> DecisionRefusal<X> {
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
         use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
 
-        let invalid = |reason| Self::InvalidOutput { reason };
+        // A decision prepares no link writes or set reads, so a link or
+        // read-set refusal means its commit was malformed.
+        if let Some(reason) = Self::read_set_reason(&error) {
+            return Self::InvalidOutput { reason };
+        }
         match error {
             CommitError::IdentityReuse => Self::IdentityReuse,
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
@@ -1910,42 +1914,22 @@ impl<X> DecisionRefusal<X> {
                 expected,
                 current,
             },
-            // A decision writes no links; a link refusal is a malformed commit.
-            CommitError::DuplicateLink { key } => {
-                invalid(format!("link {key} appears twice in one commit"))
-            }
-            CommitError::LinkConflict { key, .. } => {
-                invalid(format!("link {key} changed since the turn read it"))
-            }
-            CommitError::LinkReadConflict { source_key, link } => invalid(format!(
-                "link targets for {source_key} -{link}-> changed since the turn read them"
-            )),
-            CommitError::UnsupportedLinkRead { source_key, link } => invalid(format!(
-                "host cannot verify link targets for {source_key} -{link}->"
-            )),
-            CommitError::DuplicateLinkRead { source_key, link } => invalid(format!(
-                "link targets for {source_key} -{link}-> appear more than once"
-            )),
-            CommitError::LinkReadTooLarge {
-                source_key,
-                link,
-                actual,
-                max,
-            } => Self::link_read_limit_refusal(&source_key, &link, actual, max),
-            CommitError::InvalidLinkRead { source_key, link } => Self::InvalidOutput {
-                reason: format!("link targets for {source_key} -{link}-> are malformed"),
-            },
-            CommitError::DanglingLink { key, missing } => Self::InvalidOutput {
-                reason: format!("link {key} would dangle: {missing} does not exist"),
-            },
-            CommitError::LinkTarget { key } => Self::InvalidOutput {
-                reason: format!("link {key} is not a declared link to an admitted target"),
-            },
-            CommitError::LinkCardinality { key, endpoint } => Self::InvalidOutput {
-                reason: format!("link {key} exceeds its cardinality at {endpoint}"),
-            },
-            CommitError::LinkRequired { parent, link } => Self::InvalidOutput {
-                reason: format!("{parent} has no required link {link}"),
+            // Mapped by `read_set_reason` above; the arm keeps the match exhaustive.
+            read_set @ (CommitError::DuplicateLink { .. }
+            | CommitError::LinkConflict { .. }
+            | CommitError::LinkReadConflict { .. }
+            | CommitError::UnsupportedLinkRead { .. }
+            | CommitError::DuplicateLinkRead { .. }
+            | CommitError::LinkReadTooLarge { .. }
+            | CommitError::InvalidLinkRead { .. }
+            | CommitError::PredicateReadConflict { .. }
+            | CommitError::UnsupportedPredicateRead { .. }
+            | CommitError::InvalidPredicateRead { .. }
+            | CommitError::DanglingLink { .. }
+            | CommitError::LinkTarget { .. }
+            | CommitError::LinkCardinality { .. }
+            | CommitError::LinkRequired { .. }) => Self::InvalidOutput {
+                reason: read_set.to_string(),
             },
             CommitError::TypeMismatch { key, concrete } => Self::InvalidOutput {
                 reason: format!("{key} is live as {}", concrete.as_str()),
@@ -1982,17 +1966,93 @@ impl<X> DecisionRefusal<X> {
         }
     }
 
-    fn link_read_limit_refusal(
+    /// The malformed-commit reason of a link or predicate read-set error;
+    /// `None` for every other commit error.
+    fn read_set_reason(error: &CommitError<X>) -> Option<String> {
+        match error {
+            CommitError::DuplicateLink { key } => {
+                Some(format!("link {key} appears twice in one commit"))
+            }
+            CommitError::LinkConflict { key, .. } => {
+                Some(format!("link {key} changed since the turn read it"))
+            }
+            CommitError::LinkReadConflict { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> changed since the turn read them"
+            )),
+            CommitError::UnsupportedLinkRead { source_key, link } => Some(format!(
+                "host cannot verify link targets for {source_key} -{link}->"
+            )),
+            CommitError::DuplicateLinkRead { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> appear more than once"
+            )),
+            CommitError::LinkReadTooLarge {
+                source_key,
+                link,
+                actual,
+                max,
+            } => Some(Self::link_read_limit_reason(
+                source_key, link, *actual, *max,
+            )),
+            CommitError::InvalidLinkRead { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> are malformed"
+            )),
+            CommitError::PredicateReadConflict { object_type } => Some(format!(
+                "objects matching a predicate over {object_type:?} changed since the turn read them"
+            )),
+            CommitError::UnsupportedPredicateRead { object_type } => Some(format!(
+                "host cannot verify a predicate read over {object_type:?}"
+            )),
+            CommitError::InvalidPredicateRead {
+                object_type,
+                reason,
+            } => Some(format!(
+                "predicate read over {object_type:?} is malformed: {reason}"
+            )),
+            CommitError::DanglingLink { key, missing } => {
+                Some(format!("link {key} would dangle: {missing} does not exist"))
+            }
+            CommitError::LinkTarget { key } => Some(format!(
+                "link {key} is not a declared link to an admitted target"
+            )),
+            CommitError::LinkCardinality { key, endpoint } => {
+                Some(format!("link {key} exceeds its cardinality at {endpoint}"))
+            }
+            CommitError::LinkRequired { parent, link } => {
+                Some(format!("{parent} has no required link {link}"))
+            }
+            CommitError::IdentityReuse
+            | CommitError::AtomicBoundary { .. }
+            | CommitError::AtomicDeliveryBoundary { .. }
+            | CommitError::Law { .. }
+            | CommitError::IdentityCollision { .. }
+            | CommitError::DuplicateKey { .. }
+            | CommitError::OwnedRowsProtected { .. }
+            | CommitError::IdentifierTooLong { .. }
+            | CommitError::NotPending { .. }
+            | CommitError::Conflict { .. }
+            | CommitError::TypeMismatch { .. }
+            | CommitError::AccountingPosting { .. }
+            | CommitError::InvariantViolation { .. }
+            | CommitError::InvariantBudgetExceeded { .. }
+            | CommitError::InvariantModel { .. }
+            | CommitError::EffectiveValues { .. }
+            | CommitError::TraversalLimitExceeded { .. }
+            | CommitError::ObservationAuthorization
+            | CommitError::EventLimitExceeded { .. }
+            | CommitError::Overflow
+            | CommitError::Host(_) => None,
+        }
+    }
+
+    fn link_read_limit_reason(
         source_key: &FactKey,
         link: &str,
         actual: usize,
         max: usize,
-    ) -> Self {
-        Self::InvalidOutput {
-            reason: format!(
-                "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
-            ),
-        }
+    ) -> String {
+        format!(
+            "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
+        )
     }
 
     fn commit_identifier_refusal(
@@ -2293,8 +2353,7 @@ fn prepare_decision_with_limits_for<X>(
         writes,
         events,
         effects,
-        links: Vec::new(),
-        link_reads: Vec::new(),
+        ..CellCommit::empty()
     })
 }
 
@@ -2415,6 +2474,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: Vec::new(),
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     match host.commit(commit) {
         Ok(receipt) => {

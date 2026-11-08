@@ -68,6 +68,7 @@ mod guard_diagnostic;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
+pub mod predicate_read;
 pub use partition_slice::{PartitionSlice, load_partition_slice};
 mod synchronous_rule;
 pub use norn_decisions::DecisionBinding;
@@ -102,8 +103,9 @@ pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,
     FactWrite, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkState,
-    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, Provenance,
-    SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
+    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateObject,
+    PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance, SerializationLane,
+    WrittenLinkVersion, WrittenVersion, check_commit,
 };
 pub use decider::{
     Decider, Decision, DecisionOf, EnvelopeKind, Step, StepError, StepOf, StepResult, fold, replay,

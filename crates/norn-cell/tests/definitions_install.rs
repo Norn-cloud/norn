@@ -7013,6 +7013,21 @@ norn_testkit::proptest::proptest! {
         stale.reads.push(norn_kernel::FactExpectation { key: key.clone(), expected });
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
         let mut written = norn_kernel::CellCommit::empty();
+        let predicate: norn_kernel::PredicateQuery = serde_json::from_value(serde_json::json!({"objectType": "quality.Measurement"})).expect("predicate");
+        // A disputed stored object refuses the governed read; without one there is nothing to match.
+        if first_nfc {
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4), Err(CellError::SourceIdentityDisputed)));
+        } else {
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4), Ok(Some(ref objects)) if objects.is_empty()));
+        }
+        let mut pinned = norn_kernel::CellCommit::empty();
+        pinned.predicate_reads.push(norn_kernel::PredicateReadExpectation { predicate, members: vec![norn_kernel::PredicateReadMember { key: key.clone(), version: expected }] });
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, pinned), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
+        if first_nfc {
+            let mut unpinned = norn_kernel::CellCommit::empty();
+            unpinned.predicate_reads.push(norn_kernel::PredicateReadExpectation { predicate: serde_json::from_value(serde_json::json!({"objectType": "quality.Measurement"})).expect("predicate"), members: Vec::new() });
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, unpinned), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
+        }
         written.writes.push(norn_kernel::FactWrite { key, expected, mutation: norn_kernel::FactMutation::Put { values:BTreeMap::from([("purity".into(), Value::from_json_text("0.90").expect("value"))]) } });
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
         drop(cell);

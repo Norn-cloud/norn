@@ -356,6 +356,7 @@ fn decision_result_is_one_prepared_transition() {
         ],
         links: vec![],
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     assert_eq!(prepared, expected);
     // Preparing is pure: the same turn prepares the same commit.
