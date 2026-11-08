@@ -493,3 +493,13 @@ and the existing discovery coefficient/work ceilings. Named scenarios: true
 fractional candidate with full evidence, holdout near-miss with exact residual,
 no-signal control, duplicate record, unit separation, oversize window and measured
 256-record fixture. Law drift, misfit rules and statistical guards remain open.
+
+
+### Warning-severity governing laws (LAW-COMMIT-1 / OBS-EVIDENCE-1)
+
+Severity controls display, never governing authority. Every verified governing-law
+failure is integrity-classified: observed facts retain warning evidence and are
+quarantined, while native writes refuse atomically. Non-law quality warnings
+retain their separate quality classification. The named cell scenario
+`warning_severity_governing_law_quarantines_observed_fact` checks native refusal,
+persisted warning/pin, quarantine and recovery after a valid correction.
