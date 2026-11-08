@@ -15,6 +15,21 @@ pub fn check_artifact_set(artifacts_json: &str, context_json: &str) -> Result<St
     crate::check_artifact_set_json(artifacts_json, context_json).map_err(JsError::from)
 }
 
+/// `admitQuestion(artifactsJson, metricsJson, questionJson)`: see
+/// [`crate::admit_question_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = admitQuestion)]
+pub fn admit_question(
+    artifacts_json: &str,
+    metrics_json: &str,
+    question_json: &str,
+) -> Result<String, JsError> {
+    crate::admit_question_json(artifacts_json, metrics_json, question_json).map_err(JsError::from)
+}
+
 /// `lifecycleDiagrams(artifactsJson)`: see [`crate::lifecycle_diagrams_json`].
 ///
 /// # Errors
@@ -98,6 +113,16 @@ pub fn function_contract(
         receipt_json.as_deref(),
     )
     .map_err(JsError::from)
+}
+
+/// `checkAgent(agentJson, contextJson)`: see [`crate::check_agent_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = checkAgent)]
+pub fn check_agent(agent_json: &str, context_json: &str) -> Result<String, JsError> {
+    crate::check_agent_json(agent_json, context_json).map_err(JsError::from)
 }
 
 /// `toolPort(schemaJson)`: see [`crate::tool_port_json`].

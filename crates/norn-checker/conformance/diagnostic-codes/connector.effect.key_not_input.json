@@ -1,0 +1,7 @@
+{
+  "code": "connector.effect.key_not_input",
+  "message": "a command's providerKey must name one of the tool's own string inputs",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
