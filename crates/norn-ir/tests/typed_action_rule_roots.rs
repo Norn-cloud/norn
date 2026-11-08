@@ -613,7 +613,6 @@ fn composed_link_source_is_optional_closed_and_object_only() {
     );
 }
 
-
 #[test]
 fn parameter_slice_contract_is_closed_and_lossless() {
     let wire = serde_json::json!({"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"effectiveAt","precedence":[{"orgId":"org_demo"},{}],"defaultFrom":"defaultRate"}});
