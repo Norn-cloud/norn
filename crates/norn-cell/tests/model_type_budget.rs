@@ -30,12 +30,10 @@ fn more_than_4096_types_make_model_new_refuse() {
         property_types: &[],
     })
     .expect_err("an unclassifiable catalog must not become a model");
-    match refusal {
-        CellError::EffectiveViewRefused(refusal) => {
-            assert_eq!((refusal.dimension, refusal.limit), ("types", 4_096));
-        }
-        other => panic!("expected the effective-view refusal, got {other:?}"),
-    }
+    let CellError::EffectiveViewRefused(refused) = refusal else {
+        panic!("expected the effective-view refusal, got {refusal:?}");
+    };
+    assert_eq!((refused.dimension, refused.limit), ("types", 4_096));
 }
 
 #[test]
