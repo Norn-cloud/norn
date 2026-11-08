@@ -137,16 +137,20 @@ fn run(command: Command) -> Result<(String, bool), String> {
                 digest,
                 &rule,
             )?;
+            let mut accepted = 0_u64;
+            let mut refused = 0_u64;
             for line in std::io::stdin().lock().lines() {
                 let line = line.map_err(|error| error.to_string())?;
                 let digest = decision.closure_digest();
                 let response = match decision.run(&line, units) {
                     Ok(output) => {
+                        accepted = accepted.checked_add(1).ok_or("eval counter overflow")?;
                         format!(
                             "{{\"ok\":true,\"closureDigest\":\"{digest}\",\"output\":{output}}}"
                         )
                     }
                     Err(error) => {
+                        refused = refused.checked_add(1).ok_or("eval counter overflow")?;
                         serde_json::json!({"ok":false,"closureDigest":digest,"error":error})
                             .to_string()
                     }
@@ -154,7 +158,12 @@ fn run(command: Command) -> Result<(String, bool), String> {
                 writeln!(std::io::stdout().lock(), "{response}")
                     .map_err(|error| error.to_string())?;
             }
-            Ok((String::new(), true))
+            writeln!(
+                std::io::stderr().lock(),
+                "norn eval: {accepted} accepted, {refused} refused"
+            )
+            .map_err(|error| error.to_string())?;
+            Ok((String::new(), refused == 0))
         }
         Command::SourceDigest { dir } => source_digest(&dir).map(|document| (document, true)),
         Command::Check { artifacts, context } => {
