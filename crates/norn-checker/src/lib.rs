@@ -60,9 +60,9 @@ mod finite;
 pub mod flow_source_map;
 pub mod function;
 mod graph;
-mod inheritance;
 /// Closure-keyed structural admission evidence reuse.
 pub mod incremental;
+mod inheritance;
 pub mod interfaces;
 pub mod jdm_profile;
 pub mod layout;
