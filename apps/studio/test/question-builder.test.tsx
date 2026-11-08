@@ -15,6 +15,7 @@ const catalog: QuestionCatalog = {
   objectSet: "demo.Conversion",
   properties: objectType.properties.map(({ id, type }: { id: string; type: { kind: string; unit?: { code: string } } }) => ({ name: id, kind: type.kind, unit: type.unit?.code ?? null })),
   metrics: metrics.map(({ name, label, type }: { name: string; label: string; type: string }) => ({ name, label, type })),
+  declarations: { metrics, objectType },
   grains: ["day", "week", "month", "quarter", "year"],
   operators: ["eq", "ne", "lt", "le", "gt", "ge"],
   example: cell,

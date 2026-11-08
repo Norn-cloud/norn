@@ -11,6 +11,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { list, type Issue } from "@/lib/editor"
 import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
 import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
+import { RunQuestion } from "./run.tsx"
 
 const EMPTY: Dashboard = { title: "", tiles: [] }
 const VIEWS = [["chart:line", "Line chart"], ["chart:area", "Area chart"], ["chart:bar", "Bar chart"], ["table", "Table"]] as const
@@ -87,8 +88,8 @@ export function DashboardsPage() {
   )
 }
 
-function TileCard({ tile, index, count, invalid, onChange, onEdit, onMove, onDuplicate, onRemove }: {
-  readonly tile: Tile; readonly index: number; readonly count: number; readonly invalid: boolean
+function TileCard({ tile, index, count, invalid, catalog, onChange, onEdit, onMove, onDuplicate, onRemove }: {
+  readonly tile: Tile; readonly index: number; readonly count: number; readonly invalid: boolean; readonly catalog: QuestionCatalog
   readonly onChange: (tile: Tile) => void; readonly onEdit: () => void; readonly onMove: (to: number) => void; readonly onDuplicate: () => void; readonly onRemove: () => void
 }) {
   return (
@@ -107,7 +108,7 @@ function TileCard({ tile, index, count, invalid, onChange, onEdit, onMove, onDup
         </select>
         <Button type="button" variant="outline" size="sm" onClick={onEdit}><Pencil />Edit question</Button>
       </div>
-      <p className="rounded-lg bg-muted px-3 py-6 text-center text-sm text-muted-foreground">Not run yet: the evaluate route isn't connected.</p>
+      <RunQuestion key={JSON.stringify(tile.question)} question={tile.question} catalog={catalog} compact />
     </div>
   )
 }
@@ -185,7 +186,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       <div data-field="tiles" className="grid gap-4 lg:grid-cols-2">
         {dashboard.tiles.length === 0 && <div className="lg:col-span-2"><EmptyState icon={LayoutDashboard}>No questions on this dashboard yet.</EmptyState></div>}
         {dashboard.tiles.map((tile, index) => (
-          <TileCard key={tile.id} tile={tile} index={index} count={dashboard.tiles.length} invalid={invalid(`tile.${index}`)}
+          <TileCard key={tile.id} tile={tile} index={index} count={dashboard.tiles.length} invalid={invalid(`tile.${index}`)} catalog={catalog}
             onChange={(next) => tiles(dashboard.tiles.map((t, at) => at === index ? next : t))}
             onEdit={() => setEditing(index)}
             onMove={(to) => tiles(list.move(dashboard.tiles, index, to))}
