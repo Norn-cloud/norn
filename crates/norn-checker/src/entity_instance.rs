@@ -1702,6 +1702,7 @@ pub struct EffectiveCatalog {
     interface_names: BTreeSet<String>,
     links_by_name: BTreeMap<String, Vec<EffectiveLink>>,
     lineages: BTreeMap<String, Vec<ObjectTypeName>>,
+    conserved_metric_terms: BTreeMap<String, BTreeSet<PropertyId>>,
 }
 
 /// Codes whose findings depend on the layer an artifact is installed in.
@@ -1714,6 +1715,29 @@ pub(crate) const LAYER_DEPENDENT: &[&str] = &[
 ];
 
 impl EffectiveCatalog {
+    // Admission evidence stays separate from the value/model contract carried
+    // into the existing compute plan and checked again by the native cell.
+    pub(crate) fn record_conserved_metric_terms(
+        &mut self,
+        object_type: &str,
+        terms: &BTreeSet<PropertyId>,
+    ) {
+        self.conserved_metric_terms
+            .entry(object_type.to_owned())
+            .or_default()
+            .extend(terms.iter().cloned());
+    }
+
+    pub(crate) fn is_conserved_metric_term(
+        &self,
+        object_type: &str,
+        property: &PropertyId,
+    ) -> bool {
+        self.conserved_metric_terms
+            .get(object_type)
+            .is_some_and(|terms| terms.contains(property))
+    }
+
     /// Build the catalog of `artifacts` (see the type docs).
     #[must_use]
     pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Self {

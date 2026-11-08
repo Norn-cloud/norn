@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useView, type View } from "@/lib/view"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
-import { recordedTransport } from "./lib/transport.ts"
+import { transport } from "./lib/transport.ts"
 import { ObjectRecords } from "./objects.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
@@ -49,14 +50,18 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
   )
 }
 
+/** Business shows a type's plain one-line summary; Technical shows the registry's own description and the type's id. */
+const about = (concept: Concept, view: View) => view === "technical" ? concept.description ?? concept.summary : concept.summary
+
 function ConceptCard({ concept }: { readonly concept: Concept }) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
+  const { view } = useView()
   return (
     <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
       <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
         <CardHeader>
           <CardTitle>{concept.title}</CardTitle>
-          <CardDescription className="line-clamp-2 min-h-[2lh]">{concept.description ?? "No description declared."}</CardDescription>
+          <CardDescription className="line-clamp-2 min-h-[2lh]">{about(concept, view)}</CardDescription>
         </CardHeader>
         <CardContent className="mt-auto space-y-3 text-sm">
           <p className="text-muted-foreground tabular-nums">{concept.fields.length} facts · {concept.relationships.length} links</p>
@@ -119,6 +124,8 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
     ? <Link to="/sources/$concept" params={{ concept: target }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(target)}</Link>
     : <span>{conceptTitle(target)}</span>
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
+  const { view } = useView()
+  const text = about(concept, view)
   return (
     <article className="space-y-6">
       <header className="space-y-2">
@@ -126,9 +133,9 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
         <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <Badge variant="secondary">{concept.definition === "interface" ? "Shared interface" : systems.length > 0 ? `Fed by ${systems.join(", ")}` : "No connected system feeds it"}</Badge>
           <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>
-          <span className="font-mono">{concept.name}</span>
+          {view === "technical" && <span className="font-mono">{concept.name}</span>}
         </div>
-        <p className="max-w-2xl text-muted-foreground">{concept.description ?? "No description declared."}</p>
+        {text !== undefined && <p className="max-w-2xl text-muted-foreground">{text}</p>}
         {concept.parents.length > 0 && <p className="text-sm">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
       </header>
       <Panel icon={Shapes} label="Facts recorded">
@@ -193,15 +200,15 @@ const OVERVIEW_GROUPS: readonly { readonly label: string; readonly has: (concept
 
 /** The object types and shared interfaces, for the submenu island. */
 export function useSourcesMenu(): readonly MenuEntry[] | undefined {
-  const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
+  const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
-    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, tint: definition === "object type" ? (1 as const) : (3 as const) })))
+    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, kind: "objectType" as const })))
 }
 
 /** The admitted catalog, indexed once per read. */
 export function useCatalog() {
-  const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
+  const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return { read, catalog }
 }
@@ -209,7 +216,8 @@ export function useCatalog() {
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
   const [search, setSearch] = useState("")
-  const matches = (concept: Concept) => `${concept.title} ${concept.description ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
+  const { view } = useView()
+  const matches = (concept: Concept) => `${concept.title} ${about(concept, view) ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
     <section className="space-y-8">
       <div className="space-y-2">

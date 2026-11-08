@@ -3305,6 +3305,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: link_writes,
         link_reads: action_slice.link_reads,
+        predicate_reads: Vec::new(),
     };
     if let Some(meter) = meter.as_deref() {
         meter.check(counts).map_err(|exceeded| {
@@ -3342,6 +3343,7 @@ where
                     | CommitError::LinkConflict { .. }
                     | CommitError::LinkReadConflict { .. }
                     | CommitError::UnsupportedLinkRead { .. }
+                    | CommitError::PredicateReadConflict { .. }
                     | CommitError::NotPending { .. }
             ) && let Some(outcome) = replay_parent_rows_after_race(
                 host,
@@ -3960,6 +3962,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: created_links,
         link_reads,
+        predicate_reads: Vec::new(),
     };
     check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
     let quantity = super::action_quantity::prepare_quantity_action(call, &effective_input)?;
@@ -4384,6 +4387,7 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         CommitError::Conflict { .. }
             | CommitError::LinkReadConflict { .. }
             | CommitError::UnsupportedLinkRead { .. }
+            | CommitError::PredicateReadConflict { .. }
             | CommitError::NotPending { .. }
     ) {
         // A concurrent call committed first (it changed the target,
@@ -4482,6 +4486,9 @@ fn precondition_read_refusal<X>(
         | CommitError::DuplicateLinkRead { .. }
         | CommitError::LinkReadTooLarge { .. }
         | CommitError::InvalidLinkRead { .. }
+        | CommitError::PredicateReadConflict { .. }
+        | CommitError::UnsupportedPredicateRead { .. }
+        | CommitError::InvalidPredicateRead { .. }
         | CommitError::DanglingLink { .. }
         | CommitError::LinkTarget { .. }
         | CommitError::LinkCardinality { .. }
@@ -4518,6 +4525,9 @@ fn precondition_read_refusal<X>(
         | CommitError::DuplicateLinkRead { .. }
         | CommitError::LinkReadTooLarge { .. }
         | CommitError::InvalidLinkRead { .. }
+        | CommitError::PredicateReadConflict { .. }
+        | CommitError::UnsupportedPredicateRead { .. }
+        | CommitError::InvalidPredicateRead { .. }
         | CommitError::DanglingLink { .. }
         | CommitError::LinkTarget { .. }
         | CommitError::LinkCardinality { .. }

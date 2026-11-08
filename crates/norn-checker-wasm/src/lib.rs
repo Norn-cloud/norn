@@ -958,6 +958,76 @@ pub fn function_contract_json(
     .to_string())
 }
 
+fn unsupported_json(unsupported: &norn_checker::tool_ports::Unsupported) -> Value {
+    json!({
+        "code": unsupported.reason.code(),
+        "path": unsupported.path,
+        "message": unsupported.reason.to_string(),
+    })
+}
+
+/// A gateway tool schema as a Norn port type:
+/// `{format: "norn-checker-abi/tool-port@1", ok: true, port}` or
+/// `{…, ok: false, refusal: {code, path, message}}`. See
+/// [`norn_checker::tool_ports::ports_from_schema`].
+///
+/// # Errors
+///
+/// [`AbiError::InvalidInput`] when `schemaJson` is not JSON.
+pub fn tool_port_json(schema_json: &str) -> Result<String, AbiError> {
+    let schema = parse_json("schemaJson", schema_json)?;
+    let body = match norn_checker::tool_ports::ports_from_schema(&schema) {
+        Ok(port) => json!({"format": TOOL_PORT_FORMAT, "ok": true, "port": port.to_json()}),
+        Err(unsupported) => {
+            json!({"format": TOOL_PORT_FORMAT, "ok": false, "refusal": unsupported_json(&unsupported)})
+        }
+    };
+    Ok(body.to_string())
+}
+
+/// Whether an edge from a port of `sourceSchemaJson` into a port of
+/// `targetSchemaJson` checks: `{format: "norn-checker-abi/tool-edge@1", ok}`
+/// with `refusal: {code, path, expected, found}` on a mismatch, or
+/// `refusal: {code, path, message, side}` when either schema has no port type.
+///
+/// # Errors
+///
+/// [`AbiError::InvalidInput`] when either argument is not JSON.
+pub fn tool_edge_json(
+    source_schema_json: &str,
+    target_schema_json: &str,
+) -> Result<String, AbiError> {
+    use norn_checker::tool_ports::{edge_refusal, ports_from_schema};
+    let source = parse_json("sourceSchemaJson", source_schema_json)?;
+    let target = parse_json("targetSchemaJson", target_schema_json)?;
+    let lowered = |schema: &Value, side: &str| {
+        ports_from_schema(schema).map_err(|unsupported| {
+            json!({
+                "code": unsupported.reason.code(),
+                "path": unsupported.path,
+                "message": unsupported.reason.to_string(),
+                "side": side,
+            })
+        })
+    };
+    let body = match (lowered(&source, "source"), lowered(&target, "target")) {
+        (Err(refusal), _) | (_, Err(refusal)) => {
+            json!({"format": TOOL_EDGE_FORMAT, "ok": false, "refusal": refusal})
+        }
+        (Ok(source), Ok(target)) => match edge_refusal(&source, &target) {
+            None => json!({"format": TOOL_EDGE_FORMAT, "ok": true}),
+            Some(refusal) => json!({"format": TOOL_EDGE_FORMAT, "ok": false, "refusal": {
+                "code": refusal.code, "path": refusal.path,
+                "expected": refusal.expected, "found": refusal.found,
+            }}),
+        },
+    };
+    Ok(body.to_string())
+}
+
+const TOOL_PORT_FORMAT: &str = "norn-checker-abi/tool-port@1";
+const TOOL_EDGE_FORMAT: &str = "norn-checker-abi/tool-edge@1";
+
 /// The sub-decision closure of the rule `artifact_id` in `artifacts_json`
 /// (`norn_checker::rule_closure`, the closure admission bounds), for an
 /// offline evaluator that holds the same envelopes.
@@ -1016,6 +1086,74 @@ pub fn version_json() -> String {
         "exprProfile": EXPR_PROFILE,
     })
     .to_string()
+}
+
+/// Format tag of [`admit_question_json`] output.
+pub const QUESTION_FORMAT: &str = "norn-checker-abi/question@1";
+
+/// Admit a proposed question against a world: `artifacts_json` is the world's
+/// entity envelopes (the catalog), `metrics_json` its metric definitions and
+/// `question_json` one `QuestionIR`. Runs `check_metrics_and_questions` and
+/// `metric::compute::admit` (the same admission the cell uses) and returns
+/// `{"format", "admitted", "diagnostics", "plan"}`. The artifact set is
+/// checked first (`check_artifact_set`, as one installed layer); its error
+/// findings refuse the question. `plan` is the checked question with its
+/// grain, the sums it reduces to and the full metric declarations used; it is
+/// `null` when refused. Nothing is evaluated: admission is not a result.
+///
+/// # Errors
+///
+/// [`AbiError`] when an argument is not JSON of the expected shape.
+pub fn admit_question_json(
+    artifacts_json: &str,
+    metrics_json: &str,
+    question_json: &str,
+) -> Result<String, AbiError> {
+    let artifacts = parse_array("artifacts", artifacts_json)?;
+    let refused = |findings: &[Diagnostic]| {
+        json!({ "format": QUESTION_FORMAT, "admitted": false, "diagnostics": diagnostics_to_json(findings), "plan": null }).to_string()
+    };
+    let envelopes = match decode_envelopes(&artifacts) {
+        Ok(envelopes) => envelopes,
+        Err(findings) => return Ok(refused(&findings)),
+    };
+    let metrics: Vec<norn_ir::MetricDefinition> = serde_json::from_str(metrics_json)
+        .map_err(|error| invalid("metrics", error.to_string()))?;
+    let question: norn_ir::QuestionIR = serde_json::from_str(question_json)
+        .map_err(|error| invalid("question", error.to_string()))?;
+    // The world is one installed layer: no base, no tenant, no registry refs.
+    // A malformed catalog is refused before any question is admitted over it.
+    let registry = BTreeSet::new();
+    let set_findings = check_artifact_set(
+        &envelopes,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    if has_errors(&set_findings) {
+        return Ok(refused(&set_findings));
+    }
+    let catalog = norn_checker::EffectiveCatalog::from_artifacts(&envelopes);
+    // The cell's bound for one question's population (norn-cell-do analytics).
+    match norn_checker::metric::compute::admit(&metrics, &question, &catalog, 100) {
+        Err(findings) => Ok(refused(&findings)),
+        Ok(plan) => {
+            let output = json!({
+                "format": QUESTION_FORMAT,
+                "admitted": true,
+                "diagnostics": diagnostics_to_json(&[]),
+                "plan": {
+                    "grain": plan.grain(),
+                    "question": plan.question(),
+                    "sums": plan.sums().iter().map(|sum| json!({ "metric": sum.name, "property": sum.property.id })).collect::<Vec<_>>(),
+                    "metrics": plan.definitions(),
+                },
+            });
+            Ok(output.to_string())
+        }
+    }
 }
 
 fn metric_declarations(metrics_json: &str) -> Result<Vec<norn_ir::MetricDefinition>, AbiError> {
