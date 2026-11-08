@@ -54,3 +54,18 @@ test("the secret-bearing config is created exclusively, readable by its owner on
   expect(statSync(path).mode & 0o777).toBe(0o644)
   expect(readFileSync(path, "utf8")).toBe("{}")
 })
+
+test("a write that fails leaves no secret-bearing file behind", async () => {
+  const { mkdtempSync, existsSync } = await import("node:fs")
+  const { join } = await import("node:path")
+  const { tmpdir } = await import("node:os")
+  const { writeSecretConfig } = await import("../celld-config.ts")
+  const path = join(mkdtempSync(join(tmpdir(), "celld-config-")), "wrangler.json")
+  const circular: Record<string, unknown> = {}
+  circular.self = circular
+  expect(() => writeSecretConfig(path, circular)).toThrow()
+  expect(existsSync(path)).toBe(false)
+  // The next deploy can create it.
+  writeSecretConfig(path, { vars: {} })
+  expect(existsSync(path)).toBe(true)
+})

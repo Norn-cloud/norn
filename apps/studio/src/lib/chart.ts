@@ -22,6 +22,13 @@ export interface ChartFrame {
  * value. Ratios plot as whole percents padded by one point; sums plot at
  * their own value, padded to whole units.
  */
+/** What the empty chart says: no buckets at all, buckets that are all suppressed (the table still lists them), or none with a value. */
+export function chartEmpty(rows: readonly ChartRow[]): string {
+  if (rows.length === 0) return "The server returned no answers for this window."
+  if (rows.every(({ suppressed }) => suppressed)) return "Every week in this window is suppressed, because too few records stand behind it. There is nothing to plot; the table lists each week."
+  return "No week in this window has a value to plot."
+}
+
 export function chartFrame(rows: readonly ChartRow[]): ChartFrame | undefined {
   const answered = rows.filter(({ suppressed }) => !suppressed)
   const ratio = answered.length > 0 && answered.every(({ totals }) => totals.length > 1)

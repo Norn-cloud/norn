@@ -1,4 +1,4 @@
-import { closeSync, fchmodSync, openSync, writeFileSync } from "node:fs"
+import { closeSync, fchmodSync, openSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 // The self-hosted Studio: the same Worker, assets and bindings that alchemy.run.ts
@@ -90,6 +90,10 @@ export function writeSecretConfig(path: string, config: Record<string, unknown>)
   try {
     fchmodSync(fd, 0o600)
     writeFileSync(fd, `${JSON.stringify(config, null, 2)}\n`)
+  } catch (error) {
+    // The file may hold part of the secrets: a failed write leaves nothing behind, and the next deploy can create it.
+    rmSync(path, { force: true })
+    throw error
   } finally {
     closeSync(fd)
   }

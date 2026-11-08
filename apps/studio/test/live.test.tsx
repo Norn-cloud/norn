@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
-import { amountTexts, hostRead, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
+import { amountTexts, hostRead, liveAccess, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
 import * as answerLib from "../src/lib/answer.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
@@ -123,6 +123,14 @@ test("a 200 that is JSON but not an answer document is no live read, so the page
   expect((await liveAnswer("demo.yield_week", respond(200, answerText))).kind).toBe("read")
   expect(await liveAnswer("demo.yield_week", respond(200, "null"))).toEqual({ kind: "unavailable", status: 200 })
   expect(await liveAnswer("demo.yield_week", respond(200, '{"error":"unavailable"}'))).toEqual({ kind: "unavailable", status: 200 })
+})
+
+test("a 200 that is JSON but not an access document is no live read either", async () => {
+  const access = { principal: { subjectId: "u1", actorKind: "user", roles: ["admin"], roleTable: "roles" }, policy: "p", grantTable: "g", capabilities: Object.fromEntries(["population", "values", "sources"].map((name) => [name, { decision: "permit", rule: null }])) }
+  expect((await liveAccess(respond(200, JSON.stringify(access)))).kind).toBe("read")
+  for (const text of ["null", '{"error":"unavailable"}', JSON.stringify({ ...access, capabilities: { population: access.capabilities.population } }), JSON.stringify({ ...access, principal: { subjectId: "u1" } })]) {
+    expect(await liveAccess(respond(200, text))).toEqual({ kind: "unavailable", status: 200 })
+  }
 })
 
 test("a live answer with a malformed row, watermark or freshness is no live read, so the page keeps its recording", async () => {
