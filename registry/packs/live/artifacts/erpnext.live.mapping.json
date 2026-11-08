@@ -71,7 +71,7 @@
     ],
     "source": {
       "schemaId": "erpnext.live.source",
-      "sha256": "015cbf1dcc4c6ce0fdb744ebf41630bc2a34107904b728551ebcbe36a590eef0",
+      "sha256": "93c5f945bb2c72b1aa7d8b717a245a21741d748d8b4c065509611e617b7428d2",
       "version": "0.1.0"
     }
   },
