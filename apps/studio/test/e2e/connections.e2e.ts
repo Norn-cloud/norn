@@ -2,7 +2,7 @@
 // Each test records the verbs it exercised; a ✓ verb of the matrix left unexercised fails the run.
 // Usage (on Boat only): E2E_BASE=https://next.norn.cloud E2E_EMAIL=… E2E_PASSWORD=… (an org admin) \
 //   E2E_GATEWAY_EMAIL=… E2E_GATEWAY_PASSWORD=… E2E_APP=… E2E_APP_KEY=… E2E_TOOL=… E2E_TOOL_FIELD=… bun test/e2e/connections.e2e.ts
-// Credentials come from Infisical by name into the environment; nothing is printed or written.
+// Credentials come from the operator's secret store by name into the environment; nothing is printed or written.
 import { MATRIX, type VerbSupport } from "../../src/lib/connectors.ts"
 
 type Page = {

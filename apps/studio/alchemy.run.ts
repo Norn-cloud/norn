@@ -18,7 +18,7 @@ import { authDeploy, deployTarget, scanState } from "./deploy-target.ts"
 // records it in state. Alchemy only uploads dist.
 // Every stage runs Better Auth (worker/) with its own D1 database; the
 // session secret becomes an encrypted Worker secret, never part of a bundle.
-// Operators load BETTER_AUTH_SECRET and ALCHEMY_PASSWORD by name from Infisical
+// Operators load BETTER_AUTH_SECRET and ALCHEMY_PASSWORD by name from the secret store
 // (path /auth: NORN_STUDIO_<STAGE>_BETTER_AUTH_SECRET, NORN_STUDIO_<STAGE>_ALCHEMY_PASSWORD).
 const target = deployTarget(process.env)
 const auth = authDeploy(process.env, target)

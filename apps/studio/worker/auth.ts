@@ -58,7 +58,7 @@ export interface AuthConfig {
   readonly gateway?: GatewayClient
 }
 
-/** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from Infisical by name. */
+/** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from the operator's secret store by name. */
 export interface GatewayClient {
   readonly url: string
   readonly clientId: string
