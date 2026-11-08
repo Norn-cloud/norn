@@ -51,7 +51,7 @@
             "description": "The derived field."
           },
           "value": {
-            "description": "The exact runtime value written to the effective input."
+            "description": "The exact runtime value written to the effective input. Preserve source\ntext and use an exact-number JSON parser; JavaScript `JSON.parse` may\nlose precision."
           }
         },
         "additionalProperties": false
@@ -131,7 +131,7 @@
               "object",
               "null"
             ],
-            "description": "The final input after ordered derivations. Legacy records use `input`.",
+            "description": "The final input after ordered derivations. Legacy records use `input`.\nPreserve source text and use an exact-number JSON parser for its values;\nJavaScript `JSON.parse` may lose precision.",
             "additionalProperties": {
               "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
             }

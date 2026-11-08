@@ -26,7 +26,11 @@ export interface components {
         NornActionActionDerivedValue: {
             /** @description The derived field. */
             field: string;
-            /** @description The exact runtime value written to the effective input. */
+            /**
+             * @description The exact runtime value written to the effective input. Preserve source
+             *     text and use an exact-number JSON parser; JavaScript `JSON.parse` may
+             *     lose precision.
+             */
             value: unknown;
         };
         /** @description The successful outcome of one action precondition. */
@@ -63,7 +67,11 @@ export interface components {
              *     written before effect attribution and interpreted as `fire_transition`.
              */
             effectKind?: string | null;
-            /** @description The final input after ordered derivations. Legacy records use `input`. */
+            /**
+             * @description The final input after ordered derivations. Legacy records use `input`.
+             *     Preserve source text and use an exact-number JSON parser for its values;
+             *     JavaScript `JSON.parse` may lose precision.
+             */
             effectiveInput?: {
                 [key: string]: unknown;
             } | null;

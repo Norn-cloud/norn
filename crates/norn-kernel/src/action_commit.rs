@@ -6506,4 +6506,22 @@ mod reference_lineage_tests {
             std::fs::read_to_string(path).expect("generated schema")
         );
     }
+
+    #[test]
+    #[allow(
+        clippy::expect_used,
+        reason = "receipt schema precision guidance assertion"
+    )]
+    fn receipt_schema_keeps_exact_number_guidance_on_runtime_value_fields() {
+        let schema = serde_json::to_value(schemars::schema_for!(ActionCallRecord))
+            .expect("receipt schema");
+        for description in [
+            &schema["properties"]["effectiveInput"]["description"],
+            &schema["$defs"]["ActionDerivedValue"]["properties"]["value"]["description"],
+        ] {
+            let text = description.as_str().expect("field description");
+            assert!(text.contains("exact-number JSON parser"), "{text}");
+            assert!(text.contains("JSON.parse"), "{text}");
+        }
+    }
 }
