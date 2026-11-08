@@ -1191,6 +1191,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "datalog-stratification-model",
+      "profile": "full",
+      "command": "scripts/verify-datalog-stratification-lean.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "kernel-l1-version-correspondence",
       "profile": "full",
       "command": "scripts/verify-kernel-l1-aeneas.sh",
