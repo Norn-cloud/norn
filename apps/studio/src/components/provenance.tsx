@@ -1,6 +1,6 @@
 import { ArrowDown, GitCommitHorizontal } from "lucide-react"
 import type { ReactNode } from "react"
-import { CopyId } from "@/components/copy-id"
+import { CopyId, DigestId } from "@/components/copy-id"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { systemName } from "@/lib/catalog"
 import { KINDS, type Kind } from "@/lib/kinds"
@@ -41,8 +41,8 @@ export function ProvenanceChain({ lineage, fact }: { readonly lineage: SourceLin
       </Step>
       <Arrow />
       <Step title={`Recorded · ${field.recordedAt}`}>
-        {lineage.bundleDigest !== undefined && <div className="text-xs text-muted-foreground">Bundle <CopyId value={lineage.bundleDigest} short={12} /></div>}
-        {lineage.documentDigest !== undefined && <div className="text-xs text-muted-foreground">Document <CopyId value={lineage.documentDigest} short={12} /></div>}
+        <div className="text-xs text-muted-foreground">Bundle <DigestId value={lineage.bundleDigest} short={12} /></div>
+        <div className="text-xs text-muted-foreground">Document <DigestId value={lineage.documentDigest} short={12} /></div>
       </Step>
     </ol>
   )

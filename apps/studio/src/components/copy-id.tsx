@@ -2,6 +2,12 @@ import { Check, Copy, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 
+/** A digest the server may withhold (it hashes values the caller cannot read): absent or null shows "withheld", never a stale or empty id. */
+export function DigestId({ value, short, className }: { readonly value: string | null | undefined; readonly short?: number; readonly className?: string }) {
+  if (value === undefined || value === null) return <span className={cn("font-mono text-xs text-muted-foreground", className)}>withheld</span>
+  return <CopyId value={value} short={short} className={className} />
+}
+
 /** An identifier in mono, with a button that copies it exactly. `short` shows its first characters only. */
 export function CopyId({ value, short, className }: { readonly value: string; readonly short?: number; readonly className?: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle")

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyId } from "@/components/copy-id"
+import { CopyId, DigestId } from "@/components/copy-id"
 import { ProvenanceChain, ProvenanceValue } from "@/components/provenance"
 import { useInspector } from "@/lib/inspector"
 import { KINDS, STATUS } from "@/lib/kinds"
@@ -361,8 +361,8 @@ function Facts({ concept, reads }: { readonly concept: Concept; readonly reads: 
 }
 
 /** A labelled id row. */
-const Id = ({ label, value, short }: { readonly label: string; readonly value: string; readonly short?: number }) => (
-  <div className="flex min-w-0 flex-col gap-x-3 sm:flex-row sm:items-baseline"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">{label}</dt><dd className="min-w-0 flex-1"><CopyId value={value} short={short} /></dd></div>
+const Id = ({ label, value, short }: { readonly label: string; readonly value: string | null | undefined; readonly short?: number }) => (
+  <div className="flex min-w-0 flex-col gap-x-3 sm:flex-row sm:items-baseline"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">{label}</dt><dd className="min-w-0 flex-1"><DigestId value={value} short={short} /></dd></div>
 )
 
 /** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what a recorded snapshot cannot hold. */
@@ -388,8 +388,8 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
           <Id label="Mapping" value={`${lineage.mappingPin.artifactId}@${lineage.mappingPin.version}`} />
           <Id label="Mapping sha256" value={lineage.mappingPin.sha256} short={16} />
           <Id label="Source record" value={lineage.sourceRecordRef.record} />
-          {lineage.bundleDigest !== undefined && <Id label="Bundle" value={lineage.bundleDigest} short={16} />}
-          {lineage.documentDigest !== undefined && <Id label="Document" value={lineage.documentDigest} short={16} />}
+          <Id label="Bundle" value={lineage.bundleDigest} short={16} />
+          <Id label="Document" value={lineage.documentDigest} short={16} />
         </dl>
         <DenseTable head={<TableRow><TableHead>Property</TableHead><TableHead>Rule</TableHead><TableHead>Source fields</TableHead></TableRow>}>
           {Object.entries(lineage.fieldProvenance).map(([fact, provenance]) => (
