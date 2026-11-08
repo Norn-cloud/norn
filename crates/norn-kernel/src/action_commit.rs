@@ -958,7 +958,7 @@ where
     let action = call.action;
     // TXN-RULE-1: a declared closure never degrades to its primary effect.
     crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
-    if (action.quantity_effect.is_some() || !action.create_links.is_empty())
+    if !action.create_links.is_empty()
         && matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
@@ -3332,7 +3332,9 @@ where
             })
         })?;
     }
-    let proof = OwnedRowsCommitProof::new(&commit, limits.max_events);
+    let quantity =
+        super::action_quantity::prepare_quantity_action(call, &preparation.effective_input)?;
+    let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, quantity);
     match host.commit_owned_rows(commit, proof) {
         Ok(receipt) => {
             if let Some(meter) = meter {
@@ -3994,16 +3996,7 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some(request) = quantity {
-        let identity = norn_ir::canonical::canonical_json_of(&(
-            "action.quantity/1",
-            &call.action.action_id,
-            &call.idempotency_key,
-        ))
-        .map_err(|_encoding_error| ActionRefusal::InvalidInput {
-            field: "idempotencyKey".to_owned(),
-        })?;
-        let key = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&identity);
+    let result = if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {
