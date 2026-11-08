@@ -4,7 +4,9 @@
   "leanCompositeGates": {
     "verification/kernel-l1/Reference.lean": "scripts/verify-kernel-l1-lean.sh",
     "verification/kernel-l1/Audit.lean": "scripts/verify-kernel-l1-lean.sh",
-    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh"
+    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh",
+    "verification/datalog-stratification/Stratification.lean": "scripts/verify-datalog-stratification-lean.sh",
+    "verification/datalog-stratification/Audit.lean": "scripts/verify-datalog-stratification-lean.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [
