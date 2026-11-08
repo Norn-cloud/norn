@@ -31,6 +31,8 @@ export interface ConnectorEnv {
   /** The gateway origin, e.g. https://gateway.example; absent when this stage has no gateway. */
   readonly TOOL_GATEWAY_URL?: string
   readonly BETTER_AUTH_URL: string
+  /** The stage's trusted origins; absent means the one `BETTER_AUTH_URL`. */
+  readonly trustedOrigins?: readonly string[]
 }
 
 /** What the routes reach outside the request: the bindings table, the person's grant and the network. */
@@ -128,7 +130,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   if (actor === null) return refusal(401, "connectors.sign_in", "Sign in first.")
   // Service keys cannot hold a person's gateway grant.
   if (actor.actorKind !== "user") return refusal(403, "connectors.user_only", "Connectors act for a signed-in person, not an API key.")
-  if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refusal(403, "connectors.origin", "Cross-origin request refused.")
+  if (!originAllowed(request, actor, env.trustedOrigins ?? [env.BETTER_AUTH_URL])) return refusal(403, "connectors.origin", "Cross-origin request refused.")
   if (!permits(actor, "studio.read")) return forbidden("Your role cannot use connectors.")
   const route = `${request.method} ${path}`
   const manage = permits(actor, "studio.approve")
