@@ -459,6 +459,88 @@ pub fn recheck(flow: &Flow, bindings: &BTreeMap<String, u64>) -> Result<(), Refu
     }
 }
 
+/// The built-in function a human decision is lowered to (D58): the step asks
+/// a person and the run waits for their server-issued receipt.
+pub const DECISION_FUNCTION: &str = "norn.decision";
+
+/// The plain-words restatement (D59) of a flow payload, from its IR: what
+/// starts it, then each step in the order the rule performs it, by its
+/// label (or id), with the tool and exact version it calls, or the person
+/// it asks. A signer signs these words before the flow can change what the
+/// system does. Deterministic: the same payload always restates the same.
+///
+/// # Errors
+/// The payload is not a flow or its commands are not verifiable.
+pub fn restate(canonical: &str) -> Result<String, String> {
+    let value: Value = serde_json::from_str(canonical).map_err(|error| error.to_string())?;
+    let flow = value.get("flow").ok_or("not a flow payload")?;
+    let flow_id = flow
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("the flow has no id")?;
+    let version = flow
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let title = flow
+        .get("title")
+        .and_then(Value::as_str)
+        .map_or(flow_id, str::trim);
+    let labels: BTreeMap<&str, &str> = flow
+        .get("steps")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .filter_map(|step| {
+            Some((
+                step.get("id")?.as_str()?,
+                step.get("label")?.as_str()?.trim(),
+            ))
+        })
+        .collect();
+    let (_, rule_id) = owned_ids(flow_id);
+    let rule = value
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .and_then(|artifacts| {
+            artifacts.iter().find(|artifact| {
+                artifact.get("artifactId").and_then(Value::as_str) == Some(rule_id.as_str())
+            })
+        })
+        .ok_or("the flow has no rule")?;
+    let performs =
+        norn_checker::flow_performs::perform_refs(rule.get("payload").unwrap_or(&Value::Null))
+            .map_err(|refused| refused.message)?;
+    let mut lines = vec![
+        format!("Automation \"{title}\" (version {version})."),
+        "It runs when a run of it is started.".to_owned(),
+    ];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut number = 0_usize;
+    for perform in &performs {
+        let step = perform.step.as_deref().unwrap_or("an unnamed step");
+        if !seen.insert(step.to_owned()) {
+            continue;
+        }
+        number = number.saturating_add(1);
+        let name = labels.get(step).copied().unwrap_or(step);
+        let does = match &perform.name {
+            Some((function, _)) if function == DECISION_FUNCTION => {
+                "asks a person to decide, and waits for their decision".to_owned()
+            }
+            Some((function, function_version)) => {
+                format!("calls {function} at version {function_version}")
+            }
+            None => "calls a tool that cannot be named before it runs".to_owned(),
+        };
+        lines.push(format!("{number}. {name}: {does}."));
+    }
+    if number == 0 {
+        lines.push("It calls no tools and asks no one.".to_owned());
+    }
+    Ok(lines.join("\n"))
+}
+
 /// The binding version a flow's performs pin `binding_id` to, if any.
 #[must_use]
 pub fn pinned_version(canonical: &str, binding_id: &str) -> Option<String> {

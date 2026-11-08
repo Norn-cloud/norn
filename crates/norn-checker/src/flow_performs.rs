@@ -25,6 +25,8 @@ pub struct PerformRef {
     pub pointer: String,
     /// `(function, functionVersion)` when both are string literals.
     pub name: Option<(String, String)>,
+    /// The record's literal `step` id, when it has one.
+    pub step: Option<String>,
 }
 
 /// Why a rule's commands cannot be verified before they run.
@@ -204,6 +206,10 @@ fn table(node: &Value, n: usize, found: &mut Vec<PerformRef>) -> Result<(), Unve
             found.push(PerformRef {
                 pointer: pointer.clone(),
                 name: literal_name(record),
+                step: match record.fields.get("step") {
+                    Some(FieldValue::String(step)) => Some(step.clone()),
+                    Some(FieldValue::Other) | None => None,
+                },
             });
         }
     }
