@@ -36,7 +36,7 @@ from datetime import datetime
 REPO = "Norn-cloud/norn"
 SCHEMA = "norn.ci-frontier/v2"
 WORKFLOW = ".github/workflows/ci-policy.yml"
-RUN_NAME = "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot' && format('issue_comment bot {0}', github.event.comment.id) || github.event_name }}"
+RUN_NAME = "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}"
 RESAMPLES = 2000
 RUNNER = "ubuntu-24.04"
 
