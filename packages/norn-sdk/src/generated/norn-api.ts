@@ -224,7 +224,7 @@ export interface components {
         AdmitDefinitionRequest: {
             /** @description The definition id. */
             id: string;
-            /** @description `dashboard`, `question` or `agent`. */
+            /** @description `dashboard`, `question`, `agent` or `binding`. */
             kind: string;
             /** @description The kind's payload. */
             payload: Record<string, never>;
@@ -331,7 +331,7 @@ export interface components {
             expectedVersion?: number | null;
             /** @description The definition id. */
             id: string;
-            /** @description `dashboard`, `question` or `agent`. */
+            /** @description `dashboard`, `question`, `agent` or `binding`. */
             kind: string;
             /** @description The kind's payload. */
             payload: Record<string, never>;
