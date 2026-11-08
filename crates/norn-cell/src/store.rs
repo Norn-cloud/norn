@@ -2131,7 +2131,7 @@ impl<E: SqlEngine> CellStore<E> {
 
     fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
         validate_store_format(conn)?;
-        for statement in SYSTEM_DDL {
+        for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
             conn.execute_batch(statement)?;
         }
         crate::system::intern_marking_subjects(conn)?;
@@ -2661,6 +2661,11 @@ impl<E: SqlEngine> CellStore<E> {
                         )?;
                     }
                 } else {
+                    // A file provisioned before a system table existed gains it here,
+                    // so the next run start or write finds it (idempotent DDL).
+                    for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
+                        self.conn.execute_batch(statement)?;
+                    }
                     let binding = |key: &str| self.conn.query_optional(
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),
@@ -2875,7 +2880,9 @@ impl<E: SqlEngine> CellStore<E> {
                 // Verified-prefix reconstruction retains the original admission semantics.
                 writer.admit_created_identities()?;
             }
+            crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             let written = writer.apply_writes()?;
+            crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;

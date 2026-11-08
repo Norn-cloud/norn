@@ -94,6 +94,26 @@ inherited ownership; **TXN-CELL-LOCAL** retains ordinary local admission.
 **TXN-CELL-DELIVERY** refuses foreign/unknown timer, result and observation
 consumption before pending lookup, leaving facts, ledger, outbox and timers unchanged.
 
+### RUN-LEDGER-1 — the cell's run ledger
+
+A run of an admitted flow is the object of the flow's generated Run type; its
+lifecycle property is the flow's only state machine. A commit starts a run by
+carrying one `norn.run.started` ledger event (run id, flow artifact id and
+version, Run type, lifecycle property) together with the write that creates the
+run object. The store records the run (generation 1) in `_norn_flow_run` in that
+commit's transaction, and refreshes its state, version and update time in the
+transaction of every later commit that writes the run object. A start whose run object
+already exists before the commit (a creating write is required), whose Run type
+is undeclared, or whose run id was already started in the world refuses
+(`run.start_invalid`, `run.exists`) and nothing commits. The run-start event stays
+in the hash-chained ledger; the typed commit reader skips it as bookkeeping. The ledger derives only
+from committed batches, so every engine that runs the store's SQL maintains it and
+export replay rebuilds it. It is a read index, not authority: reads go through the
+caller's read gates on the Run type. `live_runs(flow)` counts the runs whose object
+exists in a non-terminal state of its Run type's lifecycle (RUN-LIVE-1), for a retire
+guard; an undeclared Run type counts as live. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
+**RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**, **RUN-LIVE**.
+
 ### Durable flow scheduling and identity (#515)
 
 Flows remain compiled lifecycle/rule declarations. The pure kernel helpers in
