@@ -102,13 +102,34 @@ struct Keys {
     attempted: Option<u64>,
     /// A token named a key id the JWKS lacks since the last report.
     unknown_kid: bool,
+    /// The highest `now` any call has presented since the last install.
+    high_water: u64,
+    /// The clock was seen to move backward since the last install. Wall-clock
+    /// ages cannot be trusted after that, so the keys are refused as stale
+    /// and a refetch is due; only a successful install clears it.
+    regressed: bool,
 }
 
 impl Keys {
-    /// Whether another refetch may be requested at `now`.
+    /// Record `now`; a value below the highest one seen is a clock regression.
+    fn observe(&mut self, now: u64) {
+        if now < self.high_water {
+            self.regressed = true;
+        }
+        self.high_water = self.high_water.max(now);
+    }
+
+    /// Whether the keys may be used at `now`: fresh by wall-clock age, and the
+    /// clock has not moved backward since they were fetched.
+    fn usable(&self, now: u64) -> bool {
+        !self.regressed && now.saturating_sub(self.fetched) <= JWKS_MAX_STALE_SECS
+    }
+
+    /// Whether another refetch may be requested at `now`. An attempt stamped
+    /// in the future (the clock moved back) does not block the next one.
     fn may_retry(&self, now: u64) -> bool {
         self.attempted
-            .is_none_or(|at| now.saturating_sub(at) >= JWKS_RETRY_SECS)
+            .is_none_or(|at| at > now || now - at >= JWKS_RETRY_SECS)
     }
 }
 
@@ -163,34 +184,42 @@ impl TokenPrincipals {
                 fetched: now,
                 attempted: None,
                 unknown_kid: false,
+                high_water: now,
+                regressed: false,
             }),
         })
     }
 
     /// Replace the keys after a refetch of the pinned JWKS location at `now`
     /// (Unix seconds). A key the new document omits stops verifying at once.
+    /// This is the only thing that clears an observed clock regression.
     ///
     /// # Errors
     /// The new document is unusable; the previous keys stay in force, and
-    /// age on.
+    /// age on (or stay refused after a clock regression).
     pub fn replace_jwks(&self, jwks: &str, now: u64) -> Result<(), Refusal> {
         let verifier = TokenVerifier::from_jwks(&self.issuer, HOST_AUDIENCE, jwks, &STUDIO_ROLES)?;
         let mut keys = self.keys.lock().map_err(Refusal::host)?;
         keys.verifier = verifier;
         keys.kids = kids(jwks);
         keys.fetched = now;
+        keys.high_water = now;
+        keys.regressed = false;
         Ok(())
     }
 
     /// Whether the keys have reached [`JWKS_MAX_AGE_SECS`] and the host should
     /// refetch the pinned JWKS now, before serving. Independent of any token.
     /// Granting it starts the retry interval, so a failed refetch is retried
-    /// after [`JWKS_RETRY_SECS`], not on every request.
+    /// after [`JWKS_RETRY_SECS`], not on every request. After an observed
+    /// clock regression a refetch is due regardless of age.
     pub fn refresh_due(&self, now: u64) -> bool {
         let Ok(mut keys) = self.keys.lock() else {
             return false;
         };
-        let due = now.saturating_sub(keys.fetched) >= JWKS_MAX_AGE_SECS && keys.may_retry(now);
+        keys.observe(now);
+        let aged = keys.regressed || now.saturating_sub(keys.fetched) >= JWKS_MAX_AGE_SECS;
+        let due = aged && keys.may_retry(now);
         if due {
             keys.attempted = Some(now);
         }
@@ -204,6 +233,7 @@ impl TokenPrincipals {
         let Ok(mut keys) = self.keys.lock() else {
             return false;
         };
+        keys.observe(now);
         let seen = std::mem::take(&mut keys.unknown_kid);
         let allowed = seen && keys.may_retry(now);
         if allowed {
@@ -214,9 +244,12 @@ impl TokenPrincipals {
 
     fn verify(&self, token: &str, now: u64) -> Option<Caller> {
         let mut keys = self.keys.lock().ok()?;
+        keys.observe(now);
         // Keys older than the stale bound are not honoured: a removed key
-        // must not verify forever because the issuer cannot be reached.
-        if now.saturating_sub(keys.fetched) > JWKS_MAX_STALE_SECS {
+        // must not verify forever because the issuer cannot be reached. Nor
+        // are keys once the clock has moved backward: their age is unknown
+        // until a refetch succeeds.
+        if !keys.usable(now) {
             return None;
         }
         if token_kid(token).is_some_and(|kid| !keys.kids.contains(&kid)) {

@@ -366,3 +366,111 @@ fn unknown_key_ids_and_age_share_one_retry_interval() {
     assert_eq!(defs_at(&demo, Some(&unknown), later).status, 403);
     assert!(demo.tokens.take_unknown_kid(later));
 }
+
+/// S3 (non-monotonic time): a stale denial followed by a clock rollback
+/// without a replacement stays denied. The rolled-back clock must not make
+/// the removed key "fresh" again.
+#[test]
+fn a_clock_rollback_after_stale_denial_stays_denied_without_a_refetch() {
+    let demo = demo();
+    let stale = NOW + JWKS_MAX_STALE_SECS + 1;
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", stale)), stale).status,
+        403
+    );
+    // The clock moves back to where the keys look fresh by wall-clock age.
+    let back = NOW + 100;
+    let token = admin_at(1, "k1", back);
+    assert_eq!(defs_at(&demo, Some(&token), back).status, 403);
+    // Neither further rolled-back requests nor the passage of time restore
+    // service: only a successful refetch does.
+    assert_eq!(defs_at(&demo, Some(&token), back + 1).status, 403);
+    assert_eq!(defs_at(&demo, Some(&token), NOW).status, 403);
+    // A refetch is due so the host can recover, once per retry interval,
+    // and a failed one keeps the keys refused.
+    assert!(demo.tokens.refresh_due(back));
+    assert!(!demo.tokens.refresh_due(back + JWKS_RETRY_SECS - 1));
+    assert!(demo.tokens.replace_jwks("{\"keys\":[]}", back).is_err());
+    assert_eq!(defs_at(&demo, Some(&token), back).status, 403);
+}
+
+/// S3 (non-monotonic time): a rollback that stays above `fetched` cannot
+/// extend the stale bound, with or without an earlier denial.
+#[test]
+fn a_clock_rollback_above_fetched_does_not_extend_the_stale_bound() {
+    let demo = demo();
+    // Just inside the bound, the keys verify.
+    let edge = NOW + JWKS_MAX_STALE_SECS;
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", edge)), edge).status,
+        200
+    );
+    // The clock steps back a little, and then forward past the original
+    // bound. The keys were never refetched, so they must not verify, even
+    // though by the rolled-back clock they would still be within 15 minutes.
+    let back = edge - 120;
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", back)), back).status,
+        403
+    );
+    let past = NOW + JWKS_MAX_STALE_SECS + 60;
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", past)), past).status,
+        403
+    );
+    // A refresh probe observing the regression alone has the same effect.
+    let probe = self::demo();
+    assert!(!probe.tokens.refresh_due(NOW + 200));
+    assert!(
+        probe.tokens.refresh_due(NOW + 100),
+        "regression forces a refetch"
+    );
+    let at = NOW + 100;
+    assert_eq!(
+        defs_at(&probe, Some(&admin_at(1, "k1", at)), at).status,
+        403
+    );
+}
+
+/// S3 (non-monotonic time): after a clock regression, a successful refetch
+/// is the only thing that restores verification, and ages from the refetch.
+#[test]
+fn a_successful_refetch_recovers_verification_after_a_clock_regression() {
+    let demo = demo_with(&[(1, "k1"), (2, "k2")]);
+    let ahead = NOW + 200;
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(2, "k2", ahead)), ahead).status,
+        200
+    );
+    let back = NOW + 50;
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(2, "k2", back)), back).status,
+        403
+    );
+    // The issuer meanwhile dropped k2; the refetch carries that.
+    assert!(demo.tokens.refresh_due(back));
+    demo.tokens.replace_jwks(&jwks(&[(1, "k1")]), back).unwrap();
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", back)), back).status,
+        200
+    );
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(2, "k2", back)), back).status,
+        403,
+        "the removed key stays removed"
+    );
+    // The refetch is the new origin for ageing, and the normal schedule
+    // resumes on forward time.
+    let later = back + JWKS_MAX_AGE_SECS;
+    assert!(!demo.tokens.refresh_due(later - 1));
+    assert!(demo.tokens.refresh_due(later));
+    let edge = back + JWKS_MAX_STALE_SECS;
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", edge)), edge).status,
+        200
+    );
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", edge + 1)), edge + 1).status,
+        403
+    );
+}
