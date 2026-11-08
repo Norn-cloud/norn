@@ -9,7 +9,244 @@
     },
     "version": "0.1.0"
   },
-  "paths": {},
+  "paths": {
+    "/v1/questions/{question}/answer": {
+      "get": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "Evaluate using the native exact engine; analytical freshness labels are preserved.\n# Errors\nDenied scope/authority, unavailable trusted inputs, or typed compute refusal.",
+        "operationId": "get_answer",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "question",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornQuestionAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/questions/{question}/trace": {
+      "get": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.\n# Errors\nNonexact/stale results, historical tracing, changed pins or unavailable evidence refuse.",
+        "operationId": "get_numeric_trace",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lineageRef",
+            "in": "query",
+            "description": "Previously returned complete exact result pin.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "description": "Canonical bucket key from that result.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "question",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornNumericTrace"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "components": {
     "schemas": {
       "LayoutSidecar": {
@@ -20017,6 +20254,161 @@
         },
         "additionalProperties": false
       },
+      "NornNumericContribution": {
+        "type": "object",
+        "description": "One original numeric member; enrichment does not enter this list.",
+        "required": [
+          "fact",
+          "amounts",
+          "receiptHash",
+          "factDigest",
+          "source",
+          "commitSeq",
+          "recordedAtMs",
+          "restricted",
+          "values"
+        ],
+        "properties": {
+          "amounts": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
+            },
+            "description": "Operand contributions, in `totals` order; null means a predicate excluded the operand."
+          },
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Writer's immutable commit position.",
+            "minimum": 0
+          },
+          "fact": {
+            "$ref": "#/components/schemas/NornIrFactRef"
+          },
+          "factDigest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full incarnation digest, disclosed with canonical values."
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "Emitting receipt identity; no export capability."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Receipt-authenticated knowledge time.",
+            "minimum": 0
+          },
+          "restricted": {
+            "type": "boolean",
+            "description": "Canonical property content was withheld."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "object",
+                "description": "Authenticated source bundle was resolved.",
+                "required": [
+                  "provenance",
+                  "status"
+                ],
+                "properties": {
+                  "provenance": {
+                    "$ref": "#/components/schemas/NornInstanceSourceProvenance",
+                    "description": "Original semantic source edges."
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "resolved"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Source disclosure was denied.",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "restricted"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "No retained source bundle exists.",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "unavailable"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            ],
+            "description": "A source grant never follows from membership or canonical-value disclosure."
+          },
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Complete canonical values, only under their own grant.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornNumericTrace": {
+        "type": "object",
+        "description": "LINEAGE-SUM-1: exact numeric membership with independently disclosed evidence.",
+        "required": [
+          "result",
+          "bucket",
+          "contributions"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "description": "Canonical selected bucket key."
+          },
+          "contributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornNumericContribution"
+            },
+            "description": "Ordered original fact incarnations."
+          },
+          "result": {
+            "$ref": "#/components/schemas/NornQueryResult",
+            "description": "Revalidated exact result at its original frontier."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornObjectPage": {
         "type": "object",
         "description": "One bounded page of a concept's authoritative objects.",
@@ -20357,6 +20749,19 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornQuestionAnswer": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornQueryResult",
+            "description": "Current answer."
+          },
+          {
+            "$ref": "#/components/schemas/NornHistoricalQuestionResult",
+            "description": "Historical answer."
+          }
+        ],
+        "description": "Current or authenticated historical answer, matching the native service envelope."
       },
       "NornWorld": {
         "oneOf": [

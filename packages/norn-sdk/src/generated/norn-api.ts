@@ -3,7 +3,50 @@
  * Do not make direct changes to the file.
  */
 
-export type paths = Record<string, never>;
+export interface paths {
+    "/v1/questions/{question}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Evaluate using the native exact engine; analytical freshness labels are preserved.
+         *     # Errors
+         *     Denied scope/authority, unavailable trusted inputs, or typed compute refusal.
+         */
+        get: operations["get_answer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/questions/{question}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
+         *     # Errors
+         *     Nonexact/stale results, historical tracing, changed pins or unavailable evidence refuse.
+         */
+        get: operations["get_numeric_trace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
@@ -7710,6 +7753,54 @@ export interface components {
             /** @description Admitted artifact version. */
             version: string;
         };
+        /** @description One original numeric member; enrichment does not enter this list. */
+        NornNumericContribution: {
+            /** @description Operand contributions, in `totals` order; null means a predicate excluded the operand. */
+            amounts: (number | null)[];
+            /**
+             * Format: int64
+             * @description Writer's immutable commit position.
+             */
+            commitSeq: number;
+            fact: components["schemas"]["NornIrFactRef"];
+            /** @description Full incarnation digest, disclosed with canonical values. */
+            factDigest: string | null;
+            /** @description Emitting receipt identity; no export capability. */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description Receipt-authenticated knowledge time.
+             */
+            recordedAtMs: number;
+            /** @description Canonical property content was withheld. */
+            restricted: boolean;
+            /** @description A source grant never follows from membership or canonical-value disclosure. */
+            source: {
+                /** @description Original semantic source edges. */
+                provenance: components["schemas"]["NornInstanceSourceProvenance"];
+                /** @enum {string} */
+                status: "resolved";
+            } | {
+                /** @enum {string} */
+                status: "restricted";
+            } | {
+                /** @enum {string} */
+                status: "unavailable";
+            };
+            /** @description Complete canonical values, only under their own grant. */
+            values: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** @description LINEAGE-SUM-1: exact numeric membership with independently disclosed evidence. */
+        NornNumericTrace: {
+            /** @description Canonical selected bucket key. */
+            bucket: string;
+            /** @description Ordered original fact incarnations. */
+            contributions: components["schemas"]["NornNumericContribution"][];
+            /** @description Revalidated exact result at its original frontier. */
+            result: components["schemas"]["NornQueryResult"];
+        };
         /** @description One bounded page of a concept's authoritative objects. */
         NornObjectPage: {
             /** @description The concept read; records may be of its subtypes. */
@@ -7851,6 +7942,8 @@ export interface components {
             /** @description Connector's observed high-water cursor. */
             observed: string;
         };
+        /** @description Current or authenticated historical answer, matching the native service envelope. */
+        NornQuestionAnswer: components["schemas"]["NornQueryResult"] | components["schemas"]["NornHistoricalQuestionResult"];
         /** @description An execution world. */
         NornWorld: "main" | {
             /** @description A scenario fork. */
@@ -7900,4 +7993,157 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    get_answer: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                question: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornQuestionAnswer"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_numeric_trace: {
+        parameters: {
+            query: {
+                /** @description Organization, matched against physical scope. */
+                orgId: string;
+                /** @description Environment, matched against physical scope. */
+                environmentId: string;
+                /** @description Previously returned complete exact result pin. */
+                lineageRef: string;
+                /** @description Canonical bucket key from that result. */
+                bucket: string;
+            };
+            header?: never;
+            path: {
+                question: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornNumericTrace"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+}
