@@ -4,8 +4,11 @@
 
 use std::collections::BTreeMap;
 
+use norn_cell::engine::{NativeEngine, SqlEngine};
 use norn_cell::flow_run::{FlowRef, RunFilter, RunStart};
-use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model, StoreOptions};
+use norn_cell::{
+    CellError, CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, Model, StoreOptions,
+};
 use norn_ir::{ObjectTypeDef, RuntimeValue};
 
 const RUN: &str = "billing.RouteRun";
@@ -428,5 +431,131 @@ fn the_typed_commit_reader_skips_run_start_bookkeeping() {
             .iter()
             .any(|entry| norn_cell::flow_run::is_run_start(&entry.event)),
         "the run start stays in the hash-chained ledger"
+    );
+}
+
+#[test]
+fn a_start_must_name_a_declared_lifecycle_property_of_the_run_type() {
+    let mut store = store();
+    let ledger = store.read().ledger(0).expect("ledger").len();
+    for property in ["run_id", "missing"] {
+        let mut wrong = start("run-1", "flow.a");
+        wrong.state_property = property.to_owned();
+        let refused = store
+            .commit(&batch(10, vec![put("run-1", "started")], &[wrong]))
+            .expect_err("not a lifecycle property");
+        assert_eq!(refusal(&refused), Some("run.start_invalid"), "{property}");
+    }
+    assert_eq!(store.read().ledger(0).expect("ledger").len(), ledger);
+    assert!(
+        store
+            .read()
+            .object("main", RUN, "run-1")
+            .expect("read")
+            .is_none()
+    );
+    store
+        .commit(&batch(
+            11,
+            vec![put("run-1", "started")],
+            &[start("run-1", "flow.a")],
+        ))
+        .expect("the lifecycle property starts");
+}
+
+#[test]
+fn several_writes_to_the_run_in_one_start_record_the_final_version_and_state() {
+    let mut store = store();
+    store
+        .commit(&batch(
+            10,
+            vec![
+                put("run-1", "started"),
+                put("run-1", "awaiting_perform_load"),
+            ],
+            &[start("run-1", "flow.a")],
+        ))
+        .expect("start");
+    let object = store
+        .read()
+        .object("main", RUN, "run-1")
+        .expect("read")
+        .expect("object");
+    let row = store
+        .read()
+        .flow_run("main", "run-1")
+        .expect("read")
+        .expect("recorded");
+    assert_eq!(row.state.as_deref(), Some("awaiting_perform_load"));
+    assert_eq!(row.version, object.version, "the ledger tracks the object");
+    assert!(row.version > 1, "both writes counted");
+
+    store
+        .commit(&batch(
+            20,
+            vec![
+                put("run-1", "awaiting_perform_load"),
+                put("run-1", "completed"),
+            ],
+            &[],
+        ))
+        .expect("advance twice");
+    let object = store
+        .read()
+        .object("main", RUN, "run-1")
+        .expect("read")
+        .expect("object");
+    let row = store
+        .read()
+        .flow_run("main", "run-1")
+        .expect("read")
+        .expect("recorded");
+    assert_eq!(row.state.as_deref(), Some("completed"));
+    assert_eq!(row.version, object.version);
+}
+
+#[test]
+fn provisioning_replay_adds_a_system_table_an_older_file_lacks() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("tenant.sqlite");
+    let input = InstalledDefinitionInput {
+        canonical_set: "[]".to_owned(),
+        registry: Vec::new(),
+        receipt_sha256: "synthetic".to_owned(),
+        admission_receipt: None,
+        readmission: None,
+        diff: serde_json::json!({}),
+        installed_at: 1,
+        layout: None,
+    };
+    let provision = || {
+        CellStore::provision_definitions(
+            NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
+            model(),
+            &input,
+            "tenant/dev",
+        )
+    };
+    drop(provision().expect("first provision"));
+    // A file created before the run ledger existed has no such table.
+    NativeEngine::open(&path, StoreOptions::default())
+        .expect("engine")
+        .execute_batch(r#"DROP TABLE "_norn_flow_run""#)
+        .expect("drop");
+
+    let mut store = provision().expect("replay reopens the file");
+    store
+        .commit(&batch(
+            10,
+            vec![put("run-1", "started")],
+            &[start("run-1", "flow.a")],
+        ))
+        .expect("a run starts on the upgraded file");
+    assert!(
+        store
+            .read()
+            .flow_run("main", "run-1")
+            .expect("read")
+            .is_some()
     );
 }

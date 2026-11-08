@@ -2661,6 +2661,11 @@ impl<E: SqlEngine> CellStore<E> {
                         )?;
                     }
                 } else {
+                    // A file provisioned before a system table existed gains it here,
+                    // so the next run start or write finds it (idempotent DDL).
+                    for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
+                        self.conn.execute_batch(statement)?;
+                    }
                     let binding = |key: &str| self.conn.query_optional(
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),

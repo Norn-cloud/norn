@@ -199,11 +199,19 @@ pub(crate) fn check_starts<E: SqlEngine>(
         if reader.flow_run(&batch.world, &start.run_id)?.is_some() {
             return Err(refused("run.exists"));
         }
-        let declared = reader
+        // The state property must be a declared lifecycle of the Run type, or
+        // the run could never reach a terminal state and would count as live.
+        let lifecycle = reader
             .model()
             .object_types()
-            .any(|declared| declared.name.as_str() == start.object_type);
-        if !declared
+            .find(|declared| declared.name.as_str() == start.object_type)
+            .is_some_and(|declared| {
+                declared
+                    .lifecycles
+                    .iter()
+                    .any(|lifecycle| lifecycle.property.as_str() == start.state_property)
+            });
+        if !lifecycle
             || reader
                 .object(&batch.world, &start.object_type, &start.run_id)?
                 .is_some()
@@ -242,9 +250,11 @@ pub(crate) fn apply<E: SqlEngine>(
     let starts = starts(batch)?;
     for start in &starts {
         // The starting commit creates the run object, of the Run type it names.
+        // Several writes to the run object in one batch: the last one holds
+        // the final version (the state read below is the final state too).
         let created = written
             .iter()
-            .find(|row| row.object_type == start.object_type && row.key == start.run_id)
+            .rfind(|row| row.object_type == start.object_type && row.key == start.run_id)
             .ok_or_else(|| refused("run.start_invalid"))?;
         let state = state_of(
             reader,
