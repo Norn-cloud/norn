@@ -1573,6 +1573,7 @@ pub(crate) enum ClosedSchemaUnions {
     /// The declared closed non-null type or null.
     Nullable,
     /// Existing ActionIR input leaves: nullable primitives or bounded JSON.
+    /// ACTION-ACTOR-1 also reserves actor/approved property names at every depth.
     ActionInput,
 }
 
@@ -1742,6 +1743,16 @@ pub(crate) fn validate_closed_schema(
                 }
             }
             for (field, field_schema) in properties {
+                if matches!(profile.unions, ClosedSchemaUnions::ActionInput)
+                    && matches!(field.as_str(), "actor" | "approved")
+                {
+                    diagnostics.push(invalid_diagnostic(
+                        code,
+                        "ActionIR input reserves actor and approved for authenticated context",
+                        format!("{path}.properties.{field}"),
+                        artifact_id,
+                    ));
+                }
                 validate_closed_schema(
                     Some(field_schema),
                     &format!("{path}.properties.{field}"),
