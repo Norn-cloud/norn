@@ -16,6 +16,9 @@ use norn_api::routes::{DefinitionsQuery, get_defs};
 use norn_api::scope::ScopeQuery;
 use norn_cell::engine::SqlEngine;
 
+use norn_api::authz::{ReadCapability, ReadRequest};
+
+use crate::policy::{CallerSlot, DEMO_GRANTS, READ_POLICY_ID, collection_access};
 use crate::principal::{PrincipalResolver, RequestScope};
 
 /// One finite HTTP response: a status and a JSON body.
@@ -176,4 +179,161 @@ fn parse(query: &str, allowed: &[&'static str]) -> Result<BTreeMap<&'static str,
         }
     }
     Ok(fields)
+}
+
+/// The principal and the access decisions this cell makes for it.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessDocument {
+    /// The verified principal.
+    pub principal: AccessPrincipal,
+    /// The compiled `AccessIR` policy the PDP decides under.
+    pub policy: &'static str,
+    /// The declared grant table its roles were mapped through.
+    pub grant_table: &'static str,
+    /// One decision per read capability.
+    pub capabilities: BTreeMap<&'static str, AccessDecision>,
+}
+
+/// The verified principal, as the resolver recorded it.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessPrincipal {
+    /// Norn subject id.
+    pub subject_id: String,
+    /// `user` or `service`.
+    pub actor_kind: &'static str,
+    /// Norn roles.
+    pub roles: Vec<String>,
+    /// The declared role table the roles came from.
+    pub role_table: &'static str,
+}
+
+/// One capability's decision over every collection of the cell.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessDecision {
+    /// `permit` only when the PDP permits the capability on every collection.
+    pub decision: &'static str,
+    /// The grant-table role that grants the capability, when one does.
+    pub rule: Option<String>,
+}
+
+/// `GET /v1/access`: the request's verified principal and, per read
+/// capability, the cell's actual PDP decision on each of its collections
+/// (`object_types`). An anonymous, out-of-scope or wholly denied caller gets
+/// the shared read denial.
+pub fn access<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    caller: &CallerSlot,
+    object_types: &[String],
+    request: &Request<'_>,
+) -> Response {
+    match access_document(host, principals, caller, object_types, request) {
+        Ok(body) => Response {
+            status: StatusCode::OK.as_u16(),
+            body,
+        },
+        Err(refused) => Response {
+            status: refused.status,
+            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
+        },
+    }
+}
+
+fn access_document<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    caller: &CallerSlot,
+    object_types: &[String],
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    if request.method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "this host is read-only; use GET",
+        ));
+    }
+    let fields = parse(request.query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    // The verified principal lives exactly as long as this request.
+    let _request = RequestScope::new(principals);
+    let subject = principals.resolve(request.authorization, request.now);
+    let decide = |capability| {
+        let subject = subject.as_deref().unwrap_or_default();
+        let mut first_denial = None;
+        for object_type in object_types {
+            let access = collection_access(host.scope(), subject, capability, object_type);
+            if let Err(denied) = host.read_access(
+                &scope,
+                &ReadRequest {
+                    capability,
+                    access: &access,
+                },
+            ) {
+                first_denial.get_or_insert(denied);
+            }
+        }
+        first_denial.map_or(Ok(()), Err)
+    };
+    let decisions: Vec<(ReadCapability, Result<(), Refusal>)> = [
+        ReadCapability::Population,
+        ReadCapability::Values,
+        ReadCapability::Sources,
+    ]
+    .into_iter()
+    .map(|capability| (capability, decide(capability)))
+    .collect();
+    let caller = caller
+        .current()
+        .filter(|caller| Some(&caller.subject_id) == subject.as_ref());
+    let (Some(caller), true) = (caller, decisions.iter().any(|(_, decided)| decided.is_ok()))
+    else {
+        return Err(decisions
+            .into_iter()
+            .find_map(|(_, decided)| decided.err())
+            .unwrap_or_else(|| Refusal::invalid("the cell publishes no collection")));
+    };
+    let capabilities = decisions
+        .iter()
+        .map(|(capability, decided)| {
+            let name = match capability {
+                ReadCapability::Population => "population",
+                ReadCapability::Values => "values",
+                ReadCapability::Sources => "sources",
+            };
+            let rule = DEMO_GRANTS
+                .entries
+                .iter()
+                .find(|(role, granted)| {
+                    caller.roles.iter().any(|held| held == role) && granted.contains(capability)
+                })
+                .map(|(role, _)| format!("{}:{role}", DEMO_GRANTS.version));
+            let decision = if decided.is_ok() { "permit" } else { "deny" };
+            (
+                name,
+                AccessDecision {
+                    decision,
+                    rule: decided.is_ok().then_some(rule).flatten(),
+                },
+            )
+        })
+        .collect();
+    document_json(&AccessDocument {
+        principal: AccessPrincipal {
+            subject_id: caller.subject_id,
+            actor_kind: caller.actor_kind,
+            roles: caller.roles,
+            role_table: caller.role_table,
+        },
+        policy: READ_POLICY_ID,
+        grant_table: DEMO_GRANTS.version,
+        capabilities,
+    })
 }
