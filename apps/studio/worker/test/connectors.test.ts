@@ -32,6 +32,7 @@ let address = 0
 function stage(gatewayClient = false) {
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
+  db.exec(migration("0002_workspace_provisioning.sql"))
   db.exec(migration("0002_connector_binding.sql"))
   db.exec(migration("0003_connector_binding_manifest.sql"))
   db.exec(migration("0004_connector_binding_definition.sql"))
