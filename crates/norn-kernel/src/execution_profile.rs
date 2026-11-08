@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
-use crate::cell_host::{LinkReadTarget, ObjectTypeName};
+use crate::cell_host::{LinkReadTarget, ObjectTypeName, PredicateQuery, PredicateReadMember};
 use crate::{CellCommit, CommitError, CommitView, Consumed, FactKey, FactVersion, LinkKey};
 
 pub use crate::profile_ownership::{AtomicOwnership, supports_local};
@@ -71,6 +71,11 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
                 self.link(&target.key);
             }
         }
+        for read in &commit.predicate_reads {
+            for member in &read.members {
+                self.fact(&member.key);
+            }
+        }
         for key in self.reads.borrow().iter() {
             let ownership = self
                 .inner
@@ -128,6 +133,20 @@ impl<V: CommitView + ?Sized> CommitView for ProfileView<'_, V> {
         if let Some(targets) = &result {
             for target in targets {
                 self.link(&target.key);
+            }
+        }
+        Ok(result)
+    }
+
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Self::Error> {
+        let result = self.inner.predicate_members(predicate, limit)?;
+        if let Some(members) = &result {
+            for member in members {
+                self.fact(&member.key);
             }
         }
         Ok(result)
