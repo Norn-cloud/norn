@@ -18,6 +18,7 @@ import type { Account } from "@/lib/session"
 import { cn } from "@/lib/utils"
 import { ViewProvider, ViewToggle, useView } from "@/lib/view"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
+import nornMark from "@/assets/norn-mark.webp"
 
 export interface Section {
   readonly path: string
@@ -73,7 +74,7 @@ function WorkspaceSwitcher() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
-            <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">N</span>
+            <img src={nornMark} alt="" width={32} height={32} className="size-8 shrink-0 object-contain" />
             <span className="grid flex-1 text-start text-sm leading-tight"><span className="truncate font-medium">{open?.name}</span><span className="truncate text-xs text-muted-foreground">{open?.detail}</span></span>
             <ChevronsUpDown className="ms-auto" />
           </SidebarMenuButton>
@@ -119,7 +120,7 @@ function NavSection({ section, pathname }: { readonly section: Section; readonly
         <SidebarMenuButton asChild isActive={active && pathname === section.path} tooltip={section.label} className={section.kind && KINDS[section.kind].svg}>
           <Link to={section.path} onClick={() => setOpenMobile(false)}>
             <Icon /><span>{section.label}</span>
-            {badge !== undefined && badge !== 0 && badge !== "" && badge !== "0" && <span className="ms-auto me-5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-destructive-foreground tabular-nums">{typeof badge === "string" ? badge : badge > 99 ? "99+" : badge}</span>}
+            {badge !== undefined && badge !== 0 && badge !== "" && badge !== "0" && <span className="ms-auto me-5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.625rem] leading-none font-semibold text-destructive-foreground tabular-nums">{typeof badge === "string" ? badge : badge > 99 ? "99+" : badge}</span>}
           </Link>
         </SidebarMenuButton>
         {entries.length > 0 && <>

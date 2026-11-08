@@ -28,7 +28,7 @@ test("the open section lists its entries under their heading, the open entry mar
   expect(html).toContain("Object types")
   expect(html).toContain('href="/sources/canon.Holding"')
   expect(html).toMatch(/data-sidebar="menu-sub-button"[^>]*data-active="true"/)
-  expect(html).toContain("[&amp;&gt;svg]:text-blue-600")
+  expect(html).toContain("[&amp;&gt;svg]:text-muted-foreground")
 })
 
 test("a record page belongs to the section above it", () => {

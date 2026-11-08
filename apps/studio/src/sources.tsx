@@ -18,7 +18,7 @@ import type { MenuEntry } from "./shell.tsx"
 export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-lg border">
-      <Table className="text-[13px] tabular-nums">
+      <Table className="text-[0.8125rem] tabular-nums">
         <TableHeader className="bg-muted">{head}</TableHeader>
         <TableBody>{children}</TableBody>
       </Table>
