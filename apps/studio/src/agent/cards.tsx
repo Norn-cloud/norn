@@ -71,7 +71,7 @@ export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
                 </div>
               </div>
             )}
-            <div className="space-y-1">{reasons(refusal.message).map((reason) => <p key={reason}>{reason}</p>)}</div>
+            <div className="space-y-1">{reasons(refusal.message).map((reason, position) => <p key={`${position}:${reason}`}>{reason}</p>)}</div>
             <Details>
               <div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className="font-mono">{refusal.code}</Badge></div>
               <Mono>{where(verdict.proposal)}</Mono>

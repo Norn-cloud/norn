@@ -220,3 +220,11 @@ test("the progress steps follow the stream: drafting, then checking, then the an
   expect(stepOf(turn([{ type: "tool-propose", toolCallId: "t", state: "input-available", input: {} }]))).toBe(1)
   expect(stepOf(turn([{ type: "tool-propose", toolCallId: "t", state: "output-available", input: {}, output: refusal }]))).toBe(2)
 })
+
+test("the same finding reported twice renders as two reasons", () => {
+  const message = '[Diagnostic { code: "expr.member.unknown", message: "`unseen` is not a member of `stress.Purchase`", span: (0, 6) }, Diagnostic { code: "expr.member.unknown", message: "`unseen` is not a member of `stress.Purchase`", span: (9, 15) }]'
+  const verdict = verdictOf({ ...refusal, refusals: [{ ...refusal.refusals[0], message }] })
+  if (verdict === undefined) throw new Error("a verdict")
+  const html = renderToStaticMarkup(<VerdictCard verdict={verdict} />)
+  expect(html.split("<p>`unseen` is not a member of `stress.Purchase`</p>").length - 1).toBe(2)
+})

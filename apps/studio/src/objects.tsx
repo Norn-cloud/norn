@@ -239,7 +239,7 @@ export function ObjectPage() {
             <RelatedInline concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} />
             {view === "technical" && <Technical name={name} lineage={lineage} />}
           </TabsContent>
-          <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} /></TabsContent>
+          <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} /></TabsContent>
           <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} /></TabsContent>
           <TabsContent value="guarantees" className="pt-4">
             <Panel icon={ShieldCheck} label="Laws over this object type"><Well className="p-3">
@@ -277,10 +277,10 @@ function Empty({ icon: Icon, action, children }: { readonly icon: LucideIcon; re
   )
 }
 
-function Relations({ concept, id, links }: { readonly concept: Concept; readonly id: string; readonly links: LinkPage }) {
+function Relations({ concept, id, links, concepts }: { readonly concept: Concept; readonly id: string; readonly links: LinkPage; readonly concepts: readonly Concept[] }) {
   return (
     <Panel icon={Link2} label="Related records"><Well className="p-3">
-      {concept.relationships.length === 0 && links.items.length === 0
+      {concept.relationships.length === 0 && incomingOf(concept, concepts).length === 0 && links.items.length === 0
         ? <p className="text-sm text-muted-foreground">This concept declares no relationships.</p>
         : <ul className="space-y-2 text-sm">
           {concept.relationships.map((relationship) => {
@@ -309,6 +309,7 @@ function Relations({ concept, id, links }: { readonly concept: Concept; readonly
 
 function Lineage({ lineage }: { readonly lineage: SourceLineage | undefined }) {
   const { inspect } = useInspector()
+  useEffect(() => () => inspect(), [lineage, inspect])
   return (
     <Panel icon={Database} label="Where it came from"><Well className="space-y-3 p-3">
       {!lineage && <EmptyState icon={Database}>No source record is retained for this record.</EmptyState>}

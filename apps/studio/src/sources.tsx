@@ -216,7 +216,8 @@ export function useCatalog() {
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
   const [search, setSearch] = useState("")
-  const matches = (concept: Concept) => `${concept.title} ${concept.summary ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
+  const { view } = useView()
+  const matches = (concept: Concept) => `${concept.title} ${about(concept, view) ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
     <section className="space-y-8">
       <div className="space-y-2">
