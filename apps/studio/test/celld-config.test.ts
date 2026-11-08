@@ -37,6 +37,20 @@ test("production, weak secrets, email and half an assistant refuse before anythi
   expect(() => celldStudio({ ...BASE, NORN_HOST_SERVICE: "Norn_Cell" })).toThrow("script name")
 })
 
+test("the tool gateway reaches the Worker only whole, as an https origin with Studio's client", () => {
+  const tool = { TOOL_GATEWAY_URL: "https://gateway-next.norn.cloud", TOOL_GATEWAY_CLIENT_ID: "client", TOOL_GATEWAY_CLIENT_SECRET: "c".repeat(32) }
+  expect(celldConfig(celldStudio({ ...BASE, ...tool })).vars).toEqual({ BETTER_AUTH_SECRET: SECRET, BETTER_AUTH_URL: "https://demo.norn.cloud", AUTH_SCRYPT: "js", STUDIO_BUILD: BUILD, ...tool })
+  expect(celldConfig(celldStudio(BASE)).vars).not.toHaveProperty("TOOL_GATEWAY_URL")
+  expect(() => celldStudio({ ...BASE, TOOL_GATEWAY_URL: tool.TOOL_GATEWAY_URL })).toThrow("go together")
+  expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_CLIENT_ID: "" })).toThrow("non-empty")
+  expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_CLIENT_SECRET: "" })).toThrow("non-empty")
+  expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: "http://127.0.0.1:9878" })).toThrow("https origin")
+  expect(celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: "https://gateway.example.com:8443" }).toolGateway?.url).toBe("https://gateway.example.com:8443")
+  for (const bad of ["https://gateway.example.com/", "https://gateway.example.com/v1", "https://user@gateway.example.com", "https://gateway.example.com:8443/x", "https://gateway.example.com?x=1", "https://Gateway.example.com"]) {
+    expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: bad })).toThrow("https origin")
+  }
+})
+
 test("the secret-bearing config is created exclusively, readable by its owner only", async () => {
   const { mkdtempSync, statSync, writeFileSync, readFileSync, chmodSync } = await import("node:fs")
   const { join } = await import("node:path")

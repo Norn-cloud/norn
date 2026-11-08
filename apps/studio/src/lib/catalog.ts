@@ -11,7 +11,15 @@ export interface Field {
   readonly optional: boolean
   /** Declared exact-decimal facts, with the unit or currency fact their type names. */
   readonly decimal: { readonly unit: string | undefined; readonly perUnit: string | undefined; readonly currencyFrom: string | undefined } | undefined
+  /** The declared value kind after resolving named property types; `enum` carries its declared values in order. */
+  readonly scalar: Scalar
 }
+
+/** A property's value kind as the admitted definition declares it, with named types resolved. */
+export type Scalar =
+  | { readonly kind: "text" | "integer" | "decimal" | "boolean" | "timestamp" | "date" | "duration" | "record" | "json-ext" }
+  | { readonly kind: "enum"; readonly values: readonly string[] }
+  | { readonly kind: "unresolved"; readonly name: string }
 
 export interface Relationship {
   readonly id: string
@@ -115,6 +123,15 @@ function typeText(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef
   }
 }
 
+function scalarOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>, seen: ReadonlySet<string> = new Set()): Scalar {
+  if (type.kind === "ref") {
+    const def = types.get(type.name)
+    return def === undefined || seen.has(type.name) ? { kind: "unresolved", name: type.name } : scalarOf(def.type, types, new Set([...seen, type.name]))
+  }
+  if (type.kind === "enum") return { kind: "enum", values: type.values.map(({ value }) => value) }
+  return { kind: type.kind }
+}
+
 function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>): Field["decimal"] {
   if (type.kind === "ref") {
     const def = types.get(type.name)
@@ -192,7 +209,7 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       summary: [def.name, title].includes(artifact.name) ? undefined : artifact.name,
       description: def.description,
       parents,
-      fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types) })),
+      fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types), scalar: scalarOf(type, types) })),
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],
       feeds: fed,
