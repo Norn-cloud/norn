@@ -763,22 +763,22 @@
           "span": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerDiagnosticSpan",
                 "description": "Source location in the artifact JSON, when known."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "tier": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerTier",
                 "description": "The checker tier that emitted this finding, when its code is registered."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -799,11 +799,11 @@
           "source": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerSourceSpan",
                 "description": "Byte range in the original source text, when available."
+              },
+              {
+                "type": "null"
               }
             ]
           }

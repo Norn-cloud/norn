@@ -306,14 +306,14 @@ export interface components {
             message: string;
             remediation: components["schemas"]["NornIrDiagnosticRemediation"] | null;
             severity: components["schemas"]["NornIrDiagnosticSeverity"];
-            span: null | components["schemas"]["NornCheckerDiagnosticSpan"];
-            tier: null | components["schemas"]["NornCheckerTier"];
+            span: components["schemas"]["NornCheckerDiagnosticSpan"] | null;
+            tier: components["schemas"]["NornCheckerTier"] | null;
         };
         /** @description A JSON pointer and optional source-text range for a checker finding. */
         NornCheckerDiagnosticSpan: {
             /** @description RFC 6901 JSON pointer into the artifact. */
             pointer: string;
-            source: null | components["schemas"]["NornCheckerSourceSpan"];
+            source: components["schemas"]["NornCheckerSourceSpan"] | null;
         };
         /** @description The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`). */
         NornCheckerDiagnostics: {
