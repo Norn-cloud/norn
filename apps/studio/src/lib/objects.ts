@@ -136,3 +136,18 @@ export function exactJson(value: unknown, numbers: ReadonlyMap<string, string>, 
   }
   return JSON.stringify(value)
 }
+
+/** `exactJson`, indented two spaces a level, for reading. */
+export function exactPretty(value: unknown, numbers: ReadonlyMap<string, string>, pointer: string, depth = 0): string {
+  const pad = "  ".repeat(depth + 1)
+  const end = "  ".repeat(depth)
+  if (Array.isArray(value)) {
+    return value.length === 0 ? "[]" : `[\n${value.map((item, index) => pad + exactPretty(item, numbers, `${pointer}/${index}`, depth + 1)).join(",\n")}\n${end}]`
+  }
+  if (typeof value === "number") return numbers.get(pointer) ?? String(value)
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value)
+    return entries.length === 0 ? "{}" : `{\n${entries.map(([key, item]) => `${pad}${JSON.stringify(key)}: ${exactPretty(item, numbers, `${pointer}/${member(key)}`, depth + 1)}`).join(",\n")}\n${end}}`
+  }
+  return JSON.stringify(value)
+}
