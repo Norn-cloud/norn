@@ -125,5 +125,15 @@ export interface Access {
   readonly capabilities: Readonly<Record<"population" | "values" | "sources", { readonly decision: "permit" | "deny"; readonly rule: string | null }>>
 }
 
+const isCapability = (value: unknown): boolean =>
+  isRecord(value) && (value.decision === "permit" || value.decision === "deny") && (value.rule === null || typeof value.rule === "string")
+
+/** The fields of an `Access` document that the decision panel reads. */
+export const isAccess = (value: unknown): boolean =>
+  isRecord(value) && isRecord(value.principal) && typeof value.principal.subjectId === "string" &&
+  Array.isArray(value.principal.roles) && typeof value.principal.roleTable === "string" &&
+  typeof value.policy === "string" && typeof value.grantTable === "string" && isRecord(value.capabilities) &&
+  (["population", "values", "sources"] as const).every((name) => isCapability((value.capabilities as Record<string, unknown>)[name]))
+
 /** The signed-in account's access decisions in the demo cell, computed by the host on each read. */
-export const liveAccess = (fetcher?: Fetch) => hostRead<Access>(`/v1/access?${DEMO}&environmentId=dev`, fetcher)
+export const liveAccess = (fetcher?: Fetch) => hostRead<Access>(`/v1/access?${DEMO}&environmentId=dev`, fetcher, isAccess)

@@ -32,4 +32,9 @@ test("the probe passes on any answer from the new build's route, and fails on th
   expect(probeServesNewBuild(404, JSON.stringify({ code: "question.not_found" }))).toBe(true)
   expect(probeServesNewBuild(404, "not json")).toBe(false)
   expect(probeServesNewBuild(503, "{}")).toBe(false)
+  // A bare 4xx (a proxy or CDN page) or a code-less body is not the new build; a 2xx is.
+  expect(probeServesNewBuild(200, "ok")).toBe(true)
+  expect(probeServesNewBuild(403, "<html>forbidden</html>")).toBe(false)
+  expect(probeServesNewBuild(401, "{}")).toBe(false)
+  expect(probeServesNewBuild(302, "")).toBe(false)
 })
