@@ -5169,13 +5169,11 @@ fn action_derivation_context<X>(
     actor: Option<&str>,
     derivation: &norn_ir::ActionInputDerivation,
 ) -> Result<ExprValue, ActionRefusal<X>> {
-    let mut context =
-        action_expression_context(effective_input, &JsonObject::new(), None).map_err(|reason| {
-            ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason,
-            }
+    let mut context = action_expression_context(effective_input, &JsonObject::new(), None)
+        .map_err(|reason| ActionRefusal::DerivationFailed {
+            field: derivation.field.clone(),
+            expression: derivation.expression.as_str().to_owned(),
+            reason,
         })?;
     if let Some(principal) = actor {
         let ExprValue::Object(fields) = &mut context else {

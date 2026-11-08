@@ -2643,7 +2643,6 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
     }
 }
 
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
     #[test]

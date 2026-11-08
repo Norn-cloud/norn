@@ -7729,7 +7729,6 @@ fn active_definition_pointer_and_latest_version_share_one_snapshot_during_instal
     assert_eq!(after.receipt_sha256, "receipt-v2");
 }
 
-
 norn_testkit::proptest::proptest! {
     #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(12))]
     #[test]

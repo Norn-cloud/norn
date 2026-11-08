@@ -551,7 +551,6 @@ fn every_unreachable_state_of_one_lifecycle_is_reported() {
     );
 }
 
-
 #[test]
 fn guard_diagnostics_require_runtime_errors_and_retain_inherited_identity() {
     for code in [

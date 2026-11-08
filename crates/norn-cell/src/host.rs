@@ -1917,7 +1917,7 @@ where
             Some(proof),
             quantity
                 .as_ref()
-                .map(|(request, key)| (request, key.as_str())),
+                .map(|(request, key)| (std::slice::from_ref(request), key.as_str())),
             &[],
             &[],
             &[],
