@@ -96,9 +96,14 @@ cargo check --manifest-path third_party/ascent/ascent/Cargo.toml --no-default-fe
 
 Also qualify the same runtime command with `--features no-clock,par`, and the
 default clocked profile, plus the workspace's relevant gates. Isolated macro
-unit tests resolve `ascent_base` normally. No tests/builds/Cargo commands have
-been run as part of this source-only qualification. CI admission and lock
-resolution remain integration gates, not exceptions added by this patch.
+unit tests resolve `ascent_base` normally.
+
+Qualification record (Rust 1.98.0, on a disposable Linux VM): the macro
+`no_clock_` tests pass (2 passed); the runtime `cargo check` passes for
+`no-clock`, `no-clock,par` and the default clocked profile, and fails with the
+explicit `select either clock or no-clock` error when neither is selected. CI
+admission and lock resolution remain integration gates, not exceptions added by
+this patch.
 
 Static integration preflight: relation columns require `Clone + Eq + Hash`;
 lattice columns additionally require `Lattice`, and parallel columns require
