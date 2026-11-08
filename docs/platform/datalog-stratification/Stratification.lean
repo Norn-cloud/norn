@@ -1,7 +1,7 @@
 import Std
 
-/- Source-only, uncompiled construction model; not a Rust refinement proof.
-   Source pin: 08ea1512d734bc390201dd22abb682d8f4952757.
+/- Construction model of Datalog stratification; not a Rust refinement proof.
+   Rust source: crates/norn-datalog/src/validate.rs (git blob 0f12c3d3).
    See README.md for the structural and machine-correspondence obligations.
    No executable certificate checker substitutes for the max construction. -/
 namespace Norn.DatalogStratification
