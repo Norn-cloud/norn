@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { chartFrame } from "../src/lib/chart.ts"
+import { chartEmpty, chartFrame } from "../src/lib/chart.ts"
 
 test("ratios plot as whole percents padded by one point", () => {
   const frame = chartFrame([
@@ -21,4 +21,13 @@ test("a sum plots at its own value, never as a percentage", () => {
 test("no answers, or none with a value, give no chart instead of infinite bounds", () => {
   expect(chartFrame([])).toBeUndefined()
   expect(chartFrame([{ label: "Week", value: "unavailable", totals: ["0 g", "0 g"] }])).toBeUndefined()
+})
+
+test("an all-suppressed answer is not called empty", () => {
+  const suppressed = { label: "Week", value: "unavailable", totals: ["1 g"], suppressed: true }
+  expect(chartFrame([suppressed])).toBeUndefined()
+  expect(chartEmpty([])).toContain("no answers")
+  expect(chartEmpty([suppressed])).toContain("suppressed")
+  expect(chartEmpty([suppressed])).not.toContain("no answers")
+  expect(chartEmpty([{ label: "Week", value: "unavailable", totals: ["0 g", "0 g"] }])).toContain("No week")
 })
