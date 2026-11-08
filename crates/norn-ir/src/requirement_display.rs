@@ -2,6 +2,7 @@
 use crate::deontic::{
     DeonticModality, LocalizedRequirement, RequirementTiming, StructuredRequirement,
 };
+use crate::reviewed_locale::{isolate, visible};
 use crate::{LawModality, LawResponse, LawRoot, LawTiming};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,22 +22,6 @@ pub struct RequirementSlot {
     pub id: String,
     pub label: String,
     pub text: String,
-}
-
-fn visible(text: &str) -> String {
-    let mut out = String::new();
-    for c in text.chars() {
-        if matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' | '\u{061c}')
-        {
-            out.extend(c.escape_unicode());
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-fn isolate(text: &str) -> String {
-    format!("\u{2068}{}\u{2069}", visible(text))
 }
 
 impl RequirementView {

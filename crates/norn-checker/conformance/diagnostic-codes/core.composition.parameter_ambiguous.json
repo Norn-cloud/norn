@@ -1,0 +1,7 @@
+{
+  "code": "core.composition.parameter_ambiguous",
+  "message": "multiple effective candidates at equal scope precedence",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

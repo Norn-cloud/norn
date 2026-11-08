@@ -306,14 +306,14 @@ export interface components {
             message: string;
             remediation: components["schemas"]["NornIrDiagnosticRemediation"] | null;
             severity: components["schemas"]["NornIrDiagnosticSeverity"];
-            span: null | components["schemas"]["NornCheckerDiagnosticSpan"];
-            tier: null | components["schemas"]["NornCheckerTier"];
+            span: components["schemas"]["NornCheckerDiagnosticSpan"] | null;
+            tier: components["schemas"]["NornCheckerTier"] | null;
         };
         /** @description A JSON pointer and optional source-text range for a checker finding. */
         NornCheckerDiagnosticSpan: {
             /** @description RFC 6901 JSON pointer into the artifact. */
             pointer: string;
-            source: null | components["schemas"]["NornCheckerSourceSpan"];
+            source: components["schemas"]["NornCheckerSourceSpan"] | null;
         };
         /** @description The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`). */
         NornCheckerDiagnostics: {
@@ -6287,12 +6287,35 @@ export interface components {
             optional?: boolean;
         };
         /** @description Where a [`SliceDeclaration`]'s key comes from. */
-        NornIrSliceKey: "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf4"] | components["schemas"]["NornIrSliceKeyOneOf5"];
-        /** @description A text property of an earlier slice entry (a link by key). */
-        NornIrSliceKeyOneOf4: {
-            property: components["schemas"]["NornIrSliceKeyOneOf4PropertyProperty"];
+        NornIrSliceKey: components["schemas"]["NornIrSliceKeyOneOf0"] | "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf5"] | components["schemas"]["NornIrSliceKeyOneOf6"];
+        /** @description A unique effective parameter selected from an earlier authorized link list. */
+        NornIrSliceKeyOneOf0: {
+            parameter: components["schemas"]["NornIrSliceKeyOneOf0PropertyParameter"];
         };
-        NornIrSliceKeyOneOf4PropertyProperty: {
+        NornIrSliceKeyOneOf0PropertyParameter: {
+            /** @description Earlier single-object slice holding an explicit default setting. */
+            defaultFrom?: string;
+            /** @description Action input field carrying the declared effective timestamp. */
+            effectiveAt: string;
+            /** @description Earlier list slice containing the candidate setting facts. */
+            from: string;
+            /** @description Explicit scope precedence, highest first. */
+            precedence: components["schemas"]["NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems"][];
+            /** @description Stable parameter key. */
+            settingKey: string;
+        };
+        NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems: {
+            businessUnitId?: string | null;
+            environmentId?: string | null;
+            orgId?: string | null;
+            tenantId?: string | null;
+            workspaceId?: string | null;
+        };
+        /** @description A text property of an earlier slice entry (a link by key). */
+        NornIrSliceKeyOneOf5: {
+            property: components["schemas"]["NornIrSliceKeyOneOf5PropertyProperty"];
+        };
+        NornIrSliceKeyOneOf5PropertyProperty: {
             /** @description The earlier entry's name. */
             from: string;
             /** @description The property holding the key. */
@@ -6303,10 +6326,10 @@ export interface components {
          *     single-object entry `from`, loaded as a list ordered by target key
          *     and bounded by the limit profile's slice records (#3079).
          */
-        NornIrSliceKeyOneOf5: {
-            link: components["schemas"]["NornIrSliceKeyOneOf5PropertyLink"];
+        NornIrSliceKeyOneOf6: {
+            link: components["schemas"]["NornIrSliceKeyOneOf6PropertyLink"];
         };
-        NornIrSliceKeyOneOf5PropertyLink: {
+        NornIrSliceKeyOneOf6PropertyLink: {
             /** @description The earlier (single-object) entry's name. */
             from: string;
             /** @description The link id, declared on that entry's type or a supertype. */

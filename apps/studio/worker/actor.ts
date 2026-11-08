@@ -71,9 +71,9 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
  * A missing or "null" Origin refuses. API-key (service) calls carry their own
  * credential and need no Origin.
  */
-export function originAllowed(request: Request, actor: NornActor, studioOrigin: string): boolean {
+export function originAllowed(request: Request, actor: NornActor, studioOrigins: readonly string[]): boolean {
   if (actor.actorKind === "service" || SAFE_METHODS.has(request.method)) return true
-  return request.headers.get("origin") === studioOrigin
+  return studioOrigins.includes(request.headers.get("origin") ?? "")
 }
 
 /**
