@@ -28,15 +28,16 @@ SHA-256 `792af0babe403e49368d8717763605fe978b3a1eb7d51b52e3d0a5cb97e6eb74`.
 
 ## Profile and feature unification
 
-The Norn workspace edge is exactly:
+A Norn consumer's workspace edge is exactly:
 
 ```toml
 ascent = { version = "=0.8.1", default-features = false, features = ["no-clock"] }
 ```
 
-The root `[patch.crates-io]` redirects only `ascent` and `ascent_macro` to these
-sources. Both are explicitly excluded from workspace membership; no default
-members, dependency guards, or CI admission rules are changed. The runtime
+with a root `[patch.crates-io]` that redirects only `ascent` and `ascent_macro`
+to these sources (added together with the first consumer). Both packages are
+explicitly excluded from workspace membership; no default members, dependency
+guards, or CI admission rules are changed by vendoring them. The runtime
 pins its patched macro dependency to `=0.8.1` and forwards `no-clock` to it.
 
 Upstream default behavior is retained through defaults `par` and `clock`.
@@ -64,11 +65,11 @@ pristine vendored Rust files are not formatted.
 
 Only this Ascent feature subgraph excludes `web-time`; the whole Norn
 workspace already contains unrelated `web-time` edges. No Norn crate consumes
-the workspace Ascent declaration yet: checker/Datalog integration is the next
-slice. Manifest inspection is not a resolved dependency-graph claim. The
-integrating slice must run standard Cargo resolution off-host (never manually
-edit Cargo.lock), then inspect the actual consumer's normal dependency tree
-and prove that its Ascent subtree excludes `web-time` and `clock`.
+Ascent in this change: the checker integration is the next change. Manifest
+inspection is not a resolved dependency-graph claim. The integrating change
+must run standard Cargo resolution (never manually edit Cargo.lock), then
+inspect the actual consumer's normal dependency tree and prove that its Ascent
+subtree excludes `web-time` and `clock`.
 
 ## Guards and qualification
 

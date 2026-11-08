@@ -9,7 +9,7 @@
       "revision": "e52c84b4419c56976413de1cbf15d56c8c136a5c",
       "evidence": {
         "path": "third_party/ascent/PATCHES.md",
-        "sha256": "30fbc19dba8a521f01a8b5e4c19cfcedaa3a142f2774e345b62f85b63e623993"
+        "sha256": "d69b5d23d6a24da9cbb72cc5c58960021c09ddc4240b12ee326098feb5fe7181"
       }
     }
   ],
@@ -18,7 +18,7 @@
   "rights_evidence": [
     {
       "path": "third_party/ascent/PATCHES.md",
-      "sha256": "30fbc19dba8a521f01a8b5e4c19cfcedaa3a142f2774e345b62f85b63e623993"
+      "sha256": "d69b5d23d6a24da9cbb72cc5c58960021c09ddc4240b12ee326098feb5fe7181"
     },
     {
       "path": "third_party/ascent/LICENSE",
