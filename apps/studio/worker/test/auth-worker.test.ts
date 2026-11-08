@@ -42,11 +42,28 @@ test("signing in after sign-up sets an HTTP-only, secure, same-site session cook
   expect(session).toMatch(/SameSite=Lax/i)
   const me = await call(env, "/api/me", { headers: { cookie: cookieOf(signUp) } })
   expect(me.status).toBe(200)
-  const body = (await me.json()) as { user: { email: string }; organization: { role: string; name: string } }
+  const body = (await me.json()) as { user: { email: string }; organization: { role: string; name: string }; environmentId: string | null }
   expect(body.user.email).toBe("ada@example.com")
   expect(body.organization).toMatchObject({ role: "owner", name: "Ada's workspace" })
+  expect(body.environmentId).toBeNull()
   const row = (env.AUTH_DB as unknown as Database).query("select authMethod from session").get() as { authMethod: string }
   expect(row.authMethod).toBe("password")
+})
+
+test("the active organization selects its metadata environment", async () => {
+  const env = stage()
+  const cookie = cookieOf(await enroll(env, "scope@example.com", "Scope"))
+  const db = env.AUTH_DB as unknown as Database
+  const user = (db.query("select id from user where email = 'scope@example.com'").get() as { id: string }).id
+  db.run("insert into organization (id, name, slug, createdAt) values ('org_demo', 'Demo', 'demo', ?)", [Date.now()])
+  db.run("insert into member (id, organizationId, userId, role, createdAt) values ('scope-demo', 'org_demo', ?, 'viewer', ?)", [user, Date.now()])
+  db.run("update session set activeOrganizationId = 'org_demo' where userId = ?", [user])
+  const body = await (await call(env, "/api/me", { headers: { cookie } })).json() as { organization: { id: string }; environmentId: string | null }
+  expect(body.organization.id).toBe("org_demo")
+  expect(body.environmentId).toBeNull()
+  db.run("update organization set metadata = ? where id = ?", [JSON.stringify({ environmentId: "warehouse" }), "org_demo"])
+  const changed = await (await call(env, "/api/me", { headers: { cookie } })).json() as { environmentId: string | null }
+  expect(changed.environmentId).toBe("warehouse")
 })
 
 test("sign-out ends the session", async () => {
