@@ -21,12 +21,31 @@ impl Modify for ContractSchemas {
         let components = openapi
             .components
             .get_or_insert_with(utoipa::openapi::Components::new);
-        for (name, schema) in artifact_envelope_schemas()
+        let artifact_schemas = artifact_envelope_schemas();
+        let effective_law_schemas = project_schemars_components(
+            norn_ir::verification::effective_law_instance_schema(),
+            "NornIrEffectiveLawInstance",
+            "NornIr",
+        )
+        .into_iter()
+        .filter(|(name, _)| {
+            !artifact_schemas
+                .iter()
+                .any(|(existing, _)| existing == name)
+        })
+        .collect::<Vec<_>>();
+        for (name, schema) in artifact_schemas
             .into_iter()
+            .chain(effective_law_schemas)
             .chain(project_schemars_components(
                 norn_ir::requirement_display::requirement_view_schema(),
                 "NornIrRequirementView",
                 "NornIrRequirement",
+            ))
+            .chain(project_schemars_components(
+                norn_ir::verification::guarantees::guarantees_document_schema(),
+                "NornGuaranteesDocument",
+                "NornGuarantees",
             ))
             .chain(project_schemars_components(
                 norn_ir::layout_sidecar_schema(),
@@ -61,6 +80,11 @@ impl Modify for ContractSchemas {
             .chain(project_schemars_components(
                 norn_ir::question_ir_schema(),
                 "NornIrQuestion",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
+                norn_ir::metric_definition_schema(),
+                "NornIrMetricDefinition",
                 "NornIr",
             ))
             .chain(project_schemars_components(
@@ -1134,11 +1158,100 @@ fn normalize_scalar_literal_union(object: &mut serde_json::Map<String, Value>) {
     reason = "unit tests assert schema conversion invariants"
 )]
 mod tests {
+    #[test]
+    fn effective_law_projection_preserves_exported_artifact_components() {
+        let document: serde_json::Value =
+            serde_json::from_str(&crate::openapi::openapi_json().expect("OpenAPI document"))
+                .expect("OpenAPI JSON");
+        for (name, schema) in super::artifact_envelope_schemas() {
+            if matches!(name.as_str(), "NornIrLawRoot" | "NornIrMember") {
+                let expected = serde_json::to_value(schema).expect("artifact schema");
+                assert_eq!(
+                    document.pointer(&format!("/components/schemas/{name}")),
+                    Some(&expected)
+                );
+            }
+        }
+        assert!(
+            document
+                .pointer("/components/schemas/NornIrEffectiveLawInstance")
+                .is_some()
+        );
+    }
+
     use super::{
         adapt_schemars_schema, hoist_inline_objects, parse_openapi_schema,
         project_schemars_components,
     };
     use serde_json::{Value, json};
+
+    #[test]
+    fn guarantee_projection_matches_typed_eligibility_and_exact_scalars() {
+        use norn_ir::verification::guarantees::{GoalGuarantee, GuaranteeScalar};
+        let schemas: serde_json::Map<String, Value> = project_schemars_components(
+            norn_ir::verification::guarantees::guarantees_document_schema(),
+            "NornGuaranteesDocument",
+            "NornGuarantees",
+        )
+        .into_iter()
+        .map(|(name, schema)| (name, serde_json::to_value(schema).expect("component")))
+        .collect();
+        let validator = |name: &str| {
+            jsonschema::validator_for(&json!({
+                "$ref": format!("#/components/schemas/NornGuarantees{name}"),
+                "components": {"schemas": schemas},
+            }))
+            .expect("projected guarantee schema")
+        };
+        let goals = validator("GoalGuarantee");
+        let unknown = json!({"kind":"unknown","reason":"outside qualified fragment"});
+        for eligible in [false, true] {
+            for verdict in [
+                unknown.clone(),
+                json!({"kind":"bounded-pass"}),
+                json!({"kind":"refuted"}),
+            ] {
+                for level in [
+                    unknown.clone(),
+                    json!({"kind":"exhaustive-finite/bounded"}),
+                    json!({"kind":"runtime-enforced"}),
+                    json!({"kind":"parity-tested"}),
+                ] {
+                    let value = json!({"index":0,"goalKind":"preservation","eligible":eligible,"verdict":verdict,"level":level,"evidence":null,"scenario":null});
+                    let valid = eligible || verdict == unknown && level == unknown;
+                    assert_eq!(goals.is_valid(&value), valid, "{value}");
+                    assert_eq!(
+                        serde_json::from_value::<GoalGuarantee>(value).is_ok(),
+                        valid
+                    );
+                }
+            }
+        }
+        let scalars = validator("GuaranteeScalar");
+        for coefficient in [
+            json!("0"),
+            json!("-1"),
+            json!(i64::MIN.to_string()),
+            json!(i64::MAX.to_string()),
+            json!("-0"),
+            json!("01"),
+            json!("+1"),
+            json!("1.5"),
+            json!("9223372036854775808"),
+            json!(1),
+            json!("1\n"),
+            json!("1\r"),
+            json!("1\u{2028}"),
+            json!("1\u{2029}"),
+        ] {
+            let value = json!({"coefficient":coefficient,"scale":0,"unit":null});
+            assert_eq!(
+                scalars.is_valid(&value),
+                serde_json::from_value::<GuaranteeScalar>(value.clone()).is_ok(),
+                "{value}"
+            );
+        }
+    }
 
     #[test]
     fn projection_preserves_owned_row_derivation_map_values_and_key_pattern() {

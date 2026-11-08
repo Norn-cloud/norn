@@ -482,6 +482,7 @@ pub fn decimal_expression_type(value: &JsonValue) -> Result<Option<crate::Type>,
             currency_source,
             per_unit,
             rounding,
+            ..
         }) => Ok(Some(crate::Type::Decimal {
             scale: scale.0,
             unit,
@@ -751,19 +752,45 @@ pub fn action_environment(
     }
     let slice_record = "exact.action.slice".to_owned();
     records.insert(slice_record.clone(), slice);
+    // #1105: each aggregate is a count (an integer) or a sum typed as its
+    // summed property, read as `aggregates.<name>`.
+    let mut aggregates = BTreeMap::new();
+    for aggregate in &action.aggregates {
+        let ty = match &aggregate.aggregate {
+            norn_ir::AggregateFunction::Count {} => Type::Integer,
+            norn_ir::AggregateFunction::Sum { property } => records
+                .get(aggregate.object_type.as_str())
+                .and_then(|record| record.get(property.as_str()))
+                .cloned()
+                .ok_or("unresolved action aggregate property")?,
+        };
+        aggregates.insert(aggregate.name.clone(), ty);
+    }
+    let aggregate_record = "exact.action.aggregates".to_owned();
+    let declares_aggregates = !aggregates.is_empty();
+    if declares_aggregates {
+        records.insert(aggregate_record.clone(), aggregates);
+    }
     let mut env =
         ZenTypeEnv::input_only_with_records(records, fields.clone(), EnvOptions::default())
             .map_err(|e| e.to_string())?;
     env = env
         .bind_operand("slice", Type::Record(slice_record))
         .map_err(|e| e.to_string())?;
+    if declares_aggregates {
+        env = env
+            .bind_operand("aggregates", Type::Record(aggregate_record))
+            .map_err(|e| e.to_string())?;
+    }
     if let Some(ty) = catalog.and_then(|env| env.variables().get("self")) {
         env = env
             .bind_operand("self", ty.clone())
             .map_err(|e| e.to_string())?;
     }
     for (name, ty) in fields {
-        if name != "input" && name != "slice" {
+        // A declared `aggregates` operand keeps its name; the input field
+        // stays reachable as `input.aggregates`.
+        if name != "input" && name != "slice" && !(declares_aggregates && name == "aggregates") {
             env = env.bind_operand(&name, ty).map_err(|e| e.to_string())?;
         }
     }

@@ -1,0 +1,11 @@
+{
+  "objectType": "canon.PartyRole",
+  "id": "demo/party/custodian/role/custodian",
+  "scope": "org_demo/dev",
+  "version": 1,
+  "values": {
+    "role": "custodian",
+    "valid_from": null,
+    "valid_to": null
+  }
+}

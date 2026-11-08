@@ -1443,6 +1443,225 @@ fn closure_of<'a>(
     Some(closure)
 }
 
+/// The sub-decision closure of one rule in an admitted set: every graph its
+/// `decisionNode`s reach, keyed as the evaluator resolves them.
+#[derive(Debug, Clone)]
+pub struct RuleClosure<'a> {
+    /// The rule itself.
+    pub root: &'a ArtifactEnvelope,
+    /// Every reachable sub-decision graph, keyed by its `decisionNode` key
+    /// (the dependency's `artifactId`).
+    pub sub_decisions: BTreeMap<&'a str, &'a ArtifactEnvelope>,
+    /// Norn1 hash of the canonical `{root, members}` record, where `root` and
+    /// each member are `{artifactId, version, sha256}` and members are sorted:
+    /// the identity of exactly the rule set an evaluation ran.
+    pub digest: String,
+}
+
+/// Why a rule's sub-decision closure cannot be evaluated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleClosureError {
+    /// No rule, or more than one version of it, has this `artifactId`.
+    Root {
+        /// The requested `artifactId`.
+        artifact_id: String,
+        /// How many rule artifacts carry it.
+        found: usize,
+    },
+    /// A `decisionNode` key with no pinned `rule` dependency in the set.
+    Unresolved {
+        /// The rule whose graph names the key.
+        owner: String,
+        /// The unresolved key.
+        key: String,
+    },
+    /// A key that resolves to an artifact that is not a `RuleIR` v2 graph.
+    NotAGraph {
+        /// The key.
+        key: String,
+    },
+    /// Two rules in the closure pin different versions of one key, which a
+    /// single evaluation cannot hold.
+    VersionSkew {
+        /// The key.
+        key: String,
+        /// The pinned versions, sorted.
+        versions: Vec<String>,
+    },
+    /// A key reached again on its own path.
+    Cycle {
+        /// The key.
+        key: String,
+    },
+    /// Deeper than [`MAX_SUB_DECISION_DEPTH`] or larger than
+    /// [`MAX_SUB_DECISION_CLOSURE`].
+    Bound {
+        /// What exceeded.
+        message: String,
+    },
+    /// An artifact could not be hashed.
+    Digest {
+        /// The failure.
+        message: String,
+    },
+}
+
+impl std::fmt::Display for RuleClosureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Root { artifact_id, found } => write!(
+                f,
+                "rule '{artifact_id}': expected exactly one rule artifact, found {found}"
+            ),
+            Self::Unresolved { owner, key } => write!(
+                f,
+                "rule '{owner}': sub-decision '{key}' has no pinned rule dependency in the set"
+            ),
+            Self::NotAGraph { key } => {
+                write!(f, "sub-decision '{key}' is not a RuleIR v2 decision graph")
+            }
+            Self::VersionSkew { key, versions } => write!(
+                f,
+                "sub-decision '{key}' is pinned at versions {versions:?}; one evaluation holds one"
+            ),
+            Self::Cycle { key } => write!(f, "sub-decision '{key}' recurses"),
+            Self::Bound { message } | Self::Digest { message } => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for RuleClosureError {}
+
+/// Resolve the sub-decision closure of the rule `artifact_id` over an
+/// admitted set (`artifacts` over its installed `base`), by the same pinned
+/// dependency resolution and bounds as [`check_sub_decision_closures`], so
+/// admission, offline evaluation and the cell agree on one closure.
+///
+/// # Errors
+/// A [`RuleClosureError`] when the closure is absent, ambiguous, cyclic or
+/// over the profile bounds.
+pub fn rule_closure<'a>(
+    artifacts: &'a [ArtifactEnvelope],
+    base: &'a [ArtifactEnvelope],
+    artifact_id: &str,
+) -> Result<RuleClosure<'a>, RuleClosureError> {
+    let roots: Vec<&ArtifactEnvelope> = artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.artifact_id == artifact_id && artifact.kind() == ArtifactKind::Rule
+        })
+        .collect();
+    let [root] = roots.as_slice() else {
+        return Err(RuleClosureError::Root {
+            artifact_id: artifact_id.to_owned(),
+            found: roots.len(),
+        });
+    };
+    let pool = Pool::new(artifacts, base);
+    let mut members: BTreeMap<&'a str, &'a ArtifactEnvelope> = BTreeMap::new();
+    // The deepest depth each key has been scheduled at. A key is expanded
+    // again only on a strictly deeper path, which the depth bound may
+    // refuse, so each of at most MAX_SUB_DECISION_CLOSURE + 1 graphs is
+    // decoded at most MAX_SUB_DECISION_DEPTH + 1 times, however many
+    // references share it. Depths rise strictly along any path, so a cycle
+    // is still walked back to its start (Cycle) or past the bound (Bound).
+    let mut scheduled: BTreeMap<&'a str, usize> = BTreeMap::new();
+    // (rule, depth of rule, keys on the path to it)
+    let mut stack: Vec<(&'a ArtifactEnvelope, usize, Vec<&'a str>)> =
+        vec![(root, 0, vec![root.artifact_id.as_str()])];
+    while let Some((owner, depth, path)) = stack.pop() {
+        let graph = decode_graph(owner).ok_or_else(|| RuleClosureError::NotAGraph {
+            key: owner.artifact_id.clone(),
+        })?;
+        for reference in sub_decisions(&graph) {
+            let target =
+                pool.target(owner, reference.key)
+                    .ok_or_else(|| RuleClosureError::Unresolved {
+                        owner: owner.artifact_id.clone(),
+                        key: reference.key.to_owned(),
+                    })?;
+            let key = target.artifact_id.as_str();
+            if path.contains(&key) {
+                return Err(RuleClosureError::Cycle {
+                    key: key.to_owned(),
+                });
+            }
+            let child_depth = depth.saturating_add(1);
+            if child_depth > MAX_SUB_DECISION_DEPTH {
+                return Err(RuleClosureError::Bound {
+                    message: format!(
+                        "sub-decision '{key}' nests {child_depth} levels deep; the Norn profile admits at most {MAX_SUB_DECISION_DEPTH}"
+                    ),
+                });
+            }
+            match members.get(key) {
+                Some(known) if known.version != target.version => {
+                    let mut versions = vec![known.version.clone(), target.version.clone()];
+                    versions.sort();
+                    return Err(RuleClosureError::VersionSkew {
+                        key: key.to_owned(),
+                        versions,
+                    });
+                }
+                Some(_) => {}
+                None => {
+                    members.insert(key, target);
+                    if members.len() > MAX_SUB_DECISION_CLOSURE {
+                        return Err(RuleClosureError::Bound {
+                            message: format!(
+                                "the sub-decision closure holds more than {MAX_SUB_DECISION_CLOSURE} graphs"
+                            ),
+                        });
+                    }
+                }
+            }
+            if scheduled
+                .get(key)
+                .is_some_and(|&deepest| deepest >= child_depth)
+            {
+                continue;
+            }
+            scheduled.insert(key, child_depth);
+            let mut next = path.clone();
+            next.push(key);
+            stack.push((target, child_depth, next));
+        }
+    }
+    let digest = closure_digest(root, &members)?;
+    Ok(RuleClosure {
+        root,
+        sub_decisions: members,
+        digest,
+    })
+}
+
+fn closure_digest(
+    root: &ArtifactEnvelope,
+    members: &BTreeMap<&str, &ArtifactEnvelope>,
+) -> Result<String, RuleClosureError> {
+    let identity = |artifact: &ArtifactEnvelope| {
+        crate::receipt::ArtifactRef::of(artifact)
+            .map(|reference| {
+                serde_json::json!({
+                    "artifactId": reference.artifact_id,
+                    "version": reference.version,
+                    "sha256": reference.sha256,
+                })
+            })
+            .map_err(|error| RuleClosureError::Digest {
+                message: error.to_string(),
+            })
+    };
+    let members = members
+        .values()
+        .map(|artifact| identity(artifact))
+        .collect::<Result<Vec<_>, _>>()?;
+    let record = serde_json::json!({ "root": identity(root)?, "members": members });
+    crate::receipt::hash_serde_json(&record).map_err(|error| RuleClosureError::Digest {
+        message: error.to_string(),
+    })
+}
+
 fn set_finding(
     code: &str,
     message: String,
@@ -1685,5 +1904,159 @@ mod tests {
                 Some("/payload/graph".to_owned())
             )]
         );
+    }
+
+    /// A helper graph named `id`@`version` that calls each `(key, version)`.
+    fn helper(id: &str, version: &str, calls: &[(&str, &str)]) -> ArtifactEnvelope {
+        serde_json::from_value(helper_json(id, version, calls)).expect("envelope should decode")
+    }
+
+    fn helper_json(id: &str, version: &str, calls: &[(&str, &str)]) -> Value {
+        let mut rule: Value = serde_json::from_str(PRIORITY).expect("fixture should parse");
+        rule["artifactId"] = json!(id);
+        rule["version"] = json!(version);
+        rule["payload"]["ruleId"] = json!(id);
+        for (index, (key, pinned)) in calls.iter().enumerate() {
+            rule["payload"]["graph"]["nodes"]
+                .as_array_mut()
+                .expect("nodes")
+                .push(json!({
+                    "id": format!("call_{index}_{key}"), "name": key, "type": "decisionNode",
+                    "content": { "key": key, "outputPath": key, "passThrough": true }
+                }));
+            rule["dependencies"]
+                .as_array_mut()
+                .expect("dependencies")
+                .push(json!({ "artifactId": key, "kind": "rule", "version": pinned, "required": true }));
+        }
+        rule
+    }
+
+    fn keys(closure: &super::RuleClosure<'_>) -> Vec<String> {
+        closure
+            .sub_decisions
+            .iter()
+            .map(|(key, artifact)| format!("{key}@{}", artifact.version))
+            .collect()
+    }
+
+    #[test]
+    fn a_rule_chain_resolves_its_whole_closure() {
+        let set = [
+            helper("demo.pricing", "1", &[("demo.discount", "1")]),
+            helper("demo.discount", "1", &[("demo.tier", "1")]),
+            helper("demo.tier", "1", &[]),
+        ];
+        let closure = super::rule_closure(&set, &[], "demo.pricing").expect("chain resolves");
+        assert_eq!(keys(&closure), ["demo.discount@1", "demo.tier@1"]);
+        // A standalone rule has an empty closure, and its own identity.
+        let leaf = super::rule_closure(&set, &[], "demo.tier").expect("leaf resolves");
+        assert!(leaf.sub_decisions.is_empty());
+        assert_ne!(leaf.digest, closure.digest);
+        // The digest is exactly the rule set: stable, and moved by any member.
+        assert_eq!(
+            super::rule_closure(&set, &[], "demo.pricing")
+                .expect("again")
+                .digest,
+            closure.digest
+        );
+        let mut edited = set.clone();
+        let mut tier = helper_json("demo.tier", "1", &[]);
+        tier["name"] = json!("Renamed tier");
+        edited[2] = serde_json::from_value(tier).expect("envelope should decode");
+        assert_ne!(
+            super::rule_closure(&edited, &[], "demo.pricing")
+                .expect("edited")
+                .digest,
+            closure.digest
+        );
+        // Installed base rules resolve too.
+        let base = super::rule_closure(&set[..1], &set[1..], "demo.pricing").expect("base");
+        assert_eq!(keys(&base), keys(&closure));
+    }
+
+    #[test]
+    fn a_diamond_shares_one_member_and_skewed_pins_are_refused() {
+        let diamond = [
+            helper("demo.top", "1", &[("demo.left", "1"), ("demo.right", "1")]),
+            helper("demo.left", "1", &[("demo.leaf", "1")]),
+            helper("demo.right", "1", &[("demo.leaf", "1")]),
+            helper("demo.leaf", "1", &[]),
+        ];
+        let closure = super::rule_closure(&diamond, &[], "demo.top").expect("diamond");
+        assert_eq!(
+            keys(&closure),
+            ["demo.leaf@1", "demo.left@1", "demo.right@1"]
+        );
+        let mut skewed = diamond.to_vec();
+        skewed[2] = helper("demo.right", "1", &[("demo.leaf", "2")]);
+        skewed.push(helper("demo.leaf", "2", &[]));
+        assert_eq!(
+            super::rule_closure(&skewed, &[], "demo.top").err(),
+            Some(super::RuleClosureError::VersionSkew {
+                key: "demo.leaf".to_owned(),
+                versions: vec!["1".to_owned(), "2".to_owned()],
+            })
+        );
+    }
+
+    /// Shared references are expanded once per depth, not once per path:
+    /// three levels of 100 references each to the next rule would otherwise
+    /// decode graphs 1,010,101 times for a three-member closure.
+    #[test]
+    fn shared_references_are_expanded_once_per_depth() {
+        let calls = |key: &'static str| vec![(key, "1"); 100];
+        let set = [
+            helper("demo.l0", "1", &calls("demo.l1")),
+            helper("demo.l1", "1", &calls("demo.l2")),
+            helper("demo.l2", "1", &calls("demo.l3")),
+            helper("demo.l3", "1", &[]),
+        ];
+        let started = std::time::Instant::now();
+        let closure = super::rule_closure(&set, &[], "demo.l0").expect("fan-out resolves");
+        assert_eq!(keys(&closure), ["demo.l1@1", "demo.l2@1", "demo.l3@1"]);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn unresolvable_closures_are_typed_refusals() {
+        use super::RuleClosureError as E;
+        let missing = [helper("demo.top", "1", &[("demo.gone", "1")])];
+        assert_eq!(
+            super::rule_closure(&missing, &[], "demo.top").err(),
+            Some(E::Unresolved {
+                owner: "demo.top".to_owned(),
+                key: "demo.gone".to_owned()
+            })
+        );
+        assert_eq!(
+            super::rule_closure(&missing, &[], "demo.absent").err(),
+            Some(E::Root {
+                artifact_id: "demo.absent".to_owned(),
+                found: 0
+            })
+        );
+        let cycle = [
+            helper("demo.a", "1", &[("demo.b", "1")]),
+            helper("demo.b", "1", &[("demo.a", "1")]),
+        ];
+        assert_eq!(
+            super::rule_closure(&cycle, &[], "demo.a").err(),
+            Some(E::Cycle {
+                key: "demo.a".to_owned()
+            })
+        );
+        let deep = [
+            helper("demo.d0", "1", &[("demo.d1", "1")]),
+            helper("demo.d1", "1", &[("demo.d2", "1")]),
+            helper("demo.d2", "1", &[("demo.d3", "1")]),
+            helper("demo.d3", "1", &[("demo.d4", "1")]),
+            helper("demo.d4", "1", &[]),
+        ];
+        assert!(matches!(
+            super::rule_closure(&deep, &[], "demo.d0"),
+            Err(E::Bound { .. })
+        ));
+        assert!(super::rule_closure(&deep, &[], "demo.d1").is_ok());
     }
 }

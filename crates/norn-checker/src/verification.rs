@@ -8,12 +8,20 @@ use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, che
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot,
-    LawTiming, ObjectTypeName, PropertyTypeName, ResourceLimitProfile,
+    LawTiming, PropertyTypeName, ResourceLimitProfile,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+const RETAINED_SCOPE_BUDGET: Budget = Budget {
+    max_nodes: 16_384,
+    max_edges: 131_072,
+    max_steps: 1_048_576,
+};
+
 /// Stable law diagnostic codes.
 pub mod codes {
+    /// Retained pack/app membership is unavailable in this cut.
+    pub const UNRESOLVED_SCOPE: &str = "core.laws.unresolved_scope";
     /// Malformed closed `LawIR` document.
     pub const INVALID_DOCUMENT: &str = "law.validation.invalid_document";
     /// Unsupported temporal combination.
@@ -67,7 +75,11 @@ fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, String> {
 fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let root = match &law.scope.root {
-        LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
+        LawRoot::Company(id)
+        | LawRoot::App(id)
+        | LawRoot::Pack(id)
+        | LawRoot::Cell(id)
+        | LawRoot::Entity(id) => id,
     };
     if [&law.id, &law.owner, &law.rationale, &law.subject, root]
         .iter()
@@ -91,13 +103,7 @@ fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
         ));
     }
     if let Some(LawTiming::Within { millis }) = &law.timing
-        && millis
-            .parse::<u64>()
-            .ok()
-            .filter(|value| *value > 0)
-            .map(|value| value.to_string())
-            .as_ref()
-            != Some(millis)
+        && crate::deontic::canonical_positive_millis(millis).is_none()
     {
         out.push(finding(
             codes::INVALID_DOCUMENT,
@@ -158,6 +164,7 @@ pub fn check_law_set(
         EnvOptions::from_limit_profile(&limits),
     );
     let context = LawContext {
+        base,
         pool: &pool,
         catalog: &catalog,
         layer: &layer,
@@ -214,29 +221,242 @@ pub fn check_law_set(
 }
 
 struct LawContext<'a> {
+    base: &'a [ArtifactEnvelope],
     pool: &'a [ArtifactEnvelope],
     catalog: &'a EffectiveCatalog,
     layer: &'a Layer,
     env: Option<&'a ZenTypeEnv>,
 }
 
+/// Exact retained artifact members and every root-to-instance containment path.
+pub type RetainedLawMembership =
+    BTreeMap<norn_ir::definition_catalog::ArtifactKey, Vec<Vec<norn_ir::PackInstanceRef>>>;
+
+type ScopePacks<'a> = BTreeMap<
+    norn_ir::definition_catalog::ArtifactKey,
+    (&'a ArtifactEnvelope, norn_ir::CompositionPackRoot, String),
+>;
+
+/// LAW-CONTAINED-1: resolve only explicit retained instance imports/containment.
+/// This structural query grants no proof, runtime permission or installation authority.
+/// # Errors
+/// Refuses unresolved roots, stale pins, incomplete members, cycles or budget exhaustion.
+pub fn retained_law_membership(
+    law: &ArtifactEnvelope,
+    base: &[ArtifactEnvelope],
+    budget: Budget,
+) -> Result<RetainedLawMembership, Vec<Diagnostic>> {
+    let refused = || {
+        vec![finding(
+            codes::UNRESOLVED_SCOPE,
+            law,
+            "/payload/scope/root",
+            "retained instance membership is missing, ambiguous, stale or exceeds its budget",
+        )]
+    };
+    let declaration = decode(law).map_err(|_error| refused())?;
+    let (LawRoot::App(root) | LawRoot::Pack(root)) = &declaration.scope.root else {
+        return Err(refused());
+    };
+    if base.len() > budget.max_nodes {
+        return Err(refused());
+    }
+    let packs = scope_packs(base).ok_or_else(refused)?;
+    let mut instances = BTreeMap::new();
+    for (owner, pack, _) in packs.values() {
+        for instance in pack.instances.iter().flatten() {
+            if instance.scope == law.scope
+                && (crate::scope_conflict(&instance.scope, &owner.scope).is_some()
+                    || instance.instance_id.trim().is_empty()
+                    || instances
+                        .insert(instance.instance_id.clone(), instance.clone())
+                        .is_some()
+                    || instances.len() > budget.max_nodes)
+            {
+                return Err(refused());
+            }
+        }
+    }
+    let first = instances.get(root).ok_or_else(refused)?;
+    let initial = norn_ir::PackInstanceRef {
+        instance_id: root.clone(),
+        pack: first.pack.clone(),
+    };
+    scope_members(base, &packs, &instances, initial, budget).ok_or_else(refused)
+}
+
+fn scope_packs(base: &[ArtifactEnvelope]) -> Option<ScopePacks<'_>> {
+    use norn_ir::definition_catalog::ArtifactKey;
+    let mut packs = BTreeMap::new();
+    let mut bytes = 0usize;
+    for artifact in base
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::BusinessPack)
+    {
+        let value = serde_json::to_value(artifact.payload.to_json_value()).ok()?;
+        let size = norn_canonical::serialize_json_verbatim(&value).ok()?.len();
+        bytes = bytes.saturating_add(size);
+        if bytes > 8_388_608 {
+            return None;
+        }
+        if let norn_ir::BusinessPackRoot::Composition(pack) = serde_json::from_value(value).ok()? {
+            let key = ArtifactKey {
+                artifact_id: artifact.artifact_id.clone(),
+                version: artifact.version.clone(),
+            };
+            let digest = crate::ArtifactRef::of(artifact).ok()?.sha256;
+            if packs.insert(key, (artifact, pack, digest)).is_some() {
+                return None;
+            }
+        }
+    }
+    Some(packs)
+}
+
+fn scope_members(
+    base: &[ArtifactEnvelope],
+    packs: &ScopePacks<'_>,
+    instances: &BTreeMap<String, norn_ir::PackInstance>,
+    initial: norn_ir::PackInstanceRef,
+    budget: Budget,
+) -> Option<RetainedLawMembership> {
+    use norn_ir::definition_catalog::ArtifactKey;
+    let mut pending = vec![vec![initial]];
+    let mut out: RetainedLawMembership = BTreeMap::new();
+    let mut steps = 0usize;
+    let mut copies = 0usize;
+    let mut bytes = 0usize;
+    while let Some(path) = pending.pop() {
+        steps = steps.saturating_add(1);
+        if steps > budget.max_steps || path.len() > budget.max_nodes {
+            return None;
+        }
+        let last = path.last()?;
+        let instance = instances.get(&last.instance_id)?;
+        if instance.pack != last.pack {
+            return None;
+        }
+        let key = ArtifactKey {
+            artifact_id: last.pack.artifact_id.clone(),
+            version: last.pack.version.clone(),
+        };
+        let (artifact, pack, digest) = packs.get(&key)?;
+        if digest != &last.pack.sha256
+            || crate::scope_conflict(&instance.scope, &artifact.scope).is_some()
+        {
+            return None;
+        }
+        for member in &pack.artifacts {
+            let mut matches = base
+                .iter()
+                .filter(|a| a.artifact_id == member.artifact_id && a.version == member.version);
+            let target = matches.next()?;
+            if matches.next().is_some()
+                || target.kind() != crate::artifact_set::pack_kind(member.kind)
+                || crate::scope_conflict(&instance.scope, &target.scope).is_some()
+            {
+                return None;
+            }
+            if target.kind() == ArtifactKind::BusinessPack {
+                if !instance
+                    .imports
+                    .values()
+                    .chain(&instance.instances)
+                    .any(|r| {
+                        r.pack.artifact_id == member.artifact_id && r.pack.version == member.version
+                    })
+                {
+                    return None;
+                }
+                continue;
+            }
+            copies = copies.saturating_add(path.len());
+            let size = norn_canonical::serialize_json_verbatim(&path).ok()?.len();
+            bytes = bytes.saturating_add(size);
+            if copies > budget.max_edges || bytes > 8_388_608 {
+                return None;
+            }
+            out.entry(ArtifactKey {
+                artifact_id: member.artifact_id.clone(),
+                version: member.version.clone(),
+            })
+            .or_default()
+            .push(path.clone());
+        }
+        for next in instance.imports.values().chain(&instance.instances) {
+            if path
+                .iter()
+                .any(|previous| previous.instance_id == next.instance_id)
+            {
+                return None;
+            }
+            copies = copies.saturating_add(path.len().saturating_add(1));
+            bytes = bytes.saturating_add(
+                norn_canonical::serialize_json_verbatim(&path)
+                    .ok()?
+                    .len()
+                    .saturating_add(norn_canonical::serialize_json_verbatim(next).ok()?.len()),
+            );
+            if copies > budget.max_edges || bytes > 8_388_608 {
+                return None;
+            }
+            let mut child = path.clone();
+            child.push(next.clone());
+            pending.push(child);
+        }
+    }
+    for paths in out.values_mut() {
+        paths.sort_by_cached_key(|path| {
+            path.iter()
+                .map(|p| p.instance_id.clone())
+                .collect::<Vec<_>>()
+        });
+        paths.dedup();
+    }
+    Some(out)
+}
+
 impl LawContext<'_> {
+    /// LAW-COMPLETE-1: validate the declaration even with zero implementors,
+    /// then check every concrete subject selected by the shared catalog.
     fn check_bound_law(&self, law: &LawIR, artifact: &ArtifactEnvelope, out: &mut Vec<Diagnostic>) {
-        let subject = self
-            .catalog
-            .object_type_named(&law.subject)
-            .and_then(Result::ok);
-        let Some(subject) = subject else {
+        let Some(targets) = self.catalog.target_types(&law.subject) else {
             out.push(finding(
                 codes::UNKNOWN_BINDING,
                 artifact,
                 "/payload/subject",
-                "law subject is not an admitted effective object type",
+                "law subject has no complete effective contract",
             ));
             return;
         };
-        self.check_scope(law, artifact, subject, out);
-        self.check_predicates(law, artifact, subject, out);
+        if matches!(law.scope.root, LawRoot::Pack(_))
+            && let Err(findings) =
+                retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
+        {
+            out.extend(findings);
+            return;
+        }
+        if let Some(interface) = self
+            .layer
+            .interfaces
+            .iter()
+            .find(|i| i.name.as_str() == law.subject)
+        {
+            self.check_interface(law, artifact, interface, out);
+        }
+        for name in targets {
+            let Some(Ok(subject)) = self.catalog.object_type_named(&name) else {
+                out.push(finding(
+                    codes::UNKNOWN_BINDING,
+                    artifact,
+                    "/payload/subject",
+                    "an effective subject is unavailable",
+                ));
+                continue;
+            };
+            self.check_scope(law, artifact, subject, out);
+            self.check_predicates(law, artifact, subject, out);
+        }
     }
 
     fn check_scope(
@@ -247,10 +467,9 @@ impl LawContext<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         if !law.scope.object_types.iter().any(|name| {
-            subject
-                .lineage
-                .iter()
-                .any(|ancestor| ancestor.as_str() == name)
+            self.catalog
+                .target_types(name)
+                .is_some_and(|types| types.contains(subject.name.as_str()))
         }) {
             out.push(finding(
                 codes::UNKNOWN_BINDING,
@@ -259,6 +478,40 @@ impl LawContext<'_> {
                 "scope must include the subject or one of its supertypes",
             ));
         }
+        self.check_scope_bindings(law, artifact, out);
+        for state in &law.scope.lifecycle_states {
+            let selected = if self
+                .catalog
+                .target_types(&state.object_type)
+                .is_some_and(|types| types.contains(subject.name.as_str()))
+            {
+                Some(subject)
+            } else {
+                self.catalog
+                    .object_type_named(&state.object_type)
+                    .and_then(Result::ok)
+            };
+            let machine = selected.and_then(|t| t.lifecycle(&state.property));
+            if !law.scope.object_types.contains(&state.object_type)
+                || state.states.is_empty()
+                || !machine.is_some_and(|m| state.states.iter().all(|s| m.states.contains(s)))
+            {
+                out.push(finding(
+                    codes::UNKNOWN_BINDING,
+                    artifact,
+                    "/payload/scope/lifecycleStates",
+                    "state selectors must bind declared lifecycle states of a scoped type",
+                ));
+            }
+        }
+    }
+
+    fn check_scope_bindings(
+        &self,
+        law: &LawIR,
+        artifact: &ArtifactEnvelope,
+        out: &mut Vec<Diagnostic>,
+    ) {
         for name in law
             .scope
             .object_types
@@ -266,12 +519,7 @@ impl LawContext<'_> {
             .chain(&law.scope.commitments)
             .chain(std::iter::once(&law.subject))
         {
-            let bound = self.pool.iter().find(|a| {
-                self.catalog
-                    .object_type(&a.artifact_id)
-                    .and_then(Result::ok)
-                    .is_some_and(|t| t.name.as_str() == name)
-            });
+            let bound = self.type_owner(name);
             if !bound.is_some_and(|target| pinned(artifact, target)) {
                 out.push(finding(
                     codes::UNKNOWN_BINDING,
@@ -297,23 +545,157 @@ impl LawContext<'_> {
                 ));
             }
         }
-        for state in &law.scope.lifecycle_states {
-            let machine = self
-                .catalog
-                .object_type_named(&state.object_type)
-                .and_then(Result::ok)
-                .and_then(|t| t.lifecycle(&state.property));
-            if !law.scope.object_types.contains(&state.object_type)
-                || state.states.is_empty()
-                || !machine.is_some_and(|m| state.states.iter().all(|s| m.states.contains(s)))
-            {
-                out.push(finding(
-                    codes::UNKNOWN_BINDING,
-                    artifact,
-                    "/payload/scope/lifecycleStates",
-                    "state selectors must bind declared lifecycle states of a scoped type",
-                ));
+    }
+
+    fn type_owner(&self, name: &str) -> Option<&ArtifactEnvelope> {
+        let matches: Vec<_> = self
+            .pool
+            .iter()
+            .filter(|artifact| {
+                self.catalog
+                    .object_type(&artifact.artifact_id)
+                    .and_then(Result::ok)
+                    .is_some_and(|t| t.name.as_str() == name)
+                    || self
+                        .layer
+                        .interfaces
+                        .iter()
+                        .zip(&self.layer.interface_owners)
+                        .any(|(definition, owner)| {
+                            definition.name.as_str() == name
+                                && self.pool.get(*owner).is_some_and(|a| {
+                                    a.artifact_id == artifact.artifact_id
+                                        && a.version == artifact.version
+                                })
+                        })
+            })
+            .collect();
+        match matches.as_slice() {
+            [artifact] => Some(*artifact),
+            _ => None,
+        }
+    }
+
+    fn check_interface(
+        &self,
+        law: &LawIR,
+        artifact: &ArtifactEnvelope,
+        interface: &norn_ir::InterfaceDef,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        if matches!(law.scope.root, LawRoot::App(_))
+            && let Err(findings) =
+                retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
+        {
+            out.extend(findings);
+        }
+        self.check_scope_bindings(law, artifact, out);
+        let owners = interface
+            .contract_owners(|name| self.layer.interfaces.iter().find(|i| &i.name == name));
+        if !law
+            .scope
+            .object_types
+            .iter()
+            .any(|name| owners.iter().any(|i| i.name.as_str() == name))
+            || !law.scope.lifecycle_states.is_empty()
+            || law.timing.is_some()
+        {
+            out.push(finding(codes::UNKNOWN_BINDING, artifact, "/payload/scope", "interface law scope must bind its contract; lifecycle selectors and deadlines require a concrete contract"));
+        }
+        let Some(env) = self
+            .env
+            .and_then(|env| env.clone().bind_interface_self(&interface.name).ok())
+        else {
+            out.push(finding(
+                codes::PREDICATE_TYPE,
+                artifact,
+                "/payload",
+                "interface law environment cannot be derived",
+            ));
+            return;
+        };
+        if let Some(condition) = &law.condition {
+            predicate(
+                condition.as_str(),
+                &env,
+                artifact,
+                "/payload/condition",
+                out,
+            );
+        }
+        if let LawModality::Until { predicate: stop } = &law.modality {
+            predicate(
+                stop.as_str(),
+                &env,
+                artifact,
+                "/payload/modality/predicate",
+                out,
+            );
+        }
+        self.check_interface_response(law, artifact, &owners, &env, out);
+    }
+
+    fn check_interface_response(
+        &self,
+        law: &LawIR,
+        artifact: &ArtifactEnvelope,
+        owners: &[&norn_ir::InterfaceDef],
+        env: &ZenTypeEnv,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        match &law.response {
+            LawResponse::Predicate { expression } => predicate(
+                expression.as_str(),
+                env,
+                artifact,
+                "/payload/response/expression",
+                out,
+            ),
+            LawResponse::Invariant {
+                object_type,
+                invariant_id,
+            } => {
+                let invariant = owners
+                    .iter()
+                    .flat_map(|i| &i.invariants)
+                    .find(|i| i.id.as_str() == invariant_id);
+                if object_type != &law.subject || invariant.is_none() {
+                    out.push(finding(
+                        codes::UNKNOWN_BINDING,
+                        artifact,
+                        "/payload/response",
+                        "invariant is not declared by the interface contract",
+                    ));
+                } else if let Some(invariant) = invariant {
+                    predicate(
+                        invariant.expression.as_str(),
+                        env,
+                        artifact,
+                        "/payload/response",
+                        out,
+                    );
+                }
             }
+            LawResponse::Action { artifact_id } => {
+                if !self.pool.iter().any(|a| {
+                    a.artifact_id == *artifact_id
+                        && a.kind() == ArtifactKind::Action
+                        && pinned(artifact, a)
+                }) {
+                    out.push(finding(
+                        codes::UNKNOWN_BINDING,
+                        artifact,
+                        "/payload/response",
+                        "action response needs an exact pinned ActionIR dependency",
+                    ));
+                }
+            }
+            LawResponse::Transition { .. } => out.push(finding(
+                codes::UNKNOWN_BINDING,
+                artifact,
+                "/payload/response",
+                "interfaces do not declare lifecycle transition contracts",
+            )),
         }
     }
 
@@ -324,11 +706,9 @@ impl LawContext<'_> {
         subject: &crate::EffectiveObjectType,
         out: &mut Vec<Diagnostic>,
     ) {
-        let bound_env = self.env.and_then(|env| {
-            env.clone()
-                .bind_self(&ObjectTypeName(law.subject.clone()))
-                .ok()
-        });
+        let bound_env = self
+            .env
+            .and_then(|env| env.clone().bind_self(&subject.name).ok());
         if let Some(env) = &bound_env {
             if let Some(condition) = &law.condition {
                 predicate(condition.as_str(), env, artifact, "/payload/condition", out);
@@ -345,7 +725,7 @@ impl LawContext<'_> {
             self.check_response(law, artifact, subject, env, out);
             if let Some(LawTiming::BeforeDeadline { property }) = &law.timing
                 && !env
-                    .record(&law.subject)
+                    .record(subject.name.as_str())
                     .and_then(|r| r.fields.get(property))
                     .is_some_and(|f| {
                         matches!(f.ty, Type::Timestamp { .. })

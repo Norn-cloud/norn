@@ -28,7 +28,7 @@ use tokio::sync::Notify;
 use crate::codec::{canonical_json, hash_json};
 #[cfg(feature = "native")]
 use crate::engine::NativeEngine;
-use crate::engine::{DefaultEngine, SqlEngine, params};
+use crate::engine::{DefaultEngine, SqlEngine, SqlValue, params};
 use crate::error::CellError;
 use crate::export_journal;
 use crate::model::{Model, ModelDefinitionSnapshot};
@@ -1159,6 +1159,7 @@ fn validate_readmission(
 #[serde(rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum FactWriteRow {
     /// Create the object, or replace all of its property values.
+    /// This is a trusted embedding primitive, not the authored creation contract.
     Put {
         /// The object's (concrete) type.
         object_type: String,
@@ -1731,6 +1732,7 @@ type CandidateValidator<E> = fn(&StoreReader<'_, E>, &CommitBatch, bool) -> Resu
 #[derive(Debug)]
 pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) conn: E,
+    pub(crate) transparency: RefCell<crate::transparency::ReceiptLog>,
     pub(crate) instance_identity: Arc<()>,
     model: Model,
     candidate_validator: Cell<Option<CandidateValidator<E>>>,
@@ -1740,6 +1742,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
+    mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
@@ -1951,12 +1954,15 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     /// SQL failures; existing metadata, ledger or history returns false.
     pub fn engine_is_fresh(engine: &E) -> Result<bool, CellError> {
-        engine
-            .query(
-                "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' LIMIT 1",
-                &[],
-            )
-            .map(|schema| schema.is_empty())
+        let platform = engine.platform_table_globs();
+        // An index is judged by the table it belongs to.
+        let filter = " AND (CASE WHEN type = 'index' THEN tbl_name ELSE name END) NOT GLOB ?"
+            .repeat(platform.len());
+        let sql = format!(
+            "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'{filter} LIMIT 1"
+        );
+        let globs: Vec<SqlValue> = platform.iter().map(|glob| SqlValue::from(*glob)).collect();
+        engine.query(&sql, &globs).map(|schema| schema.is_empty())
     }
 
     /// Initialize this store over an already-open engine.
@@ -2013,6 +2019,9 @@ impl<E: SqlEngine> CellStore<E> {
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
+            store
+                .transparency
+                .replace(crate::transparency::load(&store.conn)?);
         }
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -2107,6 +2116,7 @@ impl<E: SqlEngine> CellStore<E> {
     fn unverified(conn: E, model: Model) -> Self {
         Self {
             conn,
+            transparency: RefCell::new(crate::transparency::ReceiptLog::new()),
             instance_identity: Arc::new(()),
             model,
             candidate_validator: Cell::new(None),
@@ -2114,6 +2124,7 @@ impl<E: SqlEngine> CellStore<E> {
             export_notify: Arc::new(Notify::new()),
             verified: RefCell::new(LedgerHead::genesis()),
             source_disputes: RefCell::default(),
+            mapping_plans: RefCell::default(),
             quantity_boundary: Cell::new(None),
         }
     }
@@ -2194,6 +2205,9 @@ impl<E: SqlEngine> CellStore<E> {
         })?;
         store.verified.replace(head);
         store.quantity_boundary.set(boundary);
+        store
+            .transparency
+            .replace(crate::transparency::load(&store.conn)?);
         Ok(store)
     }
 
@@ -2382,6 +2396,7 @@ impl<E: SqlEngine> CellStore<E> {
     pub fn read(&self) -> StoreReader<'_, E> {
         StoreReader::new(&self.conn, &self.model)
             .with_source_disputes(&self.source_disputes)
+            .with_mapping_plans(&self.mapping_plans)
             .with_quantity_boundary(self.quantity_boundary.get())
     }
 
@@ -2418,7 +2433,9 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(head)
     }
 
-    /// Commit `batch` atomically.
+    /// Commit `batch` atomically as a trusted, actorless embedding primitive.
+    /// Authored adapters use the checked kernel boundary; raw Put carries no
+    /// authored/observed authority. Canonical `FactChange::Create` still refuses reuse.
     ///
     /// # Errors
     ///
@@ -2749,7 +2766,8 @@ impl<E: SqlEngine> CellStore<E> {
             )?;
             admitted_boundary.set(boundary.or(new_boundary));
             let quality_disputes = RefCell::default();
-            let quality_reader = StoreReader::new(&self.conn, &self.model).with_transaction_source_disputes(&quality_disputes);
+            let quality_reader = StoreReader::new(&self.conn, &self.model)
+                .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&quality_disputes);
             let quality_cutoff = prior_receipt.as_ref().map_or_else(|| quality_reader.next_commit_seq(), |receipt| Ok(receipt.body.commit_seq))?;
             crate::observation_quality::deduplicate(&quality_reader, &mut quantity_batch, quality_cutoff)?;
             let effective_batch = &quantity_batch;
@@ -2766,7 +2784,8 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(CellError::IdempotencyConflict(key.clone()).into());
             }
             let transaction_disputes = RefCell::default();
-            let reader = StoreReader::new(&self.conn, &self.model).with_transaction_source_disputes(&transaction_disputes);
+            let reader = StoreReader::new(&self.conn, &self.model)
+                .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&transaction_disputes);
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
@@ -2852,6 +2871,10 @@ impl<E: SqlEngine> CellStore<E> {
                 None
             };
 
+            if !matches!(origin, CommitOrigin::Retained(_)) {
+                // Verified-prefix reconstruction retains the original admission semantics.
+                writer.admit_created_identities()?;
+            }
             let written = writer.apply_writes()?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
@@ -2860,7 +2883,10 @@ impl<E: SqlEngine> CellStore<E> {
             if let Some(validate) = self.candidate_validator.get() {
                 let validator_disputes = RefCell::default();
                 validate(
-                    &writer.reader().with_transaction_source_disputes(&validator_disputes),
+                    &writer
+                        .reader()
+                        .with_mapping_plans(&self.mapping_plans)
+                        .with_transaction_source_disputes(&validator_disputes),
                     effective_batch,
                     installation.is_some(),
                 )?;
@@ -2943,6 +2969,12 @@ impl<E: SqlEngine> CellStore<E> {
                 Ok((admitted, CommitOutcome::Replayed(receipt)))
             }
             (admitted, CommitOutcome::Committed(receipt)) => {
+                if self.transparency.borrow().len().checked_add(1) == Some(receipt.body.commit_seq)
+                {
+                    self.transparency.borrow_mut().push(receipt.hash.clone());
+                } else if let Err(error) = self.refresh_transparency() {
+                    tracing::warn!(%error, "committed receipt; transparency cache refresh deferred");
+                }
                 #[cfg(feature = "native")]
                 self.export_notify.notify_one();
                 tracing::debug!(
@@ -3094,6 +3126,7 @@ mod identity_history_tests {
                 extends: None,
                 implements: vec![],
                 properties: vec![norn_ir::entity_v2::object::Property {
+                    protected: false,
                     id: PropertyId("code".into()),
                     description: None,
                     property_type: PropertyType::Text { format: None },

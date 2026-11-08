@@ -1,6 +1,8 @@
 //! Deterministic views of one structured requirement; display is never proof input.
-use crate::deontic::{DeonticModality, RequirementTiming, StructuredRequirement};
-use crate::{LawModality, LawResponse, LawRoot};
+use crate::deontic::{
+    DeonticModality, LocalizedRequirement, RequirementTiming, StructuredRequirement,
+};
+use crate::{LawModality, LawResponse, LawRoot, LawTiming};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -41,12 +43,26 @@ impl RequirementView {
     /// # Errors
     /// Refuses invalid wording or an unknown requested locale.
     pub fn direction(&self) -> Result<&'static str, &'static str> {
-        Ok(self
-            .requirement
-            .wording
-            .locale(&self.locale)?
-            .direction
-            .as_str())
+        Ok(self.wording()?.direction.as_str())
+    }
+
+    // LAW-WORDING-LOCALE-1 applies to every declared locale before either view.
+    // Admission-level checks (`within` shape, every locale's `within` term)
+    // live in norn-checker's `render_requirement`; this projection only
+    // refuses what it cannot render.
+    fn wording(&self) -> Result<&LocalizedRequirement, &'static str> {
+        let wording = self.requirement.wording.locale(&self.locale)?;
+        if matches!(self.requirement.norm.law.scope.root, LawRoot::Pack(_))
+            && self
+                .requirement
+                .wording
+                .0
+                .values()
+                .any(|entry| entry.terms.pack.is_none())
+        {
+            return Err("law.wording.incomplete_locale");
+        }
+        Ok(wording)
     }
 
     /// All locales expose identical semantic slots in identical order.
@@ -57,20 +73,41 @@ impl RequirementView {
     pub fn slots(&self) -> Result<Vec<RequirementSlot>, &'static str> {
         let r = &self.requirement;
         let law = &r.norm.law;
-        if law.timing.is_some()
-            || !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
-        {
-            return Err("law.validation.unsupported_temporal");
-        }
-        if matches!(r.norm.modality, DeonticModality::Prohibition)
-            != matches!(law.modality, LawModality::Never {})
-        {
+        // Render preconditions only: the temporal wrapper must have a template.
+        let window = match (&r.timing, &law.modality, &law.timing) {
+            (
+                RequirementTiming::Within(w),
+                LawModality::Eventually {},
+                Some(LawTiming::Within { millis }),
+            ) => Some((w, millis)),
+            (RequirementTiming::Within(_), _, _) => {
+                return Err("law.validation.unsupported_temporal");
+            }
+            (_, LawModality::Always {} | LawModality::Never {}, None) => None,
+            _ => return Err("law.validation.unsupported_temporal"),
+        };
+        let grade_matches = match window {
+            Some(_) => r.norm.modality == DeonticModality::Obligation,
+            None => {
+                matches!(r.norm.modality, DeonticModality::Prohibition)
+                    == matches!(law.modality, LawModality::Never {})
+            }
+        };
+        if !grade_matches {
             return Err("law.validation.invalid_document");
         }
-        let w = r.wording.locale(&self.locale)?;
+        let w = self.wording()?;
         let root = match &law.scope.root {
             LawRoot::Company(id) => format!("{} {}", visible(&w.terms.company), isolate(id)),
             LawRoot::App(id) => format!("{} {}", visible(&w.terms.application), isolate(id)),
+            LawRoot::Pack(id) => {
+                let pack = w
+                    .terms
+                    .pack
+                    .as_deref()
+                    .ok_or("law.wording.incomplete_locale")?;
+                format!("{} {}", visible(pack), isolate(id))
+            }
             LawRoot::Cell(id) => format!("{} {}", visible(&w.terms.cell), isolate(id)),
             LawRoot::Entity(id) => format!("{} {}", visible(&w.terms.entity), isolate(id)),
         };
@@ -113,9 +150,19 @@ impl RequirementView {
             DeonticModality::Permission => visible(&w.terms.permission),
             DeonticModality::Prohibition => visible(&w.terms.prohibition),
         };
-        let timing = match r.timing {
+        let timing = match &r.timing {
             RequirementTiming::SameCommit => visible(&w.terms.same_commit),
             RequirementTiming::EveryCommittedState => visible(&w.terms.every_committed_state),
+            RequirementTiming::Within(_) => {
+                let (within, millis) = window.ok_or("law.validation.unsupported_temporal")?;
+                let term = w
+                    .terms
+                    .within
+                    .as_ref()
+                    .ok_or("law.wording.incomplete_locale")?;
+                let window = format!("{millis} ms; {}", within.trigger);
+                format!("{}; {}", visible(term), isolate(&window))
+            }
         };
         let source = format!(
             "{}@{}; {}#{}",

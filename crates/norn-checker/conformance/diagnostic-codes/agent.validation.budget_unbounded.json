@@ -1,0 +1,7 @@
+{
+  "code": "agent.validation.budget_unbounded",
+  "message": "{budget} must be a positive exact bound at most {cap}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

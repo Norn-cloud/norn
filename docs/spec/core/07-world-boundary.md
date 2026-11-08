@@ -88,6 +88,8 @@ after cell-owned recomputation matches the pinned bundle
 CP2 authoritative/governed non-main reads touching a source-disputed or NFC-quarantined subject refuse `core.world.source_dispute_unqualified` until Core 08 retains the source-evidence frontier; they never omit the overlay.
 OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence, authoritative promotion and governed reads (rechecked at commit) of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
 
+**MAPPING-PLAN-1:** a store may reuse the decoded mapping, source schema, compiled mapping, artifact pins, definitions digest and retained-model proof for one retained definition version. The reuse key is the version, the mapping id and a digest of every column of the installed definition row read on this call, so any changed column misses and repeats the full retained proof. Every evaluation, hit or miss, re-reads and verifies the export-journal record for the row's `commit_seq`, requires its installed row to equal the row read, requires the stored receipt at `commit_seq` to equal the journal's, and requires the journal model snapshot to equal the one the plan was proven on; the model-hash and governing-law checks are pure functions of that snapshot and the keyed row. A hit therefore refuses exactly what a cold store refuses, and bundles are identical to a cold derivation. Named scenario: **MAPPING-PLAN-REUSE** (warm and cold rechecks agree; changed row columns and tampered receipts or journal records refuse identically warm and cold).
+
 FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
 `kind`, `source_version`, `payload_digest` and redaction record for the trusted
 connector/partition plus source/record/event identity, matching the ingress oracle.
@@ -155,6 +157,37 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 
 FUNCTION-HOST-1: engine built-ins only; never authorable. `implementation.format: host` is reserved for Norn-owned, versioned built-in Functions distributed in the engine and identified by the engine's own built-in namespace. Authored and pack definitions cannot install host Functions, including by imitating that namespace; admission refuses fail-closed with a stable diagnostic. Built-ins are reviewed and qualified like kernel code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The engine must resolve its shipped built-in implementation by these exact pins or refuse.
 
+HOST-TREE-1: `implementation.digest` of a host Function is the source-tree digest
+of its implementing crate directory. The tree is every regular file below that
+directory. Each directory entry is judged in this order, and the first rule that
+applies decides: (1) a name that is not valid UTF-8 refuses, even one that would be
+hidden; (2) an entry whose name starts with `.` is skipped whatever its kind, so a
+hidden file, directory or symlink is never read, followed or refused, and nothing
+below a hidden directory counts; (3) a directory named `target` is skipped at any
+depth, while a regular file named `target` counts and a symlink named `target`
+refuses, because a symlink is never a directory; (4) any other symlink, or any
+entry that is neither a directory nor a regular file, refuses. Each file is
+named by its relative `/`-separated path, which is non-empty, relative, and has
+no empty, `.` or `..` component, backslash or control character. Each file
+contributes `{path, size, sha256}`, where `sha256` is the lower-case hex SHA-256 of
+its exact bytes, with no line-ending or encoding normalization. The entries are
+sorted by raw path bytes (UTF-8 bytes, which is code-point order), and the digest
+is `sha256:` followed by the hex SHA-256 of `norn.function/source-tree/v1\0` and the
+exact canonical JSON of that array: sorted keys, compact, strings kept byte for byte
+with no NFC normalization, so an NFC-equivalent rename is a different tree. An empty tree
+or a duplicate path refuses. `norn_ir::source_tree::source_tree_digest` is the
+pure implementation, and `norn source-digest <dir>` walks a clean checkout. The
+golden vector in `crates/norn-ir/tests/fixtures/source-tree.digest` was computed
+by an independent reimplementation (Python `hashlib` and `json.dumps` with sorted
+keys and compact separators). Any change to the algorithm needs a new domain
+version. Named scenarios (`crates/norn-ir/tests/source_tree.rs`):
+**HOST-TREE-PINNED**, **HOST-TREE-UNICODE** (a precomposed and a decomposed
+spelling differ; a second golden vector pins raw-byte order),
+**HOST-TREE-EXCLUDE** (`crates/norn-cli/src/main.rs`: the exclusion order
+above, for hidden entries, `target` and symlinks), **HOST-TREE-SENSITIVE** (an edit, rename, removal,
+addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
+(listing order is irrelevant) and **HOST-TREE-REFUSE**.
+
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 
 OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
@@ -183,3 +216,181 @@ Interface-typed governed link targets resolve their concrete identity roots in t
 requested world before index lookup. If the identity is absent, every verified
 indexed root for that key is checked conservatively; an interface name never
 causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
+
+## Receipt consumption (RECEIPT-CONSUME-1)
+
+RECEIPT-CONSUME-1: a `fire_transition` action that declares `acceptReceipt`
+(Core 04 RECEIPT-EFFECT-1) consumes one authenticated Function receipt and fires
+its run's resolving transition in one cell commit. Action input names the receipt
+only by its content digest (`FunctionReceipt::content_digest` under
+`RECEIPT_DOMAIN`); a body, object or mutable id refuses
+`action.receipt_body_forbidden` or `action.receipt_reference_invalid`. The cell
+host resolves the digest within its scope, world and the declared manifest, and
+re-runs RECEIPT-AUTH-BIND-1 against the persisted reconciliation acceptance. A
+host without receipt support refuses `action.receipt_effect_unsupported`.
+
+The kernel then checks the pins it can see. The receipt's manifest equals the
+declaration's. Its `run.id` equals the action's target object (RUN-BIND-1), and
+its `run.generation` equals both the reconciled record's generation and the
+command's current generation; any other run or generation refuses
+`action.receipt_run_mismatch` or `action.receipt_binding_mismatch`. A failure
+outcome refuses `action.receipt_not_accepted`, and a summary missing a bound member
+refuses `action.receipt_result_type`. Receipts whose acceptance pins predicates,
+collections or a written destination refuse `action.receipt_effect_unsupported`
+until those fences are qualified on this path.
+
+The commit carries, together: the declared transition, a `set` of the digest
+property to the receipt digest, a `set` of each bound property from the accepted
+summary, the action call record, every reconciliation pin as a compare-and-swap
+read, and the acceptance's delivery (`consumes: Result { command, generation }`).
+The host's pending-delivery check is the only consumption record. A second
+consumption, or a delivery of another generation, refuses
+`action.receipt_not_pending`. A refused transition guard, precondition or CAS
+leaves the delivery pending. A refused consumption fires no transition. An exact
+retry under the same idempotency key replays the original outcome and consumes
+nothing. A call that already consumes a delivery, or that is bound to a
+synchronous rule writer, refuses `action.unsupported_effect`. The receipt is
+evidence, not authority: the action's ordinary authorization, preconditions and
+lifecycle guards still decide.
+
+Named scenarios: **RECEIPT-CONSUME-ONCE** commits the transition, the bound values
+and the consumption as one ledger commit and replays an exact retry;
+**RECEIPT-CONSUME-REPLAY** refuses a consumed receipt under a new idempotency key
+with no commit; **RECEIPT-CONSUME-RUN** refuses a receipt of another run or
+generation with the delivery still pending; **RECEIPT-CONSUME-ATOMIC** shows no
+transition without consumption and no consumption without transition
+(`crates/norn-kernel/tests/receipt_effect.rs`).
+
+## Observed canonical relation claims (#823)
+
+- **OBS-LINK-CLAIM-1:** the canonical concept owns its relation. Each admitted
+  MappingIR `maps[].links` entry declares a source-field expression, role and
+  canonical target map or identity binding. Evaluation emits one immutable
+  `ObservedLinkClaim` per non-null output or explicit nullable-role clear.
+  Claim identity includes its retaining observation and complete provenance;
+  delivery order and redelivery do not establish identity. Source aliases
+  remain provenance; they never replace canonical endpoint keys. Only typed claim
+  preparation seals claim metadata at its computed identity. Generic observation
+  authority cannot create claim metadata or rewrite a retained claim; claim
+  identities remain immutable across observation preparation and authorization merges.
+  Seals compare the catalog-effective metadata, including extension defaults.
+  Re-observation never backfills or changes retained metadata when defaults evolve;
+  differing effective values refuse until the existing definition-migration path
+  has made the retained row conform. The typed claim preimage and identity stay fixed.
+- **OBS-LINK-CONVERGE-1:** equal canonical endpoints converge to one live link;
+  all source claims remain individually addressable provenance. Observation
+  authority is confined to recomputed declared claims. Claims carry no link
+  property values, so a convergent addition must propose exactly the relation's
+  catalog-effective defaults. The existing authored relation-ownership check
+  remains in force for authored mutations.
+- **OBS-LINK-CONTRIBUTION-1:** the latest consumed claim for a source row,
+  declared canonical source/role and mapping artifact contributes current membership.
+  Its capture namespace comes from the existing connector/partition/source-row
+  identity, so identical row aliases from independent connectors never supersede
+  each other.
+  Supersession is recorded and one-way: a claim names the earlier claims of its
+  contribution that it replaces in `supersedes`, part of its immutable preimage,
+  so the order persists across turns and content addressing keeps it acyclic.
+  Mapping evaluation leaves the record empty and the claim planner fills it from
+  retained claims, ordered by source occurrence rather than arrival; redelivery
+  reuses the retained claim. Retained evidence never supersedes a fresh claim. Competing claims with no recorded order are contested
+  and authorize neither an addition nor a withdrawal; they still hold their edges
+  until a fresh claim records their order.
+  Standing and edge support are decided once over the turn's final claim set, so
+  sealing a claim is only an intent and a claim merged later can still refuse it.
+  Replacing its target withdraws an earlier observed edge only if no active
+  claim still supports that edge. Prepared old and successor evidence is
+  required for a withdrawal, and the kernel refuses it while any other prepared
+  claim for the same canonical edge is not superseded. Authored edges without
+  claim backing stay intact. Every superseded claim remains immutable evidence.
+  The kernel enforces these rules over prepared claims only: it cannot see a
+  retained claim the turn did not prepare, so an omitted successor or supporter
+  leaves a stale claim current. It also accepts whatever `supersedes` a fresh
+  claim carries, so it cannot tell a newer occurrence from a late one. The claim
+  planner (#877) must prepare every retained claim of the edge and contribution,
+  and must order supersession by source occurrence, never by arrival: an older
+  source occurrence must never supersede a newer stored one, including a
+  late-arriving older occurrence that is not a redelivery. Such an occurrence
+  records no order over the newer claim, so the two stay contested until a later
+  occurrence records both. These gaps are ship blockers for #823: no production
+  caller of `seal_observed_link_claim` may land before #877.
+- **OBS-LINK-PENDING-1:** a missing target leaves a retained claim pending by
+  canonical identity, including targets in the same capture. Target arrival
+  resolves it without source redelivery or an arrival-order assumption. Capture,
+  claims, consumption and cursor advancement share the existing atomic boundary.
+  A declared capture horizon closes pending claims into evidence-bearing findings.
+- **OBS-LINK-CONFLICT-1:** incompatible to-one claims, cardinality or endpoint-type
+  violations become source-conflict findings and quarantine their subjects under
+  OBS-EVIDENCE-1. No source occurrence or contradictory claim is silently discarded.
+  Native proposals violating those laws still refuse without writes.
+
+Unit 1 declares the claim concept, pins the MappingIR output correspondence and
+enforces at the kernel observation boundary: OBS-LINK-CLAIM-1 claim immutability
+and typed-only claim writes; OBS-LINK-CONVERGE-1 corroboration without namespace
+ownership, endpoint/type law and default-only link values; and
+OBS-LINK-CONTRIBUTION-1 recorded one-way supersession with prepared-support
+checks over the final claim set.
+Pending resolution, complete support enumeration and conflict quarantine
+require the subsequent runtime units.
+Unit 2 admits claims and resolves equal endpoints through the existing observed
+commit path. The consumed mapping-bundle journal retains pending claims and
+recomputable multi-source provenance; a transaction guard rechecks the planned
+links against that journal before admission. The planner records `supersedes`
+as every earlier-consumed claim of the contribution with a lower raw
+`source_version` (lexicographic, as the dataplane orders it), so a retained
+claim's identity recomputes exactly from the journal and a late older occurrence
+records no order over a newer one. It prepares every claim of each changed
+canonical source/role group and plans only the edge changes the kernel's
+final-set standing authorizes. A plan or link provenance read selects bundles
+naming its commit's objects or claim endpoints, then the bundles naming those
+claims' sources, so unrelated bundles spend no budget while every earlier claim
+of an affected contribution is read. The selected set refuses above 1,000
+bundles, 4 MiB of bundle evidence or 20,000 claims; budget exhaustion cannot
+silently omit a claim. Contradiction and horizon findings require the subsequent
+runtime unit.
+The claim's registry `evidence` scalar holds the exact canonical JSON of its
+typed preimage (`canonical_json_exact_of`: sorted object keys, verbatim strings
+and number tokens) as UTF-8 text; endpoint columns permit lookup without
+treating serialized claims as authority.
+
+Named acceptance scenarios:
+
+- **OBS-LINK-DECLARED:** ERPNext, Shopify and Odoo retain every declared role,
+  target type/key and relation-rule provenance from their admitted mappings.
+- **OBS-LINK-IDENTITY:** changing a source, mapping pin, observation or endpoint
+  changes claim identity; repeated evaluation of the same evidence preserves it.
+  A clear and an unresolved explicit target are distinct claims.
+- **OBS-LINK-EXTENSION-DEFAULT:** an admitted extension default is included in
+  both creation and retained-read seals. A later changed default cannot rewrite
+  the existing claim through re-observation.
+- **OBS-LINK-RETARGET:** a superseding source contribution replaces its old
+  endpoint, retaining old evidence and preserving active corroborating claims
+  and unbacked authored edges. Redelivery of an already consumed older event
+  cannot roll the relation back.
+- **OBS-LINK-CLEAR-UNION:** a to-many clear withdraws only its own contribution;
+  another source's asserted endpoint stays present through repeated captures.
+- **OBS-LINK-CONCRETE-DEFAULT:** a pending claim from an admitted mapped subtype
+  resolves with its inherited effective link defaults, exactly as commit
+  normalization does. Redeclared subtype defaults and native type promotion
+  remain catalog/admission refusals.
+- **OBS-LINK-LATE-OCCURRENCE:** an older source version captured after a newer
+  one supersedes only older claims; the two stay contested, the newer edge stays,
+  and a later version records the order.
+- **OBS-LINK-CLOSED-SCOPE:** a target arrival reads the superseding claim of a
+  contribution even when that claim names a different target.
+- **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
+  relation produce one edge with three provenance entries.
+- **OBS-LINK-STALE-REVERSAL:** after a replacement, the retained stale claim and
+  its retained successor cannot restore the stale edge or withdraw the current one,
+  whether the successor is prepared before or after the stale claim is sealed.
+  A fresh claim recording the successor wins, even when it returns to the old target.
+- **OBS-LINK-SUPPORTED-WITHDRAWAL:** a replacement cannot withdraw an edge that
+  another connector's prepared claim still supports; once that connector's own
+  replacement is recorded, a later turn can.
+- **OBS-LINK-LINK-VALUES:** a convergent addition proposing non-default link
+  property values refuses.
+- **OBS-LINK-PENDING-ORDER:** generated valid input orders and redeliveries yield
+  the same final canonical links and claim set; reopen/replay retains that state.
+- **OBS-LINK-QUARANTINE:** missing/foreign targets at the declared horizon and
+  contradictory to-one claims retain source facts plus findings; native illegal
+  link writes refuse, and no partial capture or cursor advance is visible.

@@ -87,8 +87,9 @@ pub struct StructuredRequirement {
     pub wording: RequirementWording,
 }
 
-/// Closed safety fragment. No event activation, clocks, fairness or progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Closed safety fragment plus one event-activated deadline form. No fairness,
+/// unbounded progress or wall-clock reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementTiming {
     /// Condition and response are evaluated at every applicable committed state.
@@ -96,6 +97,133 @@ pub enum RequirementTiming {
     /// Condition and response refer to the same proposed commit's state.
     /// This is not an edge trigger or a promise to respond in a later commit.
     SameCommit,
+    /// LAW-WITHIN-1: a committed trigger transition opens an activation that a
+    /// later satisfying commit must discharge before `law.timing`'s deadline.
+    Within(WithinTiming),
+}
+
+/// Activation policy for `within`; the duration stays in `law.timing`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WithinTiming {
+    /// Lifecycle transition identity on the subject that opens an activation.
+    /// Admission (norn-checker) checks it is nonblank; resolving it against the
+    /// subject's lifecycle is catalog admission (TARGET).
+    pub trigger: String,
+    /// What a trigger does while an activation is already open.
+    pub retrigger: RetriggerPolicy,
+    /// Optional committed-state predicate that closes an open activation unpaid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<ZenExpression>,
+    /// Principal or role answerable for discharge; grants no authority.
+    pub accountable: String,
+    /// Business calendar for the deadline. No calendar is admitted yet: refuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<CalendarPin>,
+}
+
+/// Exact pinned calendar identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CalendarPin {
+    /// Calendar artifact identity.
+    pub id: String,
+    /// Exact calendar version.
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetriggerPolicy {
+    /// A trigger while open is recorded as ignored; the first deadline stands.
+    KeepFirst,
+    /// A trigger while open restarts the window from the triggering commit.
+    Restart,
+}
+
+/// Canonical identity of one activation: the effective law instance, the
+/// subject and the opening commit. Never a string concatenation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActivationKey {
+    /// Governing law identity.
+    pub law_id: String,
+    /// SHA-256 of the effective instance's canonical `LawIR`.
+    pub law_digest: String,
+    /// Attachment origin of the effective law instance.
+    pub origin: String,
+    /// Subject record identity.
+    pub subject_id: String,
+    /// Ledger position of the commit that opened (or restarted) it.
+    pub trigger_seq: u64,
+}
+
+impl ActivationKey {
+    /// `sha256("norn.activation.v1\0" ‖ canonical_json(key))`, lowercase hex.
+    ///
+    /// # Errors
+    /// Canonical encoding failure.
+    pub fn id(&self) -> Result<String, norn_canonical::CanonicalJsonError> {
+        norn_canonical::domain_hash_hex(b"norn.activation.v1\0", self)
+    }
+}
+
+/// One open duty for a law instance and subject. Times are cell clock millis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Activation {
+    /// Canonical identity; events name it by [`ActivationKey::id`].
+    pub key: ActivationKey,
+    /// Trigger transition identity.
+    pub trigger: String,
+    /// Committed clock of the opening commit.
+    pub start_millis: u64,
+    /// Exclusive: a commit at `deadline_millis` no longer discharges.
+    pub deadline_millis: u64,
+    /// Declared retrigger policy.
+    pub retrigger: RetriggerPolicy,
+    /// Accountable subject; grants no authority.
+    pub accountable: String,
+}
+
+/// Recorded monitor outcome; a violation is an event, never a silent pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ActivationEvent {
+    /// A trigger opened an activation.
+    Activated { activation: Activation },
+    /// A `restart` trigger replaced the open activation.
+    Restarted {
+        activation: Activation,
+        previous_id: String,
+    },
+    /// A `keep_first` trigger left the open activation unchanged.
+    RetriggerIgnored { activation_id: String, at_seq: u64 },
+    /// A commit before the deadline satisfied the response.
+    Discharged {
+        activation_id: String,
+        at_seq: u64,
+        at_millis: u64,
+    },
+    /// A commit before the deadline satisfied the cancel predicate only.
+    Cancelled {
+        activation_id: String,
+        at_seq: u64,
+        at_millis: u64,
+    },
+    /// The deadline passed undischarged. Recorded in the first ledger commit,
+    /// at `at_seq`/`at_millis ≥ deadline_millis`, that is either this
+    /// activation's deadline timer or a commit touching its subject.
+    Violated {
+        activation: Activation,
+        at_seq: u64,
+        at_millis: u64,
+    },
 }
 
 /// LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
@@ -211,6 +339,9 @@ impl LocalizedRequirement {
         ]
         .iter()
         .any(|s| s.trim().is_empty())
+            || [&self.terms.pack, &self.terms.within]
+                .iter()
+                .any(|t| t.as_ref().is_some_and(|s| s.trim().is_empty()))
         {
             return Err("law.wording.incomplete_locale");
         }
@@ -304,6 +435,14 @@ pub struct RequirementTerms {
     pub every_committed_state: String,
     #[schemars(pattern(r"\S"))]
     pub grounding: String,
+    /// Required to render a `within` requirement; other timings never read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(pattern(r"\S"))]
+    pub within: Option<String>,
+    /// Required to render a pack-rooted law; other roots never read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(pattern(r"\S"))]
+    pub pack: Option<String>,
 }
 
 /// Public structured-requirement schema, including complete locale vocabulary.

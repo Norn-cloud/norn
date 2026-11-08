@@ -420,6 +420,29 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(())
     }
 
+    /// ID-STABLE-1 admission for canonical Creates, before any batch writes.
+    pub(crate) fn admit_created_identities(&self) -> Result<(), CellError> {
+        self.verify_mutation_scopes()?;
+        for fact in &self.batch.facts {
+            if let FactChange::Create {
+                object_type, key, ..
+            } = fact
+            {
+                let version = self
+                    .reader()
+                    .high_water(self.world, object_type.as_str(), key)?;
+                let live = self
+                    .reader()
+                    .root_row(self.world, object_type.as_str(), key)?
+                    .is_some();
+                if norn_kernel::FactVersion(version).has_committed_deletion(live) {
+                    return Err(CellError::IdentityReuse);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn verify_mutation_scopes(&self) -> Result<(), CellError> {
         if !self.batch.writes.is_empty()
             || !self.batch.facts.is_empty()

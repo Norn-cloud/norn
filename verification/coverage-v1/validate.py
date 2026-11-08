@@ -68,6 +68,7 @@ REQUIRED_KERNEL_INVARIANTS = frozenset(
     }
 )
 MANDATORY = {
+    "assurance-certificates",
     "transition-authority",
     "artifact-governance",
     "authorization",
@@ -97,6 +98,7 @@ SELECTOR = re.compile(r"^(test|theorem|invariant|predicate|harness|fixture|check
 FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
+CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 GATE_PROFILES = {"fast", "full"}
 QUINT_APALACHE_HARNESS = ROOT / "scripts/quint_apalache.py"
 NEGATIVE_CANARIES = ROOT / "verification/coverage-v1/negative_canaries.py"
@@ -398,6 +400,34 @@ def validate_rust_toolchain_steps(path: Path, source: str) -> None:
     require(action_count > 0, f"{path.name}: workflow must contain a Rust toolchain action")
 
 
+# GitHub compiles a `script:` containing `${{ }}` into one format() expression: literal text has
+# every `'`, `{` and `}` doubled, each interpolation becomes `{N}` plus a `, <expr>` argument, and
+# the whole must stay under 21,000 characters or GitHub rejects the workflow file, silently
+# for workflow_run triggers (it stalled the merge queue once). Keep a margin.
+EXPRESSION_CAP = 20_500
+
+
+def actions_expression_length(script: str) -> int:
+    """Length of the format() expression GitHub builds from an interpolated script."""
+    parts = re.split(r"\$\{\{(.*?)\}\}", script, flags=re.S)
+    literal, expressions = "".join(parts[0::2]), [part.strip() for part in parts[1::2]]
+    escaped = len(literal) + literal.count("'") + literal.count("{") + literal.count("}")
+    placeholders = sum(len(f"{{{index}}}") for index in range(len(expressions)))
+    return len("format('')") + escaped + placeholders + sum(len(", ") + len(expression) for expression in expressions)
+
+
+def validate_expression_lengths(sources: dict[str, str]) -> None:
+    for path, text in sources.items():
+        for name, job in yaml.load(text, Loader=WorkflowLoader).get("jobs", {}).items():
+            for step in job.get("steps", []):
+                script = step.get("with", {}).get("script", "")
+                if "${{" in script:
+                    length = actions_expression_length(script)
+                    require(length <= EXPRESSION_CAP,
+                            f"{path}::{name}::{step.get('name', step.get('uses'))}: interpolated script is a "
+                            f"{length}-character expression, over the {EXPRESSION_CAP} cap (GitHub rejects 21,000)")
+
+
 def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW) -> None:
     source = formal_path.read_text(encoding="utf-8")
     validate_rust_toolchain_steps(formal_path, source)
@@ -408,6 +438,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
+    validate_expression_lengths({formal_path.name: source,
+                                 "trusted-merge-group.yml": (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")})
     require(workflow.get("on", workflow.get(True)) == {
         "pull_request": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
         "pull_request_target": None,
@@ -460,11 +492,11 @@ await github.rest.repos.createCommitStatus({
         "uses": "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
         "with": {"retries": 3, "script": trusted_reporter + "\n"},
     }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
-    merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+    boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        expected_runner = merge_runner if name in {"core", "test"} else "ubuntu-24.04"
+        expected_runner = boat_runner if name in {"core", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
-                f"{name}: runner must preserve merge-only Boat opt-in and hosted fallback")
+                f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
@@ -509,7 +541,7 @@ echo "$plan"''',
                   "key": "norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}"}},
     ]
     cleanup = {"name": "Reclaim runner disk space",
-               "if": "${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
+               "if": "${{ runner.environment == 'github-hosted' }}",
                "run": """set -euo pipefail
 minimum=$((12 * 1024 * 1024))
 available() { df -Pk / | awk 'NR == 2 {print $4}'; }
@@ -542,7 +574,6 @@ df -h /
         if name != "plan":
             reclaim = copy.deepcopy(cleanup)
             if name == "test":
-                reclaim["if"] = "${{ runner.environment == 'github-hosted' }}"
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
             preparation.insert(0, reclaim)
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
@@ -622,7 +653,12 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 and not has_execution_override(full, step)
                 and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
-    runner = (ROOT / "scripts/ci/core.sh").read_text()
+    runner = CORE_RUNNER.read_text()
+    # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
+    # does a config whose match lists no tests.
+    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
+    require(runner.count(browser) == 1 and re.search(r"^phases=\(.* browser .*\)$", runner, re.MULTILINE) is not None,
+            "browser phase must run the Studio Playwright rows and refuse missing or empty tests")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,
             "full workspace tests must run")
@@ -909,13 +945,34 @@ def validate(
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_ids)}, "
         f"unexpected={sorted(core_physics_ids - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
     )
+    certificate_registry = load(ROOT / "verification/coverage-v1/assurance-certificate-obligations.json")
+    certificate_obligations = certificate_registry.get("obligations")
+    require(
+        certificate_registry.get("registry_version") == "norn.verification.obligations.v1"
+        and isinstance(certificate_obligations, list) and certificate_obligations,
+        "assurance certificate obligations must be a nonempty obligation registry",
+    )
+    certificate_ids = obligation_ids(certificate_registry)
+    require(
+        len(certificate_ids) == len(certificate_obligations)
+        and all(isinstance(item.get("id"), str) and item["id"].startswith("INV-CERT-")
+                and item.get("priority") == "P0"
+                and isinstance(item.get("statement"), str) and item["statement"].strip()
+                and isinstance(item.get("assumptions"), list) and item["assumptions"]
+                and all(isinstance(assumption, str) and assumption.strip()
+                        for assumption in item["assumptions"])
+                for item in certificate_obligations),
+        "assurance certificate obligations need unique INV-CERT IDs, P0 priority, statements and assumptions",
+    )
     known_obligations = (
         central_ids
         | obligation_ids(phase1_registry)
         | core_physics_ids
+        | certificate_ids
     )
     p0_obligations = (
         p0_obligation_ids(central_registry)
+        | p0_obligation_ids(certificate_registry)
         | p0_obligation_ids(kernel_registry, default_priority="P0")
         | p0_obligation_ids(core_physics_registry)
     )
@@ -1102,6 +1159,10 @@ def validate(
                     f"{subsystem_id}.{layer_name}: aggregate {status} disagrees with obligation claims {sorted(obligation_statuses)}",
                 )
 
+    require(
+        set(by_id.get("assurance-certificates", {}).get("obligations", [])) == certificate_ids,
+        "assurance-certificates must own exactly the certificate registry obligations",
+    )
     core_physics_claimed = set(by_id.get("core-physics", {}).get("obligations", []))
     require(
         core_physics_claimed == REQUIRED_CORE_PHYSICS_OBLIGATION_IDS,

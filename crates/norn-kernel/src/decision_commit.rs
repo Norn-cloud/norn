@@ -365,7 +365,9 @@ impl<'a> TypeCatalog<'a> {
             .is_some_and(|property| {
                 matches!(
                     &property.kind,
-                    EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. })
+                    EffectiveKind::Base(
+                        PropertyType::Integer { .. } | PropertyType::Decimal { .. }
+                    )
                 )
             })
     }
@@ -1497,6 +1499,9 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// ID-STABLE-1: a deleted identity needs explicit governed restoration.
+    #[error("{message}", message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
     /// ID-UNIQUE-1: commit refused a normalized business-key collision.
     #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
     IdentityCollision {
@@ -1790,6 +1795,7 @@ impl<X> DecisionRefusal<X> {
             Self::SourceOwnedTarget { .. } => "decision.source_owned_target",
             Self::ObjectMissing { .. } => "decision.object_missing",
             Self::ObjectExists { .. } => "decision.object_exists",
+            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
             Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::LifecyclePropertySet { .. } => lifecycle_codes::DIRECT_WRITE,
             Self::ImmutableStateWrite { .. } => lifecycle_codes::IMMUTABLE_STATE_WRITE,
@@ -1841,7 +1847,8 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::IdentityCollision { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
@@ -1859,8 +1866,13 @@ impl<X> DecisionRefusal<X> {
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
         use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
 
-        let invalid = |reason| Self::InvalidOutput { reason };
+        // A decision prepares no link writes or set reads, so a link or
+        // read-set refusal means its commit was malformed.
+        if let Some(reason) = Self::read_set_reason(&error) {
+            return Self::InvalidOutput { reason };
+        }
         match error {
+            CommitError::IdentityReuse => Self::IdentityReuse,
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
             AtomicDeliveryBoundary { consumed } => Self::AtomicDeliveryBoundary { consumed },
             CommitError::Law { key, reason } => Self::Law { key, reason },
@@ -1888,42 +1900,22 @@ impl<X> DecisionRefusal<X> {
                 expected,
                 current,
             },
-            // A decision writes no links; a link refusal is a malformed commit.
-            CommitError::DuplicateLink { key } => {
-                invalid(format!("link {key} appears twice in one commit"))
-            }
-            CommitError::LinkConflict { key, .. } => {
-                invalid(format!("link {key} changed since the turn read it"))
-            }
-            CommitError::LinkReadConflict { source_key, link } => invalid(format!(
-                "link targets for {source_key} -{link}-> changed since the turn read them"
-            )),
-            CommitError::UnsupportedLinkRead { source_key, link } => invalid(format!(
-                "host cannot verify link targets for {source_key} -{link}->"
-            )),
-            CommitError::DuplicateLinkRead { source_key, link } => invalid(format!(
-                "link targets for {source_key} -{link}-> appear more than once"
-            )),
-            CommitError::LinkReadTooLarge {
-                source_key,
-                link,
-                actual,
-                max,
-            } => Self::link_read_limit_refusal(&source_key, &link, actual, max),
-            CommitError::InvalidLinkRead { source_key, link } => Self::InvalidOutput {
-                reason: format!("link targets for {source_key} -{link}-> are malformed"),
-            },
-            CommitError::DanglingLink { key, missing } => Self::InvalidOutput {
-                reason: format!("link {key} would dangle: {missing} does not exist"),
-            },
-            CommitError::LinkTarget { key } => Self::InvalidOutput {
-                reason: format!("link {key} is not a declared link to an admitted target"),
-            },
-            CommitError::LinkCardinality { key, endpoint } => Self::InvalidOutput {
-                reason: format!("link {key} exceeds its cardinality at {endpoint}"),
-            },
-            CommitError::LinkRequired { parent, link } => Self::InvalidOutput {
-                reason: format!("{parent} has no required link {link}"),
+            // Mapped by `read_set_reason` above; the arm keeps the match exhaustive.
+            read_set @ (CommitError::DuplicateLink { .. }
+            | CommitError::LinkConflict { .. }
+            | CommitError::LinkReadConflict { .. }
+            | CommitError::UnsupportedLinkRead { .. }
+            | CommitError::DuplicateLinkRead { .. }
+            | CommitError::LinkReadTooLarge { .. }
+            | CommitError::InvalidLinkRead { .. }
+            | CommitError::PredicateReadConflict { .. }
+            | CommitError::UnsupportedPredicateRead { .. }
+            | CommitError::InvalidPredicateRead { .. }
+            | CommitError::DanglingLink { .. }
+            | CommitError::LinkTarget { .. }
+            | CommitError::LinkCardinality { .. }
+            | CommitError::LinkRequired { .. }) => Self::InvalidOutput {
+                reason: read_set.to_string(),
             },
             CommitError::TypeMismatch { key, concrete } => Self::InvalidOutput {
                 reason: format!("{key} is live as {}", concrete.as_str()),
@@ -1960,17 +1952,93 @@ impl<X> DecisionRefusal<X> {
         }
     }
 
-    fn link_read_limit_refusal(
+    /// The malformed-commit reason of a link or predicate read-set error;
+    /// `None` for every other commit error.
+    fn read_set_reason(error: &CommitError<X>) -> Option<String> {
+        match error {
+            CommitError::DuplicateLink { key } => {
+                Some(format!("link {key} appears twice in one commit"))
+            }
+            CommitError::LinkConflict { key, .. } => {
+                Some(format!("link {key} changed since the turn read it"))
+            }
+            CommitError::LinkReadConflict { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> changed since the turn read them"
+            )),
+            CommitError::UnsupportedLinkRead { source_key, link } => Some(format!(
+                "host cannot verify link targets for {source_key} -{link}->"
+            )),
+            CommitError::DuplicateLinkRead { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> appear more than once"
+            )),
+            CommitError::LinkReadTooLarge {
+                source_key,
+                link,
+                actual,
+                max,
+            } => Some(Self::link_read_limit_reason(
+                source_key, link, *actual, *max,
+            )),
+            CommitError::InvalidLinkRead { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> are malformed"
+            )),
+            CommitError::PredicateReadConflict { object_type } => Some(format!(
+                "objects matching a predicate over {object_type:?} changed since the turn read them"
+            )),
+            CommitError::UnsupportedPredicateRead { object_type } => Some(format!(
+                "host cannot verify a predicate read over {object_type:?}"
+            )),
+            CommitError::InvalidPredicateRead {
+                object_type,
+                reason,
+            } => Some(format!(
+                "predicate read over {object_type:?} is malformed: {reason}"
+            )),
+            CommitError::DanglingLink { key, missing } => {
+                Some(format!("link {key} would dangle: {missing} does not exist"))
+            }
+            CommitError::LinkTarget { key } => Some(format!(
+                "link {key} is not a declared link to an admitted target"
+            )),
+            CommitError::LinkCardinality { key, endpoint } => {
+                Some(format!("link {key} exceeds its cardinality at {endpoint}"))
+            }
+            CommitError::LinkRequired { parent, link } => {
+                Some(format!("{parent} has no required link {link}"))
+            }
+            CommitError::IdentityReuse
+            | CommitError::AtomicBoundary { .. }
+            | CommitError::AtomicDeliveryBoundary { .. }
+            | CommitError::Law { .. }
+            | CommitError::IdentityCollision { .. }
+            | CommitError::DuplicateKey { .. }
+            | CommitError::OwnedRowsProtected { .. }
+            | CommitError::IdentifierTooLong { .. }
+            | CommitError::NotPending { .. }
+            | CommitError::Conflict { .. }
+            | CommitError::TypeMismatch { .. }
+            | CommitError::AccountingPosting { .. }
+            | CommitError::InvariantViolation { .. }
+            | CommitError::InvariantBudgetExceeded { .. }
+            | CommitError::InvariantModel { .. }
+            | CommitError::EffectiveValues { .. }
+            | CommitError::TraversalLimitExceeded { .. }
+            | CommitError::ObservationAuthorization
+            | CommitError::EventLimitExceeded { .. }
+            | CommitError::Overflow
+            | CommitError::Host(_) => None,
+        }
+    }
+
+    fn link_read_limit_reason(
         source_key: &FactKey,
         link: &str,
         actual: usize,
         max: usize,
-    ) -> Self {
-        Self::InvalidOutput {
-            reason: format!(
-                "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
-            ),
-        }
+    ) -> String {
+        format!(
+            "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
+        )
     }
 
     fn commit_identifier_refusal(
@@ -2271,8 +2339,7 @@ fn prepare_decision_with_limits_for<X>(
         writes,
         events,
         effects,
-        links: Vec::new(),
-        link_reads: Vec::new(),
+        ..CellCommit::empty()
     })
 }
 
@@ -2393,6 +2460,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: Vec::new(),
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     match host.commit(commit) {
         Ok(receipt) => {
@@ -2573,12 +2641,51 @@ fn apply_change<X>(
     let Some(entry) = working.get_mut(&key) else {
         return Err(DecisionRefusal::NotInSlice { key });
     };
+    let protected = |property: &str| {
+        catalog
+            .effective_type(&key.object_type)
+            .and_then(|effective| effective.property(property))
+            .is_some_and(norn_checker::EffectiveProperty::protected)
+    };
+    let forbidden = match change {
+        FactChange::Create { values, .. } => {
+            origin != AdmissionOrigin::OwnedRows
+                && values.keys().any(|property| protected(property.as_str()))
+        }
+        FactChange::Set { property, .. } => protected(property.as_str()),
+        FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
+        FactChange::Delete { .. } => {
+            catalog
+                .effective_type(&key.object_type)
+                .is_some_and(|effective| {
+                    effective
+                        .properties
+                        .iter()
+                        .any(norn_checker::EffectiveProperty::protected)
+                })
+        }
+    };
+    if forbidden {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!("{key} has protected properties writable only by rules"),
+        });
+    }
     let event = match change {
         FactChange::Create { values, .. } => {
             if entry.values.is_some() {
                 return Err(DecisionRefusal::ObjectExists { key });
             }
-            let values = with_initial_states(catalog, &key, values)?;
+            let mut values = values.clone();
+            if origin == AdmissionOrigin::Observation {
+                for lifecycle in catalog.lifecycles(&key.object_type).into_values() {
+                    if let [initial] = lifecycle.initial.as_slice() {
+                        values
+                            .entry(lifecycle.property.as_str().to_owned())
+                            .or_insert_with(|| JsonValue::String(initial.clone()));
+                    }
+                }
+            }
+            let values = with_initial_states(catalog, &key, &values)?;
             let values = catalog
                 .effective_object_values(&key.object_type, &values)
                 .map_err(|error| DecisionRefusal::InvalidOutput {
@@ -2923,4 +3030,77 @@ fn timer<X>(
         due,
         payload: record.clone(),
     })
+}
+
+#[cfg(test)]
+mod field_authority_tests {
+    use super::{
+        AdmissionOrigin, BTreeMap, BTreeSet, FactChange, FactKey, FactSlice, FactVersion,
+        JsonObject, JsonValue, ObjectTypeDef, TypeCatalog, Working, apply_change,
+    };
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test fixtures and assertions require successful setup and existing keys"
+    )]
+    fn protected_delete_then_recreate_is_refused() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = TypeCatalog::new([&object]);
+        let key = FactKey::new("test.Counter", "one");
+        for origin in [
+            AdmissionOrigin::Command,
+            AdmissionOrigin::Observation,
+            AdmissionOrigin::OwnedRows,
+        ] {
+            let values = Some(JsonObject::from([(
+                "total".to_owned(),
+                JsonValue::from(2_i64),
+            )]));
+            let mut working = BTreeMap::from([(
+                key.clone(),
+                Working {
+                    expected: FactVersion(1),
+                    values: values.clone(),
+                    written: false,
+                },
+            )]);
+            for change in [
+                FactChange::Delete {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                },
+                FactChange::Create {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                    values: JsonObject::default(),
+                },
+            ] {
+                let error = apply_change::<std::convert::Infallible>(
+                    &catalog,
+                    &FactSlice::new(),
+                    &mut working,
+                    &change,
+                    origin,
+                    &BTreeSet::new(),
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.code(),
+                    if matches!(change, FactChange::Delete { .. }) {
+                        "decision.invalid_output"
+                    } else {
+                        "decision.object_exists"
+                    }
+                );
+                assert_eq!(working[&key].values, values);
+                assert!(!working[&key].written);
+            }
+        }
+    }
 }

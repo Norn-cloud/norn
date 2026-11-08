@@ -32,7 +32,7 @@ use norn_ir::{
 use crate::cell_host::{
     CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion,
     FactWrite, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite,
-    OwnedRowsCommitProof, WrittenLinkVersion, WrittenVersion,
+    OwnedRowsCommitProof, PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
 };
 
 /// Maximum complete outgoing link targets a turn may bind as one adjacency
@@ -51,6 +51,11 @@ pub struct CommitModel<'m, 'a> {
 }
 
 impl<'m, 'a> CommitModel<'m, 'a> {
+    /// Whether `object_type` is a stored object type (not an interface).
+    pub(crate) fn is_object_type(self, object_type: &ObjectTypeName) -> bool {
+        self.catalog.contains(object_type)
+    }
+
     /// The model of `catalog`.
     #[must_use]
     pub const fn new(catalog: &'m TypeCatalog<'a>) -> Self {
@@ -274,6 +279,25 @@ pub trait CommitView {
         Ok(None)
     }
 
+    /// Every live object matching `predicate`, as members in canonical key
+    /// order, at most `limit` of them ([`crate::predicate_read`]). Hosts
+    /// enumerate the queried type and apply [`PredicateQuery::matches`].
+    /// `None` means enumeration is incomplete or this host cannot prove the
+    /// set complete (for example, the type spans owners); a commit
+    /// containing a predicate read is then refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host read failure.
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Self::Error> {
+        let _ = (predicate, limit);
+        Ok(None)
+    }
+
     /// Whether a live outgoing target survives the excluded removals.
     /// A bounded existence proof need not enumerate a large complete adjacency.
     /// `None` means the host cannot complete the proof within its read limits.
@@ -378,6 +402,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
         // cannot remove or alter any read sealed by kernel preparation.
         || proof.reads().iter().any(|read| !commit.reads.contains(read))
         || proof.link_reads() != commit.link_reads.as_slice()
+        || proof.predicate_reads() != commit.predicate_reads.as_slice()
         || proof.writes().len() != commit.writes.len()
         || proof.links().len() != commit.links.len()
     {
@@ -487,7 +512,7 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    check_versions(commit, model, view)?;
+    check_versions(commit, model, view, authorization)?;
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;
     check_endpoints(commit, model, view, &links)?;
@@ -551,9 +576,12 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     next_versions(commit)
 }
 
-// Outgoing links share the source's authority, not their target's authority.
-// Authored incoming edges remain authored; pending target resolution carries
-// the original source's sealed scope and exact relation intent.
+/// Outgoing links share the source's authority, not their target's authority.
+/// Authored incoming edges remain authored; pending target resolution carries
+/// the original source's sealed scope and exact relation intent.
+///
+/// OBS-LINK-CONVERGE-1: only opaque claim edges share canonical relation authority.
+/// Authored writes retain their namespace and claim-metadata protections.
 #[allow(
     clippy::too_many_lines,
     reason = "one shared boundary fences source ownership, pending intents, and outgoing relations atomically"
@@ -564,6 +592,13 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    if commit.writes.iter().any(|write| {
+        model.canonical(&write.key).object_type.as_str()
+            == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+            && !authorization.is_some_and(|a| a.authorizes_claim_write(write))
+    }) {
+        return Err(CommitError::ObservationAuthorization);
+    }
     if authorization.is_none()
         && commit
             .writes
@@ -573,9 +608,12 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
         return Err(CommitError::ObservationAuthorization);
     }
     check_source_markers(commit, view, authorization)?;
+    let convergent =
+        authorization.map_or_else(Vec::new, ObservationAuthorization::convergent_links);
     let sources: BTreeSet<_> = commit
         .links
         .iter()
+        .filter(|write| !convergent.contains(write))
         .map(|write| model.canonical(&write.key.source))
         .chain(
             authorization
@@ -1318,6 +1356,7 @@ fn check_shape<E, C, T, V: CommitView + ?Sized>(
         }
     }
     check_link_read_shapes(&commit.link_reads, model)?;
+    crate::predicate_read::check_predicate_read_shapes(&commit.predicate_reads, model)?;
     for write in &commit.links {
         let admitted = model
             .link(&write.key.source.object_type, &write.key.link)
@@ -1509,6 +1548,17 @@ pub fn check_commit_identifiers<E, C, T, X>(
             });
         }
     }
+    for read in &commit.predicate_reads {
+        if read.members.len() > crate::predicate_read::MAX_PREDICATE_MEMBERS {
+            return Err(CommitError::InvalidPredicateRead {
+                object_type: read.predicate.object_type.clone(),
+                reason: "too many members",
+            });
+        }
+        for member in &read.members {
+            check_fact_key_identity(&member.key)?;
+        }
+    }
     Ok(())
 }
 
@@ -1565,7 +1615,21 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
+    authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    // ID-STABLE-1: event payloads never establish the per-write observation authority.
+    for write in &commit.writes {
+        if matches!(write.mutation, FactMutation::Put { .. }) {
+            let key = model.canonical(&write.key);
+            let version = view.version(&key).map_err(CommitError::Host)?;
+            let live = view.concrete(&key).map_err(CommitError::Host)?.is_some();
+            if version.has_committed_deletion(live)
+                && !authorization.is_some_and(|proof| proof.authorizes_write(write))
+            {
+                return Err(CommitError::IdentityReuse);
+            }
+        }
+    }
     let expectations = commit
         .reads
         .iter()
@@ -1649,6 +1713,7 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
+    crate::predicate_read::recheck_predicate_reads(&commit.predicate_reads, model, view)?;
     Ok(())
 }
 

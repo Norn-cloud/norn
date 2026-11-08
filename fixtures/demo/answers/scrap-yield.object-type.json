@@ -1,0 +1,60 @@
+{
+  "name": "demo.Conversion",
+  "properties": [
+    {
+      "id": "input",
+      "type": {
+        "kind": "decimal",
+        "additivity": {
+          "kind": "additive"
+        },
+        "scale": 3,
+        "unit": {
+          "system": "ucum",
+          "code": "g"
+        }
+      }
+    },
+    {
+      "id": "recovered",
+      "type": {
+        "kind": "decimal",
+        "additivity": {
+          "kind": "additive"
+        },
+        "scale": 3,
+        "unit": {
+          "system": "ucum",
+          "code": "g"
+        }
+      }
+    },
+    {
+      "id": "loss",
+      "type": {
+        "kind": "decimal",
+        "additivity": {
+          "kind": "additive"
+        },
+        "scale": 3,
+        "unit": {
+          "system": "ucum",
+          "code": "g"
+        }
+      }
+    },
+    {
+      "id": "occurred_at",
+      "type": {
+        "kind": "timestamp",
+        "timezone": "utc"
+      }
+    },
+    {
+      "id": "metal",
+      "type": {
+        "kind": "text"
+      }
+    }
+  ]
+}

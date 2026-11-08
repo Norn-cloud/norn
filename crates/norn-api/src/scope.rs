@@ -64,11 +64,8 @@ impl CellScope {
             return Err(Refusal::new(
                 StatusCode::FORBIDDEN,
                 codes::SCOPE_DENIED,
-                "the request scope is not this cell's scope",
-                format!(
-                    "this cell serves {}; the request named {org_id}/{environment_id}",
-                    self.key()
-                ),
+                "the request scope is not authorized",
+                "access to the requested scope is denied",
             ));
         }
         Ok(())

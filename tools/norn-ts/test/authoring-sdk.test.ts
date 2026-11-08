@@ -55,6 +55,8 @@ describe("Effect-profile business expressions through Rust admission and eval", 
     ["membership", '["ready", "open"].includes("open") && "norn".includes("or")'],
     ["nullable", '((true ? null : "value") ?? "fallback") === "fallback"'],
     ["date comparison", 'Norn.dateBefore("2026-11-06", "2026-11-08")'],
+    ["negated date comparison", '!Norn.dateBefore("2026-11-08", "2026-11-06")'],
+    ["compared date comparison", 'Norn.dateBefore("2026-11-08", "2026-11-06") === false'],
     ["conditional", 'input.event.kind === "start" ? true : false'],
   ] as const
   for (const [name, expression] of examples) test(name, () => {
@@ -177,6 +179,14 @@ test("TXN-ATOMIC-1 authoring retains explicit proposal link sources", () => {
 })
 
 
+test("#1109: dateBefore renders as a comparison, so a negated or compared one is parenthesised", () => {
+  const scope = new Map()
+  const before = E.call("dateBefore", E.lit("2026-11-08"), E.lit("2026-11-06"))
+  expect(E.render(before, scope)).toBe("date('2026-11-08') < date('2026-11-06')")
+  expect(E.render(E.not(before), scope)).toBe("not (date('2026-11-08') < date('2026-11-06'))")
+  expect(E.render(E.eq(before, E.lit(false)), scope)).toBe("(date('2026-11-08') < date('2026-11-06')) == false")
+})
+
 test("declared array indexes refuse while bounded inline lists retain item typing", () => {
   const schema = S.record({rows: S.array(S.record({value: S.number}))})
   const scope = new Map([["input", {zen: "", schema}]])
@@ -243,3 +253,18 @@ test("CP3 allocation goldens come from core-aligned typed declarations", () => {
     expect(checked.admitted).toBe(true)
   }
 }, 60_000)
+
+
+test("INV-OVERDRAW native witness is generated from its typed declaration", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/decisions/delivery-race.source.ts")
+  const pack = compilePack(fixture, { scope, root, modules: [fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  expect(pack.artifacts).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-cell/tests/fixtures/delivery-race.json"), "utf8")))
+}, 30_000)
+
+test("INV-TRANSFER native witness is generated from its typed declaration", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/decisions/custody-transfer.source.ts")
+  const pack = compilePack(fixture, { scope, root, modules: [fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  expect(pack.artifacts).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-cell/tests/fixtures/custody-transfer.json"), "utf8")))
+}, 30_000)

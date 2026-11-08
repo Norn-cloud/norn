@@ -1,23 +1,36 @@
 {
   "vendor": {
     "path": "apps/studio/src/components/ui",
-    "method": "shadcn CLI 4.23.0 `add` (style new-york, base color neutral), copied as source",
+    "method": "shadcn CLI 4.23.0 `init --preset luma --reinstall` (style radix-luma, base color neutral), copied as source; later `add sidebar command dropdown-menu` with the same CLI and style; later `add breadcrumb collapsible avatar tabs popover toggle-group` with the same CLI and style",
     "license": {
       "spdx": "MIT",
       "file": "LICENSE",
       "copyright": "Copyright (c) 2023 shadcn"
     },
     "files": [
+      "apps/studio/src/components/ui/avatar.tsx",
       "apps/studio/src/components/ui/badge.tsx",
+      "apps/studio/src/components/ui/breadcrumb.tsx",
       "apps/studio/src/components/ui/button.tsx",
       "apps/studio/src/components/ui/card.tsx",
       "apps/studio/src/components/ui/chart.tsx",
+      "apps/studio/src/components/ui/collapsible.tsx",
+      "apps/studio/src/components/ui/command.tsx",
+      "apps/studio/src/components/ui/dialog.tsx",
+      "apps/studio/src/components/ui/dropdown-menu.tsx",
+      "apps/studio/src/components/ui/input-group.tsx",
       "apps/studio/src/components/ui/input.tsx",
+      "apps/studio/src/components/ui/popover.tsx",
       "apps/studio/src/components/ui/separator.tsx",
+      "apps/studio/src/components/ui/shadcn.css",
       "apps/studio/src/components/ui/sheet.tsx",
       "apps/studio/src/components/ui/sidebar.tsx",
       "apps/studio/src/components/ui/skeleton.tsx",
       "apps/studio/src/components/ui/table.tsx",
+      "apps/studio/src/components/ui/tabs.tsx",
+      "apps/studio/src/components/ui/textarea.tsx",
+      "apps/studio/src/components/ui/toggle-group.tsx",
+      "apps/studio/src/components/ui/toggle.tsx",
       "apps/studio/src/components/ui/tooltip.tsx",
       "apps/studio/src/hooks/use-mobile.ts",
       "apps/studio/src/index.css",
@@ -25,7 +38,8 @@
     ],
     "changes": [
       "`cn` is imported from `@/lib/utils`",
-      "index.css carries the neutral theme tokens plus the app's base layer"
+      "shadcn.css is the keyframes, state variants and no-scrollbar part of shadcn@4.23.0's dist/tailwind.css, vendored instead of depending on the CLI package",
+      "index.css carries the Norn theme tokens plus the app's base layer"
     ]
   },
   "upstream": {

@@ -901,6 +901,644 @@
         },
         "additionalProperties": false
       },
+      "NornGuaranteesDocument": {
+        "type": "object",
+        "title": "GuaranteesDocument",
+        "description": "The presentation contract consumed by Studio; identity alone grants no verdict.",
+        "required": [
+          "format",
+          "lawArtifactId",
+          "lawId",
+          "lawVersion",
+          "verdict",
+          "level",
+          "challengeSha256",
+          "boundsJson",
+          "tools",
+          "goals",
+          "total",
+          "eligible",
+          "discharged",
+          "runtimeEnforcement",
+          "parity"
+        ],
+        "properties": {
+          "boundsJson": {
+            "type": "string",
+            "description": "Complete pinned bounds/assumptions JSON bytes, without a lossy projection."
+          },
+          "challengeSha256": {
+            "type": "string",
+            "description": "Exact source/closure/statement identity."
+          },
+          "discharged": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Eligible goals discharged by the checked driver.",
+            "minimum": 0
+          },
+          "eligible": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Actual eligible denominator, independent of the total goal inventory.",
+            "minimum": 0
+          },
+          "format": {
+            "type": "string",
+            "description": "Versioned wire contract.",
+            "enum": [
+              "norn/guarantees@1"
+            ],
+            "x-enumDescriptions": [
+              "First typed guarantees format."
+            ]
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornGuaranteesGoalGuarantee"
+            },
+            "description": "Every generated obligation, including individually unsupported goals."
+          },
+          "lawArtifactId": {
+            "type": "string",
+            "description": "Exact governing law artifact."
+          },
+          "lawId": {
+            "type": "string",
+            "description": "Declared LawIR identifier."
+          },
+          "lawVersion": {
+            "type": "string",
+            "description": "Governing artifact version."
+          },
+          "level": {
+            "$ref": "#/components/schemas/NornGuaranteesGuaranteeLevel",
+            "description": "Independently qualified evidence level."
+          },
+          "parity": {
+            "$ref": "#/components/schemas/NornGuaranteesGuaranteeReference",
+            "description": "Separately supplied application/reference parity evidence, or not yet."
+          },
+          "runtimeEnforcement": {
+            "$ref": "#/components/schemas/NornGuaranteesGuaranteeReference",
+            "description": "Separately supplied runtime enforcement evidence, or explicitly not yet."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornGuaranteesEvidenceTool"
+            },
+            "description": "Actual tools used by the trusted driver."
+          },
+          "total": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Complete generated denominator, including unsupported obligations.",
+            "minimum": 0
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/NornGuaranteesGuaranteeVerdict",
+            "description": "Result for the eligible bounded profile, not all possible application goals."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuaranteesEvidencePins": {
+        "type": "object",
+        "description": "Complete run identity. Fields are untrusted wire data, not proof capabilities.\nThe challenge digest binds law, writer/mapping closure, unit interpretation,\ngenerator/semantics profiles, assumptions and every generated statement.",
+        "required": [
+          "challengeSha256",
+          "goalIndex",
+          "goalSha256",
+          "tool",
+          "boundsJson",
+          "seed"
+        ],
+        "properties": {
+          "boundsJson": {
+            "type": "string",
+            "description": "Exact JSON object containing the runner's bounds and assumptions."
+          },
+          "challengeSha256": {
+            "type": "string",
+            "description": "Exact checker-owned challenge identity."
+          },
+          "goalIndex": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Index in that challenge's generated obligations, never a supplied theorem.",
+            "minimum": 0
+          },
+          "goalSha256": {
+            "type": "string",
+            "description": "Exact generated goal, including its statement and assessment."
+          },
+          "seed": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Explicit deterministic seed (zero is permitted).",
+            "minimum": 0
+          },
+          "tool": {
+            "$ref": "#/components/schemas/NornGuaranteesEvidenceTool",
+            "description": "Actual runner identity."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuaranteesEvidenceRecord": {
+        "type": "object",
+        "description": "A result and its source identity. Deserializing or matching it grants no status.",
+        "required": [
+          "pins",
+          "challengeJson",
+          "resultJson",
+          "resultSha256"
+        ],
+        "properties": {
+          "challengeJson": {
+            "type": "string",
+            "description": "Exact serialized challenge, retaining all law/writer/unit/mapping pins."
+          },
+          "pins": {
+            "$ref": "#/components/schemas/NornGuaranteesEvidencePins",
+            "description": "Complete expected run identity."
+          },
+          "resultJson": {
+            "type": "string",
+            "description": "Exact UTF-8 JSON result bytes, including whitespace and number spelling.\nThe checked driver owns their meaning and assurance level."
+          },
+          "resultSha256": {
+            "type": "string",
+            "description": "Raw SHA-256 of `result_json`'s UTF-8 bytes."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuaranteesEvidenceTool": {
+        "type": "object",
+        "description": "Identity of the actual runner, supplied by its trusted controller.\nThis record does not authenticate a runner or attest its execution.",
+        "required": [
+          "id",
+          "version",
+          "implementationSha256"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Tool/profile identity."
+          },
+          "implementationSha256": {
+            "type": "string",
+            "description": "Lowercase SHA-256 of the implementing binary/source closure."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact tool version."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuaranteesGoalGuarantee": {
+        "allOf": [
+          {
+            "required": [
+              "index",
+              "goalKind",
+              "eligible",
+              "verdict",
+              "level"
+            ],
+            "properties": {
+              "eligible": {
+                "type": "boolean",
+                "description": "Whether this goal is inside the declared backend fragment."
+              },
+              "evidence": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NornGuaranteesEvidenceRecord"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Actual bound result bytes, pins and digest; absent for unsupported goals.\nPresentation never replaces the controller's independent result pin."
+              },
+              "goalKind": {
+                "type": "string",
+                "description": "Actual generated obligation kind."
+              },
+              "index": {
+                "type": "integer",
+                "format": "uint32",
+                "description": "Index in the retained Challenge.",
+                "minimum": 0
+              },
+              "level": {
+                "$ref": "#/components/schemas/NornGuaranteesGuaranteeLevel",
+                "description": "Actual evidence level."
+              },
+              "scenario": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NornGuaranteesGuaranteeScenario"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Actual trace when a counterexample or reachability witness was returned."
+              },
+              "verdict": {
+                "$ref": "#/components/schemas/NornGuaranteesGuaranteeVerdict",
+                "description": "Scoped verdict or explicit Unknown reason."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "oneOf": [
+              {
+                "required": [
+                  "eligible"
+                ],
+                "properties": {
+                  "eligible": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
+              },
+              {
+                "required": [
+                  "eligible"
+                ],
+                "properties": {
+                  "eligible": {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  "level": {
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    }
+                  },
+                  "verdict": {
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "type": "object",
+            "description": "One generated obligation, including every unsupported goal."
+          }
+        ]
+      },
+      "NornGuaranteesGuaranteeLevel": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Exhaustive search over the pinned finite profile.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "exhaustive-finite/bounded"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Evidence of actual runtime enforcement, when separately supplied.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "runtime-enforced"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Evidence of observed reference parity, when separately supplied.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "parity-tested"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "No evidence at this level is available.",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "unknown"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "description": "Concrete reason, rather than an inferred guarantee.",
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Distinct assurance dimensions; none implies an unrestricted proof."
+      },
+      "NornGuaranteesGuaranteeReference": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The server has not supplied this evidence.",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "not-yet"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "description": "Missing evidence or integration boundary."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Immutable evidence the server actually supplied.",
+            "required": [
+              "kind",
+              "uri",
+              "sha256"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "available"
+                ]
+              },
+              "sha256": {
+                "type": "string",
+                "description": "Exact referenced bytes."
+              },
+              "uri": {
+                "type": "string",
+                "description": "Evidence location, not an execution attestation by itself."
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "A real independently supplied link, or an explicit unavailable reference."
+      },
+      "NornGuaranteesGuaranteeScalar": {
+        "type": "object",
+        "description": "An exact scalar coefficient, interpreted at its declared decimal scale/unit.",
+        "required": [
+          "coefficient",
+          "scale"
+        ],
+        "properties": {
+          "coefficient": {
+            "type": "string",
+            "description": "Signed integer text; never a binary64 quantity.",
+            "pattern": "^(0|([1-9][0-9]{0,17}|9223372036854775807|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0})|-([1-9][0-9]{0,17}|9223372036854775808|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7][0-9]{0}))(?![\\s\\S])"
+          },
+          "scale": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Fractional decimal digits from the declaration.",
+            "minimum": 0
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornGuaranteesUnitRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Effective declared unit; absent means dimensionless."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuaranteesGuaranteeScenario": {
+        "type": "object",
+        "description": "A generated writer proposal before runtime law enforcement.",
+        "required": [
+          "kind",
+          "writerArtifactId",
+          "identity",
+          "states"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "description": "Singleton identity retained from the finite profile."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Why the solver returned this trace.",
+            "enum": [
+              "counterexample",
+              "non-vacuity-witness"
+            ],
+            "x-enumDescriptions": [
+              "Actual invariant-violating writer proposal.",
+              "Actual reachable law-satisfying state."
+            ]
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornGuaranteesGuaranteeState"
+            },
+            "description": "Actual checked trace, in transition order."
+          },
+          "writerArtifactId": {
+            "type": "string",
+            "description": "Actual source writer artifact."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuaranteesGuaranteeScenarioKind": {
+        "type": "string",
+        "description": "Distinguishes a refutation from a successful non-vacuity witness.",
+        "enum": [
+          "counterexample",
+          "non-vacuity-witness"
+        ],
+        "x-enumDescriptions": [
+          "Actual invariant-violating writer proposal.",
+          "Actual reachable law-satisfying state."
+        ]
+      },
+      "NornGuaranteesGuaranteeState": {
+        "type": "object",
+        "description": "One typed counterexample state; absent objects have no scalar values.",
+        "required": [
+          "exists",
+          "values"
+        ],
+        "properties": {
+          "exists": {
+            "type": "boolean",
+            "description": "Whether the modeled object exists."
+          },
+          "values": {
+            "type": "object",
+            "description": "Exact quantities keyed by source property name.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornGuaranteesGuaranteeScalar"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuaranteesGuaranteeVerdict": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "All eligible goals pass within the explicitly retained bounds.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "bounded-pass"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "An actual checked counterexample refutes a generated goal.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "refuted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "No qualified result is available.",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "unknown"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "description": "Concrete unsupported, stale, failed or unavailable boundary.",
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "A scoped result; Unknown always explains the missing evidence."
+      },
+      "NornGuaranteesGuaranteesFormat": {
+        "type": "string",
+        "description": "Stable per-law guarantees document format.",
+        "enum": [
+          "norn/guarantees@1"
+        ],
+        "x-enumDescriptions": [
+          "First typed guarantees format."
+        ]
+      },
+      "NornGuaranteesUnitRef": {
+        "type": "object",
+        "description": "A reference to a unit of measure in a standard unit vocabulary (ruling\n2026-09-25 §27). The code is not interpreted here; resolving it against the\nvocabulary is registry work (T8-STD-1).",
+        "required": [
+          "system",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The unit's code in `system` (UCUM `kg`, `m/s`; QUDT `unit:KiloGM`)."
+          },
+          "system": {
+            "$ref": "#/components/schemas/NornGuaranteesUnitSystem"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuaranteesUnitSystem": {
+        "type": "string",
+        "description": "A standard unit vocabulary.",
+        "enum": [
+          "ucum",
+          "qudt"
+        ],
+        "x-enumDescriptions": [
+          "The Unified Code for Units of Measure (case-sensitive codes).",
+          "A QUDT unit (`unit:` local name)."
+        ]
+      },
       "NornHistoricalQuestionResult": {
         "type": "object",
         "description": "An answer read at a knowledge cutoff, beside its historical world.",
@@ -959,6 +1597,48 @@
             "description": "Pack version."
           }
         }
+      },
+      "NornInstanceSourceProvenance": {
+        "type": "object",
+        "description": "Where one object version came from: the source record, its document and the\nmapping that produced it. Describes the JSON of\n`norn_cell::source_provenance::InstanceSourceProvenance`; it grants no authority.",
+        "required": [
+          "bundleDigest",
+          "sourceRecordRef",
+          "documentRef",
+          "documentDigest",
+          "mappingPin",
+          "fieldProvenance"
+        ],
+        "properties": {
+          "bundleDigest": {
+            "type": "string",
+            "description": "Content address of the recomputed mapping bundle."
+          },
+          "documentDigest": {
+            "type": "string",
+            "description": "Digest of the source document payload."
+          },
+          "documentRef": {
+            "$ref": "#/components/schemas/NornIrSourceRecordRef",
+            "description": "A source system and the record's identity in it."
+          },
+          "fieldProvenance": {
+            "type": "object",
+            "description": "Field-level source and rule provenance, by property id.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrInstanceProvenance"
+            }
+          },
+          "mappingPin": {
+            "$ref": "#/components/schemas/NornMappingPin",
+            "description": "The mapping declaration that produced the version."
+          },
+          "sourceRecordRef": {
+            "$ref": "#/components/schemas/NornIrSourceRecordRef",
+            "description": "A source system and the record's identity in it."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrAccessCondition": {
         "oneOf": [
@@ -1214,6 +1894,63 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrActionAggregateInput": {
+        "type": "object",
+        "description": "One bounded aggregate an action's preconditions read by `name`.",
+        "required": [
+          "name",
+          "objectType",
+          "aggregate",
+          "maxItems"
+        ],
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/NornIrAggregateFunction",
+            "description": "What is computed over the matched objects."
+          },
+          "filter": {
+            "$ref": "#/components/schemas/NornIrActionAggregateInputPropertyFilter"
+          },
+          "maxItems": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Most objects the fold may match; one more refuses the action.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The precondition environment member holding the result. Unique among\nthe action's aggregates and slice entries."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The type whose stored objects are folded.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrAggregateWindow"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional window over one date or timestamp property."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrActionAggregateInputPropertyFilter": {
+        "type": "object",
+        "description": "Equality filter: each scalar property must equal the named input\nfield. An empty filter matches every object of the type.",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
       },
       "NornIrActionCommand": {
         "type": "object",
@@ -1595,6 +2332,12 @@
           "actionId": {
             "type": "string"
           },
+          "aggregates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrActionAggregateInput"
+            }
+          },
           "commands": {
             "type": "array",
             "items": {
@@ -1917,6 +2660,90 @@
         "x-enumDescriptions": [
           "The declared time dimension."
         ]
+      },
+      "NornIrAggregateFunction": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrAggregateFunctionOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrAggregateFunctionOneOf1"
+          }
+        ],
+        "description": "The fold computed over the matched objects."
+      },
+      "NornIrAggregateFunctionOneOf0": {
+        "type": "object",
+        "description": "The exact sum of a non-nullable decimal or integer property, held at\nthe property's declared scale. An empty match set sums to zero.",
+        "required": [
+          "kind",
+          "property"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sum"
+            ]
+          },
+          "property": {
+            "type": "string",
+            "description": "The summed property.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrAggregateFunctionOneOf1": {
+        "type": "object",
+        "description": "The number of matched objects.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "count"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrAggregateWindow": {
+        "type": "object",
+        "description": "A window over one date or timestamp property. Both edges and their\ninclusivity are declared; there is no default edge semantics.",
+        "required": [
+          "property",
+          "start",
+          "end",
+          "startInclusive",
+          "endInclusive"
+        ],
+        "properties": {
+          "end": {
+            "type": "string",
+            "description": "The input field holding the end edge."
+          },
+          "endInclusive": {
+            "type": "boolean",
+            "description": "Whether an object exactly at `end` matches."
+          },
+          "property": {
+            "type": "string",
+            "description": "The date or timestamp property the window ranges over.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "start": {
+            "type": "string",
+            "description": "The input field holding the start edge."
+          },
+          "startInclusive": {
+            "type": "boolean",
+            "description": "Whether an object exactly at `start` matches."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrApiKeyFormat": {
         "oneOf": [
@@ -3783,6 +4610,60 @@
         },
         "additionalProperties": false
       },
+      "NornIrConversionCalculation": {
+        "type": "string",
+        "description": "Conversion outputs.",
+        "enum": [
+          "conversions",
+          "conversion_rate"
+        ],
+        "x-enumDescriptions": [
+          "Count converted entities.",
+          "Converted entities divided by base entities."
+        ]
+      },
+      "NornIrConversionTypeParams": {
+        "type": "object",
+        "description": "MetricFlow cohort conversion parameters.",
+        "required": [
+          "base_metric",
+          "conversion_metric",
+          "entity",
+          "window",
+          "calculation"
+        ],
+        "properties": {
+          "base_metric": {
+            "type": "string",
+            "description": "Base population metric."
+          },
+          "calculation": {
+            "type": "string",
+            "description": "Conversion count or rate.",
+            "enum": [
+              "conversions",
+              "conversion_rate"
+            ],
+            "x-enumDescriptions": [
+              "Count converted entities.",
+              "Converted entities divided by base entities."
+            ]
+          },
+          "conversion_metric": {
+            "type": "string",
+            "description": "Converted population metric."
+          },
+          "entity": {
+            "type": "string",
+            "description": "Join entity."
+          },
+          "window": {
+            "type": "string",
+            "description": "Allowed conversion interval."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrCorrespondenceRelation": {
         "type": "string",
         "description": "How a source term relates to its target terms.",
@@ -3819,6 +4700,42 @@
           ";",
           "\t"
         ]
+      },
+      "NornIrCumulativeTypeParams": {
+        "type": "object",
+        "description": "MetricFlow cumulative window parameters.",
+        "required": [
+          "metric"
+        ],
+        "properties": {
+          "grain_to_date": {
+            "type": "string",
+            "description": "Calendar grain to date.",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "x-enumDescriptions": [
+              "Day.",
+              "Week.",
+              "Month.",
+              "Quarter.",
+              "Year."
+            ]
+          },
+          "metric": {
+            "type": "string",
+            "description": "Underlying metric."
+          },
+          "window": {
+            "type": "string",
+            "description": "Rolling window, e.g. `7 days`."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrCurrencyConversion": {
         "type": "object",
@@ -4985,6 +5902,76 @@
             "type": "string",
             "description": "The terminal property.",
             "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrEffectiveLawInstance": {
+        "type": "object",
+        "title": "EffectiveLawInstance",
+        "description": "LAW-INSTANCE-CONTRACT-1: an application of a law retains its original\nidentity, concrete subject, attachment and complete origin paths.\nThis projection is not a new law or evidence of preservation.",
+        "required": [
+          "law",
+          "lawDigest",
+          "subject",
+          "subjectDigest",
+          "attachment",
+          "origin",
+          "paths",
+          "instancePaths",
+          "bindings"
+        ],
+        "properties": {
+          "attachment": {
+            "$ref": "#/components/schemas/NornIrLawRoot",
+            "description": "Declared governing boundary, including retained pack/app attachments."
+          },
+          "bindings": {
+            "type": "object",
+            "description": "Explicit typed member substitutions; no rewritten child LawIR.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrMemberRef"
+            }
+          },
+          "instancePaths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrPackInstanceRef"
+              }
+            },
+            "description": "LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope."
+          },
+          "law": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Original law artifact/version and stable law member ID."
+          },
+          "lawDigest": {
+            "type": "string",
+            "description": "Norn1 identity of the unchanged law artifact."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Original governed concept/interface/container identity."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrMemberRef"
+              }
+            },
+            "description": "Every inheritance, containment or mapping path; a diamond retains all."
+          },
+          "subject": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Concrete implementing type, independently pinned."
+          },
+          "subjectDigest": {
+            "type": "string",
+            "description": "Norn1 identity of that concrete type artifact."
           }
         },
         "additionalProperties": false
@@ -7027,6 +8014,26 @@
         },
         "additionalProperties": false
       },
+      "NornIrInterpretationFormat": {
+        "type": "string",
+        "description": "Only the interpretation wire format decodes here.",
+        "enum": [
+          "norn.interpretation/1"
+        ],
+        "x-enumDescriptions": [
+          "First interpretation contract."
+        ]
+      },
+      "NornIrInterpretationRole": {
+        "type": "string",
+        "description": "A law interpretation is neither source evidence nor term correspondence.",
+        "enum": [
+          "law_interpretation"
+        ],
+        "x-enumDescriptions": [
+          "Subject to contract totality and preservation obligations."
+        ]
+      },
       "NornIrInvariant": {
         "type": "object",
         "description": "One declared invariant of an object type or interface.",
@@ -7939,6 +8946,55 @@
         },
         "additionalProperties": false
       },
+      "NornIrLawInterpretationIr": {
+        "type": "object",
+        "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+        "required": [
+          "format",
+          "role",
+          "sourceLayer",
+          "targetLayer",
+          "members"
+        ],
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "Closed format discriminator.",
+            "enum": [
+              "norn.interpretation/1"
+            ],
+            "x-enumDescriptions": [
+              "First interpretation contract."
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberInterpretation"
+            },
+            "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions."
+          },
+          "role": {
+            "type": "string",
+            "description": "Explicit semantic role.",
+            "enum": [
+              "law_interpretation"
+            ],
+            "x-enumDescriptions": [
+              "Subject to contract totality and preservation obligations."
+            ]
+          },
+          "sourceLayer": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
+            "description": "Layer whose contract must be preserved."
+          },
+          "targetLayer": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
+            "description": "Layer interpreting that contract."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLawModality": {
         "oneOf": [
           {
@@ -8265,6 +9321,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrLawRootOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLawRootOneOf4"
           }
         ],
         "description": "Named application boundary; authorization still comes from the envelope."
@@ -8344,6 +9403,26 @@
             "type": "string",
             "enum": [
               "entity"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawRootOneOf4": {
+        "type": "object",
+        "description": "Exact retained composition-pack boundary.",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pack"
             ]
           }
         },
@@ -8920,6 +9999,33 @@
         "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
         "pattern": "^[a-z][a-z0-9_]*$"
       },
+      "NornIrLinkImage": {
+        "type": "object",
+        "description": "The source path a [`PathMapping`] assigns to one target link.",
+        "required": [
+          "concept",
+          "link",
+          "path"
+        ],
+        "properties": {
+          "concept": {
+            "type": "string",
+            "description": "The target concept declaring the link."
+          },
+          "link": {
+            "type": "string",
+            "description": "The target link ID."
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Forward source link IDs from the image of `concept`; empty is identity."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLinkMap": {
         "type": "object",
         "description": "One link rule: the produced object links to the object another map\nproduces with this key (an RML referencing object map with its join).",
@@ -9076,9 +10182,9 @@
         },
         "additionalProperties": false
       },
-      "NornIrMappingPayload": {
+      "NornIrMappingIr": {
         "type": "object",
-        "description": "The payload of a `mapping` artifact: an interface-scoped mapping\n([`mapping::MappingIr`], T8-MAP-1a).",
+        "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
         "required": [
           "format",
           "source",
@@ -9094,7 +10200,7 @@
             "description": "Declarative permission-row maps. These emit ordinary upsert actions\nfor `core.Entitlement`; joins are applied only from a caller-declared\ncomplete snapshot of every `requiredSnapshot` dataset."
           },
           "extensions": {
-            "$ref": "#/components/schemas/NornIrMappingPayloadPropertyExtensions"
+            "$ref": "#/components/schemas/NornIrMappingIrPropertyExtensions"
           },
           "format": {
             "type": "string",
@@ -9127,6 +10233,13 @@
             },
             "description": "The object maps, in evaluation order."
           },
+          "pathMappings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPathMappingBinding"
+            },
+            "description": "Required path preservation obligations over the named entity artifacts."
+          },
           "source": {
             "$ref": "#/components/schemas/NornIrSourceBinding",
             "description": "The one `source_schema` artifact the mapping reads, pinned by\ncontent hash."
@@ -9134,12 +10247,25 @@
         },
         "additionalProperties": false
       },
-      "NornIrMappingPayloadPropertyExtensions": {
+      "NornIrMappingIrPropertyExtensions": {
         "type": "object",
         "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrMappingPayload": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrMappingIr",
+            "description": "Source records produce ordinary entity facts, never inherited laws."
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLawInterpretationIr",
+            "description": "A separately checked interpretation between exact ontology layers."
+          }
+        ],
+        "description": "The payload of a `mapping` artifact: source-record transforms or a\nseparately checked law interpretation ([`mapping::MappingDocument`])."
       },
       "NornIrMappingRelation": {
         "type": "string",
@@ -9394,6 +10520,29 @@
           }
         ],
         "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id."
+      },
+      "NornIrMemberInterpretation": {
+        "type": "object",
+        "description": "One interpretation between exact catalog members, never a coverage claim.",
+        "required": [
+          "source",
+          "target"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Source type, property, link, lifecycle state or transition identity."
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Corresponding target identity, resolved within the pinned target layer."
+          },
+          "transform": {
+            "type": "string",
+            "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrMemberOneOf0": {
         "type": "object",
@@ -9702,6 +10851,51 @@
         ],
         "description": "Algebraic contract for re-aggregation."
       },
+      "NornIrMetricAggregationParams": {
+        "type": "object",
+        "description": "Aggregate parameters use MetricFlow field names.",
+        "required": [
+          "semantic_model",
+          "agg",
+          "agg_time_dimension"
+        ],
+        "properties": {
+          "agg": {
+            "type": "string",
+            "description": "Aggregate operator.",
+            "enum": [
+              "sum",
+              "count",
+              "min",
+              "max",
+              "average",
+              "count_distinct"
+            ],
+            "x-enumDescriptions": [
+              "Exact total.",
+              "Count objects or non-null property values.",
+              "Minimum value.",
+              "Maximum value.",
+              "Arithmetic mean.",
+              "Count distinct property values."
+            ]
+          },
+          "agg_time_dimension": {
+            "type": "string",
+            "description": "Generated scalar field name; directional ontology paths bind in `x-norn`."
+          },
+          "non_additive_dimension": {
+            "$ref": "#/components/schemas/NornIrNonAdditiveDimension",
+            "description": "Snapshot dimension and series groupings."
+          },
+          "semantic_model": {
+            "type": "string",
+            "description": "Ontology-bound semantic model.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrMetricAuthorization": {
         "type": "object",
         "description": "Authorization remains a runtime boundary; checker admission never grants access.",
@@ -9742,6 +10936,55 @@
         },
         "additionalProperties": false
       },
+      "NornIrMetricDefinition": {
+        "type": "object",
+        "title": "MetricDefinition",
+        "description": "A MetricFlow definition carried by the OSI DBT extension.\nNorn-specific policy is isolated in `x-norn`.",
+        "required": [
+          "name",
+          "label",
+          "type",
+          "type_params",
+          "x-norn"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Human-readable MetricFlow label."
+          },
+          "name": {
+            "type": "string",
+            "description": "Stable metric identifier."
+          },
+          "type": {
+            "type": "string",
+            "description": "MetricFlow metric type.",
+            "enum": [
+              "simple",
+              "ratio",
+              "cumulative",
+              "derived",
+              "conversion"
+            ],
+            "x-enumDescriptions": [
+              "Aggregate a measure.",
+              "Divide two bucket metrics.",
+              "Accumulate a metric over a window.",
+              "Expression over named input metrics.",
+              "Cohort conversion calculation."
+            ]
+          },
+          "type_params": {
+            "$ref": "#/components/schemas/NornIrMetricTypeParams",
+            "description": "Closure-free MetricFlow calculation parameters."
+          },
+          "x-norn": {
+            "$ref": "#/components/schemas/NornIrMetricNorn",
+            "description": "Policies which do not belong to OSI or MetricFlow."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrMetricFilter": {
         "type": "object",
         "description": "A predicate over a resolved property; numeric values retain exact decimals.",
@@ -9778,6 +11021,24 @@
           "value": {
             "$ref": "#/components/schemas/NornIrJsonValue",
             "description": "Exact runtime literal checked against the effective property contract."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMetricInput": {
+        "type": "object",
+        "description": "Named metric input in a derived calculation.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "description": "Expression alias."
+          },
+          "name": {
+            "type": "string",
+            "description": "Metric name."
           }
         },
         "additionalProperties": false
@@ -9919,6 +11180,62 @@
         },
         "additionalProperties": false
       },
+      "NornIrMetricType": {
+        "type": "string",
+        "description": "MetricFlow's five metric types; conversion means cohort conversion, not FX.",
+        "enum": [
+          "simple",
+          "ratio",
+          "cumulative",
+          "derived",
+          "conversion"
+        ],
+        "x-enumDescriptions": [
+          "Aggregate a measure.",
+          "Divide two bucket metrics.",
+          "Accumulate a metric over a window.",
+          "Expression over named input metrics.",
+          "Cohort conversion calculation."
+        ]
+      },
+      "NornIrMetricTypeParams": {
+        "type": "object",
+        "description": "MetricFlow calculation parameters. The checker enforces the fields for each type.",
+        "properties": {
+          "conversion_type_params": {
+            "$ref": "#/components/schemas/NornIrConversionTypeParams",
+            "description": "Conversion parameters."
+          },
+          "cumulative_type_params": {
+            "$ref": "#/components/schemas/NornIrCumulativeTypeParams",
+            "description": "Cumulative parameters."
+          },
+          "denominator": {
+            "type": "string",
+            "description": "Denominator metric."
+          },
+          "expr": {
+            "type": "string",
+            "description": "Stored property for a simple metric, or derived expression."
+          },
+          "metric_aggregation_params": {
+            "$ref": "#/components/schemas/NornIrMetricAggregationParams",
+            "description": "Modern MetricFlow aggregate specification."
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMetricInput"
+            },
+            "description": "Derived metric inputs."
+          },
+          "numerator": {
+            "type": "string",
+            "description": "Numerator metric."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrMultiplicity": {
         "type": "string",
         "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
@@ -10054,6 +11371,41 @@
           "field": {
             "type": "string",
             "description": "The parent's field holding the rows (a Frappe `Table` field)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrNonAdditiveDimension": {
+        "type": "object",
+        "description": "MetricFlow snapshot metadata. Admission does not promise snapshot evaluation.",
+        "required": [
+          "name",
+          "window_choice"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Time dimension."
+          },
+          "window_choice": {
+            "type": "string",
+            "description": "Choose the earliest/latest timestamp, rather than a min/max amount.",
+            "enum": [
+              "min",
+              "max"
+            ],
+            "x-enumDescriptions": [
+              "Earliest timestamp.",
+              "Latest timestamp."
+            ]
+          },
+          "window_groupings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Snapshot series keys.",
+            "default": []
           }
         },
         "additionalProperties": false
@@ -11149,6 +12501,69 @@
         },
         "additionalProperties": false
       },
+      "NornIrPathMapping": {
+        "type": "object",
+        "description": "PATH-MAP-1: a declared mapping `F: target -> source` between two concept\ncatalogs. Each target concept names its source concept and each mapped\ntarget link a forward source path; source data moves to the target by\npullback along these paths. Unmapped target links are never produced.",
+        "required": [
+          "id",
+          "objects",
+          "links"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable declaration identity, retained by generated TGDs."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLinkImage"
+            },
+            "description": "Images of target links. Two images of one link make it non-functional."
+          },
+          "objects": {
+            "$ref": "#/components/schemas/NornIrPathMappingPropertyObjects"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPathMappingBinding": {
+        "type": "object",
+        "description": "Catalog bindings for a required path mapping. Admission binds evidence to\nthe exact envelopes (including equations), and the enclosing MappingIR.",
+        "required": [
+          "sourceEntities",
+          "targetEntities",
+          "mapping"
+        ],
+        "properties": {
+          "mapping": {
+            "$ref": "#/components/schemas/NornIrPathMapping",
+            "description": "Declared object and link images."
+          },
+          "sourceEntities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Source entity artifact IDs."
+          },
+          "targetEntities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Target entity artifact IDs."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPathMappingPropertyObjects": {
+        "type": "object",
+        "description": "Target concept name to source concept name.",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
       "NornIrPolicyObligation": {
         "type": "object",
         "description": "One obligation of an [`ObligationPolicyRoot`].",
@@ -11257,9 +12672,125 @@
             },
             "description": "Classification markings declared on this property. Markings from\nproperty types, interfaces, supertypes, and computed inputs are unioned\nby the checker and cannot be removed by narrowing. Omitted when empty."
           },
+          "protected": {
+            "type": "boolean",
+            "description": "FA-PROTECT-1: only sealed rule outputs may write this inherited field."
+          },
           "type": {
             "$ref": "#/components/schemas/NornIrPropertyType",
             "description": "The value kind: inline, or a shared property type through `ref`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivity": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf4"
+          }
+        ],
+        "description": "METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.\nMissing declarations permit point reads but never authorize aggregation."
+      },
+      "NornIrPropertyAdditivityOneOf0": {
+        "type": "object",
+        "description": "No aggregation contract has been declared.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "undeclared"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivityOneOf1": {
+        "type": "object",
+        "description": "Summable across entities and time.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "additive"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivityOneOf2": {
+        "type": "object",
+        "description": "Summable across entities at a single instant, never across time.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "semi_additive"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivityOneOf3": {
+        "type": "object",
+        "description": "Requires a separately declared weighting calculation.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "non_additive"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivityOneOf4": {
+        "type": "object",
+        "description": "Recompute from the sums of these operands, never average stored ratios.",
+        "required": [
+          "kind",
+          "numerator",
+          "denominator"
+        ],
+        "properties": {
+          "denominator": {
+            "type": "string",
+            "description": "Denominator property at the same object grain.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ratio"
+            ]
+          },
+          "numerator": {
+            "type": "string",
+            "description": "Numerator property at the same object grain.",
+            "pattern": "^[a-z][a-z0-9_]*$"
           }
         },
         "additionalProperties": false
@@ -11489,6 +13020,10 @@
           "kind"
         ],
         "properties": {
+          "additivity": {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivity",
+            "description": "Explicit aggregation contract; a missing declaration fails closed."
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -11528,6 +13063,10 @@
           "scale"
         ],
         "properties": {
+          "additivity": {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivity",
+            "description": "Explicit aggregation contract; units do not imply additivity."
+          },
           "currencySource": {
             "$ref": "#/components/schemas/NornIrDimensionPath",
             "description": "Authoritative currency path relative to the object holding this amount.\nMonetary decimals declare this instead of a quantity unit. Metrics\nmust verify this source; descriptions and names carry no semantics."
@@ -12205,6 +13744,25 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrRequirementCalendarPin": {
+        "type": "object",
+        "description": "Exact pinned calendar identity.",
+        "required": [
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Calendar artifact identity."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact calendar version."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementDeonticModality": {
         "type": "string",
         "description": "The normative grade is separate from the temporal wrapper in `law`.",
@@ -12633,6 +14191,26 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Exact retained composition-pack boundary.",
+            "required": [
+              "kind",
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "pack"
+                ]
+              }
+            },
+            "additionalProperties": false
           }
         ],
         "description": "Named application boundary; authorization still comes from the envelope."
@@ -12913,6 +14491,14 @@
             "type": "string",
             "pattern": "\\S"
           },
+          "pack": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a pack-rooted law; other roots never read it.",
+            "pattern": "\\S"
+          },
           "permission": {
             "type": "string",
             "pattern": "\\S"
@@ -12924,21 +14510,49 @@
           "sameCommit": {
             "type": "string",
             "pattern": "\\S"
+          },
+          "within": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a `within` requirement; other timings never read it.",
+            "pattern": "\\S"
           }
         },
         "additionalProperties": false
       },
       "NornIrRequirementRequirementTiming": {
-        "type": "string",
-        "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
-        "enum": [
-          "every_committed_state",
-          "same_commit"
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Condition and response are evaluated at every applicable committed state.",
+            "enum": [
+              "every_committed_state"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit.",
+            "enum": [
+              "same_commit"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "LAW-WITHIN-1: a committed trigger transition opens an activation that a\nlater satisfying commit must discharge before `law.timing`'s deadline.",
+            "required": [
+              "within"
+            ],
+            "properties": {
+              "within": {
+                "$ref": "#/components/schemas/NornIrRequirementWithinTiming"
+              }
+            },
+            "additionalProperties": false
+          }
         ],
-        "x-enumDescriptions": [
-          "Condition and response are evaluated at every applicable committed state.",
-          "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit."
-        ]
+        "description": "Closed safety fragment plus one event-activated deadline form. No fairness,\nunbounded progress or wall-clock reads."
       },
       "NornIrRequirementRequirementWording": {
         "type": "object",
@@ -12947,6 +14561,17 @@
           "$ref": "#/components/schemas/NornIrRequirementLocalizedRequirement"
         },
         "minProperties": 1
+      },
+      "NornIrRequirementRetriggerPolicy": {
+        "type": "string",
+        "enum": [
+          "keep_first",
+          "restart"
+        ],
+        "x-enumDescriptions": [
+          "A trigger while open is recorded as ignored; the first deadline stands.",
+          "A trigger while open restarts the window from the triggering commit."
+        ]
       },
       "NornIrRequirementRuleByteRange": {
         "type": "object",
@@ -13058,6 +14683,60 @@
           },
           "requirement": {
             "$ref": "#/components/schemas/NornIrRequirementStructuredRequirement"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRequirementWithinTiming": {
+        "type": "object",
+        "description": "Activation policy for `within`; the duration stays in `law.timing`.",
+        "required": [
+          "trigger",
+          "retrigger",
+          "accountable"
+        ],
+        "properties": {
+          "accountable": {
+            "type": "string",
+            "description": "Principal or role answerable for discharge; grants no authority."
+          },
+          "calendar": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRequirementCalendarPin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Business calendar for the deadline. No calendar is admitted yet: refuses."
+          },
+          "cancel": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRequirementZenExpression"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional committed-state predicate that closes an open activation unpaid."
+          },
+          "retrigger": {
+            "type": "string",
+            "description": "What a trigger does while an activation is already open.",
+            "enum": [
+              "keep_first",
+              "restart"
+            ],
+            "x-enumDescriptions": [
+              "A trigger while open is recorded as ignored; the first deadline stands.",
+              "A trigger while open restarts the window from the triggering commit."
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "description": "Lifecycle transition identity on the subject that opens an activation.\nAdmission (norn-checker) checks it is nonblank; resolving it against the\nsubject's lifecycle is catalog admission (TARGET)."
           }
         },
         "additionalProperties": false
@@ -18156,6 +19835,18 @@
           "preview"
         ]
       },
+      "NornIrWindowChoice": {
+        "type": "string",
+        "description": "MetricFlow timestamp selection.",
+        "enum": [
+          "min",
+          "max"
+        ],
+        "x-enumDescriptions": [
+          "Earliest timestamp.",
+          "Latest timestamp."
+        ]
+      },
       "NornIrWriteChange": {
         "type": "string",
         "description": "How an action changes an entity kind in its write set.",
@@ -18224,6 +19915,177 @@
             "type": "integer",
             "format": "int64",
             "description": "The last event sequence number (`0` when empty).",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornLinkEdge": {
+        "type": "object",
+        "description": "One live link touching the requested object.",
+        "required": [
+          "sourceType",
+          "link",
+          "source",
+          "targetType",
+          "target",
+          "version"
+        ],
+        "properties": {
+          "link": {
+            "type": "string",
+            "description": "The link id."
+          },
+          "source": {
+            "type": "string",
+            "description": "The source object id."
+          },
+          "sourceType": {
+            "type": "string",
+            "description": "The link's declaring (source) type."
+          },
+          "target": {
+            "type": "string",
+            "description": "The target object id."
+          },
+          "targetType": {
+            "type": "string",
+            "description": "The declared target type."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The link version.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornLinkPage": {
+        "type": "object",
+        "description": "One bounded page of live links touching an object, in both directions.",
+        "required": [
+          "objectType",
+          "id",
+          "items",
+          "hasMore"
+        ],
+        "properties": {
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether more candidate links remain after this page."
+          },
+          "id": {
+            "type": "string",
+            "description": "The requested object's identity."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornLinkEdge"
+            },
+            "description": "Live links on this page."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The requested object's type."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornMappingPin": {
+        "type": "object",
+        "description": "The exact admitted mapping declaration that produced an object version.",
+        "required": [
+          "artifactId",
+          "version",
+          "sha256"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Mapping artifact ID."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Canonical artifact digest."
+          },
+          "version": {
+            "type": "string",
+            "description": "Admitted artifact version."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornObjectPage": {
+        "type": "object",
+        "description": "One bounded page of a concept's authoritative objects.",
+        "required": [
+          "objectType",
+          "records",
+          "quarantineCount",
+          "scannedThrough"
+        ],
+        "properties": {
+          "objectType": {
+            "type": "string",
+            "description": "The concept read; records may be of its subtypes."
+          },
+          "quarantineCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Candidates on this page held back by source disputes or open quarantining findings.",
+            "minimum": 0
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornObjectRecord"
+            },
+            "description": "Authoritative records on this page."
+          },
+          "scannedThrough": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last scanned identity: the next page starts after it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornObjectRecord": {
+        "type": "object",
+        "description": "One object as the cell stores it, at its current version.",
+        "required": [
+          "objectType",
+          "id",
+          "scope",
+          "version",
+          "values"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object's identity."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concrete object type."
+          },
+          "scope": {
+            "type": "string",
+            "description": "The tenant scope."
+          },
+          "values": {
+            "type": "object",
+            "description": "Every stored property by property id; decimals are exact JSON number tokens.",
+            "additionalProperties": true
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The owner version (`+1` per write).",
             "minimum": 0
           }
         },

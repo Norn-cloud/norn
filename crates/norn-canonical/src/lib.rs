@@ -431,6 +431,75 @@ pub fn serialize_json_verbatim<T: Serialize + ?Sized>(
     })
 }
 
+/// Sort generated JSON object keys without normalizing Unicode or number tokens.
+///
+/// PROOF-BIND-1: generated commitments have identical bytes under either Serde
+/// map backend. Arrays retain order; strings retain their exact Unicode spelling,
+/// and numbers retain the serialized token, without floating-point conversion.
+/// This is distinct from Norn1 equivalence and from raw source-byte commitments.
+///
+/// # Errors
+/// Returns serialization errors or the validation errors of [`parse_json_verbatim`].
+pub fn canonical_json_exact_of<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<Vec<u8>, CanonicalJsonError> {
+    let bytes = serialize_json_verbatim(value)?;
+    parse_json_verbatim(&bytes)?;
+    let sorted = sort_exact_json(
+        serde_json::from_slice(&bytes).map_err(|error| json_encoding_error(&error))?,
+    )
+    .map_err(|error| json_encoding_error(&error))?;
+    Ok(sorted.get().as_bytes().to_vec())
+}
+
+fn json_encoding_error(error: &serde_json::Error) -> CanonicalJsonError {
+    CanonicalJsonError::Serialize {
+        message: error.to_string(),
+    }
+}
+
+fn sort_exact_json(
+    raw: &serde_json::value::RawValue,
+) -> Result<Box<serde_json::value::RawValue>, serde_json::Error> {
+    let bytes = match raw.get().as_bytes().first() {
+        Some(b'{') => {
+            let fields: BTreeMap<String, &serde_json::value::RawValue> =
+                serde_json::from_str(raw.get())?;
+            let sorted = fields
+                .into_iter()
+                .map(|(key, value)| sort_exact_json(value).map(|value| (key, value)))
+                .collect::<Result<BTreeMap<_, _>, _>>()?;
+            serde_json::to_string(&sorted)?
+        }
+        Some(b'[') => {
+            let values: Vec<&serde_json::value::RawValue> = serde_json::from_str(raw.get())?;
+            let sorted = values
+                .into_iter()
+                .map(sort_exact_json)
+                .collect::<Result<Vec<_>, _>>()?;
+            serde_json::to_string(&sorted)?
+        }
+        _ => return Ok(raw.to_owned()),
+    };
+    serde_json::value::RawValue::from_string(bytes)
+}
+
+/// Stream the same JSON bytes as [`serialize_json_verbatim`] into a writer.
+///
+/// This preserves Serde JSON's write boundaries so budget writers can refuse
+/// oversized input without allocating the full encoded value.
+///
+/// # Errors
+///
+/// Returns the serialization or writer error, including any budget refusal.
+/// Writes completed before an error remain charged by the writer.
+pub fn meter_json_verbatim<W: std::io::Write, T: Serialize + ?Sized>(
+    writer: W,
+    value: &T,
+) -> Result<(), serde_json::Error> {
+    serde_json::to_writer(writer, value)
+}
+
 /// Alias for [`parse`].
 ///
 /// # Errors
@@ -1417,6 +1486,54 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    #[test]
+    fn verbatim_meter_preserves_bytes_and_partial_budget_charges() {
+        struct BudgetWriter {
+            remaining: usize,
+            bytes: Vec<u8>,
+        }
+
+        impl std::io::Write for BudgetWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if bytes.len() > self.remaining {
+                    return Err(std::io::Error::other("budget exhausted"));
+                }
+                self.remaining -= bytes.len();
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let value = serde_json::json!({"text": "é\n\"", "nested": [1, true, null]});
+        let encoded = serialize_json_verbatim(&value).expect("encode");
+        for budget in 0..=encoded.len() + 1 {
+            let mut writer = BudgetWriter {
+                remaining: budget,
+                bytes: Vec::new(),
+            };
+            let mut baseline = BudgetWriter {
+                remaining: budget,
+                bytes: Vec::new(),
+            };
+            let result = meter_json_verbatim(&mut writer, &value);
+            let expected = serde_json::to_writer(&mut baseline, &value);
+            assert_eq!(result.is_ok(), budget >= encoded.len());
+            assert_eq!(
+                result.err().map(|e| e.to_string()),
+                expected.err().map(|e| e.to_string())
+            );
+            assert_eq!(writer.remaining, baseline.remaining);
+            assert_eq!(writer.bytes, baseline.bytes);
+            if budget >= encoded.len() {
+                assert_eq!(writer.bytes, encoded);
+            }
+        }
+    }
+
     fn arb_string() -> impl Strategy<Value = String> {
         prop::collection::vec(any::<char>(), 0..8)
             .prop_map(|characters| characters.into_iter().collect())
@@ -1739,5 +1856,51 @@ mod tests {
             HashProfile::Legacy0.hash_json(with_nulls),
             HashProfile::Legacy0.hash_json(without_nulls)
         );
+    }
+    #[test]
+    fn generated_commitments_sort_keys_without_changing_exact_text_or_numbers() {
+        let left: &serde_json::value::RawValue = serde_json::from_str(
+            r#"{"z":[{"b":1.2300e+2,"a":900719925474099312345}],"e\u0301":"e\u0301","é":"é"}"#,
+        )
+        .expect("raw");
+        let right: &serde_json::value::RawValue = serde_json::from_str(
+            r#"{"é":"é","e\u0301":"e\u0301","z":[{"a":900719925474099312345,"b":1.2300e+2}]}"#,
+        )
+        .expect("raw");
+        let bytes = canonical_json_exact_of(left).expect("canonical");
+        assert_eq!(bytes, canonical_json_exact_of(right).expect("reordered"));
+        assert!(
+            String::from_utf8(bytes.clone())
+                .expect("UTF8")
+                .contains("1.2300e+2")
+        );
+        assert!(
+            String::from_utf8(bytes.clone())
+                .expect("UTF8")
+                .contains("900719925474099312345")
+        );
+        let roundtrip: &serde_json::value::RawValue = serde_json::from_slice(&bytes).expect("raw");
+        assert_eq!(
+            bytes,
+            canonical_json_exact_of(roundtrip).expect("idempotent")
+        );
+        assert_ne!(
+            canonical_json_exact_of("é"),
+            canonical_json_exact_of("e\u{301}")
+        );
+        let duplicate: &serde_json::value::RawValue =
+            serde_json::from_str(r#"{"a":1,"a":2}"#).expect("raw");
+        assert!(canonical_json_exact_of(duplicate).is_err());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn generated_commitments_ignore_member_order(value in proptest::prelude::any::<i64>()) {
+            let left: &serde_json::value::RawValue = &serde_json::value::RawValue::from_string(
+                format!(r#"{{"z":{value},"a":{{"y":1,"x":0}}}}"#)).expect("raw");
+            let right: &serde_json::value::RawValue = &serde_json::value::RawValue::from_string(
+                format!(r#"{{"a":{{"x":0,"y":1}},"z":{value}}}"#)).expect("raw");
+            proptest::prop_assert_eq!(canonical_json_exact_of(left).expect("left"), canonical_json_exact_of(right).expect("right"));
+        }
     }
 }

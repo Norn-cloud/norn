@@ -78,6 +78,28 @@ G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recomput
 QUERY-ENGINE-1 / COMPUTE-DETERMINISTIC-1: maintenance follows gapless verified cell receipts, retracts each changed identity's prior contribution and adds its new projection. Duplicate written IDs and same-frontier delivery cannot double count. Complete source membership enforces the original population bound even for hidden/noncontributing rows. Definition, world/scope, mapping, population or authorization changes require explicit rebuild; a skipped receipt refuses with `core.compute.stale_input`.
 A staged generation publishes atomically only after all reads and exact adjustments succeed. Restart closes/reopens the real cell and performs a labelled complete rebuild; no partial generation is exposed. The generated DATA-DELTA correspondence scenario compares the full envelope/rows/member versions and lineage with native recompute after corrections, insertions, deletions, effective-time changes, quarantine/recovery, duplicate delivery and restart. This is sampled implementation correspondence, not a universal IVM proof. OLAP and governed read fencing remain separate qualifications.
 
+## IA operator certificates
+
+Core 03's operator-certificate section defines `norn.ivm-algebra/1` and its
+separate algebraic/runtime evidence ceilings. The closed checker is in
+`metric::compute::certificate`; it reconstructs sufficient-statistic operators
+from the borrowed admitted QuestionPlan. Its general DAG checker checks all
+nodes and never treats unsupported dependencies as proved. Fold laws are
+closed mathematical operations, not caller-provided proof booleans.
+
+Reference: Budiu et al., DBSP (PVLDB 2023), Proposition 3.2 and Theorems
+3.3/3.4, https://www.vldb.org/pvldb/vol16/p1601-budiu.pdf .
+`Composition.lean` is an engine-level conditional composition theorem.
+No new application theorem, admission variant or runtime operator is added.
+Tests exhaust two-key signed multiplicities -2..2 for old inputs and deltas
+(390625 combinations), including each omitted join-term mutant. Existing
+incremental_question/restatement_activation generated harnesses check the
+certificate on the same admitted plan before runtime correspondence.
+Kani is deferred here: the new mechanism checks symbolic rule shapes rather
+than performing unbounded arithmetic; exhaustive small-relation tests are an
+independent oracle, not a proof of runtime join support. Arbitrary fold
+runtime correspondence remains unknown until a fold is admitted by this plan.
+
 ## G7 embedded SQL correspondence (CP3 stretch)
 
 QUERY-ENGINE-1 / QUERY-GRAIN-1 / COMPUTE-DETERMINISTIC-1: optional `norn-cell/duckdb` lowers the admitted bounded sum/ratio plan over the authorized exact contribution snapshot. Shared projection supplies identity, predicates and buckets. SQL uses per-operand DECIMAL scales 0–6, identity-grain sums and one HUGEINT quotient/remainder rounding; other shapes/scales refuse `core.compute.unsupported_engine`. Values are parameters; extension loading and external access are disabled.
@@ -110,7 +132,7 @@ must equal full recomputation at that exact frontier. Equality covers the
 entire result envelope, including decimal values, member versions, exclusions,
 scope, definitions, mappings and source progress; only the engine label differs.
 Every generated sequence includes insertion, update, deletion, redelivery and
-restart, followed by generated amount, metal and effective-week changes.
+restart, with possible generated amount, metal and effective-week changes.
 Forward/reverse runs reorder independent identities within each batch and the
 initial fixture, preserving each identity's update order. Their values and
 versioned contribution IDs must agree; their physical ledger hashes may differ.
@@ -122,3 +144,7 @@ is runtime-enforced scenario assertions plus sampled generated correspondence.
 It adds no evaluator or arithmetic kernel; the existing bounded arithmetic
 Kani harness remains its arithmetic evidence. Synthetic native receipts do not
 qualify mapped-feed authority, training knowledge, OLAP or a demo surface.
+
+## G6 numeric QUERY-FANOUT correspondence
+QUERY-GRAIN-1: the native root-grain sum returns 80 for one Holding linked to two real Tag objects; two distinct holdings each valued at 80 return 160. Numeric contributions are keyed by holding identity/version, not measure value or catalog multiplicity. Typed Rust fixture definitions compile through the existing IR/checker and use actual native objects/links. No monetary/currency or joined-dimension execution is qualified.
+The named expanded-tag case refuses ambiguous grain; symmetric linked grouping stays unsupported. A generated native population varies scalar amounts and tag multiplicities, commits link-only receipts and compares complete IVM/recompute envelopes plus independent root sums and unchanged numeric rows. This test-only cut adds no pure engine function or Kani target; the existing exact-arithmetic harnesses remain unchanged.

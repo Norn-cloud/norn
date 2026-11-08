@@ -1,0 +1,37 @@
+{
+  "objectType": "canon.Party",
+  "records": [
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/custodian",
+      "scope": "org_demo/dev",
+      "version": 1,
+      "values": {
+        "display_name": "Custodian",
+        "kind": "organization"
+      }
+    },
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/customer",
+      "scope": "org_demo/dev",
+      "version": 1,
+      "values": {
+        "display_name": "Customer",
+        "kind": "organization"
+      }
+    },
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/owner",
+      "scope": "org_demo/dev",
+      "version": 1,
+      "values": {
+        "display_name": "Owner",
+        "kind": "organization"
+      }
+    }
+  ],
+  "quarantineCount": 0,
+  "scannedThrough": "demo/party/owner"
+}

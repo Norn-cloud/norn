@@ -1,0 +1,7 @@
+{
+  "code": "connector.effect.invalid",
+  "message": "a tool binding's effect must be {kind: query} or {kind: command} with only providerKey and reconcile",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

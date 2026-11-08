@@ -182,12 +182,16 @@ impl<X> CommitError<X> {
             | Self::ObservationAuthorization
             | Self::UnsupportedLinkRead { .. }
             | Self::DuplicateLinkRead { .. }
-            | Self::InvalidLinkRead { .. } => RefusalCategory::Invalid,
+            | Self::InvalidLinkRead { .. }
+            | Self::UnsupportedPredicateRead { .. }
+            | Self::InvalidPredicateRead { .. } => RefusalCategory::Invalid,
             Self::NotPending { .. }
             | Self::Conflict { .. }
             | Self::LinkConflict { .. }
-            | Self::LinkReadConflict { .. } => RefusalCategory::Conflict,
-            Self::IdentityCollision { .. }
+            | Self::LinkReadConflict { .. }
+            | Self::PredicateReadConflict { .. } => RefusalCategory::Conflict,
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::DanglingLink { .. }
             | Self::LinkCardinality { .. }
             | Self::LinkRequired { .. }
@@ -279,7 +283,10 @@ impl<X> Refusable for CommitError<X> {
         }
         refusal.retryable = matches!(
             self,
-            Self::Conflict { .. } | Self::LinkConflict { .. } | Self::LinkReadConflict { .. }
+            Self::Conflict { .. }
+                | Self::LinkConflict { .. }
+                | Self::LinkReadConflict { .. }
+                | Self::PredicateReadConflict { .. }
         );
         refusal
     }
@@ -291,7 +298,8 @@ impl<X> DecisionRefusal<X> {
     pub const fn category(&self) -> RefusalCategory {
         match self {
             Self::Law { reason, .. } => law_category(reason),
-            Self::IdentityCollision { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::GuardFalse { .. }
             | Self::GuardError { .. }
             | Self::NotFromState { .. }
@@ -545,7 +553,8 @@ impl<X> DecisionRefusal<X> {
                 key,
                 lifecycle_guard(transition, guard, Some(reason)),
             )),
-            Self::IdentityCollision { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::AtomicBoundary { .. }
             | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
@@ -609,12 +618,14 @@ impl<X> ActionRefusal<X> {
             Self::PreconditionFailed { .. } | Self::WriteModeFailed { .. } => {
                 RefusalCategory::Precondition
             }
-            Self::IdempotencyConflict { .. } | Self::StalePreconditionRead { .. } => {
-                RefusalCategory::Conflict
-            }
-            Self::InputBoundExceeded { .. } | Self::ExpressionBudgetExceeded { .. } => {
-                RefusalCategory::Limit
-            }
+            Self::IdempotencyConflict { .. }
+            | Self::StalePreconditionRead { .. }
+            | Self::StaleAggregateRead { .. } => RefusalCategory::Conflict,
+            Self::ReceiptRefused { reason } => reason.category(),
+            Self::InputBoundExceeded { .. }
+            | Self::ExpressionBudgetExceeded { .. }
+            | Self::AggregateBoundExceeded { .. }
+            | Self::AggregateBytesExceeded { .. } => RefusalCategory::Limit,
             Self::Command(rejection) => rejection.category(),
             Self::MissingScope { .. }
             | Self::UnsupportedEffect { .. }
@@ -622,6 +633,7 @@ impl<X> ActionRefusal<X> {
             | Self::InvalidInput { .. }
             | Self::DerivationFailed { .. }
             | Self::SliceUnavailable { .. }
+            | Self::AggregateUnavailable { .. }
             | Self::KindMismatch { .. } => RefusalCategory::Invalid,
         }
     }
@@ -633,7 +645,10 @@ impl<X> Refusable for ActionRefusal<X> {
             return refusal.refusal();
         }
         let mut refusal = Refusal::new(self.code(), self.category(), self);
-        refusal.retryable = matches!(self, Self::StalePreconditionRead { .. });
+        refusal.retryable = matches!(
+            self,
+            Self::StalePreconditionRead { .. } | Self::StaleAggregateRead { .. }
+        );
         refusal
     }
 }
