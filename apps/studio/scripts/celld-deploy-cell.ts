@@ -93,7 +93,7 @@ function reload(stage: CellStage): void {
 /** Sign in as the probe account and POST an empty submission to the new build's route. */
 async function probe(stage: CellStage, deadlineMs: number): Promise<void> {
   const headers = { "content-type": "application/json", origin: stage.origin, "user-agent": "norn-cell-deploy/1" }
-  const signIn = await fetch(`${stage.origin}/api/auth/sign-in/email`, { method: "POST", headers, body: JSON.stringify({ email: env("NORN_PROBE_EMAIL"), password: env("NORN_PROBE_PASSWORD") }) })
+  const signIn = await fetch(`${stage.origin}/api/auth/sign-in/email`, { method: "POST", headers, body: JSON.stringify({ email: env("NORN_PROBE_EMAIL"), password: env("NORN_PROBE_PASSWORD") }), signal: AbortSignal.timeout(Math.max(1, deadlineMs - Date.now())) })
   if (!signIn.ok) throw new Error(`the probe account could not sign in (${signIn.status})`)
   const cookie = signIn.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   const path = `/api/host/v1/questions:evaluate?${process.env.NORN_PROBE_SCOPE ?? "orgId=org_demo&environmentId=analytics"}`
