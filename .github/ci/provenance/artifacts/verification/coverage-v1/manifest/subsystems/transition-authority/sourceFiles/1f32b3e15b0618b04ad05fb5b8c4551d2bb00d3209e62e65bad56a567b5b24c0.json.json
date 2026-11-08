@@ -1,0 +1,17 @@
+{
+  "origin": "authored",
+  "category": "code",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "f89a27cb235869b9799174d1a8c80ad59c8bb056d1b00fd3c7bc8aa9c2747ae9"
+    }
+  ],
+  "notices": [],
+  "connector": null,
+  "sha256": "f89a27cb235869b9799174d1a8c80ad59c8bb056d1b00fd3c7bc8aa9c2747ae9"
+}
