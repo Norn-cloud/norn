@@ -27,7 +27,7 @@ function Details({ children }: { readonly children: ReactNode }) {
   )
 }
 
-const Mono = ({ children }: { readonly children: ReactNode }) => <div className="font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap">{children}</div>
+const Mono = ({ children }: { readonly children: ReactNode }) => <div className="font-mono text-[0.6875rem] leading-relaxed break-all whitespace-pre-wrap">{children}</div>
 
 /** What the server's checker said about one proposal; Studio adds no verdict of its own. */
 export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
