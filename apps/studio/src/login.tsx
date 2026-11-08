@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { AuthRefusal, authApi, useRefreshAccount } from "@/lib/session"
 import { cn } from "@/lib/utils"
+import nornMark from "@/assets/norn-mark.webp"
 
 export type Mode = "sign-in" | "sign-up" | "email-link"
 
@@ -30,6 +31,8 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
   const [mode, setMode] = useState<Mode>(initial)
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState<{ readonly tone: "error" | "info"; readonly text: string } | null>(null)
+  // The address carries across tabs: after "Account ready" the visitor signs in without retyping it.
+  const [email, setEmail] = useState("")
   const refresh = useRefreshAccount()
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -68,7 +71,7 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
     <main className="flex min-h-svh items-center justify-center bg-surface-subtle p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="flex items-center gap-2">
-          <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">N</span>
+          <img src={nornMark} alt="" width={32} height={32} className="size-8 object-contain" />
           <span className="font-medium">Norn Studio</span>
         </div>
         <Card>
@@ -87,7 +90,7 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
             </div>
             <form key={mode} onSubmit={submit} className="grid gap-3">
               {mode === "sign-up" && <Field label="Name" name="name" autoComplete="name" />}
-              <Field label="Email" name="email" type="email" autoComplete="email" />
+              <Field label="Email" name="email" type="email" autoComplete="email" defaultValue={email} onChange={(event) => setEmail(event.currentTarget.value)} />
               {mode !== "email-link" && (
                 <Field label="Password" name="password" type="password" minLength={mode === "sign-up" ? 12 : undefined} maxLength={128}
                   autoComplete={mode === "sign-up" ? "new-password" : "current-password"} />

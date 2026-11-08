@@ -37,7 +37,39 @@ declaration), **METRIC-RATIO-AVERAGE** (stored-ratio aggregation refuses),
 **METRIC-BALANCE-TIME** (an additive metric cannot bypass a balance's time
 restriction), **METRIC-DECLARED-SUM** (explicit additive quantities use the same
 keyed compute admission). Conservation-derived candidates and their law
-provenance are a separate slice; this admission change grants no law exemption.
+provenance use the following checked derivation contract.
+
+**METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
+properties, direct/single-link scalar dimensions and existing calendar grains.
+Candidates are uncertified; deriving one does not declare a governed KPI or
+authorize execution outside the existing compute profile. Missing additivity
+still refuses unless an admitted conservation law supplies its provenance.
+
+At an explicitly selected law root, an unconditional, error-severity `always`
+law of the form `self.input == self.output + self.loss` supplies additive terms
+and one ratio of sums for each output/input pair. The bounded structural
+recognizer accepts distinct same-type/same-unit terms, not coefficients,
+conditionals or nonlinear algebra. Rates, nullable/computed terms, explicit conflicting
+additivity, state-limited laws and other law roots supply no such contract.
+Generated definitions retain the canonical law-envelope digest; changes to a
+law change the generated ratio identity. Artifact order does not change identity.
+Reordering terms within a law expression does change identity.
+The original ontology and every property contract carried by the compute plan
+remain unchanged. Only the checker-owned catalog contains the law admission
+evidence, and every selection lowers through `compute::admit`. In particular,
+law evidence cannot make the plan fail the native cell's model-contract guard.
+
+Named scenarios: **METRIC-RATE-UNKNOWN** (rate terms supply no conservation
+additivity), **METRIC-CONSERVATION** (no metric declarations yield recovered
+and loss ratios), **METRIC-LAW-SCOPE** (conditional/advisory/other-scope laws
+supply no additivity), **METRIC-LAW-PIN** (deterministic derivation retains the
+exact governing law), **METRIC-SCRAP-PARITY** (all 80 pinned scrap-yield rows
+produce the same contributions as the existing compute path, with showcase
+totals 294/300 and ratio 0.980000), and **METRIC-NONLINEAR-UNKNOWN** (unsupported
+equalities create no conservation candidate). Unsupported calendar grains,
+link execution and snapshot evaluation keep their existing refusals.
+**METRIC-MODEL-PARITY** requires every law-derived plan property to retain the
+same native model contract as the original, undeclared ontology.
 
 ## Typed question construction (#658, #528)
 
@@ -96,7 +128,7 @@ Current evidence: structural typing and narrow induction substrate at the baseli
 
 Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/src/{metric,jdm_profile}.rs`, `crates/norn-cell/src/reactive.rs`, `crates/norn-expr/`, `crates/norn-checker/src/obligations/induction.rs`. Ordered fold #323 and membership fencing #324 are open. Full folds, three-engine lowering, freshness frontiers and grain-aware analytical execution are not established on main. #69 introduces `norn-metrics` temporal admission in an open PR; the crate is absent at this baseline. #97/#103 are open WellDB prerequisites, not a shipped IVM/OLAP engine; #71 history-at-cursor is also open.
 
-## Work breakdown (each PR ≤400 lines; beat 6 is demo priority)
+## Work breakdown (one coherent unit per PR; beat 6 is demo priority)
 
 1. Land/adapt A1 #323 fold contract with fail-closed unsupported execution; complete accumulator/step typing.
 2. A2 exact arithmetic evaluator, then bounded interpreter, then FOLD-ALLOCATE/CAPACITY correspondence as separate cuts; remove refusal only for supported semantics.

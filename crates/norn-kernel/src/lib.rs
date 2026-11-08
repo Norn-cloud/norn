@@ -53,6 +53,7 @@
 )]
 
 pub mod action;
+mod action_aggregate;
 pub mod action_commit;
 pub mod authz;
 mod authz_action;

@@ -2,6 +2,7 @@ import { apiKey } from "@better-auth/api-key"
 import { betterAuth, getCurrentAdapter, type BetterAuthOptions } from "better-auth"
 import { APIError } from "better-auth/api"
 import { createAccessControl } from "better-auth/plugins/access"
+import { genericOAuth } from "better-auth/plugins/generic-oauth"
 import { jwt } from "better-auth/plugins/jwt"
 import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
@@ -44,6 +45,7 @@ export interface AuthConfig {
   readonly baseURL: string
   /** Optional server-held default cell for newly provisioned workspaces. */
   readonly defaultEnvironmentId?: string
+  readonly trustedOrigins?: readonly string[]
   /** Absent when this deployment has no mail sender: magic links then refuse. */
   readonly sendMagicLink?: (mail: MagicLinkMail) => Promise<void>
   /**
@@ -53,9 +55,97 @@ export interface AuthConfig {
   readonly defaultOrganizationId?: string
   /** "js" where the runtime has no `node:crypto.scrypt` (celld); absent or "native" otherwise. */
   readonly scrypt?: PasswordScrypt
+  /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
+  readonly gateway?: GatewayClient
+}
+
+/** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from the operator's secret store by name. */
+export interface GatewayClient {
+  readonly url: string
+  readonly clientId: string
+  readonly clientSecret: string
 }
 
 const MINUTE = 60
+
+/**
+ * Link-only OAuth to the gateway: a signed-in person grants Studio their gateway access once,
+ * Better Auth keeps the grant encrypted in `account` and refreshes it, and the Worker uses it
+ * server-side. It never signs anyone in or creates a Norn user.
+ */
+/** The resource Studio's gateway tokens are for: the gateway's product API (`/api`), not its MCP endpoint. */
+export const gatewayResource = (gateway: GatewayClient) => `${gateway.url}/api`
+
+const gatewayLink = (gateway: GatewayClient) => genericOAuth({
+  config: [{
+    providerId: "executor",
+    clientId: gateway.clientId,
+    clientSecret: gateway.clientSecret,
+    authorizationUrl: `${gateway.url}/api/auth/oauth2/authorize`,
+    tokenUrl: `${gateway.url}/api/auth/oauth2/token`,
+    // The gateway grants only these (its /.well-known/oauth-authorization-server); it has no OpenID userinfo.
+    scopes: ["executor", "offline_access"],
+    pkce: true,
+    // Studio's client is registered at the gateway for client_secret_basic, which refuses the secret in the body.
+    tokenEndpointAuth: { method: "client_secret_basic" },
+    disableSignUp: true,
+    disableImplicitSignUp: true,
+    // RFC 8707: the gateway issues tokens only for a named resource, its product API.
+    authorizationUrlParams: { resource: gatewayResource(gateway) },
+    tokenUrlParams: { resource: gatewayResource(gateway) },
+    refreshTokenParams: { resource: gatewayResource(gateway) },
+    getUserInfo: (tokens) => gatewaySubject(gateway, tokens.accessToken),
+  }],
+})
+
+/**
+ * Who granted the gateway token, from the gateway's token introspection (RFC 7662) with Studio's
+ * client credentials. The account is keyed by that subject; the address is a placeholder, since a
+ * link-only provider never sets a Norn user's email.
+ */
+export async function gatewaySubject(gateway: GatewayClient, accessToken: string | undefined, fetcher: typeof fetch = fetch) {
+  if (accessToken === undefined) return null
+  const response = await fetcher(`${gateway.url}/api/auth/oauth2/introspect`, {
+    method: "POST",
+    headers: { authorization: `Basic ${btoa(`${gateway.clientId}:${gateway.clientSecret}`)}`, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: accessToken, token_type_hint: "access_token" }),
+  })
+  const body = (await response.json().catch(() => null)) as { active?: boolean; sub?: string } | null
+  if (!response.ok || body?.active !== true || typeof body.sub !== "string") return null
+  return { id: body.sub, name: "Tool gateway", email: `${encodeURIComponent(body.sub)}@gateway.invalid`, emailVerified: false }
+}
+/** Bind the one-time Better Auth token to the origin that requested it. */
+async function originProof(secret: string, token: string, origin: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(`studio-magic-link\n${origin}\n${token}`))
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+/** Callback URLs must stay on the origin that will receive the session cookie. */
+function callbackOnOrigin(value: string, origin: string): string | null {
+  try { const callback = new URL(value, origin); return callback.origin === origin && !callback.username && !callback.password ? callback.href : null } catch { return null }
+}
+
+/** Refuse a verification URL moved to another host before Better Auth consumes its token. */
+export async function verifyMagicLinkOrigin(request: Request, secret: string, trustedOrigins: readonly string[]): Promise<boolean> {
+  const url = new URL(request.url)
+  const token = url.searchParams.get("token")
+  const proof = url.searchParams.get("studioOriginProof")
+  if (!trustedOrigins.includes(url.origin) || !token || !proof || !/^[0-9a-f]{64}$/.test(proof)) return false
+  if (!url.searchParams.has("callbackURL")) return false
+  for (const name of ["callbackURL", "newUserCallbackURL", "errorCallbackURL"]) {
+    const values = url.searchParams.getAll(name)
+    // Issued links contain absolute callbacks. A modified relative callback would be
+    // resolved by Better Auth against its primary baseURL, not the requesting host.
+    if (values.length > 1 || (values[0] !== undefined && callbackOnOrigin(values[0], url.origin) !== values[0])) return false
+  }
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"])
+  const bytes = Uint8Array.from(proof.match(/../g) ?? [], (hex) => Number.parseInt(hex, 16))
+  return crypto.subtle.verify("HMAC", key, bytes, encoder.encode(`studio-magic-link\n${url.origin}\n${token}`))
+}
+
 
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
@@ -125,7 +215,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     baseURL: config.baseURL,
     basePath: "/api/auth",
     // Better Auth refuses state-changing requests whose Origin is not listed (its CSRF check).
-    trustedOrigins: [config.baseURL],
+    trustedOrigins: [...(config.trustedOrigins ?? [config.baseURL])],
     // No sign-in on sign-up: Better Auth then answers a registered address exactly as a new one
     // (no session either way), so sign-up does not reveal which emails have accounts.
     emailAndPassword: {
@@ -146,6 +236,9 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         }
       },
     },
+    // Gateway grants are linked to an existing session only (never a sign-in), so the gateway's
+    // email need not match; tokens are encrypted at rest.
+    account: { encryptOAuthTokens: true, accountLinking: { enabled: true, trustedProviders: ["executor"], allowDifferentEmails: true } },
     session: {
       expiresIn: 7 * 24 * 60 * MINUTE,
       updateAge: 24 * 60 * MINUTE,
@@ -195,13 +288,27 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       magicLink({
         expiresIn: 10 * MINUTE,
         disableSignUp: true,
-        sendMagicLink: async ({ email, url }) => {
+        sendMagicLink: async ({ email, url, token }, ctx) => {
           if (config.sendMagicLink === undefined) throw new APIError("SERVICE_UNAVAILABLE", { message: "Email sign-in is not available on this deployment." })
-          await config.sendMagicLink({ to: email, url })
+          const origin = ctx?.headers?.get("origin") ?? ctx?.request?.headers.get("origin")
+          if (!origin || !(config.trustedOrigins ?? [config.baseURL]).includes(origin)) throw new APIError("FORBIDDEN", { message: "Untrusted sign-in origin." })
+          const link = new URL(url)
+          const requested = new URL(origin)
+          link.protocol = requested.protocol; link.host = requested.host
+          for (const name of ["callbackURL", "newUserCallbackURL", "errorCallbackURL"]) {
+            const value = link.searchParams.get(name)
+            if (value === null) continue
+            const callback = callbackOnOrigin(value, origin)
+            if (callback === null) throw new APIError("FORBIDDEN", { message: "Untrusted magic-link callback." })
+            link.searchParams.set(name, callback)
+          }
+          link.searchParams.set("studioOriginProof", await originProof(config.secret, token, origin))
+          await config.sendMagicLink({ to: email, url: link.toString() })
         },
       }),
       // Short-lived tokens the Worker mints for the Norn host (#817); the host verifies them against /api/auth/jwks.
       jwt({ jwt: { issuer: config.baseURL, audience: "norn-host", expirationTime: "5m" } }),
+      ...config.gateway === undefined ? [] : [gatewayLink(config.gateway)],
     ],
     databaseHooks: {
       user: {

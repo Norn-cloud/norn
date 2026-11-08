@@ -1,0 +1,7 @@
+{
+  "code": "core.composition.parameter_missing",
+  "message": "no effective candidate or explicit default",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

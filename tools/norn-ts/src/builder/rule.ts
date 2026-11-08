@@ -36,6 +36,7 @@ export interface SliceDecl {
     | "triggerObject"
     | { readonly property: { readonly from: string; readonly property: string } }
     | { readonly link: { readonly from: string; readonly link: string } }
+    | { readonly parameter: { readonly from: string; readonly settingKey: string; readonly effectiveAt: string; readonly precedence: ReadonlyArray<EnvelopeOptions["scope"]>; readonly defaultFrom?: string } }
   readonly optional?: boolean
 }
 

@@ -2195,7 +2195,7 @@ fn november(account: &str, end_inclusive: bool) -> PredicateQuery {
 }
 
 fn read_members(cell: &OrderCell, predicate: &PredicateQuery) -> Vec<PredicateReadMember> {
-    cell.read_predicate(predicate, 16)
+    cell.read_predicate(predicate, 16, u64::MAX)
         .expect("reads")
         .expect("the store enumerates bounded types")
         .iter()
@@ -2382,7 +2382,7 @@ fn predicate_reads_bound_members_and_compare_timestamps_by_instant() {
     .expect("predicate");
     // T1 is 23:30Z and T3 23:59:59Z; T2 sits on the exclusive end.
     let members: Vec<String> = cell
-        .read_predicate(&predicate, 16)
+        .read_predicate(&predicate, 16, u64::MAX)
         .expect("reads")
         .expect("complete")
         .into_iter()
@@ -2390,10 +2390,16 @@ fn predicate_reads_bound_members_and_compare_timestamps_by_instant() {
         .collect();
     assert_eq!(members, ["T1", "T3"]);
     let bounded = cell
-        .read_predicate(&predicate, 1)
+        .read_predicate(&predicate, 1, u64::MAX)
         .expect("reads")
         .expect("complete");
     assert_eq!(bounded.len(), 2, "one over the bound lets callers refuse");
+    assert!(
+        cell.read_predicate(&predicate, 16, 16)
+            .expect("reads")
+            .is_none(),
+        "a byte bound smaller than the candidates fails the read closed"
+    );
 }
 
 #[test]
@@ -2507,19 +2513,31 @@ fn predicate_reads_agree_across_hosts_and_refuse_interfaces_on_both() {
             .map(PredicateObject::member)
             .collect()
     };
-    let from_native = members(native.read_predicate(&concrete, 16).expect("native read"));
-    let from_memory = members(memory.read_predicate(&concrete, 16).expect("memory read"));
+    let from_native = members(
+        native
+            .read_predicate(&concrete, 16, u64::MAX)
+            .expect("native read"),
+    );
+    let from_memory = members(
+        memory
+            .read_predicate(&concrete, 16, u64::MAX)
+            .expect("memory read"),
+    );
     assert_eq!(ids(&from_native), ["E1", "E2"]);
     assert_eq!(from_native, from_memory, "members and versions agree");
 
     let interface: PredicateQuery =
         serde_json::from_value(json!({ "objectType": "books.Dated" })).expect("predicate");
     assert_eq!(
-        native.read_predicate(&interface, 16).expect("native read"),
+        native
+            .read_predicate(&interface, 16, u64::MAX)
+            .expect("native read"),
         None
     );
     assert_eq!(
-        memory.read_predicate(&interface, 16).expect("memory read"),
+        memory
+            .read_predicate(&interface, 16, u64::MAX)
+            .expect("memory read"),
         None
     );
     let pinned = || CellCommit {

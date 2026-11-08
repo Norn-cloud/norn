@@ -1804,6 +1804,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-cell-do"
+version = "0.1.0"
+dependencies = [
+ "form_urlencoded",
+ "http",
+ "norn-api",
+ "norn-cell",
+ "norn-checker",
+ "norn-ir",
+ "norn-kernel",
+ "norn-projections",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "norn-checker"
 version = "0.2.0"
 dependencies = [

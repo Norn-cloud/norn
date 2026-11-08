@@ -50,7 +50,7 @@ RECEIPT-AUTH-BIND-1: `acceptReceipt` preparation accepts a content-digest refere
 
 Present: `crates/norn-ir/src/{decision_output,fact_change,action}.rs`, `crates/norn-kernel/src/{decision_commit,cell_host,effect}.rs`, `crates/norn-cell/src/{host,store,write,quantity}.rs`. Main has atomic decision/CAS/outbox paths and generic quantity primitives, not demonstrated universal writer closure. Lane A #323/#324 and effect composition must converge here. Host #270/#308–#312 and sampled surface suite #317 are pending, not transaction proofs. Lane C #227 uses declared rules/templates; no production stock helper qualifies.
 
-## Work breakdown (each PR ≤400 lines)
+## Work breakdown (one coherent unit per PR)
 
 1. Thread #324 complete reads through existing preparation and finalization; TXN-PHANTOM/TWO race tests (lane A).
 2. Bind admitted rule effects/quantity-template instances to one authority envelope; reject uncovered writers (A4).
