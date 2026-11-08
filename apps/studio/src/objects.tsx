@@ -294,13 +294,17 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
               </li>
             )
           })}
-          {links.items.filter((edge) => edge.target === id && edge.targetType === concept.name).map((edge) => (
-            <li key={`${edge.sourceType}/${edge.source}/${edge.link}`}>
-              <span className="text-muted-foreground">{edge.link.replaceAll("_", " ")} of </span>
-              <Link to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="font-medium underline-offset-4 hover:underline">{edge.source}</Link>
-              <span className="text-muted-foreground"> ({conceptTitle(edge.sourceType)})</span>
-            </li>
-          ))}
+          {incomingOf(concept, concepts).map(({ from, relationship }) => {
+            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.targetType === concept.name && edge.sourceType === from.name)
+            return (
+              <li key={`in/${from.name}/${relationship.id}`}>
+                <span className="text-muted-foreground">{from.title} records ({relationship.id.replaceAll("_", " ")}) ← </span>
+                {edges.length === 0
+                  ? <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none stored yet"}</span>
+                  : edges.map((edge) => <Link key={`${edge.sourceType}/${edge.source}`} to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.source}</Link>)}
+              </li>
+            )
+          })}
         </ul>}
       {links.hasMore && <p className="pt-2 text-meta text-muted-foreground">More links may exist; these are the first page the server returned.</p>}
     </Well></Panel>
