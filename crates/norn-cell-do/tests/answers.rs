@@ -10,7 +10,7 @@ use norn_api::host::DevHost;
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::analytics::{self, DemoQuestions, QUESTION};
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
-use norn_cell_do::principal::DEMO_PRINCIPALS;
+use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::server::{self, Response};
 use serde_json::Value;
 
@@ -18,34 +18,41 @@ const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 const VIEWER: Option<&str> = Some("Bearer fixture:viewer@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
 
-fn cell(engine: NativeEngine) -> (DevHost<NativeEngine>, DemoQuestions) {
+type Cell = (DevHost<NativeEngine>, DemoQuestions, FixturePrincipals);
+
+fn cell(engine: NativeEngine) -> Cell {
     let scope = analytics::analytics_scope();
     let opened = analytics::provision(engine, &scope).unwrap();
     let policy =
-        ReadPolicy::compile(opened.store.model().object_types(), &scope, DEMO_GRANTS).unwrap();
+        ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
     let host = DevHost::from_store(opened.store, scope.clone(), |command| {
         command.payload.clone()
     })
     .unwrap()
     .with_authorizer(policy);
-    (host, DemoQuestions::new(opened.plan, scope))
+    (host, DemoQuestions::new(opened.plan, scope), principals)
 }
 
-fn get(
-    cell: &(DevHost<NativeEngine>, DemoQuestions),
+fn call(
+    cell: &Cell,
+    method: &str,
     path: &str,
     query: &str,
-    auth: Option<&str>,
+    authorization: Option<&str>,
 ) -> Response {
-    server::handle_with(
-        &cell.0,
-        &DEMO_PRINCIPALS,
-        Some(&cell.1),
-        "GET",
+    let request = server::Request {
+        method,
         path,
         query,
-        auth,
-    )
+        authorization,
+        now: 0,
+    };
+    server::handle_with(&cell.0, &cell.2, Some(&cell.1), &request)
+}
+
+fn get(cell: &Cell, path: &str, query: &str, auth: Option<&str>) -> Response {
+    call(cell, "GET", path, query, auth)
 }
 
 fn json(response: &Response) -> Value {
@@ -159,15 +166,7 @@ fn unknown_questions_and_malformed_queries_refuse() {
         get(&cell, "/v1/questions/x/y/answer", SCOPE, VIEWER).status,
         404
     );
-    let post = server::handle_with(
-        &cell.0,
-        &DEMO_PRINCIPALS,
-        Some(&cell.1),
-        "POST",
-        &answer_path(),
-        SCOPE,
-        VIEWER,
-    );
+    let post = call(&cell, "POST", &answer_path(), SCOPE, VIEWER);
     assert_eq!(post.status, 405);
 }
 
