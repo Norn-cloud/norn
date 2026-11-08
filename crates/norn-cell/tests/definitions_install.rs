@@ -6321,7 +6321,7 @@ fn instance_source_provenance_charges_external_payloads_and_omits_non_bundle_fac
             &mut DecodeBudget::new(&limits(100_000)),
             |_| Ok(true)
         ),
-        Err(CellError::MappingBundleMismatch)
+        Err(CellError::ComputeRefused("core.compute.bound_exceeded"))
     ));
     assert!(
         reader
