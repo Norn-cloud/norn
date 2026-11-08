@@ -95,7 +95,11 @@ distinctions, allocation failure and metering are not inferred from `Option`.
 
 ## Qualification and axiom audit
 
-STATUS_PLACEHOLDER
+Checked on Lean 4.34.1 with `-DwarningAsError=true`: `Stratification.lean`
+elaborates with no errors or warnings, and `Audit.lean` prints exactly 22
+theorem entries (`axioms.txt`). Seventeen closures are `propext`, sometimes
+with `Quot.sound`; the five refusal/witness lemmas depend on no axioms. No
+`Classical.choice`, `sorryAx` or other axiom appears.
 
 Reproduce from the repository root:
 
