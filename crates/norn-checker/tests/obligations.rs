@@ -1245,7 +1245,6 @@ fn conjunctive_layer_cannot_weaken_a_protected_base_law() {
     );
 }
 
-
 struct LayerFixture {
     source: DefinitionSource,
     source_sha256: String,
