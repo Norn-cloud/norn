@@ -42,10 +42,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use norn_kernel::CommitError::{
-    AccountingPosting, AtomicDeliveryBoundary, EffectiveValues, UnsupportedLinkRead,
-};
-
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
     ObjectTypeDef, ObjectTypeName, PropertyTypeDef, ResourceStatus,
@@ -56,8 +52,9 @@ use norn_kernel::{
     FactState, FactVersion, FactWrite, FreshnessPolicy, Generation, IdempotencyKey, LedgerSeq,
     LinkKey, LinkMutation, LinkReadTarget, LinkState, LinkWrite, LogicalTime,
     ObservationAuthorization, ObservationEvent, ObservationId, Observed, OwnedRowsCommitProof,
-    Performed, Provenance, Timer, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
-    check_commit, check_commit_observed, check_commit_owned_rows,
+    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Provenance, Timer, TimerId,
+    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_observed,
+    check_commit_owned_rows,
 };
 use proptest::prelude::*;
 use proptest::test_runner::{TestError, TestRunner};
@@ -304,6 +301,52 @@ impl<E, C, I> MemoryCell<E, C, I> {
     }
 }
 
+impl<E, C, I> MemoryCell<E, C, I> {
+    /// The live objects of the queried object type (or a subtype) matching
+    /// `predicate`, in key order, at most `limit`. Every object is in
+    /// memory, so the enumeration is complete; an interface predicate is
+    /// unsupported (`None`), as on every host.
+    fn predicate_objects(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Option<Vec<PredicateObject>> {
+        let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
+            .with_interfaces(&self.interfaces)
+            .with_property_types(&self.property_types);
+        if !catalog.contains(&predicate.object_type) {
+            return None;
+        }
+        let model = CommitModel::new(&catalog);
+        let candidates: Vec<(FactKey, FactVersion, &JsonObject)> = self
+            .facts
+            .iter()
+            .filter_map(|(key, state)| {
+                let values = state.values.as_ref()?;
+                let concrete = self.concrete.get(key)?;
+                model.is_a(concrete, &predicate.object_type).then(|| {
+                    (
+                        FactKey {
+                            object_type: concrete.clone(),
+                            key: key.key.clone(),
+                        },
+                        state.version,
+                        values,
+                    )
+                })
+            })
+            .collect();
+        Some(norn_kernel::predicate_read::select_members(
+            predicate,
+            candidates
+                .iter()
+                .map(|(key, version, values)| (key, *version, *values)),
+            limit,
+        ))
+    }
+}
+
 /// What a [`MemoryCell`] has committed, as [`check_commit`] reads it.
 struct MemoryView<'c, E, C, I>(&'c MemoryCell<E, C, I>);
 
@@ -374,6 +417,17 @@ impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
             });
         }
         Ok(Some(reads))
+    }
+
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
+        Ok(self
+            .0
+            .predicate_objects(predicate, limit)
+            .map(|objects| objects.iter().map(PredicateObject::member).collect()))
     }
 
     fn has_link_target(
@@ -593,6 +647,14 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
             .with_property_types(&self.property_types);
         let canonical = CommitModel::new(&catalog).canonical_link(key);
         Ok(self.links.get(&canonical).cloned().unwrap_or_default())
+    }
+
+    fn read_predicate(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+    ) -> Result<Option<Vec<PredicateObject>>, Infallible> {
+        Ok(self.predicate_objects(predicate, max_members.saturating_add(1)))
     }
 
     fn read_link_targets(
@@ -1768,6 +1830,7 @@ impl CellModel {
                         effects,
                         links,
                         link_reads: Vec::new(),
+                        predicate_reads: Vec::new(),
                     }
                 },
             )
@@ -1837,6 +1900,7 @@ impl CellModel {
                     effects,
                     links,
                     link_reads: Vec::new(),
+                    predicate_reads: Vec::new(),
                 },
             )
             .boxed()
@@ -1927,108 +1991,39 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
     }
 }
 
+/// Rebuild every listed field-only variant with an uninhabited host error.
+/// The generated `match` is exhaustive, so a new [`CommitError`] variant
+/// fails to compile until it is listed here.
+macro_rules! rehost {
+    ($error:expr; $($variant:ident $({ $($field:ident),* })?),* $(,)?) => {
+        match $error {
+            $(norn_kernel::CommitError::$variant $({ $($field),* })? =>
+                norn_kernel::CommitError::$variant $({ $($field),* })?,)*
+            norn_kernel::CommitError::Host(error) => return Err(error),
+        }
+    };
+}
+
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
-    use norn_kernel::CommitError::{self as Error, IdentityCollision};
-
-    Ok(match error {
-        Error::IdentityReuse => Error::IdentityReuse,
-        Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
-        AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
-        Error::Law { key, reason } => Error::Law { key, reason },
-        IdentityCollision {
-            owner,
-            key,
-            conflicts,
-        } => IdentityCollision {
-            owner,
-            key,
-            conflicts,
-        },
-        Error::OwnedRowsProtected { key } => Error::OwnedRowsProtected { key },
-        Error::DuplicateKey { key } => Error::DuplicateKey { key },
-        Error::NotPending { consumed } => Error::NotPending { consumed },
-        Error::Conflict {
-            key,
-            expected,
-            current,
-        } => Error::Conflict {
-            key,
-            expected,
-            current,
-        },
-        Error::DuplicateLink { key } => Error::DuplicateLink { key },
-        Error::IdentifierTooLong {
-            field,
-            actual_bytes,
-            max_bytes,
-        } => Error::IdentifierTooLong {
-            field,
-            actual_bytes,
-            max_bytes,
-        },
-        Error::LinkConflict {
-            key,
-            expected,
-            current,
-        } => Error::LinkConflict {
-            key,
-            expected,
-            current,
-        },
-        Error::LinkReadConflict { source_key, link } => {
-            Error::LinkReadConflict { source_key, link }
-        }
-        UnsupportedLinkRead { source_key, link } => UnsupportedLinkRead { source_key, link },
-        Error::DuplicateLinkRead { source_key, link } => {
-            Error::DuplicateLinkRead { source_key, link }
-        }
-        Error::LinkReadTooLarge {
-            source_key,
-            link,
-            actual,
-            max,
-        } => Error::LinkReadTooLarge {
-            source_key,
-            link,
-            actual,
-            max,
-        },
-        Error::InvalidLinkRead { source_key, link } => Error::InvalidLinkRead { source_key, link },
-        Error::DanglingLink { key, missing } => Error::DanglingLink { key, missing },
-        Error::LinkTarget { key } => Error::LinkTarget { key },
-        Error::LinkCardinality { key, endpoint } => Error::LinkCardinality { key, endpoint },
-        Error::LinkRequired { parent, link } => Error::LinkRequired { parent, link },
-        Error::TypeMismatch { key, concrete } => Error::TypeMismatch { key, concrete },
-        EffectiveValues { key, reason } => EffectiveValues { key, reason },
-        Error::TraversalLimitExceeded { key, reason } => {
-            Error::TraversalLimitExceeded { key, reason }
-        }
-        AccountingPosting { key, reason } => AccountingPosting { key, reason },
-        Error::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        } => Error::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        },
-        Error::InvariantBudgetExceeded { key, limit } => {
-            Error::InvariantBudgetExceeded { key, limit }
-        }
-        Error::InvariantModel { key, interface } => Error::InvariantModel { key, interface },
-        Error::ObservationAuthorization => Error::ObservationAuthorization,
-        Error::EventLimitExceeded { limit, actual } => Error::EventLimitExceeded { limit, actual },
-        Error::Overflow => Error::Overflow,
-        Error::Host(error) => return Err(error),
-    })
+    Ok(rehost!(error;
+        IdentityReuse, AtomicBoundary { key }, AtomicDeliveryBoundary { consumed },
+        Law { key, reason }, IdentityCollision { owner, key, conflicts },
+        OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed },
+        Conflict { key, expected, current }, DuplicateLink { key },
+        IdentifierTooLong { field, actual_bytes, max_bytes },
+        LinkConflict { key, expected, current }, LinkReadConflict { source_key, link },
+        UnsupportedLinkRead { source_key, link }, DuplicateLinkRead { source_key, link },
+        LinkReadTooLarge { source_key, link, actual, max }, InvalidLinkRead { source_key, link },
+        PredicateReadConflict { object_type }, UnsupportedPredicateRead { object_type },
+        InvalidPredicateRead { object_type, reason }, DanglingLink { key, missing },
+        LinkTarget { key }, LinkCardinality { key, endpoint }, LinkRequired { parent, link },
+        TypeMismatch { key, concrete }, EffectiveValues { key, reason },
+        TraversalLimitExceeded { key, reason }, AccountingPosting { key, reason },
+        InvariantViolation { key, owner, version, id, message, outcome },
+        InvariantBudgetExceeded { key, limit }, InvariantModel { key, interface },
+        ObservationAuthorization, EventLimitExceeded { limit, actual }, Overflow,
+    ))
 }
 
 fn consumed_label(consumed: Option<&Consumed>) -> &'static str {

@@ -958,6 +958,76 @@ pub fn function_contract_json(
     .to_string())
 }
 
+fn unsupported_json(unsupported: &norn_checker::tool_ports::Unsupported) -> Value {
+    json!({
+        "code": unsupported.reason.code(),
+        "path": unsupported.path,
+        "message": unsupported.reason.to_string(),
+    })
+}
+
+/// A gateway tool schema as a Norn port type:
+/// `{format: "norn-checker-abi/tool-port@1", ok: true, port}` or
+/// `{…, ok: false, refusal: {code, path, message}}`. See
+/// [`norn_checker::tool_ports::ports_from_schema`].
+///
+/// # Errors
+///
+/// [`AbiError::InvalidInput`] when `schemaJson` is not JSON.
+pub fn tool_port_json(schema_json: &str) -> Result<String, AbiError> {
+    let schema = parse_json("schemaJson", schema_json)?;
+    let body = match norn_checker::tool_ports::ports_from_schema(&schema) {
+        Ok(port) => json!({"format": TOOL_PORT_FORMAT, "ok": true, "port": port.to_json()}),
+        Err(unsupported) => {
+            json!({"format": TOOL_PORT_FORMAT, "ok": false, "refusal": unsupported_json(&unsupported)})
+        }
+    };
+    Ok(body.to_string())
+}
+
+/// Whether an edge from a port of `sourceSchemaJson` into a port of
+/// `targetSchemaJson` checks: `{format: "norn-checker-abi/tool-edge@1", ok}`
+/// with `refusal: {code, path, expected, found}` on a mismatch, or
+/// `refusal: {code, path, message, side}` when either schema has no port type.
+///
+/// # Errors
+///
+/// [`AbiError::InvalidInput`] when either argument is not JSON.
+pub fn tool_edge_json(
+    source_schema_json: &str,
+    target_schema_json: &str,
+) -> Result<String, AbiError> {
+    use norn_checker::tool_ports::{edge_refusal, ports_from_schema};
+    let source = parse_json("sourceSchemaJson", source_schema_json)?;
+    let target = parse_json("targetSchemaJson", target_schema_json)?;
+    let lowered = |schema: &Value, side: &str| {
+        ports_from_schema(schema).map_err(|unsupported| {
+            json!({
+                "code": unsupported.reason.code(),
+                "path": unsupported.path,
+                "message": unsupported.reason.to_string(),
+                "side": side,
+            })
+        })
+    };
+    let body = match (lowered(&source, "source"), lowered(&target, "target")) {
+        (Err(refusal), _) | (_, Err(refusal)) => {
+            json!({"format": TOOL_EDGE_FORMAT, "ok": false, "refusal": refusal})
+        }
+        (Ok(source), Ok(target)) => match edge_refusal(&source, &target) {
+            None => json!({"format": TOOL_EDGE_FORMAT, "ok": true}),
+            Some(refusal) => json!({"format": TOOL_EDGE_FORMAT, "ok": false, "refusal": {
+                "code": refusal.code, "path": refusal.path,
+                "expected": refusal.expected, "found": refusal.found,
+            }}),
+        },
+    };
+    Ok(body.to_string())
+}
+
+const TOOL_PORT_FORMAT: &str = "norn-checker-abi/tool-port@1";
+const TOOL_EDGE_FORMAT: &str = "norn-checker-abi/tool-edge@1";
+
 /// The sub-decision closure of the rule `artifact_id` in `artifacts_json`
 /// (`norn_checker::rule_closure`, the closure admission bounds), for an
 /// offline evaluator that holds the same envelopes.
