@@ -163,7 +163,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
               <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
                 <div className="flex w-full justify-between gap-4">
                   <span className="text-muted-foreground">{headline(question)}</span>
-                  <span className="font-mono tabular-nums">{String(item.payload?.shown)} <span className="text-muted-foreground">({String(item.payload?.exact)})</span></span>
+                  <span className="font-mono tabular-nums">{String(item.payload?.shown)}{item.payload?.position === null ? null : <span className="text-muted-foreground"> ({String(item.payload?.exact)})</span>}</span>
                 </div>
               )} />} />
               <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.5} fill="var(--color-position)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
@@ -184,7 +184,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
                   </button>
                 </TableCell>
                 <TableCell className="text-right font-medium tabular-nums">{shown(bucket)}</TableCell>
-                <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{fraction(bucket.totals)} = {bucket.value}</TableCell>
+                <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${fraction(bucket.totals)} = ${bucket.value}`}</TableCell>
                 <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
               </TableRow>
             ))}
