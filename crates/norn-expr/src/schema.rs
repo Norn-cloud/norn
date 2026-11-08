@@ -133,16 +133,6 @@ impl Schema {
         let schema_type = type_value
             .as_string()
             .ok_or_else(|| Violation::new(path, "a closed schema requires one explicit type"))?;
-        if action_input
-            && schema_type == "string"
-            && schema.contains_key("enum")
-            && !fixed_currency_schema(value)
-        {
-            return Err(Violation::new(
-                path,
-                "ActionIR input string schemas do not admit enum",
-            ));
-        }
         let decimal = decimal_expression_type(value)?;
         let allowed: &[&str] = match schema_type {
             "number" => &["type", "nornType"],
@@ -151,7 +141,19 @@ impl Schema {
             "string" => &["type", "enum"],
             _ => &["type"],
         };
-        if let Some(unknown) = schema.keys().find(|key| !allowed.contains(&key.as_str())) {
+        // D66: ActionIR inputs carry display-only labels, and the input root
+        // its `x-norn` groups; neither changes the parsed type, so no value
+        // or behaviour depends on them. A string input's `enum` is enforced
+        // here; the checker requires it to fit the property it writes.
+        let display: &[&str] = match (action_input, schema_type, depth) {
+            (true, "object", 0) => &["title", "description", "x-norn"],
+            (true, _, _) => &["title", "description"],
+            (false, _, _) => &[],
+        };
+        if let Some(unknown) = schema
+            .keys()
+            .find(|key| !allowed.contains(&key.as_str()) && !display.contains(&key.as_str()))
+        {
             return Err(Violation::new(
                 path,
                 format!("`{unknown}` is not admitted in a closed `{schema_type}` schema"),
