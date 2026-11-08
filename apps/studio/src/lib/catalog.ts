@@ -54,6 +54,9 @@ export interface Concept {
   readonly kind: "concept" | "core idea"
   /** What the definition declares: an object type (it can have records) or a shared interface. Feed presence is `kind`. */
   readonly definition: "object type" | "interface"
+  /** The definition's one-line name when it says more than the title, e.g. "Owner and location partitioned holding". Business view. */
+  readonly summary: string | undefined
+  /** The registry's full description; it may name fields and laws, so Studio shows it in the Technical view only. */
   readonly description: string | undefined
   readonly parents: readonly string[]
   readonly fields: readonly Field[]
@@ -186,7 +189,8 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       title,
       kind: fed.length > 0 ? "concept" : "core idea",
       definition: "objectType" in payload ? "object type" : "interface",
-      description: def.description ?? ([def.name, title].includes(artifact.name) ? undefined : artifact.name),
+      summary: [def.name, title].includes(artifact.name) ? undefined : artifact.name,
+      description: def.description,
       parents,
       fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types) })),
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
