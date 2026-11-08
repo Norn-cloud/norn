@@ -419,6 +419,7 @@ declare module "@norn/authoring" {
         | "triggerObject"
         | { readonly property: { readonly from: string; readonly property: string } }
         | { readonly link: { readonly from: string; readonly link: string } }
+        | { readonly parameter: { readonly from: string; readonly settingKey: string; readonly effectiveAt: string; readonly precedence: ReadonlyArray<Readonly<Partial<Record<`${ScopeDimension}Id`, string>>>>; readonly defaultFrom?: string } }
       readonly optional?: boolean
     }
 
@@ -461,7 +462,7 @@ declare module "@norn/authoring" {
 
     interface Expression<T> { readonly _tag: "NornExpression"; readonly __type?: T }
     /** Syntax-only expression; the callback is never executed. */
-    function expression<S extends Schema.Top, T>(schema: S, body: (input: S["Type"]) => T): Expression<T>
+    function expression<S extends Schema.Top, T>(schema: S, body: (input: S["Type"]) => T, options?: { readonly root: "context" }): Expression<T>
     /** Explicit untyped escape hatch. Reported as a warning; Rust still checks admission. */
     function unsafeZen<T = string>(text: string): T & Expression<T>
     function unsafeZen(graph: JdmGraph): UnsafeJdmGraph

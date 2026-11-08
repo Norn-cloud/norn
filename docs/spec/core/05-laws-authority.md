@@ -123,7 +123,7 @@ These scenarios do not simulate a solver or claim a completed constitution drop.
 
 Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-checker/src/{deontic,verification,law_enrollment}.rs`, `obligations/`, `crates/norn-authz/src/grants.rs`, `crates/norn-kernel/src/decision_commit.rs`. #316 merged; #322 open. Narrow induction generation exists; general aggregate laws, retained interface/containment closure, generated solver dispatch and full delegation chains are not established. Core physics declarations in `registry/core/src/physics.ts` are not complete runtime law enforcement.
 
-## Work breakdown (each PR ≤400 lines)
+## Work breakdown (one coherent unit per PR)
 
 1. Complete B0b #322 deterministic EN/AR slot rendering; retain #316 safety refusals.
 2. B2 effective law instance contract, then interface resolution, then containment/diamond/weakening tests as separate cuts; coordinate 06 B1.
@@ -503,3 +503,7 @@ quarantined, while native writes refuse atomically. Non-law quality warnings
 retain their separate quality classification. The named cell scenario
 `warning_severity_governing_law_quarantines_observed_fact` checks native refusal,
 persisted warning/pin, quarantine and recovery after a valid correction.
+
+## Shared reviewed locale selection
+
+**REVIEWED-LOCALE-1:** laws and question-view consumers use the same reviewed locale-map decoding, completeness validation, BCP 47 syntax and case-insensitive exact selection. Duplicate wire keys or case variants refuse before collection; an incomplete unselected translation refuses too. No fallback is introduced. Existing law wire types, schemas, wording error codes and EN/AR display bytes remain unchanged. Named scenarios: `reviewed_locale_rejects_duplicate_wire_keys_and_incomplete_unselected_entries`, generated `reviewed_locale_selection_is_exact_without_fallback`, and the existing law locale scenarios. This refactoring changes no law or execution semantics.
