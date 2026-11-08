@@ -112,8 +112,50 @@ pub enum Freshness {
 pub struct Member {
     /// Original cell object version.
     pub version: u64,
-    /// Operand contributions; none means its predicate excluded this identity.
-    pub amounts: Vec<Option<Decimal>>,
+    /// Operand contributions; a null operand means its predicate excluded this
+    /// identity. `None` (wire `null`) when the reader may not see every member
+    /// of the bucket's values (DATA-VALUES-1): amounts are row values, and
+    /// one withheld member among visible ones would follow from the totals.
+    pub amounts: Option<Vec<Option<Decimal>>>,
+    /// The reader holds no Values grant on this member.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restricted: bool,
+}
+
+impl Member {
+    /// A member whose amounts the evaluation discloses.
+    const fn visible(version: u64, amounts: Vec<Option<Decimal>>) -> Self {
+        Self {
+            version,
+            amounts: Some(amounts),
+            restricted: false,
+        }
+    }
+}
+
+impl QueryRow {
+    /// DATA-VALUES-1 (D52/D53): mark `restricted` members and, if any, withhold
+    /// every member's amounts in this bucket, so no hidden amount follows from
+    /// the totals. For such a reader the bucket aggregate is disclosed only
+    /// when the bucket has at least `min_disclosed` members; a smaller bucket
+    /// keeps its membership but is `suppressed`: no totals and a null value.
+    pub fn withhold(&mut self, restricted: impl Fn(&str) -> bool, min_disclosed: usize) {
+        let mut any = false;
+        for (id, member) in &mut self.members {
+            member.restricted = restricted(id);
+            any |= member.restricted;
+        }
+        if any {
+            for member in self.members.values_mut() {
+                member.amounts = None;
+            }
+            if self.members.len() < min_disclosed {
+                self.totals.clear();
+                self.value = None;
+                self.suppressed = true;
+            }
+        }
+    }
 }
 /// One output bucket, retaining exact sums beside its ratio.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,10 +165,15 @@ pub struct QueryRow {
     pub bucket: RuntimeValue,
     /// One sum, or numerator then denominator.
     pub totals: Vec<Decimal>,
-    /// Null means a zero-denominator ratio is unavailable.
+    /// Null means a zero-denominator ratio is unavailable, or the bucket is `suppressed`.
     pub value: Option<Decimal>,
     /// Exact aggregate-membership lineage.
     pub members: BTreeMap<String, Member>,
+    /// DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket
+    /// has fewer members than the declared minimum, so `totals` is empty and
+    /// `value` null. Never set on an unredacted result.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
 }
 /// Result envelope for QUERY-ENGINE-1; construction alone grants no authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -481,13 +528,9 @@ pub(crate) fn finish(
             .iter()
             .map(|n| n.map(|v| decimal(i128::from(v))).transpose())
             .collect::<Result<_, _>>()?;
-        bucket.2.insert(
-            id.clone(),
-            Member {
-                version: *version,
-                amounts,
-            },
-        );
+        bucket
+            .2
+            .insert(id.clone(), Member::visible(*version, amounts));
     }
     let rows = grouped
         .into_iter()
@@ -507,6 +550,7 @@ pub(crate) fn finish(
                     totals: totals.into_iter().map(decimal).collect::<Result<_, _>>()?,
                     value,
                     members,
+                    suppressed: false,
                 },
             ))
         })

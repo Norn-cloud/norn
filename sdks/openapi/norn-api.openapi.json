@@ -148,7 +148,7 @@
           {
             "name": "lineageRef",
             "in": "query",
-            "description": "Previously returned complete exact result pin.",
+            "description": "The `lineageRef` handle a complete exact answer returned (keyed, D53).",
             "required": true,
             "schema": {
               "type": "string"
@@ -20270,7 +20270,10 @@
         ],
         "properties": {
           "amounts": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": [
                 "number",
@@ -20278,7 +20281,7 @@
               ],
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
             },
-            "description": "Operand contributions, in `totals` order; null means a predicate excluded the operand."
+            "description": "Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values."
           },
           "commitSeq": {
             "type": "integer",
@@ -20510,7 +20513,10 @@
         ],
         "properties": {
           "amounts": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": [
                 "number",
@@ -20518,7 +20524,11 @@
               ],
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
             },
-            "description": "Operand contributions, in `totals` order; null means a predicate excluded the operand."
+            "description": "Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values."
+          },
+          "restricted": {
+            "type": "boolean",
+            "description": "The reader holds no Values grant on this member; absent when false."
           },
           "version": {
             "type": "integer",
@@ -20603,7 +20613,7 @@
           },
           "lineageRef": {
             "type": "string",
-            "description": "Content-addressed membership and source lineage."
+            "description": "Opaque handle to this result's membership and source lineage, for its\ntrace: keyed by the cell (D53), never a content hash of the rows."
           },
           "mappingPin": {
             "type": "string",
@@ -20703,20 +20713,24 @@
               "type": "string"
             }
           },
+          "suppressed": {
+            "type": "boolean",
+            "description": "DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket\nhas fewer members than the server's declared minimum, so `totals` is\nempty and `value` null; membership stays. Absent when false."
+          },
           "totals": {
             "type": "array",
             "items": {
               "type": "number",
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
             },
-            "description": "One sum, or numerator then denominator."
+            "description": "One sum, or numerator then denominator; empty when the bucket is `suppressed`."
           },
           "value": {
             "type": [
               "number",
               "null"
             ],
-            "description": "The bucket's value; null means a zero-denominator ratio is unavailable. An exact decimal as a raw JSON number token; read its text, not a binary float."
+            "description": "The bucket's value; null means a zero-denominator ratio is unavailable, or the bucket is `suppressed` (DATA-VALUES-1). An exact decimal as a raw JSON number token; read its text, not a binary float."
           }
         },
         "additionalProperties": false
