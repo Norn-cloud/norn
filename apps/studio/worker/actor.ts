@@ -90,5 +90,26 @@ export async function forwardToHost(request: Request, host: Fetcher, auth: Auth,
   }
   // Streamed, never buffered in the Worker.
   const body = request.method === "GET" || request.method === "HEAD" ? null : request.body
-  return host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: request.method, headers, body }))
+  const response = await host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: request.method, headers, body }))
+  // The cell has already authorized this definition read. Add a display-only name
+  // without changing its recorded signer or exposing users from other organizations.
+  if (request.method !== "GET" || !/^\/v1\/definitions\/[^/:]+$/.test(path) || !response.ok) return response
+  const value: unknown = await response.clone().json().catch(() => null)
+  if (typeof value !== "object" || value === null || Array.isArray(value) || !("signoff" in value)) return response
+  const signoff = value.signoff
+  if (typeof signoff !== "object" || signoff === null || Array.isArray(signoff) || !("signer" in signoff) || typeof signoff.signer !== "string") return response
+  const userId = signoff.signer.startsWith("user:") ? signoff.signer.slice(5) : ""
+  let displayName = "a removed user"
+  if (userId && actor.actorKind === "user" && actor.subjectId === userId) displayName = "you"
+  else if (userId) {
+    const { adapter } = await auth.$context
+    const member = await adapter.findOne<{ userId: string }>({ model: "member", where: [{ field: "userId", value: userId }, { field: "organizationId", value: actor.orgId }] })
+    if (member) {
+      const user = await adapter.findOne<{ name: string }>({ model: "user", where: [{ field: "id", value: userId }] })
+      if (typeof user?.name === "string" && user.name.trim()) displayName = user.name
+    }
+  }
+  const resultHeaders = new Headers(response.headers)
+  resultHeaders.delete("content-length"); resultHeaders.delete("content-encoding"); resultHeaders.delete("etag")
+  return Response.json({ ...value, signoff: { ...signoff, displayName } }, { status: response.status, statusText: response.statusText, headers: resultHeaders })
 }

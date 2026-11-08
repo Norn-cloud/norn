@@ -68,6 +68,7 @@ const calls = {
       c.invocation ? read(c.invocation) : undefined,
       c.receipt ? read(c.receipt) : undefined,
     ),
+  checkAgent: (c) => abi.checkAgent(c.agentJson, c.contextJson),
   version: () => abi.version(),
 };
 
