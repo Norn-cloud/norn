@@ -289,3 +289,65 @@ fn answers_need_the_stage_lineage_key_and_handles_are_per_secret() {
         200
     );
 }
+
+/// The analytics cell as the Worker's constructor builds it: the runtime keyed
+/// through [`DemoQuestions::try_with_handle_key`] from the configured
+/// `NORN_LINEAGE_KEY` (a string in the Worker `env`), or refused.
+fn cell_configured(lineage_key: Option<&str>) -> Result<Cell, norn_cell_do::seed::SeedError> {
+    let (host, _, principals) = cell(NativeEngine::open_in_memory().unwrap());
+    let scope = analytics::analytics_scope();
+    let plan = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope)
+        .unwrap()
+        .plan;
+    let questions = DemoQuestions::new(plan, scope)
+        .try_with_handle_key(lineage_key.map(str::as_bytes))?;
+    Ok((host, questions, principals))
+}
+
+/// S2: the Worker passes `NORN_LINEAGE_KEY` into the constructor. A missing or
+/// short secret refuses to open the cell, with an error naming the secret; a
+/// configured one makes the authenticated answer and trace routes work, with a
+/// keyed handle that no other stage's secret can redeem.
+#[test]
+fn the_configured_lineage_key_serves_authenticated_answers_and_traces() {
+    for short in [None, Some(""), Some("0123456789012345678901234567890")] {
+        let Err(refusal) = cell_configured(short) else {
+            panic!("{short:?} must refuse to open");
+        };
+        assert!(
+            refusal.0.contains("NORN_LINEAGE_KEY") && refusal.0.contains("32 bytes"),
+            "{refusal}"
+        );
+    }
+    let key = "stage-secret-stage-secret-stage-secret";
+    let ours = cell_configured(Some(key)).unwrap();
+    let answer = get(&ours, &answer_path(), SCOPE, VIEWER);
+    assert_eq!(answer.status, 200, "{}", answer.body);
+    let answer = json(&answer);
+    // A keyed handle: 64 lowercase hex digits (HMAC-SHA-256), not the content hash.
+    let handle = answer["lineageRef"].as_str().unwrap();
+    assert!(
+        handle.len() == 64 && handle.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+        "{handle}"
+    );
+    let trace = format!("/v1/questions/{QUESTION}/trace");
+    let bucket = answer["rows"].as_object().unwrap().keys().next().unwrap();
+    let traced = get(&ours, &trace, &trace_query(&answer, bucket), VIEWER);
+    assert_eq!(traced.status, 200, "{}", traced.body);
+    // The same configured key reproduces the handle; another stage's does not.
+    let again = json(&get(
+        &cell_configured(Some(key)).unwrap(),
+        &answer_path(),
+        SCOPE,
+        VIEWER,
+    ));
+    assert_eq!(again["lineageRef"], answer["lineageRef"]);
+    let other = cell_configured(Some("another-stage-secret-another-stage!")).unwrap();
+    let foreign = json(&get(&other, &answer_path(), SCOPE, VIEWER));
+    assert_ne!(foreign["lineageRef"], answer["lineageRef"]);
+    assert_ne!(
+        get(&other, &trace, &trace_query(&answer, bucket), VIEWER).status,
+        200,
+        "another stage's key does not redeem this stage's handle"
+    );
+}

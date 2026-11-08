@@ -12,7 +12,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use norn_api::host::DevHost;
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
-use norn_cell_do::principal::TokenPrincipals;
+use norn_cell_do::principal::{
+    JWKS_MAX_AGE_SECS, JWKS_MAX_STALE_SECS, JWKS_RETRY_SECS, TokenPrincipals,
+};
 use norn_cell_do::{seed, server};
 use serde_json::{Value, json};
 
@@ -58,11 +60,22 @@ struct Demo {
 }
 
 fn demo() -> Demo {
+    demo_with(&[(1, "k1")])
+}
+
+fn demo_with(issuer_keys: &[(u8, &str)]) -> Demo {
     let scope = seed::demo_scope();
     let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
     let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
     let tokens =
-        TokenPrincipals::new(ISSUER, &jwks(&[(1, "k1")]), scope.clone(), policy.caller()).unwrap();
+        TokenPrincipals::new(
+        ISSUER,
+        &jwks(issuer_keys),
+        scope.clone(),
+        policy.caller(),
+        NOW,
+    )
+    .unwrap();
     let caller = policy.caller();
     let object_types = store
         .model()
@@ -81,12 +94,16 @@ fn demo() -> Demo {
 }
 
 fn defs(demo: &Demo, authorization: Option<&str>) -> server::Response {
+    defs_at(demo, authorization, NOW)
+}
+
+fn defs_at(demo: &Demo, authorization: Option<&str>, now: u64) -> server::Response {
     let request = server::Request {
         method: "GET",
         path: "/v1/definitions",
         query: SCOPE,
         authorization,
-        now: NOW,
+        now,
     };
     server::handle(&demo.host, &demo.tokens, &request)
 }
@@ -157,18 +174,18 @@ fn an_unknown_key_id_asks_for_one_refetch_and_new_keys_take_effect() {
     let demo = demo();
     let rotated = sign(2, "k2", &claims("user", "org_demo", "admin", "password"));
     assert_eq!(defs(&demo, Some(&rotated)).status, 403);
-    assert!(demo.tokens.take_unknown_kid(), "an unknown kid is reported");
-    assert!(!demo.tokens.take_unknown_kid(), "and reported once");
+    assert!(demo.tokens.take_unknown_kid(NOW), "an unknown kid is reported");
+    assert!(!demo.tokens.take_unknown_kid(NOW), "and reported once");
     // A known kid with a bad signature is not a reason to refetch.
     let forged = sign(9, "k1", &claims("user", "org_demo", "admin", "password"));
     assert_eq!(defs(&demo, Some(&forged)).status, 403);
-    assert!(!demo.tokens.take_unknown_kid());
+    assert!(!demo.tokens.take_unknown_kid(NOW));
     demo.tokens
-        .replace_jwks(&jwks(&[(1, "k1"), (2, "k2")]))
+        .replace_jwks(&jwks(&[(1, "k1"), (2, "k2")]), NOW)
         .unwrap();
     assert_eq!(defs(&demo, Some(&rotated)).status, 200);
     assert!(
-        demo.tokens.replace_jwks("{\"keys\":[]}").is_err(),
+        demo.tokens.replace_jwks("{\"keys\":[]}", NOW).is_err(),
         "an empty JWKS keeps the old keys"
     );
     assert_eq!(defs(&demo, Some(&rotated)).status, 200);
@@ -260,4 +277,84 @@ fn anonymous_foreign_and_out_of_scope_access_reads_share_the_denial() {
         access(&demo, &format!("{SCOPE}&sql=1"), Some(&admin)).status,
         400
     );
+}
+
+/// A token valid at `now`, signed by `seed`'s key as `kid`.
+fn admin_at(seed: u8, kid: &str, now: u64) -> String {
+    let mut claims = claims("user", "org_demo", "admin", "password");
+    claims["iat"] = json!(now - 10);
+    claims["exp"] = json!(now + 290);
+    sign(seed, kid, &claims)
+}
+
+/// S3: a key the issuer removed stops verifying at the next max-age refetch,
+/// with no new key id ever appearing: the unknown-kid path never fires.
+#[test]
+fn a_removed_key_stops_verifying_at_the_max_age_refetch() {
+    let demo = demo_with(&[(1, "k1"), (2, "k2")]);
+    // Just before the maximum age the cached key is still honoured, and no
+    // refetch is due.
+    let early = NOW + JWKS_MAX_AGE_SECS - 1;
+    assert_eq!(defs_at(&demo, Some(&admin_at(2, "k2", early)), early).status, 200);
+    assert!(!demo.tokens.refresh_due(early));
+    // At the maximum age a refetch is due on its own, once per retry interval.
+    let due = NOW + JWKS_MAX_AGE_SECS;
+    assert!(demo.tokens.refresh_due(due));
+    assert!(!demo.tokens.refresh_due(due), "one attempt per interval");
+    // The cached keys still verify while the refetch is in flight.
+    let revoked = admin_at(2, "k2", due);
+    assert_eq!(defs_at(&demo, Some(&revoked), due).status, 200);
+    // The issuer dropped k2 and published nothing new.
+    demo.tokens.replace_jwks(&jwks(&[(1, "k1")]), due).unwrap();
+    assert_eq!(defs_at(&demo, Some(&revoked), due).status, 403);
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", due)), due).status,
+        200
+    );
+    // The keys are fresh again: nothing is due until the next maximum age.
+    assert!(!demo.tokens.refresh_due(due + JWKS_MAX_AGE_SECS - 1));
+    assert!(demo.tokens.refresh_due(due + JWKS_MAX_AGE_SECS));
+}
+
+/// S3: when refetches keep failing, keys past the stale bound are refused,
+/// even for a validly signed fresh token, until a refetch succeeds.
+#[test]
+fn keys_past_the_stale_bound_are_refused_until_a_refetch_succeeds() {
+    let demo = demo();
+    let stale_edge = NOW + JWKS_MAX_STALE_SECS;
+    assert_eq!(
+        defs_at(&demo, Some(&admin_at(1, "k1", stale_edge)), stale_edge).status,
+        200,
+        "at the bound the keys still verify"
+    );
+    let stale = stale_edge + 1;
+    let token = admin_at(1, "k1", stale);
+    let anonymous = defs(&demo, None);
+    let refused = defs_at(&demo, Some(&token), stale);
+    assert_eq!((refused.status, &refused.body), (403, &anonymous.body));
+    // Failed refetches keep the old keys aging, and retry on an interval.
+    assert!(demo.tokens.refresh_due(stale));
+    assert!(demo.tokens.replace_jwks("{\"keys\":[]}", stale).is_err());
+    assert!(!demo.tokens.refresh_due(stale + JWKS_RETRY_SECS - 1));
+    assert!(demo.tokens.refresh_due(stale + JWKS_RETRY_SECS));
+    assert_eq!(defs_at(&demo, Some(&token), stale).status, 403);
+    // A successful refetch restores service.
+    demo.tokens.replace_jwks(&jwks(&[(1, "k1")]), stale).unwrap();
+    assert_eq!(defs_at(&demo, Some(&token), stale).status, 200);
+}
+
+/// Tokens naming unknown key ids ask for a refetch at most once per retry
+/// interval, and a max-age attempt counts against the same interval.
+#[test]
+fn unknown_key_ids_and_age_share_one_retry_interval() {
+    let demo = demo();
+    let unknown = admin_at(9, "k9", NOW);
+    assert_eq!(defs(&demo, Some(&unknown)).status, 403);
+    assert!(demo.tokens.take_unknown_kid(NOW));
+    let soon = NOW + JWKS_RETRY_SECS - 1;
+    assert_eq!(defs_at(&demo, Some(&unknown), soon).status, 403);
+    assert!(!demo.tokens.take_unknown_kid(soon), "inside the interval");
+    let later = NOW + JWKS_RETRY_SECS;
+    assert_eq!(defs_at(&demo, Some(&unknown), later).status, 403);
+    assert!(demo.tokens.take_unknown_kid(later));
 }

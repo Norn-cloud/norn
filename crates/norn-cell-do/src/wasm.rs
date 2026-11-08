@@ -5,10 +5,11 @@
 //! loop make this cell the only writer; `transactionSync` is the commit.
 //!
 //! Callers are verified host tokens ([`TokenPrincipals`]); the issuer and its
-//! JWKS come from the Worker's pinned configuration. Fixture principals exist
-//! only in builds with the `fixtures` feature (local smoke tests).
-
-use std::cell::Cell;
+//! JWKS come from the Worker's pinned configuration, and the JWKS is refetched
+//! on a bounded schedule ([`TokenPrincipals::refresh_due`]). Fixture
+//! principals exist only in builds with the `fixtures` feature (local smoke
+//! tests). The analytics cell also needs the stage's lineage key
+//! (`NORN_LINEAGE_KEY`, at least 32 bytes) and refuses to open without it.
 
 use norn_api::host::DevHost;
 use norn_api::question_routes::QuestionRuntime;
@@ -20,10 +21,6 @@ use crate::analytics::{self, DemoQuestions};
 use crate::policy::{DEMO_GRANTS, ReadPolicy};
 use crate::principal::{PrincipalResolver, TokenPrincipals};
 use crate::{seed, server};
-
-/// Least time between two refetches of the pinned JWKS (milliseconds), so
-/// tokens naming unknown key ids cannot drive a fetch storm.
-const JWKS_REFRESH_MS: f64 = 60_000.0;
 
 enum Principals {
     Tokens(TokenPrincipals),
@@ -52,7 +49,6 @@ pub struct NornCell {
     /// The cell's admitted questions, when it publishes any.
     questions: Option<DemoQuestions>,
     principals: Principals,
-    last_refresh_ms: Cell<f64>,
     /// The verified caller the policy reads, for `GET /v1/access`.
     caller: std::sync::Arc<crate::policy::CallerSlot>,
     /// The cell's collections, for `GET /v1/access`.
@@ -71,7 +67,7 @@ pub struct Reply {
     /// JSON body.
     pub body: String,
     /// The pinned JWKS should be refetched (an unknown key id was seen and the
-    /// refresh interval has passed); the host refetches, then retries once.
+    /// retry interval has passed); the host refetches, then retries once.
     #[wasm_bindgen(js_name = refreshJwks)]
     pub refresh_jwks: bool,
 }
@@ -79,12 +75,15 @@ pub struct Reply {
 #[wasm_bindgen]
 impl NornCell {
     /// Open (provisioning on first use) the cell for the DO's own scope.
-    /// `issuer` and `jwks` are the pinned token issuer and its key document;
-    /// without the `fixtures` feature both are required.
+    /// `issuer` and `jwks` are the pinned token issuer and its key document
+    /// (fetched at `now_ms`, Unix milliseconds); without the `fixtures` feature
+    /// both are required. `lineage_key` is the stage secret
+    /// (`NORN_LINEAGE_KEY`) that keys the analytics cell's lineage handles.
     ///
     /// # Errors
-    /// The scope has no published cell, provisioning failed, or no usable
-    /// issuer keys were supplied.
+    /// The scope has no published cell, provisioning failed, no usable issuer
+    /// keys were supplied, or the analytics cell has no lineage key of at
+    /// least 32 bytes.
     #[wasm_bindgen(constructor)]
     pub fn new(
         storage: JsValue,
@@ -92,6 +91,8 @@ impl NornCell {
         environment_id: String,
         issuer: Option<String>,
         jwks: Option<String>,
+        lineage_key: Option<String>,
+        now_ms: f64,
     ) -> Result<Self, JsValue> {
         let scope = CellScope {
             org_id,
@@ -102,7 +103,9 @@ impl NornCell {
             (seed::provision(engine, &scope).map_err(rejected)?, None)
         } else if scope == analytics::analytics_scope() {
             let opened = analytics::provision(engine, &scope).map_err(rejected)?;
-            let questions = DemoQuestions::new(opened.plan, scope.clone());
+            let questions = DemoQuestions::new(opened.plan, scope.clone())
+                .try_with_handle_key(lineage_key.as_deref().map(str::as_bytes))
+                .map_err(rejected)?;
             (opened.store, Some(questions))
         } else {
             return Err(JsValue::from_str("no cell is published for this scope"));
@@ -119,7 +122,7 @@ impl NornCell {
             .collect();
         let principals = match (issuer, jwks) {
             (Some(issuer), Some(jwks)) => Principals::Tokens(
-                TokenPrincipals::new(&issuer, &jwks, scope.clone(), slot)
+                TokenPrincipals::new(&issuer, &jwks, scope.clone(), slot, seconds(now_ms))
                     .map_err(|refusal| JsValue::from_str(&refusal.code))?,
             ),
             #[cfg(feature = "fixtures")]
@@ -140,24 +143,38 @@ impl NornCell {
             host,
             questions,
             principals,
-            last_refresh_ms: Cell::new(f64::NEG_INFINITY),
             caller,
             object_types,
         })
     }
 
-    /// Install a refetched JWKS from the pinned location.
+    /// Install a refetched JWKS from the pinned location, fetched at `now_ms`.
     ///
     /// # Errors
-    /// The document is unusable; the previous keys stay in force.
+    /// The document is unusable; the previous keys stay in force and keep
+    /// aging, so they are refused once past the stale bound.
     #[wasm_bindgen(js_name = replaceJwks)]
-    pub fn replace_jwks(&self, jwks: &str) -> Result<(), JsValue> {
+    pub fn replace_jwks(&self, jwks: &str, now_ms: f64) -> Result<(), JsValue> {
         match &self.principals {
             Principals::Tokens(tokens) => tokens
-                .replace_jwks(jwks)
+                .replace_jwks(jwks, seconds(now_ms))
                 .map_err(|refusal| JsValue::from_str(&refusal.code)),
             #[cfg(feature = "fixtures")]
             Principals::Fixtures(_) => Ok(()),
+        }
+    }
+
+    /// Whether the keys have reached their maximum age and the host should
+    /// refetch the pinned JWKS before serving, whether or not any token names
+    /// an unknown key id. Rate-limited, so a failing refetch retries on an
+    /// interval; the host installs the result with `replaceJwks`.
+    #[wasm_bindgen(js_name = jwksDue)]
+    #[must_use]
+    pub fn jwks_due(&self, now_ms: f64) -> bool {
+        match &self.principals {
+            Principals::Tokens(tokens) => tokens.refresh_due(seconds(now_ms)),
+            #[cfg(feature = "fixtures")]
+            Principals::Fixtures(_) => false,
         }
     }
 
@@ -199,15 +216,11 @@ impl NornCell {
         } else {
             server::handle_with(&self.host, resolver, questions, &request)
         };
-        let unknown_kid = match &self.principals {
-            Principals::Tokens(tokens) => tokens.take_unknown_kid(),
+        let refresh_jwks = match &self.principals {
+            Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
             #[cfg(feature = "fixtures")]
             Principals::Fixtures(_) => false,
         };
-        let refresh_jwks = unknown_kid && now_ms - self.last_refresh_ms.get() >= JWKS_REFRESH_MS;
-        if refresh_jwks {
-            self.last_refresh_ms.set(now_ms);
-        }
         Reply {
             status: response.status,
             body: response.body,

@@ -26,6 +26,21 @@ use crate::policy::{Caller, CallerSlot};
 /// The audience every host token must name.
 pub const HOST_AUDIENCE: &str = "norn-host";
 
+/// How long fetched issuer keys are used before the host should refetch them
+/// (seconds), whether or not any token names an unknown key id.
+pub const JWKS_MAX_AGE_SECS: u64 = 300;
+
+/// How long past a fetch the keys are still honoured (seconds). A key the
+/// issuer removed stops verifying after at most this long, even while the
+/// pinned location is unreachable; verification is then refused until a
+/// refetch succeeds. Bounds revocation latency independently of the token
+/// lifetime.
+pub const JWKS_MAX_STALE_SECS: u64 = 900;
+
+/// Least time between two refetch attempts (seconds), so neither tokens
+/// naming unknown key ids nor an unreachable issuer can drive a fetch storm.
+pub const JWKS_RETRY_SECS: u64 = 60;
+
 /// Resolves the request's `Authorization` header to a trusted principal at
 /// `now` (Unix seconds), recording it for the policy.
 pub trait PrincipalResolver {
@@ -74,8 +89,27 @@ pub struct TokenPrincipals {
     issuer: String,
     cell: CellScope,
     slot: Arc<CallerSlot>,
-    keys: Mutex<(TokenVerifier, BTreeSet<String>)>,
-    unknown_kid: Mutex<bool>,
+    keys: Mutex<Keys>,
+}
+
+/// The issuer keys in force and when they were fetched.
+struct Keys {
+    verifier: TokenVerifier,
+    kids: BTreeSet<String>,
+    /// Unix seconds of the last successful install.
+    fetched: u64,
+    /// Unix seconds of the last refetch the host was asked to make.
+    attempted: Option<u64>,
+    /// A token named a key id the JWKS lacks since the last report.
+    unknown_kid: bool,
+}
+
+impl Keys {
+    /// Whether another refetch may be requested at `now`.
+    fn may_retry(&self, now: u64) -> bool {
+        self.attempted
+            .is_none_or(|at| now.saturating_sub(at) >= JWKS_RETRY_SECS)
+    }
 }
 
 /// The key ids a JWKS document publishes.
@@ -106,7 +140,8 @@ fn token_kid(token: &str) -> Option<String> {
 }
 
 impl TokenPrincipals {
-    /// Admit the pinned issuer's JWKS for `cell`.
+    /// Admit the pinned issuer's JWKS, fetched at `now` (Unix seconds), for
+    /// `cell`.
     ///
     /// # Errors
     /// The document is not a JWKS or publishes no Ed25519 key.
@@ -115,44 +150,79 @@ impl TokenPrincipals {
         jwks: &str,
         cell: CellScope,
         slot: Arc<CallerSlot>,
+        now: u64,
     ) -> Result<Self, Refusal> {
         let verifier = TokenVerifier::from_jwks(issuer, HOST_AUDIENCE, jwks, &STUDIO_ROLES)?;
         Ok(Self {
             issuer: issuer.to_owned(),
             cell,
             slot,
-            keys: Mutex::new((verifier, kids(jwks))),
-            unknown_kid: Mutex::new(false),
+            keys: Mutex::new(Keys {
+                verifier,
+                kids: kids(jwks),
+                fetched: now,
+                attempted: None,
+                unknown_kid: false,
+            }),
         })
     }
 
-    /// Replace the keys after a refetch of the pinned JWKS location.
+    /// Replace the keys after a refetch of the pinned JWKS location at `now`
+    /// (Unix seconds). A key the new document omits stops verifying at once.
     ///
     /// # Errors
-    /// The new document is unusable; the previous keys stay in force.
-    pub fn replace_jwks(&self, jwks: &str) -> Result<(), Refusal> {
+    /// The new document is unusable; the previous keys stay in force, and
+    /// age on.
+    pub fn replace_jwks(&self, jwks: &str, now: u64) -> Result<(), Refusal> {
         let verifier = TokenVerifier::from_jwks(&self.issuer, HOST_AUDIENCE, jwks, &STUDIO_ROLES)?;
         let mut keys = self.keys.lock().map_err(Refusal::host)?;
-        *keys = (verifier, kids(jwks));
+        keys.verifier = verifier;
+        keys.kids = kids(jwks);
+        keys.fetched = now;
         Ok(())
     }
 
-    /// Whether a token since the last call named a key id the JWKS lacks: the
-    /// host may refetch the pinned JWKS (rate-limited by the caller).
-    pub fn take_unknown_kid(&self) -> bool {
-        self.unknown_kid
-            .lock()
-            .is_ok_and(|mut seen| std::mem::take(&mut *seen))
+    /// Whether the keys have reached [`JWKS_MAX_AGE_SECS`] and the host should
+    /// refetch the pinned JWKS now, before serving. Independent of any token.
+    /// Granting it starts the retry interval, so a failed refetch is retried
+    /// after [`JWKS_RETRY_SECS`], not on every request.
+    pub fn refresh_due(&self, now: u64) -> bool {
+        let Ok(mut keys) = self.keys.lock() else {
+            return false;
+        };
+        let due = now.saturating_sub(keys.fetched) >= JWKS_MAX_AGE_SECS && keys.may_retry(now);
+        if due {
+            keys.attempted = Some(now);
+        }
+        due
+    }
+
+    /// Whether a token since the last call named a key id the JWKS lacks and a
+    /// refetch is allowed now (at most one per [`JWKS_RETRY_SECS`]): the host
+    /// refetches the pinned JWKS, then retries the request once.
+    pub fn take_unknown_kid(&self, now: u64) -> bool {
+        let Ok(mut keys) = self.keys.lock() else {
+            return false;
+        };
+        let seen = std::mem::take(&mut keys.unknown_kid);
+        let allowed = seen && keys.may_retry(now);
+        if allowed {
+            keys.attempted = Some(now);
+        }
+        allowed
     }
 
     fn verify(&self, token: &str, now: u64) -> Option<Caller> {
-        let keys = self.keys.lock().ok()?;
-        if token_kid(token).is_some_and(|kid| !keys.1.contains(&kid))
-            && let Ok(mut seen) = self.unknown_kid.lock()
-        {
-            *seen = true;
+        let mut keys = self.keys.lock().ok()?;
+        // Keys older than the stale bound are not honoured: a removed key
+        // must not verify forever because the issuer cannot be reached.
+        if now.saturating_sub(keys.fetched) > JWKS_MAX_STALE_SECS {
+            return None;
         }
-        let principal = keys.0.principal(token, &self.cell, now).ok()?;
+        if token_kid(token).is_some_and(|kid| !keys.kids.contains(&kid)) {
+            keys.unknown_kid = true;
+        }
+        let principal = keys.verifier.principal(token, &self.cell, now).ok()?;
         Some(Caller {
             subject_id: principal.subject_id,
             roles: principal.roles,

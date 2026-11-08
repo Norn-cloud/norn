@@ -38,9 +38,20 @@ from a token:
 - `NORN_HOST_ISSUER`: the token issuer (Studio's base URL);
 - `NORN_HOST_JWKS_URL`: its JWKS document (Studio's `/api/auth/jwks`).
 
-The cell fetches the JWKS when it opens; a token naming an unknown key id
-triggers at most one refetch per minute, then the request is retried once.
-Set `ALLOWED_ORIGINS` (comma-separated) to let a browser origin read it.
+The cell fetches the JWKS when it opens and refetches it every five minutes
+whatever tokens arrive, so a key the issuer removes stops verifying within that
+time. A token naming an unknown key id also triggers a refetch, then the
+request is retried once. Refetch attempts are at most one per minute. If
+refetches keep failing, keys older than fifteen minutes are no longer honoured
+and every token is refused until a refetch succeeds (the Worker logs the
+failure). Set `ALLOWED_ORIGINS` (comma-separated) to let a browser origin read
+it.
+
+The analytics cell keys its lineage handles (D53) with a third Worker secret,
+`NORN_LINEAGE_KEY`: at least 32 bytes, one per stage, set with
+`wrangler secret put NORN_LINEAGE_KEY`. Without it (or with a shorter one)
+the cell refuses to open and the Worker logs `cell open refused`; answers and
+traces are never served unkeyed.
 
 ## Guarantees and their mechanism here
 

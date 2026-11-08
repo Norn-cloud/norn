@@ -213,6 +213,9 @@ fn plan(object: &ObjectTypeDef) -> Result<QuestionPlan, SeedError> {
         .map_err(|e| fail("admission", format!("{e:?}")))
 }
 
+/// The shortest stage secret that keys lineage handles (D53).
+pub const MIN_LINEAGE_KEY_BYTES: usize = 32;
+
 /// Server-owned resolution for the analytics cell's admitted question.
 pub struct DemoQuestions {
     plan: QuestionPlan,
@@ -235,15 +238,34 @@ impl DemoQuestions {
     /// D53: key this cell's lineage handles with the host's secret (the
     /// `NORN_LINEAGE_KEY` Worker secret, one per stage). The cell's own scope
     /// is mixed in, so two cells under one secret never share a handle.
+    /// A secret shorter than [`MIN_LINEAGE_KEY_BYTES`] leaves the runtime
+    /// keyless, so every answer and trace refuses.
     #[must_use]
     pub fn with_handle_key(mut self, secret: &[u8]) -> Self {
-        self.handle_key = if secret.len() < 32 {
+        self.handle_key = if secret.len() < MIN_LINEAGE_KEY_BYTES {
             Vec::new()
         } else {
             norn_cell::compute::lineage::keyed_lineage_handle(secret, &self.scope.key())
                 .into_bytes()
         };
         self
+    }
+
+    /// [`Self::with_handle_key`] for a host that must not run without the
+    /// secret: the production constructor's path.
+    ///
+    /// # Errors
+    /// No secret, or one shorter than [`MIN_LINEAGE_KEY_BYTES`].
+    pub fn try_with_handle_key(self, secret: Option<&[u8]>) -> Result<Self, SeedError> {
+        match secret {
+            Some(secret) if secret.len() >= MIN_LINEAGE_KEY_BYTES => {
+                Ok(self.with_handle_key(secret))
+            }
+            Some(_) | None => Err(SeedError(format!(
+                "NORN_LINEAGE_KEY is required for the analytics cell and must be at least \
+                 {MIN_LINEAGE_KEY_BYTES} bytes"
+            ))),
+        }
     }
 }
 

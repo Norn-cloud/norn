@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import signal
 import statistics
 import subprocess
@@ -28,6 +29,15 @@ ANSWER = "/v1/questions/demo.yield_week/answer"
 TRACE = "/v1/questions/demo.yield_week/trace"
 GUEST = "Bearer fixture:guest@demo"
 VIEWER = "Bearer fixture:viewer@demo"
+
+
+# The analytics cell refuses to open without the stage's lineage key
+# (NORN_LINEAGE_KEY, at least 32 bytes). The smoke gets a throwaway one in the
+# project's wrangler.json copy, outside the checkout.
+CONFIG = ROOT / "wrangler.json"
+config = json.loads(CONFIG.read_text())
+config.setdefault("vars", {})["NORN_LINEAGE_KEY"] = secrets.token_hex(32)
+CONFIG.write_text(json.dumps(config))
 
 
 def request(path, auth=None, method="GET"):
