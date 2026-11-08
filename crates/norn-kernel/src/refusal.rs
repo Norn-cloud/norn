@@ -189,6 +189,7 @@ impl<X> CommitError<X> {
             | Self::LinkReadConflict { .. } => RefusalCategory::Conflict,
             Self::IdentityReuse
             | Self::IdentityCollision { .. }
+            | Self::ImmutableObject { .. }
             | Self::DanglingLink { .. }
             | Self::LinkCardinality { .. }
             | Self::LinkRequired { .. }

@@ -144,6 +144,9 @@ impl KeyName {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ObjectTypeDef {
+    /// FA-IMM-1: existing instances are append-only; subtypes inherit this flag.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub immutable: bool,
     /// Unique name, across object types and interfaces, within the artifact
     /// set and against every installed base type.
     pub name: ObjectTypeName,

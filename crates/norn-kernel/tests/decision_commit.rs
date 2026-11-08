@@ -2670,3 +2670,96 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn immutable_objects_use_pre_decision_existence_for_change_sequences() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let catalog = TypeCatalog::new(&definitions);
+    let key = FactKey::new(ORDER, "new-immutable");
+    for change in [
+        json!({"op":"set", "objectType":ORDER, "key":key.key, "property":"amount", "value":2}),
+        json!({"op":"transition", "objectType":ORDER, "key":key.key, "lifecycle":"status", "transition":"submit"}),
+        json!({"op":"delete", "objectType":ORDER, "key":key.key}),
+    ] {
+        let output: DecisionOutput = serde_json::from_value(json!({
+            "facts":[{"op":"create", "objectType":ORDER, "key":key.key,
+                "values":{"order_no":"new-immutable", "amount":1, "status":"draft"}}, change],
+            "commands":[], "timers":[],
+        }))
+        .unwrap();
+        prepare_decision::<Infallible>(&catalog, &FactSlice::new(), &turn("new"), &output)
+            .expect("new instances may reach their final state within one decision");
+        let existing = FactSlice::from([(
+            key.clone(),
+            FactState {
+                version: FactVersion(1),
+                values: Some(record(
+                    json!({"order_no":"new-immutable", "amount":1, "status":"draft"}),
+                )),
+            },
+        )]);
+        let output = DecisionOutput {
+            facts: vec![output.facts[1].clone()],
+            ..output
+        };
+        let error = prepare_decision::<Infallible>(&catalog, &existing, &turn("existing"), &output)
+            .unwrap_err();
+        assert_eq!(error.code(), "decision.invalid_output");
+        assert!(error.to_string().contains("immutable"));
+    }
+}
+
+#[test]
+fn inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let mut host = cell().with_types(definitions);
+    let key = FactKey::new(BIG, "append-only");
+    let values =
+        record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
+    host.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: values.clone(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    let before = visible(&host, std::slice::from_ref(&key));
+    for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: before.0[0].version,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.immutable_object");
+        assert_eq!(visible(&host, std::slice::from_ref(&key)), before);
+    }
+}
+
+proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn immutable_ancestry_controls_every_existing_instance_write(immutable in any::<bool>(), amount in 0_i64..1000) {
+        let mut definitions = types();
+        definitions[0].immutable = immutable;
+        let catalog = TypeCatalog::new(&definitions);
+        for name in [ORDER, BIG] {
+            let key = FactKey::new(name, "existing");
+            let slice = FactSlice::from([(key.clone(), FactState { version: FactVersion(1),
+                values: Some(record(json!({"order_no":"existing", "amount":1, "status":"draft", "approver":""}))) })]);
+            let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("property"),
+                &output(json!({"facts":[set(name, "existing", "amount", &json!(amount))],"commands":[],"timers":[]})));
+            prop_assert_eq!(result.is_err(), immutable);
+        }
+    }
+}

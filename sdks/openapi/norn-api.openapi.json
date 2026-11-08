@@ -11570,6 +11570,10 @@
             },
             "description": "Declared keys. Each is unique among the type's live objects within one\ntenant scope and world, enforced at commit. Omitted when empty: every\nobject always has its kernel-assigned object id, and a type need not\ndeclare a business key."
           },
+          "immutable": {
+            "type": "boolean",
+            "description": "FA-IMM-1: existing instances are append-only; subtypes inherit this flag."
+          },
           "implements": {
             "type": "array",
             "items": {
