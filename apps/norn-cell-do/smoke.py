@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = Path(os.environ["NORN_CELL_DO_PROJECT"]).resolve()
@@ -22,6 +23,10 @@ RUNTIME = sys.argv[1] if len(sys.argv) > 1 else "celld"
 COMMAND = {"celld": ["celld", "dev", "--port", "9877"],
            "wrangler": ["wrangler", "dev", "--local", "--port", "9877"]}[RUNTIME]
 SCOPE = "orgId=org_demo&environmentId=dev"
+ANALYTICS = "orgId=org_demo&environmentId=analytics"
+ANSWER = "/v1/questions/demo.yield_week/answer"
+TRACE = "/v1/questions/demo.yield_week/trace"
+GUEST = "Bearer fixture:guest@demo"
 VIEWER = "Bearer fixture:viewer@demo"
 
 
@@ -81,12 +86,28 @@ try:
         assert request(path, VIEWER)[:2] == (403, denied), path
     assert request(f"/v1/definitions?{SCOPE}&sql=1", VIEWER)[0] == 400
     assert request(f"/v1/definitions?{SCOPE}", VIEWER, "POST")[0] == 405
+    status, body, cold_answer = request(f"{ANSWER}?{ANALYTICS}", VIEWER)
+    assert status == 200, (status, body[:500])
+    answer = json.loads(body)
+    assert answer["freshness"] == "exact" and answer["complete"], answer
+    print(f"{RUNTIME} first answer (provisions analytics): {cold_answer:.1f} ms, body sha256 {hashlib.sha256(body).hexdigest()}")
+    assert request(f"{ANSWER}?{ANALYTICS}")[:2] == (403, denied), "anonymous answer"
+    guest = json.loads(request(f"{ANSWER}?{ANALYTICS}", GUEST)[1])
+    bucket = next(iter(guest["rows"]))
+    trace_query = urllib.parse.urlencode({"lineageRef": guest["lineageRef"], "bucket": bucket})
+    status, body, _ = request(f"{TRACE}?{ANALYTICS}&{trace_query}", GUEST)
+    assert status == 200, (status, body[:500])
+    assert all(c["restricted"] and c["values"] is None for c in json.loads(body)["contributions"]), "guest saw values"
+    answers = [request(f"{ANSWER}?{ANALYTICS}", VIEWER)[2] for _ in range(20)]
+    print(f"{RUNTIME} warm answer p50 {statistics.median(answers):.1f} ms, max {max(answers):.1f} ms")
     warm = [definitions()[2] for _ in range(20)]
     print(f"{RUNTIME} warm read p50 {statistics.median(warm):.1f} ms, max {max(warm):.1f} ms")
     stop(child)
     child = start()
     again, again_digest, restart = definitions()
     assert again_digest == digest, "document changed across restart"
+    status, body, _ = request(f"{ANSWER}?{ANALYTICS}", VIEWER)
+    assert status == 200 and json.loads(body)["rows"] == answer["rows"], "answer changed across restart"
     print(f"{RUNTIME} first read after restart: {restart:.1f} ms; PASS")
 finally:
     stop(child)

@@ -70,6 +70,10 @@ fn granted_principals_get_the_exact_live_answer() {
     let cell = cell(NativeEngine::open_in_memory().unwrap());
     let viewer = get(&cell, &answer_path(), SCOPE, VIEWER);
     assert_eq!(viewer.status, 200, "{}", viewer.body);
+    // The DO smoke compares its answer bytes with this native answer (parity).
+    if let Some(out) = std::env::var_os("NORN_CELL_DO_ANSWER_OUT") {
+        std::fs::write(out, &viewer.body).unwrap();
+    }
     let answer = json(&viewer);
     assert_eq!(answer["freshness"], "exact");
     assert_eq!(answer["complete"], true);

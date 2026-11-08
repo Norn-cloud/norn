@@ -6,7 +6,7 @@ import module from "./pkg/norn_cell_do_bg.wasm";
 initSync({ module });
 
 // Published cells, as [orgId, environmentId].
-const PUBLISHED = [["org_demo", "dev"]];
+const PUBLISHED = [["org_demo", "dev"], ["org_demo", "analytics"]];
 // CellScope::key: `%` and `/` escaped in each part.
 const escape = (part) => part.replaceAll("%", "%25").replaceAll("/", "%2F");
 const key = ([org, env]) => `${escape(org)}/${escape(env)}`;
