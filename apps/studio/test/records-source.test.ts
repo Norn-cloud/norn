@@ -93,3 +93,9 @@ test("every diagnostic is kept and found by the part of the request it points at
   expect(diagnosticsAt(read.diagnostics, "/filter/all/1").map(({ code }) => code)).toEqual(["query.value_invalid"])
   expect(diagnosticsAt(read.diagnostics, "/sort").map(({ pointer }) => pointer)).toEqual(["/sort/0"])
 })
+
+test("the cell's own 404 (route.not_found) is a route it does not serve: the recording is read", async () => {
+  const { deps } = cell(() => Response.json({ code: "route.not_found", message: "No such route." }, { status: 404 }))
+  const read = await readRecords("canon.Item", EMPTY_QUERY, deps)
+  expect(read.kind === "page" && read.origin).toBe("recorded")
+})

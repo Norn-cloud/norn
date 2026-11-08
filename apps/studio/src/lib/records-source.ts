@@ -51,7 +51,7 @@ function diagnosticsOf(body: unknown): readonly QueryDiagnostic[] {
  * Read one page of `objectType` records for `query` from the cell, as the signed-in actor.
  *
  * - A workspace without a cell makes no call and reads `no-cell`.
- * - While the cell does not serve the object route (404 without a refusal, or 503: no host bound),
+ * - While the cell does not serve the object route (any 404 or 503, whatever its body),
  *   the recorded documents are read instead, and they say so (`origin: "recorded"`, `served: null`).
  *   A query is never sent to the recording: it cannot sort or filter, and the grid offers neither.
  * - A refusal is returned exactly, with every diagnostic. A 409 `object.snapshot_moved` is `restart`.
@@ -77,11 +77,11 @@ export async function readRecords(objectType: string, query: RecordsQuery, deps:
   }
   const code = (body as { code?: unknown } | null)?.code
   if (snapshotMoved(response.status, typeof code === "string" ? code : undefined)) return { kind: "restart" }
-  if (typeof code === "string") {
+  // Any 404 or 503, whatever its body (the cell's carries `route.not_found`), is a route this cell does not serve.
+  if (response.status !== 404 && response.status !== 503 && typeof code === "string") {
     const message = (body as { message?: unknown }).message
     return { kind: "refused", status: response.status, code, message: typeof message === "string" ? message : code, diagnostics: diagnosticsOf(body) }
   }
-  // The route is not served on this cell yet (no refusal document), or no host is bound to this stage.
   if (response.status === 404 || response.status === 503) {
     if (query.sort.length > 0 || query.filter !== null) return { kind: "refused", status: response.status, code: "studio.query_unavailable", message: "This cell can't sort or filter records yet.", diagnostics: [] }
     return recordedPage(await deps.recorded(objectType, query.after))
