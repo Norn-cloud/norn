@@ -186,7 +186,7 @@ pub use entity_lowering::{
     lower_cardinality_v1, lower_entity_v1, lower_relation_v1, relation_link,
 };
 pub use entity_model::{
-    EntityContext, EntityModel, check_entity_model, check_interface_local,
+    EffectiveViewRefused, EntityContext, EntityModel, check_entity_model, check_interface_local,
     check_object_type_extension_local, check_object_type_local, effective_object_types,
 };
 pub use envelope::{ArtifactValidation, plan_graph_load, validate_artifact};

@@ -159,7 +159,45 @@ fn budget_refusal_stops_before_cyclic_ancestry_and_effective_tables() {
                 tenant: None
             },
         )
-        .is_empty()
+        .is_err_and(|refusal| refusal.dimension == "types" && refusal.limit == 4_096)
+    );
+}
+
+#[test]
+fn more_than_the_type_budget_refuses_the_effective_view_instead_of_returning_an_empty_one() {
+    let local = types(
+        &(0..4_097)
+            .map(|index| (format!("test.T{index:04}"), None::<String>))
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|(name, parent)| (name.as_str(), parent.as_deref()))
+            .collect::<Vec<_>>(),
+    );
+    let registry = BTreeSet::new();
+    let model = EntityModel {
+        object_types: &local,
+        ..EntityModel::EMPTY
+    };
+    let context = EntityContext {
+        catalog: &[],
+        registry: &registry,
+        base: EntityModel::EMPTY,
+        tenant: None,
+    };
+    let refusal = effective_object_types(&model, &context)
+        .expect_err("4,097 registered types exceed the classification budget");
+    assert_eq!((refusal.dimension, refusal.limit), ("types", 4_096));
+    assert_eq!(
+        refusal.diagnostic().code.as_str(),
+        "object_type.validation.inheritance_budget_exhausted"
+    );
+    assert!(refusal.to_string().contains("budget"));
+    // The model check refuses the same input, so the two never disagree.
+    assert!(
+        check_entity_model(&model, &context)
+            .iter()
+            .any(|finding| finding.code.as_str()
+                == "object_type.validation.inheritance_budget_exhausted")
     );
 }
 

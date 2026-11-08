@@ -262,6 +262,55 @@ pub(crate) fn check(
     checker.out
 }
 
+/// The inheritance classification of a model exceeded its bounded budget
+/// (for example more than 4,096 registered object types), so no effective view
+/// can be derived. This is a refusal, never an empty view: an empty map reads as
+/// "no types are registered", which would make every known type look unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectiveViewRefused {
+    /// The exhausted budget dimension (`types`, `steps`, `facts`, ...).
+    pub dimension: &'static str,
+    /// The limit of that dimension.
+    pub limit: usize,
+}
+
+impl EffectiveViewRefused {
+    /// The registered `object_type.validation.inheritance_budget_exhausted`
+    /// finding for this refusal, anchored at the document root.
+    #[must_use]
+    pub fn diagnostic(&self) -> Diagnostic {
+        budget_exhausted_diagnostic(
+            self.dimension,
+            self.limit,
+            crate::Span::from_segments(Roots::DOCUMENT.object_types.iter().copied()),
+        )
+    }
+}
+
+impl std::fmt::Display for EffectiveViewRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: inheritance classification exhausted its {} budget (limit {}); no effective view was derived",
+            crate::inheritance::BUDGET_EXHAUSTED,
+            self.dimension,
+            self.limit
+        )
+    }
+}
+
+impl std::error::Error for EffectiveViewRefused {}
+
+fn budget_exhausted_diagnostic(dimension: &str, limit: usize, span: crate::Span) -> Diagnostic {
+    error(
+        crate::inheritance::BUDGET_EXHAUSTED,
+        format!(
+            "inheritance classification exhausted its {dimension} budget (limit {limit}); catalog validation stopped before ancestry resolution"
+        ),
+        span,
+    )
+}
+
 /// The effective view of every registered local object type of `model`
 /// (instance semantics, #2848), by its position in `model.object_types`.
 /// A duplicate definition of a name is not registered and has no entry.
@@ -270,25 +319,32 @@ pub(crate) fn check(
 /// (inherited, overridden, interface-constrained, and extension members), so
 /// instance validation never re-derives inheritance. It does not check the
 /// model: callers must reject a model with findings first
-/// ([`crate::entity_instance::EffectiveCatalog`] does). A classification budget
-/// refusal returns no effective tables; callers must retain the preceding
-/// model-check refusal rather than treating this empty view as admission.
-#[must_use]
+/// ([`crate::entity_instance::EffectiveCatalog`] does).
+///
+/// # Errors
+///
+/// [`EffectiveViewRefused`] when the bounded inheritance classification is
+/// exhausted (more than 4,096 registered object types, or a text, step, fact
+/// or work budget). No partial or empty view is returned: callers must
+/// propagate the refusal (or surface [`EffectiveViewRefused::diagnostic`]) and
+/// must never fall back to an empty map, which would report registered types
+/// as unknown.
 pub fn effective_object_types(
     model: &EntityModel<'_>,
     context: &EntityContext<'_>,
-) -> BTreeMap<
-    usize,
-    (
-        crate::entity_instance::EffectiveObjectType,
-        Vec<crate::entity_instance::EffectiveLink>,
-    ),
+) -> Result<
+    BTreeMap<
+        usize,
+        (
+            crate::entity_instance::EffectiveObjectType,
+            Vec<crate::entity_instance::EffectiveLink>,
+        ),
+    >,
+    EffectiveViewRefused,
 > {
     let mut checker = Checker::new(model, context, &Roots::DOCUMENT);
     checker.register();
-    if !checker.find_cycles() {
-        return BTreeMap::new();
-    }
+    checker.classify_cycles()?;
     checker.expression_env = has_invariants(model, context).then(|| expression_env(model, context));
     checker.register_inverses();
     let mut out = BTreeMap::new();
@@ -303,7 +359,7 @@ pub fn effective_object_types(
             out.insert(index, (object_type, links));
         }
     }
-    out
+    Ok(out)
 }
 
 impl<'a, 'r> Checker<'a, 'r> {
@@ -877,7 +933,7 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    fn find_cycles(&mut self) -> bool {
+    fn classify_cycles(&mut self) -> Result<(), EffectiveViewRefused> {
         let entries = self
             .types
             .iter()
@@ -885,15 +941,22 @@ impl<'a> Checker<'a, '_> {
         match crate::inheritance::classify(entries, crate::inheritance::Budget::default()) {
             Ok(classification) => {
                 self.cyclic = classification.cyclic;
-                true
+                Ok(())
             }
+            Err(refusal) => Err(EffectiveViewRefused {
+                dimension: refusal.dimension,
+                limit: refusal.limit,
+            }),
+        }
+    }
+
+    fn find_cycles(&mut self) -> bool {
+        match self.classify_cycles() {
+            Ok(()) => true,
             Err(refusal) => {
-                self.out.push(error(
-                    crate::inheritance::BUDGET_EXHAUSTED,
-                    format!(
-                        "inheritance classification exhausted its {} budget (limit {}); catalog validation stopped before ancestry resolution",
-                        refusal.dimension, refusal.limit
-                    ),
+                self.out.push(budget_exhausted_diagnostic(
+                    refusal.dimension,
+                    refusal.limit,
                     crate::Span::from_segments(self.roots.object_types.iter().copied()),
                 ));
                 false

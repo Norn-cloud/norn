@@ -900,6 +900,9 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .effective_object_values(&ObjectTypeName(object_type.to_owned()), values)
             .map_err(|error| match error {
                 EffectiveValuesError::Runtime(error) => CellError::Value(error),
+                EffectiveValuesError::ViewRefused(refusal) => {
+                    CellError::EffectiveViewRefused(refusal)
+                }
                 EffectiveValuesError::ValueType { property, expected } => CellError::ValueType {
                     owner: object_type.to_owned(),
                     property,

@@ -103,6 +103,12 @@ pub enum CellError {
     /// The object types do not project to DDL.
     #[error("ddl projection: {0}")]
     Projection(#[from] SqliteDdlError),
+    /// The effective view of the object types could not be derived: the
+    /// bounded inheritance classification was exhausted (more than 4,096
+    /// object types, or another budget). The model is refused; no query ever
+    /// sees an empty view.
+    #[error(transparent)]
+    EffectiveViewRefused(#[from] norn_checker::EffectiveViewRefused),
     /// A payload does not (de)serialize.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
