@@ -53,7 +53,7 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
   const submit = () => {
     const mapping: Record<string, { fixed: unknown }> = {}
     for (const field of fields) {
-      if (!(field.name in fixed)) continue
+      if (!Object.hasOwn(fixed, field.name)) continue
       const parsed = parseField({ ...field, required: true }, fixed[field.name] ?? "")
       if (!parsed.ok) return setProblem(parsed.error)
       mapping[field.name] = { fixed: parsed.value }
@@ -77,10 +77,10 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
         {fields.map((field) => (
           <div key={field.name} className="flex flex-wrap items-center gap-2 text-sm">
             <label className="flex w-48 items-center gap-2">
-              <input type="checkbox" aria-label={`Fix ${field.name}`} checked={field.name in fixed} onChange={(e) => setFixed(e.target.checked ? { ...fixed, [field.name]: "" } : Object.fromEntries(Object.entries(fixed).filter(([name]) => name !== field.name)))} />
+              <input type="checkbox" aria-label={`Fix ${field.name}`} checked={Object.hasOwn(fixed, field.name)} onChange={(e) => setFixed(e.target.checked ? { ...fixed, [field.name]: "" } : Object.fromEntries(Object.entries(fixed).filter(([name]) => name !== field.name)))} />
               <span className="font-mono">{field.name}</span><span className="text-meta text-muted-foreground">{field.kind}</span>
             </label>
-            {field.name in fixed && <FieldInput field={field} value={fixed[field.name] ?? ""} onChange={(next) => setFixed({ ...fixed, [field.name]: next })} />}
+            {Object.hasOwn(fixed, field.name) && <FieldInput field={field} value={fixed[field.name] ?? ""} onChange={(next) => setFixed({ ...fixed, [field.name]: next })} />}
           </div>
         ))}
       </fieldset>
@@ -97,7 +97,7 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
 
 /** A test run: the fields the binding leaves open, as a form from the tool's input schema. */
 function TestRun({ binding, tool }: { readonly binding: Binding; readonly tool: Tool | undefined }) {
-  const fields = (formFields(tool?.inputSchema) ?? []).filter((field) => !(field.name in binding.inputMapping))
+  const fields = (formFields(tool?.inputSchema) ?? []).filter((field) => !(Object.hasOwn(binding.inputMapping, field.name)))
   const [texts, setTexts] = useState<Record<string, string>>({})
   const [problem, setProblem] = useState<string | null>(null)
   const run = useMutation({ mutationFn: (input: unknown) => api<{ result: unknown }>(`/bindings/${encode(binding.id)}/run`, { method: "POST", body: { input } }) })

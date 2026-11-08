@@ -3,8 +3,8 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createAuth, gatewaySubject } from "../auth.ts"
-import { connectors, type ConnectorDeps } from "../connectors.ts"
-import { canonicalJson, connectorVersion, manifestDigest, readDraft, toolManifest } from "../bindings.ts"
+import { connectors, PENDING_CREATE_LEASE_MS, type ConnectorDeps } from "../connectors.ts"
+import { canonicalJson, connectorVersion, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
 import { Gateway } from "../gateway.ts"
 import { cellScope, scopeQuery } from "../scope.ts"
 import worker, { type Env } from "../index.ts"
@@ -62,7 +62,9 @@ function stage(gatewayClient = false) {
   }) as typeof fetch
   // The cell host: the stand-in PDP in front of a cell that keeps the definitions it installs.
   const cell = liveCell()
-  const deps: ConnectorDeps = { db: d1(db), grant: async () => TOKEN, fetch: fetcher, host: standInHost(cell.host) }
+  // `clock.offset` moves the connectors' clock forward, past the pending-create lease.
+  const clock = { offset: 0 }
+  const deps: ConnectorDeps = { db: d1(db), grant: async () => TOKEN, fetch: fetcher, host: standInHost(cell.host), now: () => Date.now() + clock.offset }
   const send = async (path: string, init: RequestInit & { cookie?: string } = {}, overrides: Partial<ConnectorDeps> = {}, gateway: string | null = GATEWAY) => {
     const headers = new Headers(init.headers)
     if (init.cookie !== undefined) headers.set("cookie", init.cookie)
@@ -88,7 +90,7 @@ function stage(gatewayClient = false) {
     if (environment) db.query(`UPDATE organization SET metadata = json_set(coalesce(metadata, '{}'), '$.environmentId', 'analytics') WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)) AND json_extract(coalesce(metadata, '{}'), '$.environmentId') IS NULL`).run(email)
     return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   }
-  return { send, signUp, calls, cell, answer: (next: (request: Request) => Response) => { answer = next } }
+  return { send, signUp, calls, cell, clock, answer: (next: (request: Request) => Response) => { answer = next } }
 }
 
 const body = (method: string, value: unknown) => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
@@ -501,7 +503,7 @@ function liveCell() {
 }
 
 test("a save never ends half-done: each failure point is settled against the cell", async () => {
-  const { send, signUp } = stage()
+  const { send, signUp, clock } = stage()
   const owner = await signUp("ada@example.com")
   const cell = liveCell()
   const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
@@ -512,6 +514,9 @@ test("a save never ends half-done: each failure point is settled against the cel
   failures.next = /^UPDATE connector_binding SET label/
   const failed = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "One" }), cookie: owner }, { host: cell.host })
   expect(failed).toMatchObject({ status: 500, body: { code: "connectors.internal" } })
+  // Within its lease the create may still be installing elsewhere, so it is left alone.
+  expect((await list())[0]).toMatchObject({ label: "One", state: "pending" })
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
   const [one] = await list()
   expect(one).toMatchObject({ label: "One", state: "ready", definition: { version: 1 } })
   expect(cell.held.size).toBe(1)
@@ -523,6 +528,7 @@ test("a save never ends half-done: each failure point is settled against the cel
 
   // 3. Create while the cell is down: the outcome is unknown, so the row stays "creating" and
   //    cannot run or change; once the cell answers that it holds nothing, the create is undone.
+  clock.offset = 0
   cell.state.down = true
   const unknown = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Two" }), cookie: owner }, { host: cell.host })
   expect(unknown.body.code).toBe("connectors.cell_unavailable")
@@ -531,6 +537,9 @@ test("a save never ends half-done: each failure point is settled against the cel
   expect((await send(`/bindings/${pending?.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: cell.host })).body.code).toBe("connectors.binding_pending")
   expect((await send(`/bindings/${pending?.id}`, { method: "DELETE", cookie: owner }, { host: cell.host })).body.code).toBe("connectors.binding_pending")
   cell.state.down = false
+  // Still within its lease: the create is kept pending even though the cell holds nothing.
+  expect((await list()).find((b) => b.label === "Two")?.state).toBe("pending")
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
   expect((await list()).map((b) => b.label)).toEqual(["One, edited"])
 
   // 4. Edit while the cell is down, which never received it: once the cell answers, the edit is
@@ -544,6 +553,42 @@ test("a save never ends half-done: each failure point is settled against the cel
   const refusing = cellHost(() => Response.json({ code: "definition.refused", diagnostics: [{ code: "binding.role_undeclared", message: "no such role", span: { pointer: "/payload/runRole" } }] }, { status: 422 }))
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Three" }), cookie: owner }, { host: refusing.host })).body.code).toBe("connectors.binding_refused")
   expect((await list()).map((b) => b.label)).toEqual(["One, edited"])
+})
+
+test("a create still installing is never reconciled away by another read", async () => {
+  const { send, signUp, clock } = stage()
+  const owner = await signUp("ada@example.com")
+  const cell = liveCell()
+  // The cell holds the install until released, as a slow install does.
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const slow = { fetch: async (request: Request) => { if (new URL(request.url).pathname === "/v1/definitions:install") await gate; return cell.host.fetch(request) } } as unknown as Fetcher
+  const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as { label: string; state: string; definition: { version: number } | null }[]
+
+  const saving = send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Slow" }), cookie: owner }, { host: slow })
+  // Another page loads Connections mid-install: the row is shown pending, not deleted.
+  for (let attempt = 0; attempt < 100 && (await list()).length === 0; attempt++) await Bun.sleep(10)
+  expect((await list())).toMatchObject([{ label: "Slow", state: "pending" }])
+  release()
+  expect((await saving).status).toBe(200)
+  expect(await list()).toMatchObject([{ label: "Slow", state: "ready", definition: { version: 1 } }])
+  expect(cell.held.size).toBe(1)
+
+  // A create that never finishes is settled only after its lease: here the cell has nothing.
+  cell.state.down = true
+  await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Lost" }), cookie: owner }, { host: cell.host })
+  cell.state.down = false
+  expect((await list()).map((b) => b.label)).toEqual(["Lost", "Slow"])
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  expect((await list()).map((b) => b.label)).toEqual(["Slow"])
+})
+
+test("field names that are prototype members are not inputs, fixed or overridden", async () => {
+  expect(readDraft({ app: "github", tool: "t", inputMapping: { toString: { fixed: 1 }, constructor: { fixed: 1 } } }, { properties: {} })).toMatchObject({ field: "inputMapping.toString" })
+  expect(readDraft({ app: "github", tool: "t", inputMapping: { constructor: { fixed: 1 } } }, { properties: {} })).toMatchObject({ field: "inputMapping.constructor" })
+  const binding = { inputMapping: { owner: { fixed: "a" } } } as unknown as Parameters<typeof runInput>[0]
+  expect(runInput(binding, { toString: "x" })).toMatchObject({ ok: true })
+  expect(runInput(binding, { owner: "x" })).toMatchObject({ ok: false })
 })
 
 /**

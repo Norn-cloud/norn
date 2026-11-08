@@ -29,7 +29,16 @@ export interface ConnectorDeps {
   readonly fetch?: typeof fetch
   /** The Norn cell host (NORN_HOST); bindings are installed there as definitions when it serves them. */
   readonly host?: Fetcher
+  /** The clock, in epoch milliseconds; tests move it past the pending-create lease. */
+  readonly now?: () => number
 }
+
+/**
+ * How long a create may stay pending before it counts as abandoned. A create that is younger may
+ * still be installing in another request (or isolate), so reconciling it would delete the row the
+ * install is about to complete. Several times the cell call's time limit.
+ */
+export const PENDING_CREATE_LEASE_MS = 2 * 60 * 1000
 
 /** How the person fixes a refusal; the page renders one button per kind. */
 export type FixAction =
@@ -154,10 +163,12 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
    * Settle a binding a save left pending, from what the cell holds: the cell's version and fields
    * when it has the definition, otherwise undo the save (a create is deleted, an edit restored).
    * Returns the settled binding, null when it was deleted, or the binding still pending when the
-   * cell cannot be asked now.
+   * cell cannot be asked now, or when a create is younger than its lease (its install may still
+   * be running: the row's creation time is when the intent was recorded).
    */
   const reconcile = async (binding: Binding): Promise<Binding | null> => {
     if (binding.state !== "pending" || binding.pendingDefinition === null) return binding
+    if (binding.pendingSave === "create" && (deps.now ?? Date.now)() - binding.updatedAt < PENDING_CREATE_LEASE_MS) return binding
     const cell = cellFor()
     if (cell === null) return binding
     let held: Awaited<ReturnType<BindingDefinitions["get"]>>
