@@ -13,6 +13,8 @@ pub mod scope;
 
 pub use clock::{Clock, ManualClock};
 
+/// Retained (non-kernel) definitions: admit, install, retire, list, get.
+pub mod definition_routes;
 /// Shared cell and definition epoch.
 pub mod host;
 /// Generic MCP catalog and dispatch boundary.

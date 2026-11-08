@@ -164,7 +164,20 @@ pub(super) fn frame<E: SqlEngine>(
         .receipt
         .as_ref()
         .map_or(0, |r| r.body.definitions_version);
-    if reader.active_definitions_version()?.unwrap_or(0) != version {
+    // The kernel identity in force, not the version number: a retained
+    // (dashboard, agent, …) revision commits a new definitions version over
+    // the same kernel set and receipt, which does not change what a
+    // historical cutoff evaluates.
+    let identity = |version: u64| -> Result<Option<String>, CellError> {
+        if version == 0 {
+            return Ok(None);
+        }
+        Ok(reader
+            .installed_definitions(Some(version))?
+            .map(|installed| installed.receipt_sha256))
+    };
+    let active = reader.active_definitions_version()?.unwrap_or(0);
+    if active != version && identity(active)? != identity(version)? {
         return Err(refused(UNSUPPORTED_ENGINE));
     }
     Ok((frame.revision, frame.receipt))

@@ -396,6 +396,25 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(installed)
     }
 
+    /// Install one retained (non-kernel) definition revision through the
+    /// governed definitions install; see [`CellStore::install_retained_definition`].
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, or a store error.
+    pub fn install_retained_definition(
+        &mut self,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        change: &crate::retained::RetainedDefinitionChange,
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        let installed =
+            self.store
+                .install_retained_definition(input, expected_version, &self.scope, change)?;
+        self.advance_to(LogicalTime::from_millis(installed.installed_at));
+        Ok(installed)
+    }
+
     /// Check the same version-bound definition candidate against this cell's
     /// live values and return the installation preview without modifying it.
     ///

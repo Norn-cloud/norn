@@ -11,6 +11,7 @@
 //! tests). The analytics cell also needs the stage's lineage key
 //! (`NORN_LINEAGE_KEY`, at least 32 bytes) and refuses to open without it.
 
+use norn_api::definition_routes::DefinitionKinds;
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::scope::CellScope;
@@ -53,6 +54,8 @@ pub struct NornCell {
     caller: std::sync::Arc<crate::policy::CallerSlot>,
     /// The cell's collections, for `GET /v1/access`.
     object_types: Vec<String>,
+    /// The retained-definition kinds this cell admits.
+    kinds: DefinitionKinds,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -151,6 +154,8 @@ impl NornCell {
             principals,
             caller,
             object_types,
+            // Dashboards are built in; agents wait for lane CANVAS's checker.
+            kinds: DefinitionKinds::default(),
         })
     }
 
@@ -222,7 +227,7 @@ impl NornCell {
                 &request,
             )
         } else {
-            server::handle_with(&self.host, resolver, questions, &request)
+            server::handle_all(&self.host, resolver, questions, &self.kinds, &request)
         };
         let refresh_jwks = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
