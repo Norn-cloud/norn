@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useView, type View } from "@/lib/view"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { transport } from "./lib/transport.ts"
-import { ObjectRecords } from "./objects.tsx"
+import { RecordsGrid } from "./grid/records-grid.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
@@ -186,7 +186,7 @@ export function ObjectTypePage() {
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
-      {concept?.definition === "object type" && <ObjectRecords concept={concept} />}
+      {concept?.definition === "object type" && <RecordsGrid concept={concept} />}
     </div>
   )
 }
