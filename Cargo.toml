@@ -55,13 +55,7 @@ edition = "2024"
 license = "Apache-2.0"
 publish = false
 
-[patch.crates-io]
-ascent = { path = "third_party/ascent/ascent" }
-ascent_macro = { path = "third_party/ascent/ascent_macro" }
-
 [workspace.dependencies]
-# Clock-free Ascent profile; provenance and the exact patch are in third_party/ascent/PATCHES.md.
-ascent = { version = "=0.8.1", default-features = false, features = ["no-clock"] }
 
 # ZEN Expression (D19 GO-WITH-FORK, D32, #3404). The zen crate set is vendored
 # in this repository at `vendor/zen` as workspace members (provenance:
