@@ -2,8 +2,8 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { catalogOf, type Field } from "../src/lib/catalog.ts"
-import { readDocument } from "../src/lib/exact.ts"
-import { collect, compareDecimals, exactJson, factText, lifecycleOf, lifecycleStates, nextAfter, readProblem, readsOf, recordName, shouldReadNext } from "../src/lib/objects.ts"
+import { numberTexts, readDocument } from "../src/lib/exact.ts"
+import { collect, compareDecimals, exactJson, exactPretty, factText, lifecycleOf, lifecycleStates, nextAfter, readProblem, readsOf, recordName, shouldReadNext } from "../src/lib/objects.ts"
 import type { Artifact, LinkPage, ObjectPage, ObjectRecord } from "../src/lib/transport.ts"
 
 // The cell's reads of the three-systems world (crates/norn-api/tests/explorer_objects.rs).
@@ -119,4 +119,9 @@ test("composite facts keep every nested number's exact text", () => {
   expect(exactJson(read.document.values.lots, read.numbers, "/values/lots")).toBe('[{"qty":100.000,"unit":"g"}]')
   expect(factText({ id: "lots", type: "List", optional: false, decimal: undefined }, read.document, read.numbers, "")).toBe('[{"qty":100.000,"unit":"g"}]')
   expect(exactJson(read.document.values.range, read.numbers, "/values/range")).toBe('{"low":1.50,"high":2}')
+})
+
+test("an indented document keeps every number exactly as the server wrote it", () => {
+  const source = '{"a":{"b":[1.10,9007199254740993]},"c":"x","d":[],"e":{}}'
+  expect(exactPretty(JSON.parse(source), numberTexts(source), "")).toBe('{\n  "a": {\n    "b": [\n      1.10,\n      9007199254740993\n    ]\n  },\n  "c": "x",\n  "d": [],\n  "e": {}\n}')
 })

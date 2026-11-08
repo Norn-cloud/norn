@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { words } from "./lib/format.ts"
-import { recordedTransport } from "./lib/transport.ts"
+import { transport } from "./lib/transport.ts"
 import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
 import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
 import type { MenuEntry } from "./shell.tsx"
@@ -289,13 +289,13 @@ const anchor = (workflow: Workflow) => `workflow-${workflow.objectType}-${workfl
 
 /** The admitted lifecycles, for the submenu island. */
 export function useWorkflowsMenu(): readonly MenuEntry[] | undefined {
-  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions })
+  const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
   return definitions.data && workflows(definitions.data.map(({ document }) => document))
     .map((workflow) => ({ href: `#${anchor(workflow)}`, label: words(workflow.objectType) }))
 }
 
 export function WorkflowsPage() {
-  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions })
+  const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
