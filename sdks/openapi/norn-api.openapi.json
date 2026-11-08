@@ -9385,6 +9385,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrLawResponseOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLawResponseOneOf4"
           }
         ],
         "description": "Response slots resolve to existing ontology definitions."
@@ -9487,6 +9490,43 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrLawResponseOneOf4": {
+        "type": "object",
+        "description": "TRANSLATION-PRESERVES-1: the subject is the source contract, the law's\ncondition is admission, and `self` in each assignment is the source record.",
+        "required": [
+          "kind",
+          "targetType",
+          "assignments",
+          "observation"
+        ],
+        "properties": {
+          "assignments": {
+            "$ref": "#/components/schemas/NornIrLawResponseOneOf4PropertyAssignments"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "translation_preserves"
+            ]
+          },
+          "observation": {
+            "$ref": "#/components/schemas/NornIrTranslationObservation",
+            "description": "The named observation this law protects."
+          },
+          "targetType": {
+            "type": "string",
+            "description": "Exact target object type, the target contract."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawResponseOneOf4PropertyAssignments": {
+        "type": "object",
+        "description": "Total executable map from target property id to ZEN over the source.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrZenExpression"
+        }
       },
       "NornIrLawRoot": {
         "oneOf": [
@@ -14259,6 +14299,40 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "TRANSLATION-PRESERVES-1: the subject is the source contract, the law's\ncondition is admission, and `self` in each assignment is the source record.",
+            "required": [
+              "kind",
+              "targetType",
+              "assignments",
+              "observation"
+            ],
+            "properties": {
+              "assignments": {
+                "type": "object",
+                "description": "Total executable map from target property id to ZEN over the source.",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/NornIrRequirementZenExpression"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "translation_preserves"
+                ]
+              },
+              "observation": {
+                "$ref": "#/components/schemas/NornIrRequirementTranslationObservation",
+                "description": "The named observation this law protects."
+              },
+              "targetType": {
+                "type": "string",
+                "description": "Exact target object type, the target contract."
+              }
+            },
+            "additionalProperties": false
           }
         ],
         "description": "Response slots resolve to existing ontology definitions."
@@ -14821,6 +14895,30 @@
           "ltr",
           "rtl"
         ]
+      },
+      "NornIrRequirementTranslationObservation": {
+        "type": "object",
+        "description": "One named observation, read on each side of a translation and compared exactly.",
+        "required": [
+          "id",
+          "source",
+          "target"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable observation identity."
+          },
+          "source": {
+            "type": "string",
+            "description": "ZEN over the source record."
+          },
+          "target": {
+            "type": "string",
+            "description": "ZEN over the translated target record."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRequirementView": {
         "type": "object",
@@ -17187,6 +17285,30 @@
         "type": "string",
         "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
         "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "NornIrTranslationObservation": {
+        "type": "object",
+        "description": "One named observation, read on each side of a translation and compared exactly.",
+        "required": [
+          "id",
+          "source",
+          "target"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable observation identity."
+          },
+          "source": {
+            "type": "string",
+            "description": "ZEN over the source record."
+          },
+          "target": {
+            "type": "string",
+            "description": "ZEN over the translated target record."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrTurnBudget": {
         "type": "object",

@@ -179,7 +179,7 @@
           "description": "Bounded detail, typed by the error schema.",
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
+            "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
           }
         }
       },
@@ -268,35 +268,6 @@
           "required": [
             "cancelled"
           ]
-        }
-      ]
-    },
-    "JsonValue": {
-      "anyOf": [
-        {
-          "type": "null"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "number",
-          "format": "double"
-        },
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          }
         }
       ]
     },
@@ -412,7 +383,7 @@
           "description": "The bounded summary the cell consumes (at most\n[`MAX_RECEIPT_SUMMARY_BYTES`] canonical bytes), typed by the output\nschema.",
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
+            "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
           }
         }
       },

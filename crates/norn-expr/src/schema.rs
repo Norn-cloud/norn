@@ -738,6 +738,27 @@ pub fn fold_step_graph_supported(graph: &norn_ir::jdm::JdmGraph) -> bool {
     })
 }
 
+/// #1105: each aggregate is a count (an integer) or a sum typed as its
+/// summed property, read as `aggregates.<name>`.
+fn aggregate_types(
+    action: &norn_ir::ActionRoot,
+    records: &BTreeMap<String, BTreeMap<String, crate::Type>>,
+) -> Result<BTreeMap<String, crate::Type>, String> {
+    let mut aggregates = BTreeMap::new();
+    for aggregate in &action.aggregates {
+        let ty = match &aggregate.aggregate {
+            norn_ir::AggregateFunction::Count {} => crate::Type::Integer,
+            norn_ir::AggregateFunction::Sum { property } => records
+                .get(aggregate.object_type.as_str())
+                .and_then(|record| record.get(property.as_str()))
+                .cloned()
+                .ok_or("unresolved action aggregate property")?,
+        };
+        aggregates.insert(aggregate.name.clone(), ty);
+    }
+    Ok(aggregates)
+}
+
 /// VAL-EXACT-1: one action environment for admission and runtime binding.
 /// `completed` identifies the ordered derivation prefix already materialized.
 ///
@@ -812,20 +833,7 @@ pub fn action_environment(
     }
     let slice_record = "exact.action.slice".to_owned();
     records.insert(slice_record.clone(), slice);
-    // #1105: each aggregate is a count (an integer) or a sum typed as its
-    // summed property, read as `aggregates.<name>`.
-    let mut aggregates = BTreeMap::new();
-    for aggregate in &action.aggregates {
-        let ty = match &aggregate.aggregate {
-            norn_ir::AggregateFunction::Count {} => Type::Integer,
-            norn_ir::AggregateFunction::Sum { property } => records
-                .get(aggregate.object_type.as_str())
-                .and_then(|record| record.get(property.as_str()))
-                .cloned()
-                .ok_or("unresolved action aggregate property")?,
-        };
-        aggregates.insert(aggregate.name.clone(), ty);
-    }
+    let aggregates = aggregate_types(action, &records)?;
     let aggregate_record = "exact.action.aggregates".to_owned();
     let declares_aggregates = !aggregates.is_empty();
     if declares_aggregates {
