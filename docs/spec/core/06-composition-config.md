@@ -71,7 +71,7 @@ Evidence: structural identity/admission, runtime activation/parameter pins, gene
 
 Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, `crates/norn-checker/src/obligations/`, `crates/norn-cell/src/migration.rs`. Settings and live-data migration are real substrate. `SettingValue::Number(f64)` is not an exact economic parameter. B1–B3 remain the [design on #213](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558465085); generic pack instances, protected law transport and complete in-flight migration are gaps.
 
-## Work breakdown (each PR ≤400 lines)
+## Work breakdown (one coherent unit per PR)
 
 1. B1 role/endpoints in existing mapping roots, then typed member interpretations, then MAP-* negatives/schema/SDK projection cuts.
 2. Coordinate 05 B2 law instances; B3 checked retained-layer construction and receipt revalidation, then full writer/edge challenge reconstruction, then LAYERS/EDGE tests.
