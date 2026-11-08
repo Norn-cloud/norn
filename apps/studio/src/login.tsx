@@ -30,6 +30,8 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
   const [mode, setMode] = useState<Mode>(initial)
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState<{ readonly tone: "error" | "info"; readonly text: string } | null>(null)
+  // The address carries across tabs: after "Account ready" the visitor signs in without retyping it.
+  const [email, setEmail] = useState("")
   const refresh = useRefreshAccount()
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -87,7 +89,7 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
             </div>
             <form key={mode} onSubmit={submit} className="grid gap-3">
               {mode === "sign-up" && <Field label="Name" name="name" autoComplete="name" />}
-              <Field label="Email" name="email" type="email" autoComplete="email" />
+              <Field label="Email" name="email" type="email" autoComplete="email" defaultValue={email} onChange={(event) => setEmail(event.currentTarget.value)} />
               {mode !== "email-link" && (
                 <Field label="Password" name="password" type="password" minLength={mode === "sign-up" ? 12 : undefined} maxLength={128}
                   autoComplete={mode === "sign-up" ? "new-password" : "current-password"} />

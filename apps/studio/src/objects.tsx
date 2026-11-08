@@ -25,6 +25,8 @@ import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
 import { member } from "./lib/exact.ts"
 import { collect, compareDecimals, exactPretty, factText, nextAfter, readProblem, recordName, shouldReadNext, type PageRow } from "./lib/objects.ts"
 import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
+import { liveAccess } from "./lib/live.ts"
+import { RefusedNote } from "./questions.tsx"
 import { DenseTable, ObjectTypePage, RECORDED_HINT, useCatalog } from "./sources.tsx"
 
 /** Pages read per concept before the list is shown as incomplete. */
@@ -282,7 +284,7 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
         ? <p className="text-sm text-muted-foreground">This concept declares no relationships.</p>
         : <ul className="space-y-2 text-sm">
           {concept.relationships.map((relationship) => {
-            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id)
+            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id && edge.sourceType === concept.name)
             return (
               <li key={relationship.id}>
                 <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} ({relationship.count}) → </span>
@@ -293,7 +295,7 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
             )
           })}
           {incomingOf(concept, concepts).map(({ from, relationship }) => {
-            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.sourceType === from.name)
+            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.targetType === concept.name && edge.sourceType === from.name)
             return (
               <li key={`in/${from.name}/${relationship.id}`}>
                 <span className="text-muted-foreground">{from.title} records ({relationship.id.replaceAll("_", " ")}) ← </span>
@@ -366,8 +368,6 @@ const Id = ({ label, value, short }: { readonly label: string; readonly value: s
 /** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what a recorded snapshot cannot hold. */
 function Technical({ name, lineage }: { readonly name: string; readonly lineage: SourceLineage | undefined }) {
   const { read } = useCatalog()
-  // Who is reading, for display; the server decides what they may see.
-  const viewer = useViewer()
   const artifacts = read.data?.document ?? []
   const index = artifacts.findIndex((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name)
   const entity = artifacts[index]
@@ -398,14 +398,7 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
         </DenseTable>
       </Well></Panel>
     )}
-    <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="space-y-3 p-3">
-      <p className="text-sm">This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.</p>
-      <dl className="space-y-1 text-sm">
-        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Viewing as</dt><dd>{viewer.name}{viewer.role !== null && <span className="text-muted-foreground"> · {viewer.role}</span>}</dd></div>
-        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />Not in the recorded snapshot</dd></div>
-        <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Receipt</dt><dd className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />Not in the recorded snapshot</dd></div>
-      </dl>
-    </Well></Panel>
+    <DecisionAndReceipt />
   </>
 }
 
@@ -416,7 +409,8 @@ const incomingOf = (concept: Concept, concepts: readonly Concept[]) =>
 /** One plain sentence from what the server sent: the record, its type, where it was read from and what its stored links say. */
 export function summaryOf(concept: Concept, reads: ObjectReads, concepts: readonly Concept[]): string {
   const source = reads.source?.document
-  const stored = reads.links.document.items.length
+  const { id, objectType } = reads.object.document
+  const stored = reads.links.document.items.filter((edge) => (edge.source === id && edge.sourceType === objectType) || (edge.target === id && edge.targetType === objectType)).length
   const declared = concept.relationships.length + incomingOf(concept, concepts).length
   const from = source ? `, read from ${systemName(source.sourceRecordRef.system)} by mapping ${source.mappingPin.artifactId}` : ""
   // Only the first page of links may have been returned; then the count is a floor, not the whole.
@@ -432,18 +426,62 @@ function RelatedInline({ concept, id, links, concepts }: { readonly concept: Con
   const incoming = incomingOf(concept, concepts)
   if (concept.relationships.length === 0 && incoming.length === 0) return null
   const none = <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none in this snapshot"}</span>
-  const record = (type: string, target: string) => <Link key={`${type}/${target}`} to="/sources/$concept/$" params={{ concept: type, _splat: target }} className="me-2 font-medium underline-offset-4 hover:underline">{target}</Link>
+  // One stored link's other end. Contested links (sources disagree, nothing added) never reach `items`, so nothing is shown for them.
+  const record = (edge: LinkPage["items"][number], type: string, target: string) => (
+    <span key={`${edge.link}/${type}/${target}`} className="me-3 inline-flex items-center gap-1">
+      <Link to="/sources/$concept/$" params={{ concept: type, _splat: target }} className="font-medium underline-offset-4 hover:underline">{target}</Link>
+      {/* Slot: the link's per-claim source lineage (observed_link_provenance) goes here once the server records it. */}
+    </span>
+  )
   return (
     <Panel icon={Link2} label="Related"><Well className="p-3">
       <dl className="space-y-2 text-sm">
         {concept.relationships.map((relationship) => {
-          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id)
-          return <div key={`out/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{relationship.id.replaceAll("_", " ")} → {relationship.count} {conceptTitle(relationship.target)}</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge.targetType, edge.target))}</dd></div>
+          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id && edge.sourceType === concept.name)
+          return <div key={`out/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{relationship.id.replaceAll("_", " ")} → {relationship.count} {conceptTitle(relationship.target)}</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge, edge.targetType, edge.target))}</dd></div>
         })}
         {incoming.map(({ from, relationship }) => {
-          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.sourceType === from.name)
-          return <div key={`in/${from.name}/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{from.title} records ({relationship.id.replaceAll("_", " ")})</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge.sourceType, edge.source))}</dd></div>
+          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.targetType === concept.name && edge.sourceType === from.name)
+          return <div key={`in/${from.name}/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{from.title} records ({relationship.id.replaceAll("_", " ")})</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge, edge.sourceType, edge.source))}</dd></div>
         })}
+      </dl>
+    </Well></Panel>
+  )
+}
+
+const CAPABILITIES = [["population", "Population: which records exist"], ["values", "Values: their amounts and facts"], ["sources", "Sources: where they came from"]] as const
+
+/**
+ * The host's access decision for the signed-in account, read live (`/v1/access`) and shown as the
+ * server wrote it: its principal and, per capability, permit or deny with the rule. Nothing is decided here.
+ */
+function DecisionAndReceipt() {
+  const viewer = useViewer()
+  const access = useQuery({ queryKey: ["live-access"], queryFn: () => liveAccess(), retry: false, staleTime: 60_000 })
+  const row = (label: string, value: ReactNode) => <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">{label}</dt><dd className="min-w-0">{value}</dd></div>
+  const unknown = (text: string) => <span className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />{text}</span>
+  const data = access.data
+  return (
+    <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="space-y-3 p-3">
+      {data?.kind === "read"
+        ? <p className="text-sm">The access decision is read live from the cell for your account.</p>
+        : <p className="text-sm">This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.</p>}
+      {data?.kind === "refused" && <RefusedNote refusal={data.refusal} />}
+      <dl className="space-y-1 text-sm">
+        {data?.kind === "read"
+          ? <>
+            {row("Principal", <span><CopyId value={data.read.document.principal.subjectId} /> <span className="text-muted-foreground">· {data.read.document.principal.roles.join(", ")} ({data.read.document.principal.roleTable})</span></span>)}
+            {row("Policy", <span className="font-mono text-xs">{data.read.document.policy} · {data.read.document.grantTable}</span>)}
+            {CAPABILITIES.map(([capability, label]) => {
+              const { decision, rule } = data.read.document.capabilities[capability]
+              return <div key={capability}>{row(label, <span className="flex flex-wrap items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", decision === "permit" ? STATUS.held.dot : STATUS.refused.dot)} />{decision === "permit" ? "Permit" : "Deny"}<span className="font-mono text-xs text-muted-foreground">{rule ?? "no rule grants it"}</span></span>)}</div>
+            })}
+          </>
+          : <>
+            {row("Viewing as", <>{viewer.name}{viewer.role !== null && <span className="text-muted-foreground"> · {viewer.role}</span>}</>)}
+            {data?.kind !== "refused" && row("Access decision", unknown("Not in the recorded snapshot"))}
+          </>}
+        {row("Receipt", unknown("Not in the recorded snapshot"))}
       </dl>
     </Well></Panel>
   )

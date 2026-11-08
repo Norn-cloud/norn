@@ -218,7 +218,8 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertIn("heavy-1", combined["shard"])
         self.assertIn("heavy-3", combined["shard"])
         self.assertEqual(combined["rest_shards"], 3)
-        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy"])
+        # norn-cell and norn-expr reach norn-checker-wasm, so the Studio browser rows run (#1113).
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser"])
         self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
         self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
 

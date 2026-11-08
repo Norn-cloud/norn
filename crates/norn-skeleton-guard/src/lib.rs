@@ -123,6 +123,12 @@ const fn rule(name: &'static str, ring: Ring, allowed_norn: &'static [&'static s
 pub const CRATES: &[CrateRule] = &[
     r0("norn-graph", &[], &["rust_decimal"]),
     r0("norn-canonical", &[], &[]),
+    // Shared data/validator only; no executor.
+    r0(
+        "norn-datalog",
+        &["norn-canonical", "norn-graph", "norn-ir"],
+        &["serde"],
+    ),
     r0(
         "norn-ir",
         &["norn-canonical"],
@@ -164,6 +170,18 @@ pub const CRATES: &[CrateRule] = &[
         "norn-cell",
         Ring::One,
         &["norn-kernel", "norn-checker", "norn-projections", "norn-ir"],
+    ),
+    rule(
+        "norn-cell-do",
+        Ring::One,
+        &[
+            "norn-api",
+            "norn-cell",
+            "norn-checker",
+            "norn-ir",
+            "norn-kernel",
+            "norn-projections",
+        ],
     ),
     rule("norn-dataplane", Ring::One, &["norn-ir"]),
     rule(
