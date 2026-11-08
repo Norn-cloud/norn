@@ -1,12 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router"
-import { ChartLine, Database, Gauge, ShieldCheck, Workflow } from "lucide-react"
+import { ChartLine, Database, Gauge, Plug, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
 import { createRoot } from "react-dom/client"
 import { EmptyState, Panel, Well } from "@/components/panel"
+import { ConnectionsPage } from "./connections.tsx"
 import { QuestionPage, QuestionsPage, useQuestionsMenu } from "./questions.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { ObjectTypePage, SourcesPage, useSourcesMenu } from "./sources.tsx"
@@ -21,6 +22,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu, group: "model" },
   { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", useMenu: useWorkflowsMenu, group: "rules" },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", useMenu: useGuaranteesMenu, group: "rules" },
+  { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "system" },
   { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", group: "system", foot: true },
 ]
 
@@ -76,7 +78,7 @@ const router = createRouter({
     ...SECTIONS.map((section) => createRoute({
       getParentRoute: () => root,
       path: section.path,
-      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : () => <NotYet {...section} />,
+      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : section.path === "/connections" ? ConnectionsPage : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),
