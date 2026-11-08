@@ -13069,6 +13069,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrPropertyTypeOneOf10"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf11"
           }
         ],
         "description": "The value kind of a property, tagged by `kind`."
@@ -13188,6 +13191,31 @@
       },
       "NornIrPropertyTypeOneOf10": {
         "type": "object",
+        "description": "Opaque JSON (an extension payload), optionally described by a JSON\nSchema document the checker does not interpret.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "json-ext"
+            ]
+          },
+          "schema": {
+            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf10PropertySchema"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyTypeOneOf10PropertySchema": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrPropertyTypeOneOf11": {
+        "type": "object",
         "description": "The shared property type (local or registry) with this name.",
         "required": [
           "kind",
@@ -13259,6 +13287,27 @@
       },
       "NornIrPropertyTypeOneOf3": {
         "type": "object",
+        "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+        "required": [
+          "kind",
+          "group"
+        ],
+        "properties": {
+          "group": {
+            "type": "string",
+            "description": "Same-name members in one interface bind identically."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "decimal-binding"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyTypeOneOf4": {
+        "type": "object",
         "description": "`true` or `false`.",
         "required": [
           "kind"
@@ -13273,7 +13322,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf4": {
+      "NornIrPropertyTypeOneOf5": {
         "type": "object",
         "description": "An instant in time with an explicit timezone policy.",
         "required": [
@@ -13302,7 +13351,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf5": {
+      "NornIrPropertyTypeOneOf6": {
         "type": "object",
         "description": "An ISO 8601 calendar date (`YYYY-MM-DD`) with no time and no zone.",
         "required": [
@@ -13318,7 +13367,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf6": {
+      "NornIrPropertyTypeOneOf7": {
         "type": "object",
         "description": "An exact elapsed duration (fixed-length units only; calendar periods\nsuch as months are not durations).",
         "required": [
@@ -13334,7 +13383,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf7": {
+      "NornIrPropertyTypeOneOf8": {
         "type": "object",
         "description": "One of a closed set of string values.",
         "required": [
@@ -13358,7 +13407,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf8": {
+      "NornIrPropertyTypeOneOf9": {
         "type": "object",
         "description": "A closed structured value. Every member is present; nullability of\nthe containing property applies to the whole record.",
         "required": [
@@ -13380,31 +13429,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "NornIrPropertyTypeOneOf9": {
-        "type": "object",
-        "description": "Opaque JSON (an extension payload), optionally described by a JSON\nSchema document the checker does not interpret.",
-        "required": [
-          "kind"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "json-ext"
-            ]
-          },
-          "schema": {
-            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf9PropertySchema"
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrPropertyTypeOneOf9PropertySchema": {
-        "type": "object",
-        "additionalProperties": {
-          "$ref": "#/components/schemas/NornIrJsonValue"
-        }
       },
       "NornIrProposalActor": {
         "type": "string",

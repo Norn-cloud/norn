@@ -359,6 +359,7 @@ fn kind_compatibility_is_layered() {
     assert!(!may_reference(&Rule, &Policy));
     assert!(!may_reference(&Widget, &Customization));
     assert!(!may_reference(&Action, &Widget));
+    assert!(may_reference(&ArtifactKind::Mapping, &BusinessPack));
 }
 
 /// T3-DEC-1: each `RuleIR` v2 sub-decision set code has a negative case.
