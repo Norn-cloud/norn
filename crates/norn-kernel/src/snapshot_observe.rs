@@ -1651,6 +1651,7 @@ pub fn prepare_observed_snapshot(
             effects: Vec::new(),
             links: Vec::new(),
             link_reads: Vec::new(),
+            predicate_reads: Vec::new(),
         },
         authorization,
     })
@@ -2317,6 +2318,7 @@ where
             effects: Vec::new(),
             links: prepared.links,
             link_reads: Vec::new(),
+            predicate_reads: Vec::new(),
         },
         authorization,
     )
