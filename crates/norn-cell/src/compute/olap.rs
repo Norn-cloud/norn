@@ -32,8 +32,12 @@ impl<E: SqlEngine> CellStore<E> {
             context: &result.context,
             exclusions: &result.exclusions,
         };
-        let lineage_ref =
-            crate::codec::hash_json(&(&result.query_pin, &result.revision, evidence, &result.rows))?;
+        let lineage_ref = crate::codec::hash_json(&(
+            &result.query_pin,
+            &result.revision,
+            evidence,
+            &result.rows,
+        ))?;
         result.lineage_ref = lineage_ref;
         Ok(result)
     }
