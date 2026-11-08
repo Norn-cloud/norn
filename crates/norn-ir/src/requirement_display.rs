@@ -141,7 +141,9 @@ impl RequirementView {
                 object_type,
                 invariant_id,
             } => format!("{object_type}.{invariant_id}"),
-            LawResponse::Action { .. } | LawResponse::Transition { .. } => {
+            LawResponse::Action { .. }
+            | LawResponse::Transition { .. }
+            | LawResponse::TranslationPreserves { .. } => {
                 return Err("law.validation.invalid_document");
             }
         };
