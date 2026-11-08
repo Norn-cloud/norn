@@ -129,7 +129,7 @@ impl Keys {
     /// in the future (the clock moved back) does not block the next one.
     fn may_retry(&self, now: u64) -> bool {
         self.attempted
-            .is_none_or(|at| at > now || now - at >= JWKS_RETRY_SECS)
+            .is_none_or(|at| at > now || now.saturating_sub(at) >= JWKS_RETRY_SECS)
     }
 }
 
