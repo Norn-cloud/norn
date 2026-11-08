@@ -552,7 +552,7 @@ fi
 df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
 """}
-    nextest = {"uses": "taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32",
+    nextest = {"uses": "taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941",
                "with": {"tool": "nextest@0.9.150"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():
