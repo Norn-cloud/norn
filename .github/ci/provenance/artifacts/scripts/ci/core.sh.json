@@ -1,5 +1,11 @@
 {
+<<<<<<< HEAD
   "sha256": "5cc8908b2cfc9d13454e22257e825f5b353653f12f9e38b3a796766ccb5ca5e2",
+||||||| 48dd111bb4
+  "sha256": "882cd24be04e3f0d71d1a1c84d3c347bb165de801d4be260445ddd5f933b9be8",
+=======
+  "sha256": "2b50d69995bf0ef674b615f6fe3a996de9c2019f8025b511083cf606bc9ed7d0",
+>>>>>>> origin/main
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
