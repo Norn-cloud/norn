@@ -114,6 +114,10 @@ fn dotted_source_literals() -> BTreeMap<String, BTreeSet<String>> {
     // Tool diagnostics have a separate emission authority; checker codes still
     // require a Rust emission regardless of TypeScript mentions.
     let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/norn-ts");
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "test-only scan of the TypeScript CLI diagnostics; not a runtime capability"
+    )]
     let output = std::process::Command::new("bun")
         .arg(tool.join("src/cli-code-registry.ts"))
         .output()
