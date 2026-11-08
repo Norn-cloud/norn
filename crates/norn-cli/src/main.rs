@@ -3,6 +3,7 @@ use std::io::{BufRead as _, Write as _};
 mod eval;
 mod mcp;
 mod remote;
+mod source;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -20,6 +21,8 @@ enum Command {
     Mcp,
     /// Discover and invoke a remote server's live MCP catalog.
     Remote(remote::RemoteArgs),
+    /// Read a configured source and print sealed raw observations.
+    Source(source::SourceArgs),
     /// List the available human operations and their input schemas.
     #[command(
         long_about = "List the available human operations and their input schemas. Returns tools and a catalogDigest, with at most 32 tools per page. Follow nextCursor using --cursor until it is absent. A cursor is bound to this working directory and catalog; restart without it after a revision. Only installed backends appear; discovery never installs definitions."
@@ -72,11 +75,16 @@ enum Command {
     },
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dispatch maps every CLI subcommand to its handler"
+)]
 fn run(command: Command) -> Result<(String, bool), String> {
     match command {
         Command::Mcp => mcp::serve(),
         Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
+        Command::Source(args) => source::execute(&args),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))
             .map_err(|error| error.to_string()),
@@ -137,16 +145,20 @@ fn run(command: Command) -> Result<(String, bool), String> {
                 digest,
                 &rule,
             )?;
+            let mut accepted = 0_u64;
+            let mut refused = 0_u64;
             for line in std::io::stdin().lock().lines() {
                 let line = line.map_err(|error| error.to_string())?;
                 let digest = decision.closure_digest();
                 let response = match decision.run(&line, units) {
                     Ok(output) => {
+                        accepted = accepted.checked_add(1).ok_or("eval counter overflow")?;
                         format!(
                             "{{\"ok\":true,\"closureDigest\":\"{digest}\",\"output\":{output}}}"
                         )
                     }
                     Err(error) => {
+                        refused = refused.checked_add(1).ok_or("eval counter overflow")?;
                         serde_json::json!({"ok":false,"closureDigest":digest,"error":error})
                             .to_string()
                     }
@@ -154,7 +166,12 @@ fn run(command: Command) -> Result<(String, bool), String> {
                 writeln!(std::io::stdout().lock(), "{response}")
                     .map_err(|error| error.to_string())?;
             }
-            Ok((String::new(), true))
+            writeln!(
+                std::io::stderr().lock(),
+                "norn eval: {accepted} accepted, {refused} refused"
+            )
+            .map_err(|error| error.to_string())?;
+            Ok((String::new(), refused == 0))
         }
         Command::SourceDigest { dir } => source_digest(&dir).map(|document| (document, true)),
         Command::Check { artifacts, context } => {

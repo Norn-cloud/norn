@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "checker": "bash ../../crates/norn-checker-wasm/scripts/build-pkg.sh src/checker",
     "typecheck": "tsc -p tsconfig.json && tsc -p worker/tsconfig.json",
     "test": "bun test",
-    "deploy": "NODE_ENV=production vite build && bun ./alchemy.run.ts"
+    "deploy": "bun run checker && NODE_ENV=production vite build && bun ./alchemy.run.ts",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@ai-sdk/react": "4.0.166",
@@ -21,6 +23,7 @@
     "@xyflow/react": "12.12.1",
     "ai": "7.0.162",
     "better-auth": "1.7.12",
+    "canonicalize": "5.1.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
@@ -35,7 +38,9 @@
     "use-stick-to-bottom": "1.1.6"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@cloudflare/workers-types": "5.20261021.1",
+    "@playwright/test": "1.56.1",
     "@tailwindcss/vite": "4.3.4",
     "@types/bun": "1.4.2",
     "@types/react": "19.3.0",
