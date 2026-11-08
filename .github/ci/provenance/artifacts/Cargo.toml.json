@@ -1,11 +1,5 @@
 {
-<<<<<<< HEAD
-  "sha256": "94d162a5bc93e7cea3d46efe30488447fd79f040158ae7a0433f982144db0c1c",
-||||||| 48dd111bb4
-  "sha256": "b06d7114659b4bb6892e0044711663a93c9b75a84679b69117202f3845372b58",
-=======
-  "sha256": "971310043e36b5073e6b30eaf8cd046fe9aa2afda35cc5e60b316fa616cabeb8",
->>>>>>> origin/main
+  "sha256": "166c7272783b0bfcfa9f1ce9b260d633fbad0b42aca930f93311e54a24fd67b1",
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
