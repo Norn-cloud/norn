@@ -34,12 +34,23 @@ export interface Graph {
   readonly edges: readonly CanvasEdge[]
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+const isConfig = (value: unknown) => isRecord(value) && Object.values(value).every((one) => typeof one === "string")
+
+/** Whether a value read from storage is a graph the canvas can draw: every node and edge has the fields it reads. */
+export function isGraph(value: unknown): value is Graph {
+  if (!isRecord(value) || !Array.isArray(value.nodes) || !Array.isArray(value.edges)) return false
+  return value.nodes.every((node) => isRecord(node) && typeof node.id === "string" && typeof node.kind === "string" && isConfig(node.config)
+    && isRecord(node.position) && Number.isFinite(node.position.x) && Number.isFinite(node.position.y))
+    && value.edges.every((edge) => isRecord(edge) && ["id", "source", "sourcePort", "target", "targetPort"].every((key) => typeof edge[key] === "string") && isConfig(edge.config))
+}
+
 /** The ports a node of each kind offers. */
 export type Kinds = Readonly<Record<string, (node: CanvasNode) => readonly Port[]>>
 
 /** Why the canvas would not draw an edge. */
 export interface Refusal {
-  readonly code: "canvas.port.unknown" | "canvas.port.type_mismatch" | "canvas.edge.duplicate" | "canvas.node.duplicate"
+  readonly code: "canvas.port.unknown" | "canvas.port.type_mismatch" | "canvas.edge.duplicate" | "canvas.node.duplicate" | "canvas.condition.invalid"
   readonly message: string
 }
 

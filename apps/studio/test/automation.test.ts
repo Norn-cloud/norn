@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { loadInvoice, notify } from "../../../tools/norn-ts/fixtures/flows/support/billing.builder.ts"
-import { CANVAS_EXTENSION, branchesOf, lower, redraw, setBranches, type Condition } from "../src/lib/canvas/automation.ts"
+import { CANVAS_EXTENSION, branchesOf, lower, parseCondition, redraw, setBranches, type Condition } from "../src/lib/canvas/automation.ts"
 import type { CanvasEdge, CanvasNode, Graph } from "../src/lib/canvas/graph.ts"
 
 const tools = [loadInvoice, notify]
@@ -75,4 +75,14 @@ test("reordering a route's branches carries each branch's exit; removing a branc
   expect(lower(swapped, tools, meta, options).problems).toEqual([])
   const dropped = setBranches(route, "settled", [draft], [1])
   expect(dropped.edges.filter(({ source }) => source === "settled").map(({ sourcePort, target }) => `${sourcePort}->${target}`).sort()).toEqual(["b0->draft", "next->overdue"])
+})
+
+test("a branch condition that does not parse is refused, never kept as a mangled one", () => {
+  expect(parseCondition("invoice.status == paid and total >= 10")).toEqual({ all: [{ left: "invoice.status", op: "==", right: "paid" }, { left: "total", op: ">=", right: "10" }] })
+  expect(parseCondition("invoice.status=='paid'")).toEqual({ all: [{ left: "invoice.status", op: "==", right: "'paid'" }] })
+  expect(parseCondition("")).toEqual({ all: [] })
+  // A single `=`, a missing right side and a bare word have no `left op right` shape.
+  expect(parseCondition("invoice.status = paid")).toEqual({ bad: "invoice.status = paid" })
+  expect(parseCondition("invoice.status ==")).toEqual({ bad: "invoice.status ==" })
+  expect(parseCondition("total > 1 and paid")).toEqual({ bad: "paid" })
 })

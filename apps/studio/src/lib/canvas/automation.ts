@@ -22,6 +22,19 @@ export interface Condition {
   readonly right: string
 }
 
+export const formatCondition = (all: readonly Condition[]) => all.map(({ left, op, right }) => `${left} ${op} ${right}`).join(" and ")
+
+/** One condition per `and` part, or the first part that has no `left op right` shape (it is never accepted as written). */
+export function parseCondition(line: string): { readonly all: Condition[] } | { readonly bad: string } {
+  const all: Condition[] = []
+  for (const part of line.split(/\s+and\s+/).map((one) => one.trim()).filter(Boolean)) {
+    const match = /^(\S+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/.exec(part)
+    if (!match) return { bad: part }
+    all.push({ left: match[1] as string, op: match[2] as Condition["op"], right: match[3] as string })
+  }
+  return { all }
+}
+
 export const branchesOf = (node: CanvasNode): Condition[][] => JSON.parse(node.config.branches ?? "[]") as Condition[][]
 export const inputsOf = (node: CanvasNode): Record<string, string> => JSON.parse(node.config.input ?? "{}") as Record<string, string>
 

@@ -135,3 +135,14 @@ test.skipIf(!existsSync(join(pkg, "norn_checker_wasm_bg.wasm")))("the checker fi
   const { added } = introduced(placed, clean.diagnostics.diagnostics)
   expect(added.map(({ finding, node }) => `${finding.code}@${node}`).sort()).toEqual(["lifecycle.validation.dead_end_state@invoiced", "lifecycle.validation.unreachable_state@completed"])
 })
+
+test("only a stored value shaped like a graph is restored as a draft", () => {
+  const node = { id: "a", kind: "start", position: { x: 0, y: 0 }, config: {} }
+  const edge = { id: "e", source: "a", sourcePort: "next", target: "a", targetPort: "in", config: {} }
+  expect(g.isGraph({ nodes: [node], edges: [edge] })).toBe(true)
+  expect(g.isGraph({})).toBe(false)
+  expect(g.isGraph(null)).toBe(false)
+  expect(g.isGraph({ nodes: [{ ...node, position: undefined }], edges: [] })).toBe(false)
+  expect(g.isGraph({ nodes: [{ ...node, config: { n: 1 } }], edges: [] })).toBe(false)
+  expect(g.isGraph({ nodes: [node], edges: [{ ...edge, target: 3 }] })).toBe(false)
+})

@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
-import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
+import { automationKinds, branchesOf, formatCondition, inputsOf, lower, parseCondition, setBranches, type Condition } from "./lib/canvas/automation.ts"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
@@ -76,12 +76,6 @@ export function exitLabel(node: g.CanvasNode | undefined, port: string): string 
   return port
 }
 
-const formatCondition = (all: readonly Condition[]) => all.map(({ left, op, right }) => `${left} ${op} ${right}`).join(" and ")
-const parseCondition = (line: string): Condition[] => line.split(/\s+and\s+/).map((part) => part.trim()).filter(Boolean).map((part) => {
-  const [, left = part, op = "==", right = ""] = /^(\S+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/.exec(part) ?? []
-  return { left, op: op as Condition["op"], right }
-})
-
 /** A route's branches: edit each condition, add, delete and reorder; exits follow their branch. */
 function Branches({ editing, id, branches }: { readonly editing: Editing; readonly id: string; readonly branches: Condition[][] }) {
   const { graph, edit } = editing
@@ -104,7 +98,13 @@ function Branches({ editing, id, branches }: { readonly editing: Editing; readon
           </div>
           {/* The whole condition stays readable: it wraps instead of clipping, and hovering shows it in full. */}
           <Textarea aria-label={`Branch b${index}`} rows={2} className="min-h-0 resize-y font-mono text-xs break-all" title={formatCondition(all) || "No condition yet"} defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
-            onBlur={(event) => { const next = branches.map((one, at) => at === index ? parseCondition(event.target.value) : one); if (formatCondition(next[index] ?? []) !== formatCondition(all)) set(indices, next) }} />
+            onBlur={(event) => {
+              const parsed = parseCondition(event.target.value)
+              // A part that is not `left op right` is refused, never kept as a mangled condition; the previous branch stays.
+              if ("bad" in parsed) { edit({ code: "canvas.condition.invalid", message: `"${parsed.bad}" is not a condition. Write it as left == right (also !=, <, <=, >, >=), joined by "and".` }); return }
+              const next = branches.map((one, at) => at === index ? parsed.all : one)
+              if (formatCondition(next[index] ?? []) !== formatCondition(all)) set(indices, next)
+            }} />
         </div>
       ))}
       <Button size="sm" variant="outline" onClick={() => set([...indices, -1], [...branches, []])}><Plus />Branch</Button>

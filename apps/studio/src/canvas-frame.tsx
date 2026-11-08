@@ -63,11 +63,16 @@ export interface CanvasFrameProps {
 
 interface Draft { readonly graph: g.Graph; readonly at: string }
 
-function readDraft(key: string): Draft | undefined {
+/** The draft kept for `key`; `unreadable` when something is stored that is not a draft (it is left in place, not deleted). */
+function readDraft(key: string): { readonly draft?: Draft; readonly unreadable: boolean } {
   try {
     const text = window.localStorage.getItem(`norn.canvas.draft.${key}`)
-    return text ? JSON.parse(text) as Draft : undefined
-  } catch { return undefined }
+    if (!text) return { unreadable: false }
+    const value: unknown = JSON.parse(text)
+    const draft = value as { graph?: unknown; at?: unknown } | null
+    if (typeof draft === "object" && draft !== null && g.isGraph(draft.graph) && typeof draft.at === "string" && !Number.isNaN(Date.parse(draft.at))) return { draft: { graph: draft.graph, at: draft.at }, unreadable: false }
+    return { unreadable: true }
+  } catch { return { unreadable: true } }
 }
 
 export function writeDraft(key: string, draft: Draft | undefined): boolean {
@@ -86,12 +91,16 @@ let clipboard: g.Graph | undefined
 
 function Frame(props: CanvasFrameProps) {
   const { draftKey, initial, kinds } = props
-  const restored = useRef(readDraft(draftKey))
+  const stored = useRef(readDraft(draftKey))
+  const restored = useRef(stored.current.draft)
+  // A stored draft that cannot be read is kept until the reader makes a change that replaces it.
+  const unreadable = useRef(stored.current.unreadable)
   const [state, setState] = useState(() => g.history(restored.current?.graph ?? initial))
   const [draftAt, setDraftAt] = useState(restored.current?.at)
   const [selection, setSelection] = useState<Selection>(props.initialSelection ?? NONE)
   const [notice, setNotice] = useState<{ readonly tone: "refusal" | "info"; readonly text: string } | null>(props.initialNotice
-    ?? (restored.current ? { tone: "info", text: `Restored your unsaved draft from ${new Date(restored.current.at).toLocaleString()}.` } : null))
+    ?? (restored.current ? { tone: "info", text: `Restored your unsaved draft from ${new Date(restored.current.at).toLocaleString()}.` }
+      : unreadable.current ? { tone: "info", text: "A draft saved in this browser could not be read, so the admitted definition is shown. The draft is kept until you make a change." } : null))
   const flow = useReactFlow()
   // Whether the canvas is in use: the last pointer-down landed on it, or keyboard focus moved into it
   // (React Flow nodes take focus and selection from the keyboard). Its shortcuts apply only then.
@@ -119,7 +128,11 @@ function Frame(props: CanvasFrameProps) {
 
   // Autosave: every change is written at once (a debounce loses the last edit when the tab closes) and kept until discarded or saved.
   useEffect(() => {
-    if (!dirty) { writeDraft(draftKey, undefined); setDraftAt(undefined); return }
+    if (!dirty) {
+      if (!unreadable.current) { writeDraft(draftKey, undefined); setDraftAt(undefined) }
+      return
+    }
+    unreadable.current = false
     const at = new Date().toISOString()
     if (writeDraft(draftKey, { graph, at })) setDraftAt(at)
   }, [graph, dirty, draftKey])
@@ -149,6 +162,7 @@ function Frame(props: CanvasFrameProps) {
     if (dirty) setDraftAt(at)
   }
   const discard = () => {
+    unreadable.current = false
     writeDraft(draftKey, undefined)
     setState(g.history(initial))
     setSelection(NONE)
