@@ -3152,6 +3152,18 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 && head.result.is_none()
         });
         if !is_head {
+            let parked = StoreReader::new(self.conn, self.model)
+                .parked_commands()?
+                .into_iter()
+                .any(|row| {
+                    row.command.command_id == command_id && row.command.generation == generation
+                });
+            if parked {
+                return Err(CellError::ParkedClaimUnsupported {
+                    command_id: command_id.to_owned(),
+                    generation,
+                });
+            }
             return Err(CellError::PerformClaimNotPending {
                 command_id: command_id.to_owned(),
                 generation,

@@ -1726,6 +1726,7 @@ dependencies = [
  "chrono",
  "ct-merkle",
  "js-sys",
+ "norn-builtins",
  "norn-checker",
  "norn-ir",
  "norn-kernel",

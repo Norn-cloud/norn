@@ -637,6 +637,15 @@ pub struct PendingCommand {
     pub result: Option<Value>,
 }
 
+/// PARKED-1: whether `command` waits outside the FIFO perform queue.
+#[must_use]
+pub fn is_parked(command: &OutboxCommand) -> bool {
+    command
+        .command
+        .get("payload")
+        .is_some_and(norn_builtins::parks)
+}
+
 /// A pending timer row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3941,13 +3950,54 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         self.outbox_rows("")
     }
 
-    /// The oldest pending command (the next to `perform`), if any.
+    /// The oldest pending command that does not park (the next to
+    /// `perform`), if any. Parked commands never block it (PARKED-1).
     ///
     /// # Errors
     ///
     /// SQL engine or decode errors.
     pub fn head_command(&self) -> Result<Option<PendingCommand>, CellError> {
-        Ok(self.outbox_rows(" LIMIT 1")?.into_iter().next())
+        Ok(self
+            .outbox_rows("")?
+            .into_iter()
+            .find(|row| !is_parked(&row.command)))
+    }
+
+    /// PARKED-1: pending commands that wait for the cell to resolve them, in
+    /// enqueue order. They are never performed or claimed.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn parked_commands(&self) -> Result<Vec<PendingCommand>, CellError> {
+        Ok(self
+            .outbox_rows("")?
+            .into_iter()
+            .filter(|row| is_parked(&row.command))
+            .collect())
+    }
+
+    /// The pending result delivery of `command_id` at `generation`: the FIFO
+    /// head, or a parked command, once its result is recorded and until a
+    /// commit consumes it.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn pending_result(
+        &self,
+        command_id: &str,
+        generation: u64,
+    ) -> Result<Option<PendingCommand>, CellError> {
+        let matches = |row: &PendingCommand| {
+            row.command.command_id == command_id
+                && row.command.generation == generation
+                && row.result.is_some()
+        };
+        if let Some(head) = self.head_command()?.filter(|head| matches(head)) {
+            return Ok(Some(head));
+        }
+        Ok(self.parked_commands()?.into_iter().find(|row| matches(row)))
     }
 
     /// Whether `command_id` and `generation` have a durable perform claim.
@@ -4217,11 +4267,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             Consumption::Result {
                 command_id,
                 generation,
-            } => Ok(self.head_command()?.is_some_and(|head| {
-                head.command.command_id == *command_id
-                    && head.command.generation == *generation
-                    && head.result.is_some()
-            })),
+            } => Ok(self.pending_result(command_id, *generation)?.is_some()),
             Consumption::Observation { observation_id } => {
                 let found: Option<i64> = self.conn.query_optional(
                     &format!(
