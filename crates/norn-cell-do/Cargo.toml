@@ -19,6 +19,8 @@ norn-ir = { path = "../norn-ir" }
 norn-kernel = { path = "../norn-kernel" }
 norn-projections = { path = "../norn-projections" }
 # Query-string decoding for the fetch dispatch.
+# Reads a host token's key id to rate-limit JWKS refetches; never trusts it.
+base64 = "0.22.1"
 form_urlencoded = "1.2.2"
 http = "1.5.0"
 serde = "1.0.228"
@@ -30,6 +32,8 @@ wasm-bindgen = "=0.2.129"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
 tempfile = "3.27.0"
+# Signs host tokens in the native correspondence tests.
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
 
 [features]
 # Local smoke builds only: lets the Worker accept fixture principals.
