@@ -194,35 +194,36 @@ impl<E: SqlEngine> CellStore<E> {
             if sums != row.totals {
                 return Err(incomplete());
             }
-            // DATA-VALUES-1 (D53): one restricted member withholds every
-            // value-bearing field of every member in the bucket: amounts,
-            // canonical values and the snapshot digest (a guessing oracle for
-            // the values). Otherwise the visible members subtracted from the
-            // totals would reconstruct the restricted one. The same holds for the
-            // source digests (bundle and payload), which hash the same values and
-            // would confirm a guess of a small-domain value offline. Source
-            // identities, mapping pin and field provenance carry no values and
-            // follow their own Sources grant.
-            if contributions
-                .iter()
-                .any(|contribution| contribution.restricted)
-            {
-                for contribution in &mut contributions {
-                    contribution.amounts = None;
-                    contribution.values = None;
-                    contribution.fact_digest = None;
-                    if let ContributionSource::Resolved { provenance } = &mut contribution.source {
-                        provenance.bundle_digest = None;
-                        provenance.document_digest = None;
-                    }
-                }
-            }
+            withhold_restricted_bucket(&mut contributions);
             Ok(NumericTrace {
                 result,
                 bucket: bucket.to_owned(),
                 contributions,
             })
         })
+    }
+}
+
+/// DATA-VALUES-1 (D53): one restricted member withholds every value-bearing
+/// field of every member in the bucket: amounts, canonical values and the
+/// snapshot digest (a guessing oracle for the values). Otherwise the visible
+/// members subtracted from the totals would reconstruct the restricted one. The
+/// same holds for the source digests (bundle and payload), which hash the same
+/// values and would confirm a guess of a small-domain value offline. Source
+/// identities, mapping pin and field provenance carry no values and follow their
+/// own Sources grant.
+fn withhold_restricted_bucket(contributions: &mut [NumericContribution]) {
+    if !contributions.iter().any(|contribution| contribution.restricted) {
+        return;
+    }
+    for contribution in contributions {
+        contribution.amounts = None;
+        contribution.values = None;
+        contribution.fact_digest = None;
+        if let ContributionSource::Resolved { provenance } = &mut contribution.source {
+            provenance.bundle_digest = None;
+            provenance.document_digest = None;
+        }
     }
 }
 

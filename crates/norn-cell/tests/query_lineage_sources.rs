@@ -74,7 +74,10 @@ fn scrap_yield_drills_from_294_over_300_to_exact_authorized_source_rows_and_docu
         );
         assert_eq!(provenance.document_ref.record, raw.provenance.source_id);
         assert_eq!(
-            provenance.document_digest.as_deref().expect("values granted"),
+            provenance
+                .document_digest
+                .as_deref()
+                .expect("values granted"),
             raw.input.as_object().expect("envelope")["payload_digest"]
                 .as_str()
                 .expect("digest")
@@ -216,17 +219,27 @@ fn value_derived_source_digests_follow_the_values_grant_not_the_sources_grant() 
     }
     let wire = serde_json::to_string(&population).expect("wire");
     assert!(!wire.contains("documentDigest") && !wire.contains("bundleDigest"));
-    assert!(wire.contains("ERP-DOC/"), "unrelated Sources disclosure stays");
+    assert!(
+        wire.contains("ERP-DOC/"),
+        "unrelated Sources disclosure stays"
+    );
     // With Values granted both digests are disclosed again.
     let full = trace_with(true);
     for contribution in &full.contributions {
         let ContributionSource::Resolved { provenance } = &contribution.source else {
             panic!("sources granted")
         };
-        assert_eq!(provenance.document_digest.as_deref().map(str::len), Some(64));
+        assert_eq!(
+            provenance.document_digest.as_deref().map(str::len),
+            Some(64)
+        );
         assert_eq!(provenance.bundle_digest.as_deref().map(str::len), Some(64));
     }
-    assert!(serde_json::to_string(&full).expect("wire").contains("documentDigest"));
+    assert!(
+        serde_json::to_string(&full)
+            .expect("wire")
+            .contains("documentDigest")
+    );
 }
 
 #[test]

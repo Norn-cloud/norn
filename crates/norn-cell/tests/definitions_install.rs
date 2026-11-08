@@ -6207,7 +6207,13 @@ fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version()
         .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
         .expect("checked source lineage")
         .expect("bundle");
-    assert_eq!(id, format!("mapping-bundle:{}", evidence.bundle_digest.as_deref().expect("digest")));
+    assert_eq!(
+        id,
+        format!(
+            "mapping-bundle:{}",
+            evidence.bundle_digest.as_deref().expect("digest")
+        )
+    );
     assert_eq!(evidence.source_record_ref.record, "Rows/MEAS-1");
     assert_eq!(evidence.source_record_ref.system, "synthetic-erpnext");
     assert_eq!(evidence.document_ref.system, "synthetic-erpnext");

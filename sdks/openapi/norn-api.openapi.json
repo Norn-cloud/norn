@@ -1839,21 +1839,25 @@
         "type": "object",
         "description": "Where one object version came from: the source record, its document and the\nmapping that produced it. Describes the JSON of\n`norn_cell::source_provenance::InstanceSourceProvenance`; it grants no authority.",
         "required": [
-          "bundleDigest",
           "sourceRecordRef",
           "documentRef",
-          "documentDigest",
           "mappingPin",
           "fieldProvenance"
         ],
         "properties": {
           "bundleDigest": {
-            "type": "string",
-            "description": "Content address of the recomputed mapping bundle."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Content address of the recomputed mapping bundle; omitted in a numeric trace\nwhen the caller may not read the contributing values."
           },
           "documentDigest": {
-            "type": "string",
-            "description": "Digest of the source document payload."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Digest of the source document payload; omitted in a numeric trace when the\ncaller may not read the contributing values."
           },
           "documentRef": {
             "$ref": "#/components/schemas/NornIrSourceRecordRef",

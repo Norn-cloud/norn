@@ -668,10 +668,16 @@ export interface components {
          *     `norn_cell::source_provenance::InstanceSourceProvenance`; it grants no authority.
          */
         NornInstanceSourceProvenance: {
-            /** @description Content address of the recomputed mapping bundle. */
-            bundleDigest: string;
-            /** @description Digest of the source document payload. */
-            documentDigest: string;
+            /**
+             * @description Content address of the recomputed mapping bundle; omitted in a numeric trace
+             *     when the caller may not read the contributing values.
+             */
+            bundleDigest?: string | null;
+            /**
+             * @description Digest of the source document payload; omitted in a numeric trace when the
+             *     caller may not read the contributing values.
+             */
+            documentDigest?: string | null;
             /** @description A source system and the record's identity in it. */
             documentRef: components["schemas"]["NornIrSourceRecordRef"];
             /** @description Field-level source and rule provenance, by property id. */
