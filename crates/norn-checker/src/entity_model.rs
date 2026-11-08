@@ -268,7 +268,7 @@ pub(crate) fn check(
 /// "no types are registered", which would make every known type look unknown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EffectiveViewRefused {
-    /// The exhausted budget dimension (`types`, `steps`, `facts`, ...).
+    /// The exhausted budget dimension (`registered types`, `steps`, `facts`, ...).
     pub dimension: &'static str,
     /// The limit of that dimension.
     pub limit: usize,

@@ -159,7 +159,7 @@ fn budget_refusal_stops_before_cyclic_ancestry_and_effective_tables() {
                 tenant: None
             },
         )
-        .is_err_and(|refusal| refusal.dimension == "types" && refusal.limit == 4_096)
+        .is_err_and(|refusal| refusal.dimension == "registered types" && refusal.limit == 4_096)
     );
 }
 
@@ -186,7 +186,10 @@ fn more_than_the_type_budget_refuses_the_effective_view_instead_of_returning_an_
     };
     let refusal = effective_object_types(&model, &context)
         .expect_err("4,097 registered types exceed the classification budget");
-    assert_eq!((refusal.dimension, refusal.limit), ("types", 4_096));
+    assert_eq!(
+        (refusal.dimension, refusal.limit),
+        ("registered types", 4_096)
+    );
     assert_eq!(
         refusal.diagnostic().code.as_str(),
         "object_type.validation.inheritance_budget_exhausted"

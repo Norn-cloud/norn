@@ -27,7 +27,10 @@ fn a_refused_catalog_errors_instead_of_passing_values_through() {
     let refusal = catalog
         .effective_refusal()
         .expect("4,097 types exceed the classification budget");
-    assert_eq!((refusal.dimension, refusal.limit), ("types", 4_096));
+    assert_eq!(
+        (refusal.dimension, refusal.limit),
+        ("registered types", 4_096)
+    );
     let error = catalog
         .effective_object_values(
             &ObjectTypeName("budget.T0000".to_owned()),

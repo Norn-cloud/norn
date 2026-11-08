@@ -33,7 +33,10 @@ fn more_than_4096_types_make_model_new_refuse() {
     let CellError::EffectiveViewRefused(refused) = refusal else {
         panic!("expected the effective-view refusal, got {refusal:?}");
     };
-    assert_eq!((refused.dimension, refused.limit), ("types", 4_096));
+    assert_eq!(
+        (refused.dimension, refused.limit),
+        ("registered types", 4_096)
+    );
 }
 
 #[test]
