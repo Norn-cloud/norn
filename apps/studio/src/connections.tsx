@@ -143,7 +143,7 @@ export function ConnectionsPage({ children }: { readonly children?: ReactNode })
           </Well>
         </Panel>
       )}
-      {linked && children}
+      {children}
     </section>
   )
 }

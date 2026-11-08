@@ -8,6 +8,7 @@ import { LoginPage } from "./login.tsx"
 import { createRoot } from "react-dom/client"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { ConnectionsPage } from "./connections.tsx"
+import { ToolBindings } from "./tool-bindings.tsx"
 import { QuestionPage, QuestionsPage, useQuestionsMenu } from "./questions.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { ObjectTypePage, SourcesPage, useSourcesMenu } from "./sources.tsx"
@@ -16,6 +17,8 @@ import { GuaranteesPage, useGuaranteesMenu } from "./guarantees.tsx"
 import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
 import { ObjectPage } from "./objects.tsx"
 import "./index.css"
+
+const ConnectionsWithBindings = () => <ConnectionsPage><ToolBindings /></ConnectionsPage>
 
 const SECTIONS: readonly Section[] = [
   { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu, group: "model" },
@@ -78,7 +81,7 @@ const router = createRouter({
     ...SECTIONS.map((section) => createRoute({
       getParentRoute: () => root,
       path: section.path,
-      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : section.path === "/connections" ? ConnectionsPage : () => <NotYet {...section} />,
+      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : section.path === "/connections" ? ConnectionsWithBindings : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),
