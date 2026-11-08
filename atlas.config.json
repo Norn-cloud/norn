@@ -1,0 +1,7 @@
+{
+  "designGraph": {
+    "flows": [
+      { "id": "builder", "label": "Builder", "note": "Studio canvas: lifecycles, automations, agents" }
+    ]
+  }
+}

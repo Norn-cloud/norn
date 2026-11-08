@@ -1,0 +1,13 @@
+{
+  "name": "norn-datalog",
+  "ring": "Zero",
+  "allowed_norn": [
+    "norn-canonical",
+    "norn-graph",
+    "norn-ir"
+  ],
+  "dev_only_norn": [],
+  "third_party": [
+    "serde"
+  ]
+}
