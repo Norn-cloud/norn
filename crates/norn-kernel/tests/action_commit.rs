@@ -3439,6 +3439,53 @@ fn owned_series_add(row_id: &str) -> Value {
 }
 
 #[test]
+fn owned_quantity_intent_refuses_hosts_without_combined_admission() {
+    let definitions = owned_series_types(false, false);
+    let catalog = TypeCatalog::new(&definitions);
+    let mut action = owned_series_action();
+    let mut schema = serde_json::to_value(&action.input_schema).unwrap();
+    schema["properties"]["versions"] = json!({"type": "array", "items": {
+        "type": "object", "properties": {
+            "account": {"type": "string"}, "unit": {"type": "string"},
+            "layer": {"type": "string"}, "version": {"type": "integer"}
+        }, "required": ["account", "unit", "layer", "version"], "additionalProperties": false
+    }});
+    schema["properties"]["reservation"] = json!({"type": "string"});
+    schema["properties"]["posting"] = json!({"type": "string"});
+    action.input_schema = serde_json::from_value(schema).unwrap();
+    action.quantity_effect = Some(
+        serde_json::from_value(json!({
+            "ledgerId": "stock", "balanceVersionsField": "versions",
+            "operation": {"kind": "post_reservation", "reservationIdField": "reservation",
+                "postingIdField": "posting"}
+        }))
+        .unwrap(),
+    );
+    let mut request = owned_series_call(
+        &action,
+        "unsupported-quantity",
+        "0",
+        &json!({"name": "ORDER-1", "company": "ACME"}),
+        &json!([owned_series_add("row-c")]),
+    );
+    request.input.extend(
+        serde_json::from_value::<JsonObject>(json!({
+            "versions": [], "reservation": "hold", "posting": "posted"
+        }))
+        .unwrap(),
+    );
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(definitions.clone());
+    let refusal = refuse_owned_series_atomically(&mut cell, &catalog, &request);
+    assert!(
+        matches!(&refusal,
+        ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { reason })
+            if reason == "observation authorization did not match its prepared commit"),
+        "{refusal:?}"
+    );
+}
+
+#[test]
 fn owned_row_expressions_share_action_fuel_and_refuse_atomically() {
     use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
     use norn_kernel::{EnvelopeLimits, RefusalCategory, ResourceLimitProfile};
