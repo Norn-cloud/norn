@@ -389,6 +389,15 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
+            SliceKey::Parameter { .. } => {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    "parameter slice execution is not qualified in this cut",
+                    format!("{path}.key"),
+                    artifact_id,
+                ));
+                0
+            }
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
