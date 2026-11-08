@@ -17,6 +17,10 @@ use utoipa::{Modify, ToSchema};
 pub(crate) struct ContractSchemas;
 
 impl Modify for ContractSchemas {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass registers every contract schema and install response union"
+    )]
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let components = openapi
             .components
