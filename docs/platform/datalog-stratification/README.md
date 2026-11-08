@@ -101,15 +101,25 @@ theorem entries (`axioms.txt`). Seventeen closures are `propext`, sometimes
 with `Quot.sound`; the five refusal/witness lemmas depend on no axioms. No
 `Classical.choice`, `sorryAx` or other axiom appears.
 
-Reproduce from the repository root:
+Reproduce (Lean 4.34.1, from this directory):
 
 ```bash
-scripts/verify-datalog-stratification-lean.sh
+export ELAN_TOOLCHAIN=leanprover/lean4:v4.34.1
+test "$(cat lean-toolchain)" = "$ELAN_TOOLCHAIN"
+out="$(mktemp -d)"
+lean -DwarningAsError=true -o "$out/Stratification.olean" Stratification.lean
+LEAN_PATH="$out" lean -DwarningAsError=true Audit.lean | diff -u axioms.txt -
 ```
 
-The script requires Lean 4.34.1, checks `Stratification.lean` with
-`-DwarningAsError=true`, prints the axiom closure of every theorem in
-`Audit.lean` and diffs it against the checked-in `axioms.txt`. Only
-`propext`, `Classical.choice` and `Quot.sound` are acceptable; `sorryAx` or any
-other axiom fails the audit. Rust refinement (the open obligations in the table
-above) is not established by this gate.
+Only `propext`, `Classical.choice` and `Quot.sound` are acceptable axioms;
+`sorryAx` or any other axiom fails the audit. Rust refinement (the open
+obligations in the table above) is not established by this check.
+
+## Status in the coverage manifest
+
+These sources live under `docs/platform`, not `verification/`, on purpose: every
+Lean file under `verification/` must be enrolled in the coverage manifest as
+evidence for a named obligation claim, and this model does not yet back one.
+It is therefore not a promoted gate and credits no theorem to any production
+obligation. Promoting it means adding that claim and a gate for the commands
+above in a separate change.
