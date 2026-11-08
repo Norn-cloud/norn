@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { compileDefinitionFiles } from "../src/compiler/definitions.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -18,7 +19,7 @@ function compile() {
 test("jewelry specializes the stock masters and voucher lifecycle deterministically", () => {
   const artifacts = compile()
   expect(canonicalJson(artifacts)).toBe(canonicalJson(compile()))
-  expect(artifacts).toHaveLength(25)
+  expect(artifacts).toHaveLength(30)
   const find = (id: string) => artifacts.find(value => value && typeof value === "object" && "artifactId" in value && value.artifactId === id)
   expect(find("stock.Item.entity")).toMatchObject({ provenance: { sourcePath: "tools/norn-ts/fixtures/stock/stock.source.ts" } })
   expect(find("jewelry.MetalLot.entity")).toMatchObject({ provenance: { sourcePath: "tools/norn-ts/fixtures/jewelry/jewelry.source.ts" } })
@@ -31,7 +32,11 @@ test("jewelry specializes the stock masters and voucher lifecycle deterministica
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
 test.skipIf(!checker)("stock and jewelry definitions pass real checker admission", () => {
   if (!checker) throw new Error("Checker required")
-  const result = checker.checkArtifactSet(compile())
+  const core = join(TOOL_ROOT, "../../registry/core/artifacts")
+  const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
+  const base = [...physics.map(name => `core.${name}.interface.json`), "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
+    .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
+  const result = checker.checkArtifactSet(compile(), { base })
   expect(result.diagnostics.diagnostics).toEqual([])
   expect(result.admitted).toBe(true)
 }, 60_000)
