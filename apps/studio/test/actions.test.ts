@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
 // Real admitted actions from the cell's own fixtures: an upsert with exact decimals and a transition.
@@ -56,6 +56,22 @@ test("nullable leaves, fixed currencies, records, lists and the JSON leaf encode
   expect(fields.find((f) => f.name === "meta")?.spec.kind).toBe("json")
   const draft: { [name: string]: Draft } = { ...emptyDraft(fields), note: null, paid: "true", meta: '{"a": 1.50}', lines: [{ sku: "A-1", qty: "3" }, { sku: "B", qty: "" }] }
   expect(encodeObject(fields, draft)).toBe('{"lines":[{"sku":"A-1","qty":3},{"sku":"B"}],"note":null,"currency":"USD","paid":true,"meta":{"a": 1.50}}')
+})
+
+test("unchecking \"No value\" restores a value of the field's kind, so Submit still encodes", () => {
+  const fields = fieldsOf({
+    type: "object", additionalProperties: false,
+    properties: {
+      note: { type: ["string", "null"] },
+      tags: { type: ["array", "null"], items: { type: "string" } },
+      one: { type: ["object", "null"], additionalProperties: false, properties: { sku: { type: "string" } } },
+    },
+  })
+  const restored = Object.fromEntries(fields.map((f) => [f.name, emptyFor(f.spec)]))
+  expect(restored).toEqual({ note: "", tags: [], one: { sku: "" } })
+  expect(encodeObject(fields, { note: null, tags: null, one: null })).toBe('{"note":null,"tags":null,"one":null}')
+  // A record or list restored from "No value" encodes like a fresh one rather than throwing on a string.
+  expect(encodeObject(fields, restored)).toBe(encodeObject(fields, emptyDraft(fields)))
 })
 
 test("a shape the form cannot offer is named, not guessed at", () => {

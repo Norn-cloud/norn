@@ -247,7 +247,8 @@ export type Draft = string | null | readonly Draft[] | { readonly [name: string]
 export const emptyDraft = (fields: readonly FormField[]): { readonly [name: string]: Draft } =>
   Object.fromEntries(fields.map((field) => [field.name, emptyFor(field.spec)]))
 
-function emptyFor(spec: Spec): Draft {
+/** The blank draft of a field of this kind: a record of blanks, an empty list, the fixed value, or empty text. */
+export function emptyFor(spec: Spec): Draft {
   switch (spec.kind) {
     case "object": return emptyDraft(spec.fields)
     case "array": return []

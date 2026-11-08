@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, itemNoun, newIdempotencyKey, pastTense, risky as isRisky, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, itemNoun, newIdempotencyKey, pastTense, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type CallResult, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 
@@ -213,7 +213,7 @@ function Nullable({ field, value, onEdit, widget }: { readonly field: FormField;
     <div className="grid gap-1.5">
       {!none && widget}
       <label className="flex items-center gap-2 text-meta text-muted-foreground">
-        <input type="checkbox" checked={none} onChange={(event) => onEdit(field.pointer, event.target.checked ? null : "")} /> No value
+        <input type="checkbox" checked={none} onChange={(event) => onEdit(field.pointer, event.target.checked ? null : emptyFor(field.spec))} /> No value
       </label>
     </div>
   )
