@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "checker": "bash ../../crates/norn-checker-wasm/scripts/build-pkg.sh src/checker",
     "typecheck": "tsc -p tsconfig.json && tsc -p worker/tsconfig.json",
     "test": "bun test",
-    "deploy": "NODE_ENV=production vite build && bun ./alchemy.run.ts",
+    "deploy": "bun run checker && NODE_ENV=production vite build && bun ./alchemy.run.ts",
     "e2e": "playwright test"
   },
   "dependencies": {

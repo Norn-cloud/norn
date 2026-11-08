@@ -9,7 +9,7 @@ interface CheckerModule {
 }
 
 // src/checker/ holds the checker ABI package (crates/norn-checker-wasm,
-// `--target web`), built into place before `vite build`; it is not committed.
+// `--target web`), built into place by `bun run checker` (the deploy script runs it before `vite build`); it is not committed.
 // A glob, so a build without it still succeeds and the canvas says the checker is absent.
 // Called, not evaluated at import: only Vite provides import.meta.glob, and tests import this module through the pages.
 const PACKAGE = () => import.meta.glob<CheckerModule>("../../checker/norn_checker_wasm.js")
