@@ -1903,7 +1903,9 @@ impl<X> DecisionRefusal<X> {
                 actual_bytes,
                 max_bytes,
             } => Self::commit_identifier_refusal(field, actual_bytes, max_bytes),
-            CommitError::ImmutableObject { key } => invalid(format!("{key} is immutable")),
+            CommitError::ImmutableObject { key } => Self::InvalidOutput {
+                reason: format!("{key} is immutable"),
+            },
             CommitError::NotPending { consumed } => Self::NotPending { consumed },
             CommitError::Conflict {
                 key,
@@ -2028,6 +2030,7 @@ impl<X> DecisionRefusal<X> {
             | CommitError::DuplicateKey { .. }
             | CommitError::OwnedRowsProtected { .. }
             | CommitError::IdentifierTooLong { .. }
+            | CommitError::ImmutableObject { .. }
             | CommitError::NotPending { .. }
             | CommitError::Conflict { .. }
             | CommitError::TypeMismatch { .. }
