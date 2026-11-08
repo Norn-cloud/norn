@@ -2650,7 +2650,7 @@ fn budget_types(count: usize) -> Vec<ObjectTypeDef> {
     (0..count)
         .map(|index| {
             serde_json::from_value(serde_json::json!({ "name": format!("budget.T{index:04}") }))
-                .expect("object type")
+                .unwrap()
         })
         .collect()
 }
@@ -2659,9 +2659,7 @@ fn budget_types(count: usize) -> Vec<ObjectTypeDef> {
 fn a_refused_catalog_errors_instead_of_passing_values_through() {
     let objects = budget_types(4_097);
     let catalog = TypeCatalog::new(&objects);
-    let refusal = catalog
-        .effective_refusal()
-        .expect("4,097 types exceed the classification budget");
+    let refusal = catalog.effective_refusal().unwrap();
     assert_eq!(
         (refusal.dimension, refusal.limit),
         ("registered types", 4_096)
@@ -2671,7 +2669,7 @@ fn a_refused_catalog_errors_instead_of_passing_values_through() {
             &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
             &JsonObject::new(),
         )
-        .expect_err("no effective view means no materialized values");
+        .unwrap_err();
     assert!(matches!(error, EffectiveValuesError::ViewRefused(_)));
     assert!(
         catalog
