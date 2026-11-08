@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "./components/ui/shadcn.css";
 @import "@fontsource-variable/inter";
+@source "../node_modules/streamdown/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -160,3 +161,8 @@
   body { @apply bg-canvas text-foreground antialiased; font-size: 0.875rem; line-height: 1.45; }
   h1, h2, h3 { letter-spacing: -0.02em; }
 }
+
+/* Shiki's dual themes: each token carries both colours; the page's scheme picks one. */
+.code pre { background: transparent !important; }
+.code span { color: var(--shiki-light); }
+.dark .code span { color: var(--shiki-dark); }

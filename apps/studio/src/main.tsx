@@ -1,3 +1,4 @@
+import { AgentButton } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router"
 import { ChartLine, Database, Gauge, Network, ShieldCheck, Workflow } from "lucide-react"
@@ -14,16 +15,16 @@ import { StatusPage } from "./status.tsx"
 import { GuaranteesPage, useGuaranteesMenu } from "./guarantees.tsx"
 import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
 import { CanvasPage } from "./canvas.tsx"
-import { ObjectPage } from "./objects.tsx"
+import { SourcesItemPage } from "./objects.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu, group: "model" },
-  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu, group: "model" },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", useMenu: useWorkflowsMenu, group: "rules" },
-  { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "rules" },
-  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", useMenu: useGuaranteesMenu, group: "rules" },
-  { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", group: "system", foot: true },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", kind: "source", useMenu: useSourcesMenu, group: "Model" },
+  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model" },
+  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules" },
+  { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "Rules" },
+  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
+  { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", foot: true },
 ]
 
 function NotYet({ label, summary, icon }: Section) {
@@ -47,7 +48,7 @@ function NotYet({ label, summary, icon }: Section) {
 function Root() {
   const account = useAccount()
   const refresh = useRefreshAccount()
-  if (account.data != null) return <Shell sections={SECTIONS} account={account.data} onSignOut={() => void signOut(refresh)} />
+  if (account.data != null) return <Shell sections={SECTIONS} tools={<AgentButton />} account={account.data} onSignOut={() => void signOut(refresh)} />
   if (account.isPending) return null
   if (account.isError) {
     return (
@@ -81,7 +82,7 @@ const router = createRouter({
       component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/canvas" ? CanvasPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
-    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: SourcesItemPage }),
     createRoute({ getParentRoute: () => root, path: "/questions/$name", component: QuestionPage }),
   ]),
 })
