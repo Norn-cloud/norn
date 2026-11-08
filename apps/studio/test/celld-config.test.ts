@@ -45,6 +45,10 @@ test("the tool gateway reaches the Worker only whole, as an https origin with St
   expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_CLIENT_ID: "" })).toThrow("non-empty")
   expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_CLIENT_SECRET: "" })).toThrow("non-empty")
   expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: "http://127.0.0.1:9878" })).toThrow("https origin")
+  expect(celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: "https://gateway.example.com:8443" }).toolGateway?.url).toBe("https://gateway.example.com:8443")
+  for (const bad of ["https://gateway.example.com/", "https://gateway.example.com/v1", "https://user@gateway.example.com", "https://gateway.example.com:8443/x", "https://gateway.example.com?x=1", "https://Gateway.example.com"]) {
+    expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: bad })).toThrow("https origin")
+  }
 })
 
 test("the secret-bearing config is created exclusively, readable by its owner only", async () => {

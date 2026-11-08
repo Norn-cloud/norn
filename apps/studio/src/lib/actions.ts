@@ -180,7 +180,7 @@ function specOf(schema: unknown, pointer: string): { spec: Spec; nullable: boole
     const names = [...new Set(type.map(String))].sort()
     if (names.join() === JSON_DOMAIN.join()) return { spec: { kind: "json" }, nullable: false }
     const inner = names.filter((name) => name !== "null")
-    if (names.includes("null") && inner.length === 1) return { spec: specOf({ type: inner[0] }, pointer).spec, nullable: true }
+    if (names.includes("null") && inner.length === 1) return { spec: specOf({ ...node, type: inner[0] }, pointer).spec, nullable: true }
     return { spec: { kind: "unsupported", reason: `type union ${names.join(" | ")}` }, nullable: false }
   }
   switch (type) {
@@ -232,7 +232,11 @@ export function unsupported(fields: readonly FormField[]): string | null {
   for (const field of fields) {
     if (field.spec.kind === "unsupported") return `${field.name}: ${field.spec.reason}`
     if (field.spec.kind === "object") { const inner = unsupported(field.spec.fields); if (inner) return `${field.name}.${inner}` }
-    if (field.spec.kind === "array" && field.spec.item.kind === "unsupported") return `${field.name}: items ${field.spec.item.reason}`
+    if (field.spec.kind === "array") {
+      const item = field.spec.item
+      if (item.kind === "unsupported") return `${field.name}: items ${item.reason}`
+      if (item.kind === "object") { const inner = unsupported(item.fields); if (inner) return `${field.name}[].${inner}` }
+    }
   }
   return null
 }

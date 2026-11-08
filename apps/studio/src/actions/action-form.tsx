@@ -101,7 +101,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   }
 
   if (phase.kind === "done") {
-    return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} receipt={phase.receipt} onAgain={writesWhole(action) ? () => { setDraft(emptyDraft(fields)); setKey(newKey()); setStep(0); setReached(0); setPhase({ kind: "editing" }) } : undefined} onClose={onClose} />
+    return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} receipt={phase.receipt} onAgain={writesWhole(action) ? () => { setDraft(initial); setKey(newKey()); setStep(0); setReached(0); setPhase({ kind: "editing" }) } : undefined} onClose={onClose} />
   }
 
   const top = unplaced(diagnostics, fields)

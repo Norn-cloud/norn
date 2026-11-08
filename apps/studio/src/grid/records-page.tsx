@@ -21,7 +21,7 @@ export function RecordsPage() {
           <span className="font-mono text-meta text-muted-foreground">{concept.name}</span>
           <Link to="/sources/$concept" params={{ concept: concept.name }} className="text-meta underline-offset-4 hover:underline">Definition</Link>
         </header>
-        <RecordsGrid concept={concept} />
+        <RecordsGrid key={concept.name} concept={concept} />
       </>}
     </div>
   )

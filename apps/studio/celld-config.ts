@@ -28,6 +28,13 @@ export interface CelldStudio {
 }
 
 const NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+/** An https origin as written: a lowercase DNS host and an optional port, with no path, query, fragment or credentials. */
+const isHttpsOrigin = (value: string): boolean => {
+  try {
+    const url = new URL(value)
+    return url.protocol === "https:" && url.origin === value && /^[a-z0-9.-]+$/.test(url.hostname)
+  } catch { return false }
+}
 
 /** Read the deploy's settings from the environment, refusing anything incomplete. */
 export function celldStudio(env: Readonly<Record<string, string | undefined>>): CelldStudio {
@@ -50,7 +57,7 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   const toolSettings = [toolUrl, toolClient, toolSecret].filter((value) => value !== undefined && value !== "").length
   const toolDeclared = [toolUrl, toolClient, toolSecret].some((value) => value !== undefined)
   if (toolDeclared && toolSettings !== 3) throw new Error("TOOL_GATEWAY_URL, TOOL_GATEWAY_CLIENT_ID and TOOL_GATEWAY_CLIENT_SECRET go together, each non-empty")
-  if (toolUrl !== undefined && !/^https:\/\/[a-z0-9.-]+$/.test(toolUrl)) throw new Error("TOOL_GATEWAY_URL must be an https origin without a path")
+  if (toolUrl !== undefined && !isHttpsOrigin(toolUrl)) throw new Error("TOOL_GATEWAY_URL must be an https origin without a path")
   return {
     stage, build, authUrl, authSecret,
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },

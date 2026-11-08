@@ -61,6 +61,24 @@ test("nullable leaves, fixed currencies, records, lists and the JSON leaf encode
 test("a shape the form cannot offer is named, not guessed at", () => {
   const fields = fieldsOf({ type: "object", additionalProperties: false, properties: { odd: { type: ["string", "integer"] } } })
   expect(unsupported(fields)).toBe("odd: type union integer | string")
+  // ...also inside a list of records, where the member would otherwise be dropped silently.
+  const nested = fieldsOf({ type: "object", additionalProperties: false, properties: { lines: { type: "array", items: { type: "object", additionalProperties: false, properties: { odd: { type: ["string", "integer"] } } } } } })
+  expect(unsupported(nested)).toBe("lines[].odd: type union integer | string")
+})
+
+test("a nullable union keeps the node's other keywords: choices, items and members", () => {
+  const fields = fieldsOf({
+    type: "object", additionalProperties: false,
+    properties: {
+      kind: { type: ["string", "null"], enum: ["a", "b"] },
+      tags: { type: ["array", "null"], items: { type: "string" } },
+      one: { type: ["object", "null"], additionalProperties: false, properties: { sku: { type: "string" } } },
+    },
+  })
+  expect(fields.find((f) => f.name === "kind")).toMatchObject({ nullable: true, spec: { kind: "choice", values: ["a", "b"] } })
+  expect(fields.find((f) => f.name === "tags")).toMatchObject({ nullable: true, spec: { kind: "array", item: { kind: "text" } } })
+  expect(fields.find((f) => f.name === "one")).toMatchObject({ nullable: true, spec: { kind: "object", fields: [{ name: "sku" }] } })
+  expect(unsupported(fields)).toBeNull()
 })
 
 test("refusal pointers land on their field, nested ones on the field that holds them, the rest at the top", () => {

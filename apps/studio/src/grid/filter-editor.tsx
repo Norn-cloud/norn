@@ -6,7 +6,7 @@ import type { Field } from "../lib/catalog.ts"
 import { LIMITS, opsFor, type Clause, type Op, type Predicate } from "../lib/records-query.ts"
 import { diagnosticsAt, type QueryDiagnostic } from "../lib/records-source.ts"
 
-/** A clause being written: the value is kept as typed until it is applied. */
+/** A clause being written: the value is kept as typed until it is applied. For "is one of" on a free-form field `value` holds the lines as typed; on an enum, `values` holds the picks. */
 export interface DraftClause { readonly property: string; readonly op: Op; readonly value: string; readonly high: string; readonly values: readonly string[] }
 
 export const OP_LABEL: Readonly<Record<Op, string>> = {
@@ -30,7 +30,7 @@ export function toPredicate(draft: readonly DraftClause[], fields: readonly Fiel
       case "empty":
       case "present": return { property: clause.property, op: clause.op }
       case "between": return { property: clause.property, op: "between", value: [clause.value.trim(), clause.high.trim()] }
-      case "in": return { property: clause.property, op: "in", value: clause.values }
+      case "in": return { property: clause.property, op: "in", value: kind === "enum" ? clause.values : clause.value.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, LIMITS.inValues) }
       default: return { property: clause.property, op: clause.op, value: kind === "boolean" ? clause.value === "true" : clause.value.trim() }
     }
   })
@@ -42,7 +42,7 @@ export function fromPredicate(predicate: Predicate | null): readonly DraftClause
     const value = "value" in clause ? clause.value : undefined
     return {
       property: clause.property, op: clause.op,
-      value: Array.isArray(value) ? (clause.op === "between" ? String(value[0] ?? "") : "") : value === undefined ? "" : String(value),
+      value: Array.isArray(value) ? (clause.op === "between" ? String(value[0] ?? "") : clause.op === "in" ? value.map(String).join("\n") : "") : value === undefined ? "" : String(value),
       high: clause.op === "between" && Array.isArray(value) ? String(value[1] ?? "") : "",
       values: clause.op === "in" && Array.isArray(value) ? value.map(String) : [],
     }
@@ -50,6 +50,9 @@ export function fromPredicate(predicate: Predicate | null): readonly DraftClause
 }
 
 export const sameDraft = (a: readonly DraftClause[], b: readonly DraftClause[]) => JSON.stringify(a) === JSON.stringify(b)
+
+/** The draft as applying it would leave it: trimmed, and without what its test does not use. */
+export const settled = (draft: readonly DraftClause[], fields: readonly Field[]) => fromPredicate(toPredicate(draft, fields))
 
 const select = "h-8 rounded-md border bg-background px-2 text-sm"
 
@@ -68,7 +71,7 @@ function ValueInput({ field, clause, onChange, label, problem }: { readonly fiel
     }
     return (
       <textarea {...invalid} aria-label={label} placeholder="One value per line" className="min-h-16 rounded-md border bg-background px-2 py-1 text-sm"
-        value={clause.values.join("\n")} onChange={(event) => onChange({ ...clause, values: event.target.value.split("\n").map((v) => v.trim()).filter(Boolean).slice(0, LIMITS.inValues) })} />
+        value={clause.value} onChange={(event) => onChange({ ...clause, value: event.target.value })} />
     )
   }
   if (kind === "enum" && field.scalar.kind === "enum") {
@@ -106,7 +109,7 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
 }) {
   const id = useId()
   const options = filterable(fields)
-  const dirty = !sameDraft(draft, applied)
+  const dirty = !sameDraft(settled(draft, fields), applied)
   const set = (index: number, next: DraftClause) => onDraft(draft.map((clause, i) => i === index ? next : clause))
   const general = diagnosticsAt(diagnostics, "/filter").filter(({ pointer }) => !pointer?.startsWith("/filter/all/"))
   return (
@@ -125,7 +128,7 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
                   onChange={(event) => { const next = options.find(({ id: fid }) => fid === event.target.value); if (next) set(index, blankClause(next)) }}>
                   {options.map((option) => <option key={option.id} value={option.id}>{option.id.replaceAll("_", " ")}</option>)}
                 </select>
-                <select aria-label={`${label} test`} className={select} value={clause.op} onChange={(event) => set(index, { ...clause, op: event.target.value as Op })}>
+                <select aria-label={`${label} test`} className={select} value={clause.op} onChange={(event) => { const op = event.target.value as Op; set(index, { ...clause, op, value: (op === "in") === (clause.op === "in") ? clause.value : "" }) }}>
                   {opsFor(field.scalar).map((op) => <option key={op} value={op}>{OP_LABEL[op]}</option>)}
                 </select>
                 <ValueInput field={field} clause={clause} label={`${label} value`} problem={problems.length > 0 ? `${id}-${index}` : undefined} onChange={(next) => set(index, next)} />

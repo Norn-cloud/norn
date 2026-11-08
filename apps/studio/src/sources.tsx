@@ -186,7 +186,7 @@ export function ObjectTypePage() {
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
-      {concept?.definition === "object type" && <RecordsGrid concept={concept} />}
+      {concept?.definition === "object type" && <RecordsGrid key={concept.name} concept={concept} />}
     </div>
   )
 }

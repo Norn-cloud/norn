@@ -13,6 +13,7 @@ mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport
 const { RecordsGrid } = await import("../src/grid/records-grid.tsx")
 const { cellText } = await import("../src/grid/cells.tsx")
 const { EMPTY_QUERY, recordsQueryParams, SERVER_QUERY_UNAVAILABLE } = await import("../src/lib/records-query.ts")
+const { blankClause, fromPredicate, sameDraft, settled, toPredicate } = await import("../src/grid/filter-editor.tsx")
 
 const explorer = (name: string) => readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8")
 const catalog = catalogOf(readDocument<readonly Artifact[]>(explorer("three-systems.definitions.json"), "recorded").document)
@@ -103,4 +104,17 @@ test("typed cells keep the server's exact text", () => {
   const partly = { ...row, record: { ...row.record, withheld: false, withheldProperties: ["qty"] } as never }
   expect(cellText(field("qty", { kind: "decimal" }), partly)).toBe("Withheld")
   expect(cellText(field("missing", { kind: "text" }), partly)).toBe("—")
+})
+
+test("'is one of' on a free-form field keeps what was typed, and applying leaves the draft settled", () => {
+  const name = concept.fields.find((field) => field.scalar.kind === "text")
+  if (name === undefined) throw new Error("canon.Item has no text field")
+  const typed = [{ ...blankClause(name), op: "in" as const, value: "New York\n Gold \n\n" }]
+  expect(toPredicate(typed, concept.fields)).toEqual({ all: [{ property: name.id, op: "in", value: ["New York", "Gold"] }] })
+  // The raw text (a trailing newline, a space) is not "not applied" once its predicate is.
+  const applied = fromPredicate(toPredicate(typed, concept.fields))
+  expect(sameDraft(settled(typed, concept.fields), applied)).toBe(true)
+  // A leftover from an earlier test (extra `values`, untrimmed text) settles the same way.
+  const leftover = [{ ...blankClause(name), op: "eq" as const, value: " Gold ", values: ["x"] }]
+  expect(settled(leftover, concept.fields)).toEqual([{ property: name.id, op: "eq", value: "Gold", high: "", values: [] }])
 })
