@@ -383,3 +383,28 @@ fn underived_twenty_kib_input_is_retained_once_and_commits_a_small_transition() 
         )
     );
 }
+
+#[test]
+fn oversized_raw_input_is_refused_by_its_bound_before_normalization() {
+    let action = action();
+    let max = usize::try_from(
+        norn_kernel::ResourceLimitProfile::norn_limits_v1()
+            .slice
+            .max_canonical_bytes,
+    )
+    .unwrap();
+    // `extra` is not in the closed input schema, so normalizing this input
+    // would refuse it as invalid input. Only the pre-normalization bound
+    // check yields `input_bound_exceeded`.
+    let raw: JsonObject =
+        serde_json::from_value(json!({"code": "x".repeat(max + 1), "extra": 1})).unwrap();
+    let refusal = prepare_action_input::<Infallible>(&action, &raw).unwrap_err();
+    assert_eq!(refusal.code(), "action.input_bound_exceeded");
+    let within: JsonObject = serde_json::from_value(json!({"code": "x", "extra": 1})).unwrap();
+    assert_eq!(
+        prepare_action_input::<Infallible>(&action, &within)
+            .unwrap_err()
+            .code(),
+        "action.invalid_input"
+    );
+}

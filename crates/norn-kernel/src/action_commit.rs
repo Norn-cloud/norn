@@ -299,7 +299,9 @@ pub trait ActionAuthorizer {
 pub struct ActionDerivedValue {
     /// The derived field.
     pub field: String,
-    /// The exact runtime value written to the effective input.
+    /// The exact runtime value written to the effective input. Preserve source
+    /// text and use an exact-number JSON parser; JavaScript `JSON.parse` may
+    /// lose precision.
     pub value: RuntimeValue,
 }
 
@@ -402,6 +404,8 @@ pub struct ActionCallRecord {
     /// The call's input.
     pub input: JsonObject,
     /// The final input after ordered derivations. Legacy records use `input`.
+    /// Preserve source text and use an exact-number JSON parser for its values;
+    /// JavaScript `JSON.parse` may lose precision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_input: Option<JsonObject>,
     /// The values produced by each derivation, in declaration order.
@@ -5037,9 +5041,16 @@ fn prepare_action_input_inner<'a, X>(
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
-    let normalized = normalize_action_input::<X>(action, raw_input)?;
     let profile = ResourceLimitProfile::norn_limits_v1();
-    if !has_action_preparation_features(action) && normalized == *raw_input {
+    let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
+    let has_preparation = has_action_preparation_features(action);
+    if has_preparation {
+        // Refuse oversized raw input by its canonical size before any clone,
+        // decode or normalization work.
+        check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
+    }
+    let normalized = normalize_action_input::<X>(action, raw_input)?;
+    if !has_preparation && normalized == *raw_input {
         validate_action_input(action, &normalized)?;
         return Ok(ActionInputPreparation {
             action,
@@ -5053,10 +5064,11 @@ fn prepare_action_input_inner<'a, X>(
             precondition_outcomes: Vec::new(),
         });
     }
-    let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
     let max_receipt_bytes =
         usize::try_from(profile.envelope.max_output_bytes).unwrap_or(usize::MAX);
-    check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
+    if !has_preparation {
+        check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
+    }
     let raw_bytes = canonical_object_bytes::<X>(raw_input)?;
     if raw_bytes > max_receipt_bytes {
         return Err(ActionRefusal::InputBoundExceeded {
