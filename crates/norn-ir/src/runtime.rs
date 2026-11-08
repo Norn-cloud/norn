@@ -178,6 +178,15 @@ impl Decimal {
         self.0.is_integer()
     }
 
+    /// The exact sum, or `None` when it cannot be held without rounding.
+    #[must_use]
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        let sum = self.0.checked_add(other.0)?;
+        // The 96-bit mantissa can force a rescale on overflow; an exact sum
+        // subtracts back to its operand.
+        (sum.checked_sub(other.0) == Some(self.0)).then_some(Self(sum))
+    }
+
     /// The value as an `i64`, when it is an integer in range.
     #[must_use]
     pub fn to_i64(&self) -> Option<i64> {
