@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionCard, VerdictCard } from "./cards.tsx"
+import { QuestionCard, questionVerdictOf } from "./question.tsx"
 import { EXAMPLES, STEPS, SUGGESTIONS, sessionId, settleExample, stepOf, tabStorage, timeline, verdictOf, type ExampleRun, type Verdict } from "./verdict.ts"
 
 const ALTERNATIVE = "Suggest a different change that keeps the intent but that the checker would admit, and propose it."
@@ -66,6 +67,14 @@ function Parts({ message }: { readonly message: UIMessage }) {
   return message.parts.map((part, index) => {
     const key = `${message.id}:${index}`
     if (part.type === "text") return message.role === "user" ? <p key={key} className="whitespace-pre-wrap">{part.text}</p> : <Streamdown key={key} className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{part.text}</Streamdown>
+    if (part.type === "tool-propose_question") {
+      if (part.state === "output-available") {
+        const verdict = questionVerdictOf(part.output)
+        return verdict ? <QuestionCard key={key} verdict={verdict} /> : <p key={key} className="text-sm text-muted-foreground">The checker's answer could not be read.</p>
+      }
+      if (part.state === "output-error") return <p key={key} className="text-sm text-destructive">The checker could not run: {part.errorText}</p>
+      return <p key={key} className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Asking the checker…</p>
+    }
     if (part.type === "tool-propose") {
       if (part.state === "output-available") {
         const verdict = verdictOf(part.output)
