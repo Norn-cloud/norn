@@ -5894,7 +5894,9 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
                             aggregate: aggregate.name.clone(),
                             max_bytes: limits.max_canonical_bytes,
                         },
-                        _ => unavailable(exceeded.to_string()),
+                        crate::IngressLimit::SliceRecords
+                        | crate::IngressLimit::SliceRelationDepth
+                        | crate::IngressLimit::EnvelopeBytes => unavailable(exceeded.to_string()),
                     })?;
             }
         }
