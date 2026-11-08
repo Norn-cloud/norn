@@ -12,6 +12,7 @@ import { RunQuestion } from "./run.tsx"
 import { questionDefinitions, QuestionDefinitionError } from "./lib/question-definitions.ts"
 import { NO_DATA_CELL, useStudioScope } from "./lib/definitions.ts"
 import { z } from "zod"
+import { useView } from "@/lib/view"
 
 /** One option of a column, as GET /api/questions/recommendations serves it. */
 interface Choice { readonly id: string; readonly label: string; readonly detail: string; readonly recommended: boolean; readonly value: Record<string, unknown> }
@@ -30,7 +31,7 @@ export interface Recommendations {
 export interface CheckedQuestion { readonly verdict: QuestionVerdict; readonly restatement: { readonly text: string; readonly sha256: string } | null; readonly restatementError?: string }
 
 /** A sign-off: the person read exactly these words (by their hash) and said "This is what I asked for". */
-export interface SignOff { readonly sha256: string; readonly atMs: number; readonly signer?: string }
+export interface SignOff { readonly sha256: string; readonly atMs: number; readonly signer?: string; readonly displayName?: string }
 
 async function readRecommendations(): Promise<Recommendations> {
   const response = await fetch("/api/questions/recommendations", { headers: { accept: "application/json" } })
@@ -47,11 +48,6 @@ async function checkQuestion(question: unknown): Promise<CheckedQuestion> {
 }
 
 const words = (name: string) => name.replaceAll("_", " ")
-/** The cell stores a QuestionIR name; present it as a readable name alongside its id. */
-export const questionTitle = (title: string, id: string) => {
-  const label = (title || id).replace(/^studio\./, "").replaceAll("_", " ")
-  return label ? label[0]?.toUpperCase() + label.slice(1) : id
-}
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const options = (choices: readonly Choice[], extra: readonly ColumnOption[] = []): readonly ColumnOption[] =>
   [...choices.map(({ id, label, detail, recommended }) => ({ id, label, detail, marks: recommended ? ["recommended" as const] : [] })), ...extra]
@@ -100,6 +96,7 @@ const stable = (value: unknown): string => JSON.stringify(value, (_key, v: unkno
 const definitions = questionDefinitions()
 
 export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommendations; readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode }) {
+  const { view } = useView()
   const editor = useEditor<Draft>({ initial: recommendedDraft(tree) })
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
@@ -163,12 +160,12 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       if (request !== opening.current) return
       const parsed = savedQuestion.safeParse(stored.payload)
       if (!parsed.success) throw new QuestionDefinitionError("definition.shape", "This question uses fields this builder cannot edit.")
-      const next = draftOf(parsed.data)
+      const next = draftOf(parsed.data, parsed.data.name)
       if (stable(buildQuestion(next, catalog)) !== stable(parsed.data)) throw new QuestionDefinitionError("definition.unsupported", "This question cannot be reopened without changing it.")
       const { name: _storedName, ...storedQuestion } = buildQuestion(next, catalog)
       const signoff = stored.signoff
       editor.open(next); setCustomCondition(false); setSaved({ id: stored.id, version: stored.version }); setVerified(Boolean(signoff)); setRemoved(undefined)
-      setSignOff(signoff && signoff.restatementSha256 === stored.words.sha256 ? { sha256: signoff.restatementSha256, atMs: signoff.signedAtMs, signer: signoff.signer } : undefined)
+      setSignOff(signoff && signoff.restatementSha256 === stored.words.sha256 ? { sha256: signoff.restatementSha256, atMs: signoff.signedAtMs, signer: signoff.signer, displayName: signoff.displayName ?? "a removed user" } : undefined)
       setChecked(undefined); setCheckedKey(undefined); setServerWords({ key: JSON.stringify(storedQuestion), value: stored.words }); setRestatementFailure(undefined); setSaveError(undefined)
     } catch (error) { if (request === opening.current) setSaveError(error instanceof Error ? error.message : String(error)) }
   }
@@ -291,14 +288,14 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       {currentCheck && !admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{currentCheck.verdict.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
       {currentCheck && restated === null && <p role="status" className="text-sm text-muted-foreground">This question cannot be stated in plain words, so it cannot be signed off: {currentCheck.restatementError ?? "the checker gave no reason"}.</p>}
       {restated && (
-        <Panel icon={ShieldCheck} label="In plain words" action={<span className="font-mono text-xs text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span>}>
+        <Panel icon={ShieldCheck} label="In plain words" action={view === "technical" ? <span className="font-mono text-xs text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span> : undefined}>
           <div className="space-y-3 p-1">
             {fromCell && <p className="font-medium">The server reads your question as:</p>}
             <p className="text-base" data-testid="restatement">{restated.text}</p>
             <p className="text-meta text-muted-foreground">Written from the question itself by the server, not by the assistant. Check that it says what you mean.</p>
             <div className="flex flex-wrap items-center gap-3">
               {signed
-                ? <span className="flex items-center gap-2 text-sm font-medium"><BadgeCheck className="size-4 text-success" />{signOff.signer ? `Signed off by ${signOff.signer} on ${new Date(signOff.atMs).toLocaleDateString()}` : "Signed off: this is what you asked for"}</span>
+                ? <span className="flex items-center gap-2 text-sm font-medium"><BadgeCheck className="size-4 text-success" />{signOff.signer ? <>Signed off by {signOff.displayName} on {new Date(signOff.atMs).toLocaleDateString()}{view === "technical" && <span className="font-mono text-meta text-muted-foreground">({signOff.signer})</span>}</> : "Signed off: this is what you asked for"}</span>
                 : <Button type="button" size="sm" disabled={!admitted} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => restated && setSignOff({ sha256: restated.sha256, atMs: Date.now() })}>This is what I asked for</Button>}
               {!admitted && <span className="text-meta text-muted-foreground">Sign-off opens once the checker admits the question.</span>}
             </div>
@@ -322,7 +319,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
         {cellAvailable && list.isPending && <p>Loading saved questions…</p>}
         {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
         {list.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No saved questions yet.</p>}
-        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span><span>{questionTitle(item.title, item.id)} · version {item.version}</span><span className="block text-meta text-muted-foreground">{item.id}</span></span><Button type="button" variant="outline" size="sm" disabled={!cellAvailable || saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
+        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span><span>{item.title || item.id} · version {item.version}</span><span className="block text-meta text-muted-foreground">{item.id}</span></span><Button type="button" variant="outline" size="sm" disabled={!cellAvailable || saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
         {pageCursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(undefined)}>First page</Button>}
         {list.data?.cursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
       </Panel>
