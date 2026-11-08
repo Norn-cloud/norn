@@ -28,10 +28,14 @@ impl<E: SqlEngine> CellStore<E> {
         let mut result = snapshot.result;
         result.rows = rows;
         result.engine = Engine::Duckdb;
+        let evidence = super::FindingEvidence {
+            context: &result.context,
+            exclusions: &result.exclusions,
+        };
         result.lineage_ref = crate::codec::hash_json(&(
             &result.query_pin,
             &result.revision,
-            &result.context,
+            evidence,
             &result.rows,
         ))?;
         Ok(result)
