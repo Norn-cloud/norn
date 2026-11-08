@@ -33,6 +33,23 @@ export const automationKinds: Kinds = {
   route: (node) => [input, ...branchesOf(node).map((_, index) => ({ id: `b${index}`, type: FLOW, side: "out" as const })), { id: "otherwise", type: FLOW, side: "out" }, next],
 }
 
+/**
+ * Set a route's branches. `order[i]` is the old index of new branch `i`
+ * (`-1` for a new one); each branch's exit edge follows it, and the exit of
+ * a removed branch goes with it.
+ */
+export function setBranches(graph: Graph, id: string, branches: readonly Condition[][], order: readonly number[]): Graph {
+  const moved = new Map<string, string>(order.flatMap((old, index) => old >= 0 ? [[`b${old}`, `b${index}`] as const] : []))
+  return {
+    nodes: graph.nodes.map((node) => node.id === id ? { ...node, config: { ...node.config, branches: JSON.stringify(branches) } } : node),
+    edges: graph.edges.flatMap((edge) => {
+      if (edge.source !== id || !/^b\d+$/.test(edge.sourcePort)) return [edge]
+      const port = moved.get(edge.sourcePort)
+      return port ? [{ ...edge, sourcePort: port }] : []
+    }),
+  }
+}
+
 /** A finding the canvas itself makes before anything is lowered. */
 export interface Problem extends BuildDiagnostic {
   readonly node?: string
