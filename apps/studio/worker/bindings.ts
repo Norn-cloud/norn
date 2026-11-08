@@ -159,7 +159,7 @@ export function readDraft(body: unknown, inputSchema: unknown, fallback?: Bindin
   if (typeof mapping !== "object" || mapping === null || Array.isArray(mapping)) return { field: "inputMapping", error: "inputMapping must be {field: {fixed: value}}." }
   const properties = ((inputSchema as { properties?: unknown } | null)?.properties ?? {}) as Record<string, Record<string, unknown>>
   for (const [field, entry] of Object.entries(mapping)) {
-    const property = properties[field]
+    const property = Object.hasOwn(properties, field) ? properties[field] : undefined
     if (property === undefined) return { field: `inputMapping.${field}`, error: `${field} is not an input of ${app}.${tool}.` }
     if (typeof entry !== "object" || entry === null || !("fixed" in entry)) return { field: `inputMapping.${field}`, error: `${field} must be {fixed: value}.` }
     if (!fits(property, (entry as { fixed: unknown }).fixed)) return { field: `inputMapping.${field}`, error: `The fixed value of ${field} does not fit its declared type.` }
@@ -169,7 +169,7 @@ export function readDraft(body: unknown, inputSchema: unknown, fallback?: Bindin
 
 /** The call input: the person's values plus the binding's fixed ones; a person may not override a fixed field. */
 export function runInput(binding: Binding, input: Record<string, unknown>): { readonly ok: true; readonly input: Record<string, unknown> } | { readonly ok: false; readonly problem: BindingProblem } {
-  const overridden = Object.keys(input).find((field) => field in binding.inputMapping)
+  const overridden = Object.keys(input).find((field) => Object.hasOwn(binding.inputMapping, field))
   if (overridden !== undefined) return { ok: false, problem: { field: `input.${overridden}`, error: `${overridden} is fixed by this binding.` } }
   return { ok: true, input: { ...input, ...Object.fromEntries(Object.entries(binding.inputMapping).map(([field, { fixed }]) => [field, fixed])) } }
 }

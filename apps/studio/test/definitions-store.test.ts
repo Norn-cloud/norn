@@ -50,6 +50,9 @@ test("the cell's route: admit, install, retire as CELL-DO documents them; anythi
   expect(reads.slice(-2)).toEqual(["/api/host/v1/definitions:list?kind=dashboard&limit=50&orgId=org_demo&environmentId=analytics", "/api/host/v1/definitions:list?kind=dashboard&limit=50&cursor=c2&orgId=org_demo&environmentId=analytics"])
   expect(await testDefinitions(reader(200, { id: "studio.dashboard.refinery", kind: "dashboard", version: 3, lifecycle: "active", payload: dashboard, receipt })).get("studio.dashboard.refinery")).toEqual({ id: "studio.dashboard.refinery", version: 3, dashboard })
   expect(await testDefinitions(reader(404, { code: "definition.not_found" })).get("nope")).toBeUndefined()
+  // A stored tile the page cannot draw (no view or layout) is the cell failing, not a crash on open.
+  const { view: _view, ...noView } = tile("a")
+  await expect(testDefinitions(reader(200, { id: "x", kind: "dashboard", version: 1, lifecycle: "active", payload: { title: "T", tiles: [noView] }, receipt })).get("x")).rejects.toBeInstanceOf(CellUnavailable)
   await expect(testDefinitions(reader(404, {})).list()).rejects.toThrow("no route to read them back")
   await expect(testDefinitions(reader(404, {})).get("x")).rejects.toThrow("no route to read them back")
 })

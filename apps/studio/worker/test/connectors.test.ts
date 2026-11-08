@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, type ConnectorDeps } from "../connectors.ts"
-import { canonicalJson, connectorVersion, manifestDigest, readDraft, toolManifest } from "../bindings.ts"
+import { canonicalJson, connectorVersion, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
 import { Gateway } from "../gateway.ts"
 import { cellScope, scopeQuery } from "../scope.ts"
 import worker, { type Env } from "../index.ts"
@@ -298,6 +298,10 @@ test("a fixed value for a property without a declared type is left to the gatewa
   const schema = { type: "object", properties: { filter: {}, choice: { anyOf: [{ type: "string" }, { type: "integer" }] }, n: { type: "integer" } } }
   expect(readDraft({ app: "github", tool: "t", inputMapping: { filter: { fixed: { any: "thing" } }, choice: { fixed: 3 } } }, schema)).toMatchObject({ inputMapping: { filter: { fixed: { any: "thing" } } } })
   expect(readDraft({ app: "github", tool: "t", inputMapping: { n: { fixed: "x" } } }, schema)).toMatchObject({ field: "inputMapping.n" })
+  // Prototype names are not declared properties.
+  expect(readDraft({ app: "github", tool: "t", inputMapping: { constructor: { fixed: "x" } } }, schema)).toMatchObject({ field: "inputMapping.constructor" })
+  // ...and an input field with such a name is not "fixed by the binding".
+  expect(runInput({ inputMapping: { n: { fixed: 1 } } } as never, { toString: "x" })).toMatchObject({ ok: true })
 })
 
 /** A cell host that answers DEFS's definition writes from `answer`, recording each request. */

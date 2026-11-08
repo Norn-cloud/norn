@@ -42,6 +42,9 @@ test("the cell's checker refusal gives each finding's code, message and field; t
   expect(await evaluateQuestion(question, answer(413, '{"code":"question.bucket_bound_exceeded"}'))).toEqual({ kind: "too-large", code: "question.bucket_bound_exceeded", message: "" })
   expect(await evaluateQuestion(question, answer(400, '{"error":"unknown field `extra`"}'))).toEqual({ kind: "bad-request", message: "unknown field `extra`" })
   expect(await evaluateQuestion(question, answer(200, "<html>gateway</html>"))).toEqual({ kind: "unavailable", status: 200 })
+  // A 200 that is JSON but not an answer would throw in the card: it is unavailable too.
+  for (const body of ["null", '{"error":"nope"}']) expect(await evaluateQuestion(question, answer(200, body))).toEqual({ kind: "unavailable", status: 200 })
+  for (const body of ["null", '{"error":"nope"}']) expect(await traceQuestion(question, "lin", "row", answer(200, body))).toEqual({ kind: "unavailable", status: 200 })
   expect(await evaluateQuestion(question, async () => { throw new TypeError("network") })).toEqual({ kind: "unavailable", status: 0 })
 })
 

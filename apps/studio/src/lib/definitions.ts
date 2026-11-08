@@ -68,8 +68,15 @@ export interface DefinitionStore {
 export const dashboardId = (title: string, unique: string = crypto.randomUUID().replaceAll("-", "").slice(0, 12)) =>
   `studio.dashboard.${title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "untitled"}_${unique}`
 
+const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object"
+/** A tile the page can draw: TileCard reads its question name, view kind and layout width. */
+const isTile = (value: unknown): value is Tile =>
+  isObject(value) && typeof value.id === "string" && typeof value.title === "string"
+  && isObject(value.question) && typeof value.question.name === "string"
+  && isObject(value.view) && (value.view.kind === "chart" || value.view.kind === "table")
+  && isObject(value.layout) && typeof value.layout.w === "number"
 const isDashboard = (value: unknown): value is Dashboard =>
-  value !== null && typeof value === "object" && typeof (value as { title?: unknown }).title === "string" && Array.isArray((value as { tiles?: unknown }).tiles)
+  isObject(value) && typeof value.title === "string" && Array.isArray(value.tiles) && value.tiles.every(isTile)
 
 const KIND = "dashboard"
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
