@@ -127,7 +127,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 - **FUNCTION-HOST-1-BUILTINS-ONLY:** Core 07 reserves host for engine built-ins, denies authored/pack installation even with a copied built-in namespace, and retains exact pins, scoped capabilities, recorded receipts and proposal-only outputs. Runtime conformance is the separate #731 admission cut.
 - **AUTHORED-HOST-REFUSED:** A fully pinned authored host manifest refuses `function.manifest.authored_host` at `implementation.format` through both shared manifest admission and its public ABI; supported WASM and external-worker manifests retain their admitted identities.
 - **BUILTIN-NAMESPACE-NO-BYPASS:** Copying an engine-shaped function ID, crate name, version or digest into authored data cannot authorize host code.
-- **ENGINE-BUILTIN-AVAILABLE (unsupported):** No engine-owned Host registry currently ships. Public manifest admission refuses Host under every execution profile; genuine built-in availability and exact-pin dispatch qualification are deferred to #761.
+- **ENGINE-BUILTIN-AVAILABLE (partial):** `norn-builtins` ships the compiled-in registry with `norn.decision@1` (BUILTIN-PIN-1, DECISION-1). Public manifest admission still refuses Host under every execution profile. Exact-pin dispatch from the cell host remains part of #761.
 - **FEED-CONFLICT-RACE:** Given mapped preparation, when another connection captures conflict or NFC evidence before the observed commit transaction begins, then recheck that exact bundle inside the transaction and refuse promotion/consumption. Ordinary corrections under a different source event retain their existing capture path.
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
@@ -187,6 +187,48 @@ spelling differ; a second golden vector pins raw-byte order),
 above, for hidden entries, `target` and symlinks), **HOST-TREE-SENSITIVE** (an edit, rename, removal,
 addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
 (listing order is irrelevant) and **HOST-TREE-REFUSE**.
+
+BUILTIN-PIN-1: the engine's compiled-in registry is the crate `norn-builtins`.
+Each built-in's manifest pins `runtime.id`/`runtime.version` to that crate and
+`implementation.digest` and `runtime.digest` to its HOST-TREE-1 digest, recorded
+in `registry/builtins/norn-builtins.json` outside the digested tree. The locator
+is `norn-builtins/<version>@<digest>`. A drift test recomputes the digest from the
+crate's sources and fails until a reviewed change re-pins it. Only this table
+registers built-ins: `resolve(id, version)` answers nothing for any other id or
+version, and authored or pack `host` manifests keep refusing
+`function.manifest.authored_host`.
+
+DECISION-1 (`norn.decision@1`, D58): a flow asks a person by `perform` of this
+built-in, then `route` on `choice` with `otherwise` failing; the run waits in
+`awaiting_perform_<step>`. The input is one canonical-JSON blob named `request`,
+a closed record `{question, risk: low|medium|high, options: [{id, label,
+effect: {action}|{binding}, scope}], agentPick?, decider: {roles, law?},
+expiresInMs?}`. The cell enforces the bounds the closed schema cannot carry:
+question and note at most 500 characters, one to nine options, option ids
+`[a-z][a-z0-9_]*` and unique, exactly one effect member, `agentPick` naming an
+option (a recommendation, never a decision), at least one decider role, and
+`expiresInMs` at most seven days, which the cell turns into the command's
+deadline. The output is `{choice, note?}`, where `choice` must name an option.
+The errors are `{_tag: "Expired" | "Withdrawn"}`.
+
+Only the cell resolves the command, by issuing the Function receipt itself and
+delivering it as the pending perform's result. The existing reconciliation and
+route path then applies it, and the result's single consumption follows the
+ordinary delivery fence (Core 04). Issuing requires the verified caller to be an
+Actor holding one of `decider.roles`; when `decider.law` is set, the server must
+also have evaluated that law as satisfied. The receipt's `provenance.executor` is
+the deciding Actor and its placement is `norn.cell`. After the deadline only the
+`Expired` receipt can be issued; `Withdrawn` is issued for an authorized
+withdrawer. DECISION-ISSUED-1: for this manifest, reconciliation accepts only
+receipts the cell issued and retained. A client-supplied result, even
+byte-identical to an issued receipt the cell has no record of, refuses
+`decision.receipt_not_cell_issued`. Refusals: `decision.not_a_decider`,
+`decision.law_not_satisfied`, `decision.unknown_choice`, `decision.note_too_long`,
+`decision.expired`, `decision.not_this_command` and the `decision.*` request
+bounds. An action-based decide route can instead consume the receipt through
+RECEIPT-CONSUME-1. Named scenarios (`crates/norn-builtins/tests/`):
+**DECISION-RESOLVE**, **DECISION-FORGED**, **DECISION-NON-DECIDER**,
+**DECISION-BOUNDS**, **DECISION-EXPIRE**, **BUILTIN-PIN-DRIFT**.
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 
