@@ -778,6 +778,23 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(self.next_commit_seq()?.saturating_sub(1))
     }
 
+    /// The engine's revision of the whole database as this connection sees it
+    /// ([`SqlEngine::read_cache_revision`]): equal revisions imply unchanged
+    /// contents, including writes that carry no receipt and commits by other
+    /// connections. `None` when the engine offers no revision.
+    ///
+    /// # Errors
+    /// Backend revision-read failures.
+    pub fn database_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.conn.read_cache_revision()
+    }
+
+    /// How reads on this engine know they saw one snapshot.
+    #[must_use]
+    pub fn read_isolation(&self) -> crate::engine::ReadIsolation {
+        self.conn.read_isolation()
+    }
+
     /// Scan metadata lengths and charge bytes before fetching owned IDs/types.
     /// Both passes read the same committed cell view; only the admitted prefix
     /// is fetched. Sibling rows consume the same row/byte budget. Exhaustion

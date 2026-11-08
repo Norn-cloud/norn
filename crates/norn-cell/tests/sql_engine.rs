@@ -188,6 +188,9 @@ impl MeasuredEngine {
 }
 
 impl SqlEngine for MeasuredEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.native.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.note_values(params);
         self.native.execute(sql, params)
