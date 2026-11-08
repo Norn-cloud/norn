@@ -377,7 +377,7 @@ test("a tool with no gateway version gets sha256- and the first 12 hex of its di
 
 test("the whole link round trip: state cookie, basic client auth, resource, introspection, then a linked grant", async () => {
   const db = new Database(":memory:")
-  for (const file of ["0001_better_auth.sql", "0002_connector_binding.sql", "0003_connector_binding_manifest.sql", "0004_connector_binding_definition.sql"]) db.exec(migration(file))
+  for (const file of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0002_connector_binding.sql", "0003_connector_binding_manifest.sql", "0004_connector_binding_definition.sql"]) db.exec(migration(file))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
   const jar = new Map<string, string>()
   const keep = (response: Response) => { for (const line of response.headers.getSetCookie()) { const [pair] = line.split(";"); const [name, ...rest] = (pair ?? "").split("="); if (name) jar.set(name, rest.join("=")) } return response }
