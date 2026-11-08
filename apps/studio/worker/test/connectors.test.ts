@@ -72,8 +72,8 @@ function stage(gatewayClient = false) {
     if (colleagueOf !== undefined) db.query(`UPDATE member SET organizationId = (SELECT organizationId FROM member WHERE userId = ${member}) WHERE userId = ${member}`).run(colleagueOf, email)
     const response = await call("/api/auth/sign-in/email", { email, password: "correct horse battery" })
     db.query(`UPDATE member SET role = ? WHERE userId = (SELECT id FROM user WHERE email = ?)`).run(role, email)
-    // The organization's cell environment, as the demo organization's metadata declares it.
-    if (environment) db.query(`UPDATE organization SET metadata = ? WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)) AND metadata IS NULL`).run('{"environmentId":"analytics"}', email)
+    // The organization's cell environment, added to its server-provisioned metadata (reserved keys are written only server-side).
+    if (environment) db.query(`UPDATE organization SET metadata = json_set(coalesce(metadata, '{}'), '$.environmentId', ?) WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?))`).run("analytics", email)
     return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   }
   return { send, signUp, calls, answer: (next: (request: Request) => Response) => { answer = next } }
