@@ -8,10 +8,10 @@
   "rights_evidence": [
     {
       "path": "NOTICE",
-      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+      "sha256": "881ffc5f9a6d1730b5ca5dd837890d2f0a65f40766cacd92caf00a66571482c6"
     }
   ],
   "notices": [],
   "connector": null,
-  "sha256": "3da5ccd3acd1b94bcba71db45bd572bab7929202e52b0e481b7d85bf2743c0ac"
+  "sha256": "881ffc5f9a6d1730b5ca5dd837890d2f0a65f40766cacd92caf00a66571482c6"
 }

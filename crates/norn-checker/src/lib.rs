@@ -24,6 +24,7 @@
 // TODO(rust-safety): these downgrades were moved with the code from norn-ir
 // (docs/platform/rust-safety-baseline.md) and keep the same staged burn-down.
 pub mod action_set;
+pub mod agent;
 pub mod artifact_set;
 pub mod classification;
 pub mod codes;
@@ -156,6 +157,7 @@ pub mod verification;
 pub mod widget_ux;
 
 pub use action_set::{check_action_firing, check_action_set};
+pub use agent::{AgentContext, check_agent};
 pub use artifact_set::{
     ResolvedArtifactSet, check_artifact_set, may_reference, resolve_artifact_set, scope_conflict,
 };
