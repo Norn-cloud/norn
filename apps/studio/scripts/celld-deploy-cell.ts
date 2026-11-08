@@ -45,11 +45,16 @@ export function studioPointer(document: string, studio: string): string {
   return document
 }
 
-/** The probe passes once the stage answers the new build's route at all: anything but 404 route.not_found. */
+/**
+ * The probe passes once the stage answers the new build's route: a 2xx, or a 4xx that carries the
+ * host's own error code other than route.not_found. A bare 4xx (a proxy or CDN page) is not the new build.
+ */
 export function probeServesNewBuild(status: number, body: string): boolean {
-  if (status !== 404) return status < 500
+  if (status >= 200 && status < 300) return true
+  if (status < 400 || status >= 500) return false
   try {
-    return (JSON.parse(body) as { code?: unknown }).code !== "route.not_found"
+    const code = (JSON.parse(body) as { code?: unknown }).code
+    return typeof code === "string" && code !== "route.not_found"
   } catch {
     return false
   }

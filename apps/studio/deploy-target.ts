@@ -105,10 +105,13 @@ export const cellHost = (target: DeployTarget): string | undefined => CELL_HOSTS
 export async function requireWorkerScript(script: string, env: Readonly<Record<string, string | undefined>>, fetcher: typeof fetch = fetch): Promise<void> {
   const account = env.CLOUDFLARE_ACCOUNT_ID
   if (account === undefined) throw new Error("CLOUDFLARE_ACCOUNT_ID is required to check the cell Worker binding")
-  const headers: Record<string, string> = env.CLOUDFLARE_API_TOKEN !== undefined
-    ? { authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` }
-    : { "x-auth-email": env.CLOUDFLARE_EMAIL ?? "", "x-auth-key": env.CLOUDFLARE_API_KEY ?? "" }
-  const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${script}/settings`, { headers })
+  const { CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_EMAIL: email, CLOUDFLARE_API_KEY: key } = env
+  if (token === undefined && (email === undefined || key === undefined)) throw new Error("CLOUDFLARE_API_TOKEN, or CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY, is required to check the cell Worker binding")
+  const headers: Record<string, string> = token !== undefined
+    ? { authorization: `Bearer ${token}` }
+    : { "x-auth-email": email ?? "", "x-auth-key": key ?? "" }
+  // Bounded: a stalled connection fails the deploy instead of hanging it.
+  const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${script}/settings`, { headers, signal: AbortSignal.timeout(30_000) })
   if (response.status === 404) throw new Error(`The cell Worker ${script} does not exist on this account; deploy it before binding Studio to it as NORN_HOST`)
   if (!response.ok) throw new Error(`Could not check the cell Worker ${script}: Cloudflare answered ${response.status}`)
 }

@@ -152,6 +152,14 @@ test("a 200 that is JSON but not an answer document is no live read, so the page
   expect(await liveAnswer("demo.yield_week", respond(200, '{"error":"unavailable"}'))).toEqual({ kind: "unavailable", status: 200 })
 })
 
+test("a 200 that is JSON but not an access document is no live read either", async () => {
+  const access = { principal: { subjectId: "u1", actorKind: "user", roles: ["admin"], roleTable: "roles" }, policy: "p", grantTable: "g", capabilities: Object.fromEntries(["population", "values", "sources"].map((name) => [name, { decision: "permit", rule: null }])) }
+  expect((await liveAccess(respond(200, JSON.stringify(access)))).kind).toBe("read")
+  for (const text of ["null", '{"error":"unavailable"}', JSON.stringify({ ...access, capabilities: { population: access.capabilities.population } }), JSON.stringify({ ...access, principal: { subjectId: "u1" } })]) {
+    expect(await liveAccess(respond(200, text))).toEqual({ kind: "unavailable", status: 200 })
+  }
+})
+
 test("a live answer with a malformed row, watermark or freshness is no live read, so the page keeps its recording", async () => {
   const broken = (change: (doc: Record<string, unknown>) => void) => { const doc = JSON.parse(answerText) as Record<string, unknown>; change(doc); return JSON.stringify(doc) }
   const first = (doc: Record<string, unknown>) => Object.keys(doc.rows as object)[0] ?? ""
