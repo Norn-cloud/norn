@@ -1613,6 +1613,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }))
     }
 
+    /// Like [`StoreReader::list_after`], but every candidate is read through
+    /// `budget`, so stored bytes are charged before they are decoded.
+    /// `None` means the budget ran out before every candidate was read.
+    ///
+    /// # Errors
+    /// Unknown type, SQL engine, or decode errors.
+    pub fn list_after_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        limit: usize,
+        budget: &mut DecodeBudget,
+    ) -> Result<Option<Vec<crate::ObjectRecord>>, CellError> {
+        let ids = self.type_ids_after(world, object_type, None, limit)?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            match self.object_with_budget(world, object_type, &id, budget)? {
+                BudgetedRead::Found(record) => out.push(record),
+                BudgetedRead::Missing => {}
+                BudgetedRead::Exhausted => return Ok(None),
+            }
+        }
+        Ok(Some(out))
+    }
+
     /// Read only selected physical properties of one object within the
     /// candidate budget. Large unrelated properties are never fetched or
     /// decoded. This is used for indexes whose authorization evidence is a

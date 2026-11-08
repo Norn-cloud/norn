@@ -653,6 +653,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
         &self,
         predicate: &PredicateQuery,
         max_members: usize,
+        _max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, Infallible> {
         Ok(self.predicate_objects(predicate, max_members.saturating_add(1)))
     }
