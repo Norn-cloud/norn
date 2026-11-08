@@ -100,6 +100,26 @@ pub fn function_contract(
     .map_err(JsError::from)
 }
 
+/// `toolPort(schemaJson)`: see [`crate::tool_port_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = toolPort)]
+pub fn tool_port(schema_json: &str) -> Result<String, JsError> {
+    crate::tool_port_json(schema_json).map_err(JsError::from)
+}
+
+/// `toolEdge(sourceSchemaJson, targetSchemaJson)`: see [`crate::tool_edge_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = toolEdge)]
+pub fn tool_edge(source_schema_json: &str, target_schema_json: &str) -> Result<String, JsError> {
+    crate::tool_edge_json(source_schema_json, target_schema_json).map_err(JsError::from)
+}
+
 /// `version()`: see [`crate::version_json`].
 #[wasm_bindgen]
 #[must_use]
