@@ -75,6 +75,10 @@ enum Command {
     },
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dispatch maps every CLI subcommand to its handler"
+)]
 fn run(command: Command) -> Result<(String, bool), String> {
     match command {
         Command::Mcp => mcp::serve(),
