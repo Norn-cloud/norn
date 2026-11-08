@@ -212,6 +212,28 @@ fn more_matches_than_the_bound_refuse() {
     assert!(!spend_exists(&cell, "S1"));
 }
 
+/// Members count against the slice's canonical byte bound, so a few large
+/// records refuse even when they are under `maxItems`.
+#[test]
+fn members_larger_than_the_slice_byte_bound_refuse() {
+    let types = types();
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = entries();
+    let padding = "x".repeat(100_000);
+    for id in ["E1", "E2", "E3"] {
+        put(
+            &mut cell,
+            id,
+            json!({"account": "A", "booked_on": "2026-11-05", "amount": 1.00, "note": padding}),
+        );
+    }
+    let action = action(false, 10, &["aggregates.entries >= 0"]);
+    let refusal = commit_action(&mut cell, &catalog, &call(&action, "S1"), &ALLOW)
+        .expect_err("three 100 KB members exceed the 256 KiB slice bound");
+    assert_eq!(refusal.code(), "action.aggregate_bytes_exceeded");
+    assert!(!spend_exists(&cell, "S1"));
+}
+
 #[test]
 fn an_unreadable_member_refuses_instead_of_shrinking_the_fold() {
     let types = types();
@@ -255,11 +277,14 @@ impl CellHost for RacingCell {
         &self,
         predicate: &PredicateQuery,
         max_members: usize,
+        max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
         if matches!(self.race, Some(Race::Unsupported)) {
             return Ok(None);
         }
-        self.cell.borrow().read_predicate(predicate, max_members)
+        self.cell
+            .borrow()
+            .read_predicate(predicate, max_members, max_bytes)
     }
     fn commit(
         &mut self,

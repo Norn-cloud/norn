@@ -711,6 +711,14 @@ pub enum ActionRefusal<X> {
         /// Its declared bound.
         max_items: u32,
     },
+    /// An aggregate input's matches outgrew the slice's byte bound.
+    #[error("aggregate {aggregate:?} matched more than {max_bytes} canonical bytes")]
+    AggregateBytesExceeded {
+        /// The declared aggregate.
+        aggregate: String,
+        /// The slice's canonical byte bound.
+        max_bytes: u64,
+    },
     /// An aggregate input could not be read or folded exactly.
     #[error("aggregate {aggregate:?} was refused: {reason}")]
     AggregateUnavailable {
@@ -806,6 +814,7 @@ impl<X> ActionRefusal<X> {
             Self::ExpressionBudgetExceeded { .. } => "action.expression_budget_exceeded",
             Self::SliceUnavailable { .. } => "action.slice_unavailable",
             Self::AggregateBoundExceeded { .. } => "action.aggregate_bound_exceeded",
+            Self::AggregateBytesExceeded { .. } => "action.aggregate_bytes_exceeded",
             Self::AggregateUnavailable { .. } => "action.aggregate_unavailable",
             Self::SliceObjectMissing { .. } => "action.slice_object_missing",
             Self::StalePreconditionRead { .. } => "action.precondition_stale_read",
@@ -5764,7 +5773,12 @@ fn load_action_slice<H: CellHost + ?Sized>(
             );
         load_action_slice_entry(context, &mut state, entry, identity_only)?;
     }
-    let (aggregates, predicate_reads) = load_action_aggregates(context, &mut state.read_types)?;
+    let (aggregates, predicate_reads) = load_action_aggregates(
+        context,
+        &mut state.read_types,
+        &mut state.meter,
+        &state.limits,
+    )?;
     let ActionSliceState {
         mut facts,
         values,
@@ -5811,10 +5825,15 @@ fn load_action_slice<H: CellHost + ?Sized>(
 /// #1105: fold each declared aggregate over a complete, bounded predicate
 /// read of its type. Every member passes the same object read authorization
 /// as a slice read; an unreadable member refuses rather than silently
-/// shrinking the fold. The returned reads pin the members for the commit.
+/// shrinking the fold. The host reads under the slice bytes still unspent, and
+/// each member is then charged to the slice meter like any other record, so
+/// an aggregate cannot outgrow the slice's byte bound. The returned reads pin
+/// the members for the commit.
 fn load_action_aggregates<H: CellHost + ?Sized>(
     context: &ActionSliceContext<'_, '_, '_, H>,
     read_types: &mut BTreeSet<ObjectTypeName>,
+    meter: &mut SliceMeter,
+    limits: &crate::SliceLimits,
 ) -> Result<(JsonObject, Vec<PredicateReadExpectation>), ActionRefusal<H::Error>> {
     let ActionSliceContext {
         host,
@@ -5839,11 +5858,17 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
             crate::action_aggregate::predicate_query(aggregate, effective_input, catalog)
                 .map_err(unavailable)?;
         let max_items = usize::try_from(aggregate.max_items).unwrap_or(usize::MAX);
-        if !snapshots.iter().any(|(read, _)| *read == predicate) {
+        let fresh = !snapshots.iter().any(|(read, _)| *read == predicate);
+        if fresh {
+            let remaining = limits.max_canonical_bytes.saturating_sub(meter.bytes());
             let objects = host
-                .read_predicate(&predicate, max_items)
+                .read_predicate(&predicate, max_items, remaining)
                 .map_err(host_failure)?
-                .ok_or_else(|| unavailable("the host cannot enumerate every match".to_owned()))?;
+                .ok_or_else(|| {
+                    unavailable(
+                        "the host cannot enumerate every match within the slice bounds".to_owned(),
+                    )
+                })?;
             snapshots.push((predicate.clone(), objects));
         }
         let Some((_, objects)) = snapshots.iter().find(|(read, _)| *read == predicate) else {
@@ -5856,6 +5881,22 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
                 aggregate: aggregate.name.clone(),
                 max_items: aggregate.max_items,
             });
+        }
+        if fresh {
+            for object in objects {
+                let bytes = norn_ir::canonical::canonical_json_of(&object.values)
+                    .map_err(|error| unavailable(error.to_string()))?
+                    .len();
+                meter
+                    .admit_record(u64::try_from(bytes).unwrap_or(u64::MAX), 0)
+                    .map_err(|exceeded| match exceeded.kind {
+                        crate::IngressLimit::SliceBytes => ActionRefusal::AggregateBytesExceeded {
+                            aggregate: aggregate.name.clone(),
+                            max_bytes: limits.max_canonical_bytes,
+                        },
+                        _ => unavailable(exceeded.to_string()),
+                    })?;
+            }
         }
         for object in objects {
             authorizer

@@ -624,7 +624,8 @@ impl<X> ActionRefusal<X> {
             Self::ReceiptRefused { reason } => reason.category(),
             Self::InputBoundExceeded { .. }
             | Self::ExpressionBudgetExceeded { .. }
-            | Self::AggregateBoundExceeded { .. } => RefusalCategory::Limit,
+            | Self::AggregateBoundExceeded { .. }
+            | Self::AggregateBytesExceeded { .. } => RefusalCategory::Limit,
             Self::Command(rejection) => rejection.category(),
             Self::MissingScope { .. }
             | Self::UnsupportedEffect { .. }
