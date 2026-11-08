@@ -198,8 +198,11 @@ impl<E: SqlEngine> CellStore<E> {
             // value-bearing field of every member in the bucket: amounts,
             // canonical values and the snapshot digest (a guessing oracle for
             // the values). Otherwise the visible members subtracted from the
-            // totals would reconstruct the restricted one. Source provenance
-            // (document identities and digests) follows its own Sources grant.
+            // totals would reconstruct the restricted one. The same holds for the
+            // source digests (bundle and payload), which hash the same values and
+            // would confirm a guess of a small-domain value offline. Source
+            // identities, mapping pin and field provenance carry no values and
+            // follow their own Sources grant.
             if contributions
                 .iter()
                 .any(|contribution| contribution.restricted)
@@ -208,6 +211,10 @@ impl<E: SqlEngine> CellStore<E> {
                     contribution.amounts = None;
                     contribution.values = None;
                     contribution.fact_digest = None;
+                    if let ContributionSource::Resolved { provenance } = &mut contribution.source {
+                        provenance.bundle_digest = None;
+                        provenance.document_digest = None;
+                    }
                 }
             }
             Ok(NumericTrace {

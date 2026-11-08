@@ -388,8 +388,8 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
           <Id label="Mapping" value={`${lineage.mappingPin.artifactId}@${lineage.mappingPin.version}`} />
           <Id label="Mapping sha256" value={lineage.mappingPin.sha256} short={16} />
           <Id label="Source record" value={lineage.sourceRecordRef.record} />
-          <Id label="Bundle" value={lineage.bundleDigest} short={16} />
-          <Id label="Document" value={lineage.documentDigest} short={16} />
+          {lineage.bundleDigest !== undefined && <Id label="Bundle" value={lineage.bundleDigest} short={16} />}
+          {lineage.documentDigest !== undefined && <Id label="Document" value={lineage.documentDigest} short={16} />}
         </dl>
         <DenseTable head={<TableRow><TableHead>Property</TableHead><TableHead>Rule</TableHead><TableHead>Source fields</TableHead></TableRow>}>
           {Object.entries(lineage.fieldProvenance).map(([fact, provenance]) => (

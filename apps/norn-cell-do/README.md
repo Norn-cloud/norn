@@ -41,7 +41,9 @@ from a token:
 The cell fetches the JWKS when it opens and refetches it every five minutes
 whatever tokens arrive, so a key the issuer removes stops verifying within that
 time. A token naming an unknown key id also triggers a refetch, then the
-request is retried once. Refetch attempts are at most one per minute. If
+request is retried once. Refetch attempts are at most one per minute, and so is a cold open: a failed
+open (issuer unreachable, missing lineage key) is cached for a minute and
+refused at once with the same error, without a JWKS fetch. If
 refetches keep failing, keys older than fifteen minutes are no longer honoured
 and every token is refused until a refetch succeeds (the Worker logs the
 failure). Set `ALLOWED_ORIGINS` (comma-separated) to let a browser origin read

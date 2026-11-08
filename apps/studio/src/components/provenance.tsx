@@ -41,8 +41,8 @@ export function ProvenanceChain({ lineage, fact }: { readonly lineage: SourceLin
       </Step>
       <Arrow />
       <Step title={`Recorded · ${field.recordedAt}`}>
-        <div className="text-xs text-muted-foreground">Bundle <CopyId value={lineage.bundleDigest} short={12} /></div>
-        <div className="text-xs text-muted-foreground">Document <CopyId value={lineage.documentDigest} short={12} /></div>
+        {lineage.bundleDigest !== undefined && <div className="text-xs text-muted-foreground">Bundle <CopyId value={lineage.bundleDigest} short={12} /></div>}
+        {lineage.documentDigest !== undefined && <div className="text-xs text-muted-foreground">Document <CopyId value={lineage.documentDigest} short={12} /></div>}
       </Step>
     </ol>
   )

@@ -74,7 +74,7 @@ fn scrap_yield_drills_from_294_over_300_to_exact_authorized_source_rows_and_docu
         );
         assert_eq!(provenance.document_ref.record, raw.provenance.source_id);
         assert_eq!(
-            provenance.document_digest,
+            provenance.document_digest.as_deref().expect("values granted"),
             raw.input.as_object().expect("envelope")["payload_digest"]
                 .as_str()
                 .expect("digest")
@@ -84,7 +84,7 @@ fn scrap_yield_drills_from_294_over_300_to_exact_authorized_source_rows_and_docu
         assert_eq!(provenance.mapping_pin.sha256, pin.sha256);
         assert_eq!(provenance.source_record_ref.system, "synthetic-erpnext");
         assert_eq!(provenance.document_ref.system, raw.provenance.source);
-        assert_eq!(provenance.bundle_digest.len(), 64);
+        assert_eq!(provenance.bundle_digest.as_deref().map(str::len), Some(64));
         assert!(
             provenance
                 .field_provenance
@@ -149,6 +149,10 @@ fn source_disclosure_is_independent_of_canonical_values_and_numeric_membership()
                 assert_eq!(contribution.restricted, !values_allowed);
                 assert_eq!(contribution.values.is_some(), values_allowed);
                 assert_eq!(contribution.fact_digest.is_some(), values_allowed);
+                if let ContributionSource::Resolved { provenance } = &contribution.source {
+                    assert_eq!(provenance.document_digest.is_some(), values_allowed);
+                    assert_eq!(provenance.bundle_digest.is_some(), values_allowed);
+                }
             }
         }
     }
@@ -172,6 +176,57 @@ fn source_disclosure_is_independent_of_canonical_values_and_numeric_membership()
         ))
     ));
     assert_eq!(store.verified_head().expect("unchanged"), head);
+}
+
+#[test]
+fn value_derived_source_digests_follow_the_values_grant_not_the_sources_grant() {
+    let (cell, plan, context, _, _directory) = loaded();
+    let result = cell
+        .store()
+        .evaluate_question(&plan, context.clone(), |_| Ok(true))
+        .expect("exact");
+    let trace_with = |values_allowed: bool| {
+        cell.store()
+            .trace_question(
+                &plan,
+                context.clone(),
+                &result.lineage_ref,
+                WEEK,
+                |_| Ok(true),
+                LineageDisclosure {
+                    values: &mut |_| Ok(values_allowed),
+                    source: &mut |_| Ok(true),
+                },
+            )
+            .expect("trace")
+    };
+    // Population-only caller: Sources granted, Values denied. The payload digest
+    // and bundle digest hash the withheld values, so they are absent on the
+    // wire, while the permitted source identities and mapping stay.
+    let population = trace_with(false);
+    assert_eq!(population.contributions.len(), 4);
+    for contribution in &population.contributions {
+        let ContributionSource::Resolved { provenance } = &contribution.source else {
+            panic!("sources granted")
+        };
+        assert!(provenance.document_digest.is_none() && provenance.bundle_digest.is_none());
+        assert!(!provenance.document_ref.record.is_empty());
+        assert_eq!(provenance.mapping_pin.artifact_id, "demo.scrap.mapping");
+        assert!(!provenance.field_provenance.is_empty());
+    }
+    let wire = serde_json::to_string(&population).expect("wire");
+    assert!(!wire.contains("documentDigest") && !wire.contains("bundleDigest"));
+    assert!(wire.contains("ERP-DOC/"), "unrelated Sources disclosure stays");
+    // With Values granted both digests are disclosed again.
+    let full = trace_with(true);
+    for contribution in &full.contributions {
+        let ContributionSource::Resolved { provenance } = &contribution.source else {
+            panic!("sources granted")
+        };
+        assert_eq!(provenance.document_digest.as_deref().map(str::len), Some(64));
+        assert_eq!(provenance.bundle_digest.as_deref().map(str::len), Some(64));
+    }
+    assert!(serde_json::to_string(&full).expect("wire").contains("documentDigest"));
 }
 
 #[test]
@@ -202,6 +257,9 @@ fn source_grants_apply_to_each_canonical_contribution_identity() {
         // D53: the bucket mixes restricted and readable members, so no member's
         // values or digest is disclosed; the restricted flag stays per member.
         assert!(contribution.values.is_none() && contribution.fact_digest.is_none());
+        if let ContributionSource::Resolved { provenance } = &contribution.source {
+            assert!(provenance.document_digest.is_none() && provenance.bundle_digest.is_none());
+        }
         assert_eq!(contribution.restricted, !selected);
         assert_eq!(
             matches!(contribution.source, ContributionSource::Restricted),

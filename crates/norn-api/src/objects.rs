@@ -148,16 +148,18 @@ pub struct NornMappingPin {
 #[derive(Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NornInstanceSourceProvenance {
-    /// Content address of the recomputed mapping bundle.
-    pub bundle_digest: String,
+    /// Content address of the recomputed mapping bundle; omitted in a numeric trace
+    /// when the caller may not read the contributing values.
+    pub bundle_digest: Option<String>,
     /// The source record the mapping names.
     #[schema(schema_with = source_record_schema)]
     pub source_record_ref: serde_json::Value,
     /// The original source document in the sealed envelope.
     #[schema(schema_with = source_record_schema)]
     pub document_ref: serde_json::Value,
-    /// Digest of the source document payload.
-    pub document_digest: String,
+    /// Digest of the source document payload; omitted in a numeric trace when the
+    /// caller may not read the contributing values.
+    pub document_digest: Option<String>,
     /// The mapping declaration that produced the version.
     pub mapping_pin: NornMappingPin,
     /// Field-level source and rule provenance, by property id.

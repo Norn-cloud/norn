@@ -13,6 +13,8 @@ const key = ([org, env]) => `${escape(org)}/${escape(env)}`;
 const CELL_HEADER = "x-norn-cell";
 // A hung JWKS fetch must not hold the object: the cached keys age out instead.
 const JWKS_TIMEOUT_MS = 5000;
+// Same spacing as the Rust side's JWKS_RETRY_SECS: a failed cold open is not retried sooner.
+const OPEN_RETRY_MS = 60_000;
 
 export class Cell {
   constructor(ctx, env) {
@@ -20,6 +22,8 @@ export class Cell {
     this.env = env;
     this.cell = null;
     this.opening = null;
+    // The last failed cold open and when it failed (see open()).
+    this.openFailure = null;
   }
   /** The pinned JWKS document. The URL is configuration, never taken from a token. */
   async jwks() {
@@ -29,6 +33,13 @@ export class Cell {
     return response.text();
   }
   open(request) {
+    // A failed open is cached for OPEN_RETRY_MS and refused at once with the same
+    // error: no JWKS fetch, no provisioning reads and no 5 s hold on the object per
+    // request while the issuer is unreachable or the stage is misconfigured.
+    if (this.openFailure !== null) {
+      if (Date.now() - this.openFailure.at < OPEN_RETRY_MS) return Promise.reject(this.openFailure.error);
+      this.openFailure = null;
+    }
     // One opening per object; provisioning and dispatch are synchronous Wasm.
     this.opening ??= (async () => {
       const [org, env] = JSON.parse(request.headers.get(CELL_HEADER));
@@ -39,6 +50,7 @@ export class Cell {
       this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks, this.env.NORN_LINEAGE_KEY, Date.now());
     })().catch((error) => {
       this.opening = null;
+      this.openFailure = { error, at: Date.now() };
       console.error(`cell open refused: ${error}`);
       throw error;
     });
