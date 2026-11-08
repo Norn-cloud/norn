@@ -515,7 +515,7 @@ fn setting_schema_types_value_by_value_type() {
             ),
             (
                 serde_json::json!("number"),
-                serde_json::json!({ "type": "number", "format": "double" })
+                serde_json::json!({ "$ref": "#/$defs/DecimalLiteral" })
             ),
             (
                 serde_json::json!("boolean"),

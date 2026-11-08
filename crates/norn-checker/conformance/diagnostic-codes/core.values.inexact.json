@@ -1,7 +1,7 @@
 {
   "code": "core.values.inexact",
-  "message": "the number is outside the exact 96-bit decimal profile (scale at most 28)",
+  "message": "value cannot be represented in the shared exact decimal profile",
   "severity": "error",
-  "since": "0.2.0",
-  "tier": "T6"
+  "since": "0.1.0",
+  "tier": "T1"
 }

@@ -6,6 +6,8 @@
   "sources": [],
   "analyzed_sources": [],
   "parents": [
+    "crates/norn-checker/src/codes.rs",
+    "crates/norn-checker/tests/code_registry.rs",
     "crates/norn-ir/src/deontic.rs",
     "crates/norn-ir/src/requirement_display.rs"
   ],
