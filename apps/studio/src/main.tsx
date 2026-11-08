@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router"
-import { ChartLine, Database, Gauge, ShieldCheck, Workflow } from "lucide-react"
+import { ChartLine, Database, Gauge, Network, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
@@ -13,6 +13,7 @@ import { ObjectTypePage, SourcesPage, useSourcesMenu } from "./sources.tsx"
 import { StatusPage } from "./status.tsx"
 import { GuaranteesPage, useGuaranteesMenu } from "./guarantees.tsx"
 import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
+import { CanvasPage } from "./canvas.tsx"
 import { ObjectPage } from "./objects.tsx"
 import "./index.css"
 
@@ -20,6 +21,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu, group: "model" },
   { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu, group: "model" },
   { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", useMenu: useWorkflowsMenu, group: "rules" },
+  { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "rules" },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", useMenu: useGuaranteesMenu, group: "rules" },
   { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", group: "system", foot: true },
 ]
@@ -76,7 +78,7 @@ const router = createRouter({
     ...SECTIONS.map((section) => createRoute({
       getParentRoute: () => root,
       path: section.path,
-      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : () => <NotYet {...section} />,
+      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/canvas" ? CanvasPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),
