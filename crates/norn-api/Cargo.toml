@@ -18,7 +18,7 @@ http = "1.5.0"
 norn-ir = { path = "../norn-ir" }
 serde = "1.0.228"
 serde_json = "1.0.150"
-utoipa = "5.4.0"
+utoipa = "6.0.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
