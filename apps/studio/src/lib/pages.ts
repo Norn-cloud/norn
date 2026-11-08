@@ -16,7 +16,9 @@ export const PAGES = {
   "/dashboards/new": "/dashboards/new",
   "/dashboards/$id": "/dashboards/studio.dashboard.missing",
   "/workflows": "/workflows",
+  "/canvas": "/canvas",
   "/guarantees": "/guarantees",
+  "/connections": "/connections",
   "/status": "/status",
 } as const
 

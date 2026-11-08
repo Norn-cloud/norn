@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "checker": "bash ../../crates/norn-checker-wasm/scripts/build-pkg.sh src/checker",
     "typecheck": "tsc -p tsconfig.json && tsc -p worker/tsconfig.json",
     "test": "bun test",
-    "deploy": "NODE_ENV=production vite build && bun ./alchemy.run.ts"
+    "deploy": "bun run checker && NODE_ENV=production vite build && bun ./alchemy.run.ts",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@ai-sdk/react": "4.0.166",
@@ -38,6 +40,7 @@
   "devDependencies": {
     "@playwright/test": "1.56.1",
     "@cloudflare/workers-types": "5.20261021.1",
+    "@playwright/test": "1.56.1",
     "@tailwindcss/vite": "4.3.4",
     "@types/bun": "1.4.2",
     "@types/react": "19.3.0",

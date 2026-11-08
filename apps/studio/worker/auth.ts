@@ -52,13 +52,13 @@ export interface AuthConfig {
    * seeded `org_demo` on preview; otherwise the user's earliest membership.
    */
   readonly defaultOrganizationId?: string
-  /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
-  readonly gateway?: GatewayClient
   /** "js" where the runtime has no `node:crypto.scrypt` (celld); absent or "native" otherwise. */
   readonly scrypt?: PasswordScrypt
+  /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
+  readonly gateway?: GatewayClient
 }
 
-/** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from Infisical by name. */
+/** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from the operator's secret store by name. */
 export interface GatewayClient {
   readonly url: string
   readonly clientId: string
