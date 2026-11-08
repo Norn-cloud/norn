@@ -6,6 +6,17 @@ import { compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
 import { checkPack, compilePack, finalizeFlowSourceMap } from "./pack.ts"
 
+if (process.argv[2] === "fmt") {
+  const { fmt } = await import("./fmt.ts")
+  const { ProjectError } = await import("./project.ts")
+  try { process.exit(fmt(process.argv.slice(3))) }
+  catch (error) {
+    if (!(error instanceof ProjectError)) throw error
+    process.stdout.write(`${JSON.stringify(error.diagnostic)}\n`)
+    process.exit(error.exitCode)
+  }
+}
+
 const [command, input, ...flags] = process.argv.slice(2)
 function option(name: string): string | undefined {
   const index = flags.indexOf(name)
