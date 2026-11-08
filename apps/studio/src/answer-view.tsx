@@ -12,7 +12,7 @@ import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
-import { chartFrame } from "./lib/chart.ts"
+import { chartEmpty, chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
 import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from "./lib/live.ts"
 import type { Read } from "./lib/exact.ts"
@@ -169,7 +169,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
               <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.5} fill="var(--color-position)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
             </AreaChart>
           </ChartContainer>
-          ) : <EmptyState icon={ChartLine}>The server returned no answers for this window.</EmptyState>}
+          ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
         </Well>
       </Panel>
       <Panel icon={Rows3} label="Every week" action="Select a week to see its records">

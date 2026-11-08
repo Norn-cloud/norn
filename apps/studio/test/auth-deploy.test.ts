@@ -41,4 +41,9 @@ test("a missing cell Worker fails the deploy by name; an existing one passes", a
   await expect(requireWorkerScript("norn-cell-preview", env, answer(500) as typeof fetch)).rejects.toThrow("Cloudflare answered 500")
   await requireWorkerScript("norn-cell-preview", env, answer(200) as typeof fetch)
   await expect(requireWorkerScript("norn-cell-preview", {}, answer(200) as typeof fetch)).rejects.toThrow("CLOUDFLARE_ACCOUNT_ID")
+  // No credentials is named as such, before any request goes out.
+  asked = ""
+  await expect(requireWorkerScript("norn-cell-preview", { CLOUDFLARE_ACCOUNT_ID: "a", CLOUDFLARE_EMAIL: "e" }, answer(200) as typeof fetch)).rejects.toThrow("CLOUDFLARE_API_TOKEN")
+  expect(asked).toBe("")
+  await requireWorkerScript("norn-cell-preview", { CLOUDFLARE_ACCOUNT_ID: "a", CLOUDFLARE_API_TOKEN: "t" }, answer(200) as typeof fetch)
 })
