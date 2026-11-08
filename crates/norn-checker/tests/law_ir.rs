@@ -1093,6 +1093,14 @@ fn decimal_binding_findings(
     units: [Option<&str>; 3],
     scales: [u64; 3],
 ) -> Vec<norn_checker::Diagnostic> {
+    decimal_binding_findings_with(units, scales, None)
+}
+
+fn decimal_binding_findings_with(
+    units: [Option<&str>; 3],
+    scales: [u64; 3],
+    additivity: Option<&str>,
+) -> Vec<norn_checker::Diagnostic> {
     let names = ["input", "output", "loss"];
     let interface: norn_ir::InterfaceDef = serde_json::from_value(json!({
         "name":"core.Conversion", "invariants":[{"id":"conserve","expression":"self.input == self.output + self.loss","message":"conserve"}], "properties": names.map(|id| json!({
@@ -1105,6 +1113,7 @@ fn decimal_binding_findings(
         "properties": names.into_iter().zip(scales).zip(units).map(|((id, scale), unit)| {
             let mut kind = json!({"kind":"decimal", "scale":scale});
             if let Some(unit) = unit { kind["unit"] = json!({"system":"ucum","code":unit}); }
+            if let Some(additivity) = additivity { kind["additivity"] = json!({"kind":additivity}); }
             json!({"id":id, "type":kind})
         }).collect::<Vec<_>>()
     }))
@@ -1139,6 +1148,14 @@ fn interface_decimal_binding_resolves_concrete_units_and_scales_without_defaults
             .iter()
             .any(|d| d.code.as_str() == "core.values.unit_mismatch")
     );
+}
+
+#[test]
+fn interface_decimal_binding_admits_implementors_with_declared_additivity() {
+    for additivity in ["additive", "semi_additive", "non_additive"] {
+        let findings = decimal_binding_findings_with([Some("g"); 3], [3; 3], Some(additivity));
+        assert!(findings.is_empty(), "{additivity}: {findings:?}");
+    }
 }
 
 proptest::proptest! {

@@ -2329,7 +2329,10 @@ fn type_narrows(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Option<bool> {
 }
 
 fn base_narrows(narrow: &PropertyType, wide: &PropertyType) -> bool {
-    if narrow.additivity() != wide.additivity() {
+    // A `DecimalBinding` carries no additivity, so the implementor chooses its own.
+    if !matches!(wide, PropertyType::DecimalBinding { .. })
+        && narrow.additivity() != wide.additivity()
+    {
         return false;
     }
 
