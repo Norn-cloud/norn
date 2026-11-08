@@ -98,7 +98,25 @@ fn action_input(
         .to_json_value()
         .decode::<norn_ir::ActionRoot>()
         .expect("action IR");
-    (action, serde_json::from_value(input).expect("input"))
+    let input = serde_json::from_value(exact_decimals(&action, input)).expect("input");
+    (action, input)
+}
+/// Sends each decimal-typed number as exact text, the action wire's decimal form.
+fn exact_decimals(action: &norn_ir::ActionRoot, mut input: Value) -> Value {
+    let schema = serde_json::to_value(&action.input_schema).expect("input schema");
+    let properties = schema.get("properties").and_then(Value::as_object);
+    if let (Some(properties), Some(fields)) = (properties, input.as_object_mut()) {
+        for (name, value) in fields.iter_mut() {
+            let decimal = properties
+                .get(name)
+                .and_then(|schema| schema.pointer("/nornType/kind"))
+                == Some(&json!("decimal"));
+            if decimal && value.is_number() {
+                *value = Value::String(value.to_string());
+            }
+        }
+    }
+    input
 }
 pub(crate) fn run(
     action_id: &str,

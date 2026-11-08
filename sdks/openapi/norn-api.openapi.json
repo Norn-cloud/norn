@@ -38,6 +38,187 @@
         },
         "additionalProperties": false
       },
+      "NornActionActionDerivedValue": {
+        "type": "object",
+        "description": "One field produced by an ordered action input derivation.",
+        "required": [
+          "field",
+          "value"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The derived field."
+          },
+          "value": {
+            "description": "The exact runtime value written to the effective input. Preserve source\ntext and use an exact-number JSON parser; JavaScript `JSON.parse` may\nlose precision."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionActionPreconditionOutcome": {
+        "type": "object",
+        "description": "The successful outcome of one action precondition.",
+        "required": [
+          "expression",
+          "satisfied"
+        ],
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "The expression evaluated."
+          },
+          "satisfied": {
+            "type": "boolean",
+            "description": "Whether it held (successful records contain only `true`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionCallRecord": {
+        "type": "object",
+        "title": "ActionCallRecord",
+        "description": "The idempotency record of a committed call (the values of its\n[`ACTION_CALL_TYPE`] object).",
+        "required": [
+          "actionId",
+          "object",
+          "input",
+          "actor",
+          "turn",
+          "transition",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "actionArtifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action artifact that was admitted when the call committed. Missing\nonly on records written before action attribution was recorded."
+          },
+          "actionId": {
+            "type": "string",
+            "description": "The action."
+          },
+          "actionVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action artifact version that was admitted when the call committed.\nMissing only on records written before action attribution was recorded."
+          },
+          "actor": {
+            "type": "string",
+            "description": "The actor."
+          },
+          "derivedValues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionDerivedValue"
+            },
+            "description": "The values produced by each derivation, in declaration order."
+          },
+          "effectKind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effect program that committed this call. Missing in legacy records\nwritten before effect attribution and interpreted as `fire_transition`."
+          },
+          "effectiveInput": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The final input after ordered derivations. Legacy records use `input`.\nPreserve source text and use an exact-number JSON parser for its values;\nJavaScript `JSON.parse` may lose precision.",
+            "additionalProperties": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            }
+          },
+          "from": {
+            "type": "string",
+            "description": "The state it left."
+          },
+          "input": {
+            "type": "object",
+            "description": "The call's input.",
+            "additionalProperties": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            }
+          },
+          "object": {
+            "$ref": "#/components/schemas/NornActionFactKey",
+            "description": "The target object."
+          },
+          "preconditionOutcomes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionPreconditionOutcome"
+            },
+            "description": "Successful precondition results, in declaration order."
+          },
+          "rowOperations": {
+            "type": "array",
+            "items": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            },
+            "description": "Normalized row operations committed by a parent-and-rows action."
+          },
+          "ruleBinding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "TXN-RULE-1: exact writer closure, action, scope and world identity."
+          },
+          "to": {
+            "type": "string",
+            "description": "The state it entered."
+          },
+          "transition": {
+            "type": "string",
+            "description": "The fired transition."
+          },
+          "turn": {
+            "type": "string",
+            "description": "The turn the call committed in."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionFactKey": {
+        "type": "object",
+        "description": "Identity of one ontology object in a cell: its type and identity key.",
+        "required": [
+          "objectType",
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The object's identity key value."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionInput": {
+        "type": "object",
+        "title": "Map_of_RuntimeValue",
+        "additionalProperties": {
+          "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+        }
+      },
+      "NornActionObjectTypeName": {
+        "type": "string",
+        "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+        "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+      },
       "NornArtifactEnvelope": {
         "oneOf": [
           {
@@ -8901,8 +9082,7 @@
             "items": {}
           },
           {
-            "type": "object",
-            "additionalProperties": {}
+            "$ref": "#/components/schemas/NornIrJsonValueAnyOf5"
           }
         ]
       },
@@ -9575,7 +9755,6 @@
             }
           },
           "settings": {
-            "$ref": "#/components/schemas/NornIrLayoutJsonValue",
             "description": "Optional editor settings preserved as exact JSON."
           },
           "viewport": {
@@ -9658,31 +9837,6 @@
         "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
         "enum": [
           "0.1"
-        ]
-      },
-      "NornIrLayoutJsonValue": {
-        "anyOf": [
-          {
-            "type": "null"
-          },
-          {
-            "type": "boolean"
-          },
-          {
-            "type": "number",
-            "format": "double"
-          },
-          {
-            "type": "string"
-          },
-          {
-            "type": "array",
-            "items": {}
-          },
-          {
-            "type": "object",
-            "additionalProperties": {}
-          }
         ]
       },
       "NornIrLayoutLayoutViewport": {
@@ -11019,7 +11173,6 @@
             "description": "Relative property path. To-many filters are existential predicates."
           },
           "value": {
-            "$ref": "#/components/schemas/NornIrJsonValue",
             "description": "Exact runtime literal checked against the effective property contract."
           }
         },
@@ -13694,7 +13847,7 @@
             "type": "object",
             "description": "Typed operands; disclosure authority is required before projection.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/NornIrJsonValue"
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
             }
           }
         },
