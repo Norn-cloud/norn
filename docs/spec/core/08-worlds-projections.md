@@ -52,7 +52,7 @@ Evidence: runtime isolation/access enforcement; sampled replay/subscription/thre
 
 Present: `crates/norn-kernel/src/observations.rs`, `crates/norn-cell/src/{history,reactive,reactive_read,migration}.rs`, `crates/norn-ir/src/{view,metric,widget,definition_catalog}.rs`. Metric IR/checking is not a statistical runtime. `norn-metrics` is introduced by open #69, not present at the inspected main. #71 adds historical cursor proof; #97/#103 are WellDB prerequisites with limited evidence. Complete bitemporal queries, IVM/OLAP, publication/lineage/restatement and main-to-fork promotion are target gaps.
 
-## Work breakdown (each PR ≤400 lines; beat 6 demo priority)
+## Work breakdown (one coherent unit per PR; beat 6 demo priority)
 
 1. **Demo priority:** bitemporal question/result envelope and history-at-cursor binding (#71), then ASOF-RESTATE fixtures.
 2. **Demo priority:** contribution lineage projection and source-document drill-down; then authorized LINEAGE-REGION tests.
@@ -142,3 +142,7 @@ DATA-LINEAGE scenarios use the unchanged scrap-yield CSV through a typed source
 mapping, all four combinations of value/source grants, non-bundle facts,
 redelivery and restart, source-budget exhaustion and corrupt source journal
 refusal. Generated disclosure cases preserve exact sums and member identities.
+
+## Admitted question locale views
+
+**QUESTION-LOCALE-1:** render an already admitted plan through #496's shared complete reviewed locale map, with explicit direction, no fallback and isolated semantic expressions. Every locale retains the original QuestionIR, its canonical digest, stable semantic slot IDs, numerator/denominator quantities and units, population, filters, dimensions, effective-time window and declared knowledge/freshness policy. A separate display binding digest pins metric definitions and numeric contracts. This view neither executes nor authenticates a cutoff; historical results retain their authenticated frontier/receipt-clock provenance through the host seam. AsOf stays AsOf. Named scenarios: generated `question_locale_identity` and `question_locale_identity_refuses_unknown_or_incomplete_wording_and_retains_denominator`. Ambiguity still refuses before plan admission; only Diag's shared typed hook may remove those refusals.

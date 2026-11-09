@@ -422,3 +422,10 @@ test("path equations compile from concept declarations to typed EntityIR extensi
     "norn.path-equations/1.0.0": [{ id: "same_parent", left: ["parent"], right: ["parent"] }],
   } } })
 }, 30_000)
+
+test("parameter slices and typed context expressions retain their shared contract", () => {
+  const compiled = compileDefinitions(join(TOOL_ROOT, "fixtures/parameters/binding.source.ts"), { scope, sourcePath: "tools/norn-ts/fixtures/parameters/binding.source.ts" })
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+  expect(compiled.artifacts).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ preconditions: ["input.value == slice.selected.value"], slice: expect.arrayContaining([expect.objectContaining({ key: { parameter: { from: "settings", settingKey: "example.rate", effectiveAt: "effective_at", precedence: [{ orgId: "org_demo", environmentId: "dev" }, { orgId: "org_demo" }, {}] } } })]) }) }))
+  if (checker) expect(checker.checkArtifactSet(compiled.artifacts).admitted).toBe(false)
+}, 30_000)

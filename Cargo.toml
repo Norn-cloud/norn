@@ -51,6 +51,7 @@ default-members = [
   "vendor/zen/core/template",
   "vendor/zen/core/expression"
 ]
+exclude = ["third_party/ascent/ascent", "third_party/ascent/ascent_macro"]
 resolver = "2"
 
 [workspace.package]

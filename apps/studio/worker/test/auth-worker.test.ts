@@ -80,6 +80,54 @@ test("a state-changing auth request from another origin is refused", async () =>
   expect(response.status).toBe(403)
 })
 
+test("a listed second origin may sign in while an unlisted origin is refused", async () => {
+  const env = { ...stage(), BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify([ORIGIN, "https://studio-demo.norn.cloud"]) }
+  await post(env, "/api/auth/sign-up/email", { email: "second@example.com", password: "correct horse battery", name: "Second" })
+  const credentials = { email: "second@example.com", password: "correct horse battery" }
+  expect((await post(env, "/api/auth/sign-in/email", credentials, { origin: "https://studio-demo.norn.cloud" })).status).toBe(200)
+  expect((await post(env, "/api/auth/sign-in/email", credentials, { origin: "https://evil.example" })).status).toBe(403)
+})
+
+test("magic links stay on the trusted origin that requested them", async () => {
+  const second = "https://studio-demo.norn.cloud"
+  const sent: string[] = []
+  const env = { ...stage(), BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify([ORIGIN, second]), EMAIL_FROM: "studio@norn.cloud", EMAIL: { send: async (message: { text: string }) => { sent.push(message.text) } } }
+  await post(env, "/api/auth/sign-up/email", { email: "magic@example.com", password: "correct horse battery", name: "Magic" })
+  const magic = (origin: string, extra: Record<string, string> = {}, callbackURL = "/") => worker.fetch(new Request(`${origin}/api/auth/sign-in/magic-link`, { method: "POST", headers: { "content-type": "application/json", origin, "cf-connecting-ip": `198.51.100.${++address % 250}`, ...extra }, body: JSON.stringify({ email: "magic@example.com", callbackURL }) }) as Parameters<typeof worker.fetch>[0], env)
+  expect((await magic("https://evil.example")).status).toBe(403)
+  expect((await magic(second, {}, "https://evil.example/landing")).status).toBe(403)
+  expect((await magic(second, { host: "evil.example" })).status).toBe(403)
+  expect((await magic(second, { "x-forwarded-host": "evil.example" })).status).toBe(403)
+  expect(sent).toHaveLength(0)
+  for (const [source, other] of [[second, ORIGIN], [ORIGIN, second]] as const) {
+    expect((await magic(source)).status).toBe(200)
+    const url = sent.at(-1)?.match(/https:\/\/[^\s]+/)?.[0]
+    expect(url).toBeDefined()
+    const link = new URL(url ?? "")
+    expect(link.origin).toBe(source)
+    expect(new URL(link.searchParams.get("callbackURL") ?? "").origin).toBe(source)
+    const moved = new URL(link); moved.host = new URL(other).host
+    expect((await worker.fetch(new Request(moved, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)).status).toBe(403)
+    for (const header of ["host", "x-forwarded-host"]) {
+      expect((await worker.fetch(new Request(link, { headers: { [header]: "evil.example" }, redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)).status).toBe(403)
+    }
+    const tampered = new URL(link); tampered.searchParams.set("callbackURL", `${other}/`)
+    expect((await worker.fetch(new Request(tampered, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)).status).toBe(403)
+    const relative = new URL(link); relative.searchParams.set("callbackURL", "/")
+    expect((await worker.fetch(new Request(relative, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)).status).toBe(403)
+    const verified = await worker.fetch(new Request(link, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)
+    expect(verified.status).toBe(302)
+    expect(new URL(verified.headers.get("location") ?? "", source).origin).toBe(source)
+    const cookie = cookieOf(verified)
+    expect(cookie).toContain("__Secure-norn.session_token=")
+    const me = await worker.fetch(new Request(`${source}/api/me`, { headers: { cookie } }) as Parameters<typeof worker.fetch>[0], env)
+    expect(me.status).toBe(200)
+    const replay = await worker.fetch(new Request(link, { redirect: "manual" }) as Parameters<typeof worker.fetch>[0], env)
+    expect(replay.headers.getSetCookie().some((line) => line.startsWith("__Secure-norn.session_token="))).toBe(false)
+    expect(replay.headers.get("location")).toContain("INVALID_TOKEN")
+  }
+})
+
 test("repeated password guesses from one address are rate limited", async () => {
   const env = stage()
   await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" })

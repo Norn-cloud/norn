@@ -208,6 +208,33 @@ impl Refusal {
         )
     }
 
+    /// Preserve stable compute refusals without exposing storage diagnostics.
+    #[must_use]
+    pub fn from_compute(error: norn_cell::CellError) -> Self {
+        let code = if let norn_cell::CellError::ComputeRefused(code) = error {
+            code
+        } else if matches!(error, norn_cell::CellError::TemporalLeakage) {
+            "core.compute.stale_input"
+        } else {
+            return Self::host(error);
+        };
+        if code == "core.compute.bound_exceeded" {
+            return Self::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                code,
+                "the question exceeds its admitted bounds",
+                "no partial answer is returned",
+            );
+        }
+        Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            code,
+            "the question cannot be evaluated at the requested frontier",
+            "the admitted computation or exact-result precondition is not satisfied",
+        )
+        .with_category(RefusalCategory::Precondition)
+    }
+
     /// A host failure (the request changed nothing).
     #[must_use]
     pub fn host(_detail: impl std::fmt::Display) -> Self {

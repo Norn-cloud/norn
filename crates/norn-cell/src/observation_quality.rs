@@ -1,7 +1,7 @@
 //! OBS-EVIDENCE-1: durable finding identity and explicit authoritative population filtering.
 use crate::{
     CellError, CommitBatch, ObjectRecord, StoreReader,
-    engine::{SqlEngine, params},
+    engine::{SqlEngine, SqlValue, params},
     read::to_i64,
     system::LEDGER,
 };
@@ -21,6 +21,28 @@ pub struct AuthoritativePage {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// QUERY-ENGINE-1: receipt subjects are invalidation hints, never finding authority.
+    /// The shared record read rechecks findings using the same first-subject lookup.
+    pub(crate) fn question_finding_keys(
+        &self,
+        receipt: &crate::Receipt,
+    ) -> Result<BTreeSet<String>, CellError> {
+        let mut keys = BTreeSet::new();
+        if receipt.body.event_count == 0 {
+            return Ok(keys);
+        }
+        let rows = self.conn.query(
+            &format!("SELECT json_extract(event, '$.fact.subjects[0].key') FROM {LEDGER} WHERE commit_seq = ?1 AND world = ?2 AND json_extract(event, '$.op') = 'data_quality_finding' ORDER BY seq"),
+            params![to_i64(receipt.body.commit_seq, "finding receipt")?, &receipt.body.world],
+        )?;
+        for mut row in rows {
+            if let Some(SqlValue::Text(key)) = row.pop() {
+                keys.insert(key);
+            }
+        }
+        Ok(keys)
+    }
+
     /// OBS-EVIDENCE-1: quarantine is any open integrity finding under its retained model.
     ///
     /// # Errors

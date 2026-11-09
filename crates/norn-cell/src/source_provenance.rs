@@ -25,14 +25,18 @@ pub struct MappingPin {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceSourceProvenance {
-    /// Content address of the recomputed bundle.
-    pub bundle_digest: String,
+    /// Content address of the recomputed bundle. Derived from the mapped canonical
+    /// values, so a trace withholds it (`None`) unless the caller may read values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_digest: Option<String>,
     /// Semantic source-record identity emitted by the admitted mapping.
     pub source_record_ref: SourceRecordRef,
     /// Original source document identity in the sealed envelope.
     pub document_ref: SourceRecordRef,
-    /// Digest of the source document payload.
-    pub document_digest: String,
+    /// Digest of the source document payload. Derived from the payload's values, so
+    /// a trace withholds it (`None`) unless the caller may read values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_digest: Option<String>,
     /// Exact mapping declaration that produced the canonical instance.
     pub mapping_pin: MappingPin,
     /// Complete field-level source/rule provenance emitted by that mapping.
@@ -168,10 +172,10 @@ fn source_from_bundle(
             .ok_or_else(invalid)
     };
     Ok(InstanceSourceProvenance {
-        bundle_digest: bundle.digest.clone(),
+        bundle_digest: Some(bundle.digest.clone()),
         source_record_ref: mapped.provenance.source.clone(),
         document_ref: SourceRecordRef::new(text("source")?, text("source_id")?),
-        document_digest: text("payload_digest")?,
+        document_digest: Some(text("payload_digest")?),
         mapping_pin: MappingPin {
             artifact_id,
             version,
