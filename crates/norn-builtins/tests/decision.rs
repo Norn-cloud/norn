@@ -462,7 +462,14 @@ fn an_oversized_request_is_refused_before_parsing_and_issuance() {
         satisfied_laws: &laws,
     };
     assert_eq!(
-        issue(&manifest, &invocation, &body, &evidence, &decide("publish"), 5_000),
+        issue(
+            &manifest,
+            &invocation,
+            &body,
+            &evidence,
+            &decide("publish"),
+            5_000
+        ),
         Err(too_large)
     );
     assert_eq!(
