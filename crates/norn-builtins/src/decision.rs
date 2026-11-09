@@ -299,7 +299,9 @@ fn bind(
     request: &[u8],
 ) -> Result<DecisionRequest, DecisionRefusal> {
     if too_large(request) {
-        return Err(DecisionRefusal::InvalidRequest("decision.request_too_large"));
+        return Err(DecisionRefusal::InvalidRequest(
+            "decision.request_too_large",
+        ));
     }
     let manifest = registered.manifest();
     let blob = invocation

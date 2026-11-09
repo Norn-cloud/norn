@@ -14,8 +14,8 @@ use std::convert::Infallible;
 
 use norn_builtins::Registered;
 use norn_builtins::decision::{
-    DeciderEvidence, Decision, DecisionRefusal, IssuedOnly, MAX_OPTION_ID_CHARS, MAX_TEXT_CHARS,
-    MAX_REQUEST_BYTES, REQUEST_BLOB, expire, issue, parse_request, withdraw,
+    DeciderEvidence, Decision, DecisionRefusal, IssuedOnly, MAX_OPTION_ID_CHARS, MAX_REQUEST_BYTES,
+    MAX_TEXT_CHARS, REQUEST_BLOB, expire, issue, parse_request, withdraw,
 };
 use norn_ir::function::{
     Authority, AuthorityKind, BlobRef, Digest, Fencing, FreshnessMode, FunctionInvocation,
@@ -429,7 +429,14 @@ fn an_oversized_request_is_refused_before_parsing_and_issuance() {
         satisfied_laws: &laws,
     };
     assert_eq!(
-        issue(&manifest, &invocation, &body, &evidence, &decide("publish"), 5_000),
+        issue(
+            &manifest,
+            &invocation,
+            &body,
+            &evidence,
+            &decide("publish"),
+            5_000
+        ),
         Err(too_large)
     );
     assert_eq!(

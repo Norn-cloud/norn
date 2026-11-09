@@ -4012,9 +4012,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         command_id: &str,
         generation: u64,
     ) -> Result<Option<PendingCommand>, CellError> {
-        let Some(row) = self.pending_command(command_id)?.filter(|row| {
-            row.command.generation == generation && row.result.is_some()
-        }) else {
+        let Some(row) = self
+            .pending_command(command_id)?
+            .filter(|row| row.command.generation == generation && row.result.is_some())
+        else {
             return Ok(None);
         };
         if is_parked(&row.command) {
