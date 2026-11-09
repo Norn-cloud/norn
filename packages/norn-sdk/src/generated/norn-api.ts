@@ -129,6 +129,98 @@ export interface components {
              */
             layoutVersion: "0.1";
         };
+        /** @description One field produced by an ordered action input derivation. */
+        NornActionActionDerivedValue: {
+            /** @description The derived field. */
+            field: string;
+            /**
+             * @description The exact runtime value written to the effective input. Preserve source
+             *     text and use an exact-number JSON parser; JavaScript `JSON.parse` may
+             *     lose precision.
+             */
+            value: unknown;
+        };
+        /** @description The successful outcome of one action precondition. */
+        NornActionActionPreconditionOutcome: {
+            /** @description The expression evaluated. */
+            expression: string;
+            /** @description Whether it held (successful records contain only `true`). */
+            satisfied: boolean;
+        };
+        /**
+         * ActionCallRecord
+         * @description The idempotency record of a committed call (the values of its
+         *     [`ACTION_CALL_TYPE`] object).
+         */
+        NornActionCallRecord: {
+            /**
+             * @description The action artifact that was admitted when the call committed. Missing
+             *     only on records written before action attribution was recorded.
+             */
+            actionArtifactId?: string | null;
+            /** @description The action. */
+            actionId: string;
+            /**
+             * @description The action artifact version that was admitted when the call committed.
+             *     Missing only on records written before action attribution was recorded.
+             */
+            actionVersion?: string | null;
+            /** @description The actor. */
+            actor: string;
+            /** @description The values produced by each derivation, in declaration order. */
+            derivedValues?: components["schemas"]["NornActionActionDerivedValue"][];
+            /**
+             * @description The effect program that committed this call. Missing in legacy records
+             *     written before effect attribution and interpreted as `fire_transition`.
+             */
+            effectKind?: string | null;
+            /**
+             * @description The final input after ordered derivations. Legacy records use `input`.
+             *     Preserve source text and use an exact-number JSON parser for its values;
+             *     JavaScript `JSON.parse` may lose precision.
+             */
+            effectiveInput?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description The state it left. */
+            from: string;
+            /** @description The call's input. */
+            input: {
+                [key: string]: unknown;
+            };
+            /** @description The target object. */
+            object: components["schemas"]["NornActionFactKey"];
+            /** @description Successful precondition results, in declaration order. */
+            preconditionOutcomes?: components["schemas"]["NornActionActionPreconditionOutcome"][];
+            /** @description Normalized row operations committed by a parent-and-rows action. */
+            rowOperations?: unknown[];
+            /** @description TXN-RULE-1: exact writer closure, action, scope and world identity. */
+            ruleBinding?: string | null;
+            /** @description The state it entered. */
+            to: string;
+            /** @description The fired transition. */
+            transition: string;
+            /** @description The turn the call committed in. */
+            turn: string;
+        };
+        /** @description Identity of one ontology object in a cell: its type and identity key. */
+        NornActionFactKey: {
+            /** @description The object's identity key value. */
+            key: string;
+            /** @description The object type. */
+            objectType: string;
+        };
+        /** Map_of_RuntimeValue */
+        NornActionInput: {
+            [key: string]: unknown;
+        };
+        /**
+         * @description Qualified name of an object type: dotted lower-case namespace segments and
+         *     a PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1
+         *     `objectKind` already uses. The namespace segments are the type's domain
+         *     namespace ([`Self::domain`]).
+         */
+        NornActionObjectTypeName: string;
         /**
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
@@ -413,14 +505,14 @@ export interface components {
             message: string;
             remediation: components["schemas"]["NornIrDiagnosticRemediation"] | null;
             severity: components["schemas"]["NornIrDiagnosticSeverity"];
-            span: null | components["schemas"]["NornCheckerDiagnosticSpan"];
-            tier: null | components["schemas"]["NornCheckerTier"];
+            span: components["schemas"]["NornCheckerDiagnosticSpan"] | null;
+            tier: components["schemas"]["NornCheckerTier"] | null;
         };
         /** @description A JSON pointer and optional source-text range for a checker finding. */
         NornCheckerDiagnosticSpan: {
             /** @description RFC 6901 JSON pointer into the artifact. */
             pointer: string;
-            source: null | components["schemas"]["NornCheckerSourceSpan"];
+            source: components["schemas"]["NornCheckerSourceSpan"] | null;
         };
         /** @description The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`). */
         NornCheckerDiagnostics: {
@@ -3535,9 +3627,7 @@ export interface components {
         };
         /** @constant */
         NornIrJsonFalse: false;
-        NornIrJsonValue: null | boolean | number | string | unknown[] | {
-            [key: string]: unknown;
-        };
+        NornIrJsonValue: null | boolean | number | string | unknown[] | components["schemas"]["NornIrJsonValueAnyOf5"];
         NornIrJsonValueAnyOf5: {
             [key: string]: unknown;
         };
@@ -3780,7 +3870,7 @@ export interface components {
                 [key: string]: components["schemas"]["NornIrLayoutNodeLayout"];
             };
             /** @description Optional editor settings preserved as exact JSON. */
-            settings?: components["schemas"]["NornIrLayoutJsonValue"];
+            settings?: unknown;
             /** @description Optional viewport state in the editor's canvas coordinate system. */
             viewport?: components["schemas"]["NornIrLayoutLayoutViewport"] | null;
         };
@@ -3811,9 +3901,6 @@ export interface components {
          * @enum {string}
          */
         NornIrLayoutIrVersion01: "0.1";
-        NornIrLayoutJsonValue: null | boolean | number | string | unknown[] | {
-            [key: string]: unknown;
-        };
         /** @description Exact pan and zoom state of the editor canvas. */
         NornIrLayoutLayoutViewport: {
             /** @description Horizontal viewport offset. */
@@ -4411,7 +4498,7 @@ export interface components {
             /** @description Relative property path. To-many filters are existential predicates. */
             path: components["schemas"]["NornIrDimensionPath"];
             /** @description Exact runtime literal checked against the effective property contract. */
-            value: components["schemas"]["NornIrJsonValue"];
+            value: unknown;
         };
         /** @description Named metric input in a derived calculation. */
         NornIrMetricInput: {
@@ -4659,6 +4746,8 @@ export interface components {
              *     declare a business key.
              */
             identity?: components["schemas"]["NornIrKeySpec"][];
+            /** @description FA-IMM-1: existing instances are append-only; subtypes inherit this flag. */
+            immutable?: boolean;
             /**
              * @description Interfaces the type implements, in addition to those its supertypes
              *     implement. Omitted when empty.
@@ -5243,7 +5332,7 @@ export interface components {
             propertyId: string;
         };
         /** @description The value kind of a property, tagged by `kind`. */
-        NornIrPropertyType: components["schemas"]["NornIrPropertyTypeOneOf0"] | components["schemas"]["NornIrPropertyTypeOneOf1"] | components["schemas"]["NornIrPropertyTypeOneOf2"] | components["schemas"]["NornIrPropertyTypeOneOf3"] | components["schemas"]["NornIrPropertyTypeOneOf4"] | components["schemas"]["NornIrPropertyTypeOneOf5"] | components["schemas"]["NornIrPropertyTypeOneOf6"] | components["schemas"]["NornIrPropertyTypeOneOf7"] | components["schemas"]["NornIrPropertyTypeOneOf8"] | components["schemas"]["NornIrPropertyTypeOneOf9"] | components["schemas"]["NornIrPropertyTypeOneOf10"];
+        NornIrPropertyType: components["schemas"]["NornIrPropertyTypeOneOf0"] | components["schemas"]["NornIrPropertyTypeOneOf1"] | components["schemas"]["NornIrPropertyTypeOneOf2"] | components["schemas"]["NornIrPropertyTypeOneOf3"] | components["schemas"]["NornIrPropertyTypeOneOf4"] | components["schemas"]["NornIrPropertyTypeOneOf5"] | components["schemas"]["NornIrPropertyTypeOneOf6"] | components["schemas"]["NornIrPropertyTypeOneOf7"] | components["schemas"]["NornIrPropertyTypeOneOf8"] | components["schemas"]["NornIrPropertyTypeOneOf9"] | components["schemas"]["NornIrPropertyTypeOneOf10"] | components["schemas"]["NornIrPropertyTypeOneOf11"];
         /**
          * @description EntityIR v2 payload of an `entity` artifact that carries a catalog of
          *     shared property types (non-empty; checker rule).
@@ -5301,8 +5390,20 @@ export interface components {
             /** @enum {string} */
             kind: "integer";
         };
-        /** @description The shared property type (local or registry) with this name. */
+        /**
+         * @description Opaque JSON (an extension payload), optionally described by a JSON
+         *     Schema document the checker does not interpret.
+         */
         NornIrPropertyTypeOneOf10: {
+            /** @enum {string} */
+            kind: "json-ext";
+            schema?: components["schemas"]["NornIrPropertyTypeOneOf10PropertySchema"];
+        };
+        NornIrPropertyTypeOneOf10PropertySchema: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /** @description The shared property type (local or registry) with this name. */
+        NornIrPropertyTypeOneOf11: {
             /** @enum {string} */
             kind: "ref";
             /** @description The referenced [`PropertyTypeDef`] name. */
@@ -5339,13 +5440,20 @@ export interface components {
             scale: number;
             unit?: components["schemas"]["NornIrUnitRef"];
         };
-        /** @description `true` or `false`. */
+        /** @description VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale. */
         NornIrPropertyTypeOneOf3: {
+            /** @description Same-name members in one interface bind identically. */
+            group: string;
+            /** @enum {string} */
+            kind: "decimal-binding";
+        };
+        /** @description `true` or `false`. */
+        NornIrPropertyTypeOneOf4: {
             /** @enum {string} */
             kind: "boolean";
         };
         /** @description An instant in time with an explicit timezone policy. */
-        NornIrPropertyTypeOneOf4: {
+        NornIrPropertyTypeOneOf5: {
             /** @enum {string} */
             kind: "timestamp";
             /**
@@ -5355,7 +5463,7 @@ export interface components {
             timezone: "utc" | "offset";
         };
         /** @description An ISO 8601 calendar date (`YYYY-MM-DD`) with no time and no zone. */
-        NornIrPropertyTypeOneOf5: {
+        NornIrPropertyTypeOneOf6: {
             /** @enum {string} */
             kind: "date";
         };
@@ -5363,12 +5471,12 @@ export interface components {
          * @description An exact elapsed duration (fixed-length units only; calendar periods
          *     such as months are not durations).
          */
-        NornIrPropertyTypeOneOf6: {
+        NornIrPropertyTypeOneOf7: {
             /** @enum {string} */
             kind: "duration";
         };
         /** @description One of a closed set of string values. */
-        NornIrPropertyTypeOneOf7: {
+        NornIrPropertyTypeOneOf8: {
             /** @enum {string} */
             kind: "enum";
             /** @description Declared values, in presentation order; unique and non-empty. */
@@ -5378,22 +5486,10 @@ export interface components {
          * @description A closed structured value. Every member is present; nullability of
          *     the containing property applies to the whole record.
          */
-        NornIrPropertyTypeOneOf8: {
+        NornIrPropertyTypeOneOf9: {
             /** @enum {string} */
             kind: "record";
             members: components["schemas"]["NornIrRecordMember"][];
-        };
-        /**
-         * @description Opaque JSON (an extension payload), optionally described by a JSON
-         *     Schema document the checker does not interpret.
-         */
-        NornIrPropertyTypeOneOf9: {
-            /** @enum {string} */
-            kind: "json-ext";
-            schema?: components["schemas"]["NornIrPropertyTypeOneOf9PropertySchema"];
-        };
-        NornIrPropertyTypeOneOf9PropertySchema: {
-            [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /**
          * @description Who proposed a definition.
@@ -5555,7 +5651,7 @@ export interface components {
             subject: string;
             /** @description Typed operands; disclosure authority is required before projection. */
             values: {
-                [key: string]: components["schemas"]["NornIrJsonValue"];
+                [key: string]: unknown;
             };
         };
         /** @description Directional `rel(from, role)`. */
@@ -6331,8 +6427,7 @@ export interface components {
             /** @enum {unknown} */
             valueType?: "text";
         } | {
-            /** Format: double */
-            value?: number;
+            value?: components["schemas"]["NornIrDecimalLiteral"];
             /** @enum {unknown} */
             valueType?: "number";
         } | {
@@ -6370,7 +6465,7 @@ export interface components {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /**
-         * @description The JSON type of a setting's `value`.
+         * @description The setting value kind; numbers use exact decimal-string literals.
          * @enum {string}
          */
         NornIrSettingValueType: "text" | "number" | "boolean" | "json";
@@ -6400,12 +6495,35 @@ export interface components {
             optional?: boolean;
         };
         /** @description Where a [`SliceDeclaration`]'s key comes from. */
-        NornIrSliceKey: "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf4"] | components["schemas"]["NornIrSliceKeyOneOf5"];
-        /** @description A text property of an earlier slice entry (a link by key). */
-        NornIrSliceKeyOneOf4: {
-            property: components["schemas"]["NornIrSliceKeyOneOf4PropertyProperty"];
+        NornIrSliceKey: components["schemas"]["NornIrSliceKeyOneOf0"] | "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf5"] | components["schemas"]["NornIrSliceKeyOneOf6"];
+        /** @description A unique effective parameter selected from an earlier authorized link list. */
+        NornIrSliceKeyOneOf0: {
+            parameter: components["schemas"]["NornIrSliceKeyOneOf0PropertyParameter"];
         };
-        NornIrSliceKeyOneOf4PropertyProperty: {
+        NornIrSliceKeyOneOf0PropertyParameter: {
+            /** @description Earlier single-object slice holding an explicit default setting. */
+            defaultFrom?: string;
+            /** @description Action input field carrying the declared effective timestamp. */
+            effectiveAt: string;
+            /** @description Earlier list slice containing the candidate setting facts. */
+            from: string;
+            /** @description Explicit scope precedence, highest first. */
+            precedence: components["schemas"]["NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems"][];
+            /** @description Stable parameter key. */
+            settingKey: string;
+        };
+        NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems: {
+            businessUnitId?: string | null;
+            environmentId?: string | null;
+            orgId?: string | null;
+            tenantId?: string | null;
+            workspaceId?: string | null;
+        };
+        /** @description A text property of an earlier slice entry (a link by key). */
+        NornIrSliceKeyOneOf5: {
+            property: components["schemas"]["NornIrSliceKeyOneOf5PropertyProperty"];
+        };
+        NornIrSliceKeyOneOf5PropertyProperty: {
             /** @description The earlier entry's name. */
             from: string;
             /** @description The property holding the key. */
@@ -6416,10 +6534,10 @@ export interface components {
          *     single-object entry `from`, loaded as a list ordered by target key
          *     and bounded by the limit profile's slice records (#3079).
          */
-        NornIrSliceKeyOneOf5: {
-            link: components["schemas"]["NornIrSliceKeyOneOf5PropertyLink"];
+        NornIrSliceKeyOneOf6: {
+            link: components["schemas"]["NornIrSliceKeyOneOf6PropertyLink"];
         };
-        NornIrSliceKeyOneOf5PropertyLink: {
+        NornIrSliceKeyOneOf6PropertyLink: {
             /** @description The earlier (single-object) entry's name. */
             from: string;
             /** @description The link id, declared on that entry's type or a supertype. */
@@ -6764,6 +6882,11 @@ export interface components {
             description?: string;
             /** @description The source states, non-empty and distinct; none is `to`. */
             from: string[];
+            /**
+             * @description GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.
+             *     Omission inherits a parent's diagnostic; guard evidence is retained.
+             */
+            guardRefusalCode?: string;
             /**
              * @description Boolean ZEN Expressions over the object's properties, evaluated on
              *     the state before the change; the transition may be taken only when
@@ -8114,6 +8237,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description The exact answer. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8122,6 +8246,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornQuestionAnswer"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8130,6 +8255,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8138,6 +8264,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8146,6 +8273,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: over a resource bound. */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -8154,6 +8282,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused by a typed compute refusal. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -8162,6 +8291,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8192,6 +8322,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description The numeric trace. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8200,6 +8331,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornNumericTrace"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8208,6 +8340,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8216,6 +8349,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8224,6 +8358,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: over a resource bound. */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -8232,6 +8367,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused by a typed compute refusal. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -8240,6 +8376,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;

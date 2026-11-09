@@ -39,7 +39,9 @@ export class Cell {
     // error: no JWKS fetch, no provisioning reads and no 5 s hold on the object per
     // request while the issuer is unreachable or the stage is misconfigured.
     if (this.openFailure !== null) {
-      if (Date.now() - this.openFailure.at < OPEN_RETRY_MS) return Promise.reject(this.openFailure.error);
+      // A clock that moved backwards (negative elapsed) expires the entry too, so recovery is never delayed past the interval.
+      const elapsed = Date.now() - this.openFailure.at;
+      if (elapsed >= 0 && elapsed < OPEN_RETRY_MS) return Promise.reject(this.openFailure.error);
       this.openFailure = null;
     }
     // One opening per object; provisioning and dispatch are synchronous Wasm.

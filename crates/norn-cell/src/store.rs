@@ -3119,6 +3119,7 @@ mod identity_history_tests {
     fn snapshot(steps: usize) -> ModelDefinitionSnapshot {
         ModelDefinitionSnapshot {
             object_types: vec![ObjectTypeDef {
+                immutable: false,
                 name: ObjectTypeName("identity.Legacy".into()),
                 role: None,
                 description: None,

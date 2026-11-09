@@ -54,7 +54,7 @@
 //! | `customization` | every kind but `business_pack` | A constrained overlay on any definition; packs are composed, not customized. |
 //! | `business_pack` | every kind | A pack composes any artifact, including other packs. |
 //! | `source_schema` | nothing | Discovery evidence (T8-SRC-1): what a source declares and what Norn measured. |
-//! | `mapping` | `entity`, `source_schema` | Maps one source schema onto interfaces and object types (T8-MAP-1a); it binds its source by hash and names its targets by artifact id. |
+//! | `mapping` | `entity`, `source_schema`, `business_pack` | Source mappings bind a schema by hash and name entity targets; law interpretations pin their source and target ontology packs. |
 //!
 //! # Cycles
 //!
@@ -184,7 +184,7 @@ pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
         Customization => !matches!(to, BusinessPack),
         BusinessPack => true,
         SourceSchema => false,
-        Mapping => matches!(to, Entity | SourceSchema),
+        Mapping => matches!(to, Entity | SourceSchema | BusinessPack),
         Law => matches!(
             to,
             Entity
