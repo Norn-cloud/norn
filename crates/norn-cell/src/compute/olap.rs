@@ -131,7 +131,7 @@ fn execute(
             .get_mut(&bucket)
             .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?
             .members
-            .insert(id, Member { version, amounts })
+            .insert(id, Member::visible(version, amounts))
             .is_some()
         {
             return Err(refused(UNSUPPORTED_ENGINE));
@@ -178,6 +178,7 @@ fn aggregate_rows(
                 totals,
                 value,
                 members: BTreeMap::new(),
+                suppressed: false,
             },
         );
     }

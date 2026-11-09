@@ -5156,6 +5156,14 @@ fn check_action_identity_input<X>(
     actor: Option<&str>,
     max_bytes: usize,
 ) -> Result<(), ActionRefusal<X>> {
+    // Validate the principal before any traversal of caller input.
+    if actor.is_some_and(|a| {
+        a.len() > max_bytes || a.trim().is_empty() || norn_ir::canonical::nfc(a) != a
+    }) {
+        return Err(ActionRefusal::InvalidInput {
+            field: "actor".into(),
+        });
+    }
     if has_action_preparation_features(action)
         || matches!(
             action.effect_program,
@@ -5185,13 +5193,6 @@ fn check_action_identity_input<X>(
                 | RuntimeValue::String(_) => {}
             }
         }
-    }
-    if actor.is_some_and(|a| {
-        a.len() > max_bytes || a.trim().is_empty() || norn_ir::canonical::nfc(a) != a
-    }) {
-        return Err(ActionRefusal::InvalidInput {
-            field: "actor".into(),
-        });
     }
     Ok(())
 }
