@@ -1796,12 +1796,31 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ObjectRecord>, CellError> {
+        let ids = self.type_ids_after(world, object_type, after, limit)?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(record) = self.object(world, object_type, &id)? {
+                out.push(record);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The first `limit` identity keys after `after` of `object_type` (and
+    /// its subtypes) in `world`, in key order. Reads no object values.
+    pub(crate) fn type_ids_after(
+        &self,
+        world: &str,
+        object_type: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<BTreeSet<String>, CellError> {
         let tables = self.model.tables(object_type)?;
         let Some(root) = tables.first() else {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
         };
         if limit == 0 {
-            return Ok(Vec::new());
+            return Ok(BTreeSet::new());
         }
         let safe_max = usize::try_from(MAX_SAFE_INTEGER).unwrap_or(usize::MAX);
         let cap = limit.min(safe_max);
@@ -1848,13 +1867,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 }
             }
         }
-        let mut out = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Some(record) = self.object(world, object_type, &id)? {
-                out.push(record);
-            }
-        }
-        Ok(out)
+        Ok(ids)
     }
 
     /// The model the reader reads.

@@ -75,6 +75,7 @@ impl Backend for Human {
             command @ Command::Check { .. } => command,
             Command::Mcp
             | Command::Remote(_)
+            | Command::Source(_)
             | Command::Eval { .. }
             | Command::Openapi
             | Command::SourceDigest { .. } => {

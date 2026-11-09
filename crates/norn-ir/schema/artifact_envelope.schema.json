@@ -8825,6 +8825,25 @@
           ]
         },
         {
+          "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+          "type": "object",
+          "properties": {
+            "group": {
+              "description": "Same-name members in one interface bind identically.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal-binding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group"
+          ]
+        },
+        {
           "description": "`true` or `false`.",
           "type": "object",
           "properties": {
@@ -10474,6 +10493,84 @@
     "SliceKey": {
       "description": "Where a [`SliceDeclaration`]'s key comes from.",
       "oneOf": [
+        {
+          "description": "A unique effective parameter selected from an earlier authorized link list.",
+          "type": "object",
+          "properties": {
+            "parameter": {
+              "type": "object",
+              "properties": {
+                "defaultFrom": {
+                  "description": "Earlier single-object slice holding an explicit default setting.",
+                  "type": "string"
+                },
+                "effectiveAt": {
+                  "description": "Action input field carrying the declared effective timestamp.",
+                  "$ref": "#/$defs/PropertyId"
+                },
+                "from": {
+                  "description": "Earlier list slice containing the candidate setting facts.",
+                  "type": "string"
+                },
+                "precedence": {
+                  "description": "Explicit scope precedence, highest first.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "businessUnitId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "environmentId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "orgId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tenantId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "workspaceId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "settingKey": {
+                  "description": "Stable parameter key.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "settingKey",
+                "effectiveAt",
+                "precedence"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "parameter"
+          ]
+        },
         {
           "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
           "type": "string",

@@ -130,7 +130,7 @@ Current evidence: structural typing and narrow induction substrate at the baseli
 
 Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/src/{metric,jdm_profile}.rs`, `crates/norn-cell/src/reactive.rs`, `crates/norn-expr/`, `crates/norn-checker/src/obligations/induction.rs`. Ordered fold #323 and membership fencing #324 are open. Full folds, three-engine lowering, freshness frontiers and grain-aware analytical execution are not established on main. #69 introduces `norn-metrics` temporal admission in an open PR; the crate is absent at this baseline. #97/#103 are open WellDB prerequisites, not a shipped IVM/OLAP engine; #71 history-at-cursor is also open.
 
-## Work breakdown (each PR ≤400 lines; beat 6 is demo priority)
+## Work breakdown (one coherent unit per PR; beat 6 is demo priority)
 
 1. Land/adapt A1 #323 fold contract with fail-closed unsupported execution; complete accumulator/step typing.
 2. A2 exact arithmetic evaluator, then bounded interpreter, then FOLD-ALLOCATE/CAPACITY correspondence as separate cuts; remove refusal only for supported semantics.

@@ -1,0 +1,7 @@
+{
+  "code": "agent.validation.invalid_payload",
+  "message": "the agent payload is invalid: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

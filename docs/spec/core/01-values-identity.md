@@ -84,13 +84,17 @@ The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserv
 
 At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `runtime.rs`, `function.rs`; `crates/norn-canonical/src/{lib,number}.rs`; `crates/norn-checker/src/property_codec.rs`; `crates/norn-cell/tests/exact_values.rs`; `crates/norn-kernel/src/observations.rs` are substrate. General stable alias/merge/split history, bitemporal keys and calendar policies are not established. WellDB exact-decimal work #103 is open; its numeric limits must match the shared profile before engine equivalence is claimed.
 
-## Work breakdown (dependency order; each PR ≤400 changed lines)
+## Work breakdown (dependency order; one coherent unit per PR)
 
 1. Freeze shared exact value/unit profile and add VAL-ROUNDTRIP/VAL-ROUND conformance; reuse existing codecs (CI + core laws).
 2. Add scoped stable identity/key-binding contract with ID-COLLISION admission tests; unsupported alias mutations refuse.
 3. Enforce key/alias history and reference fences at commit; add concurrent collision/tombstone tests.
 4. Add temporal/calendar/content-reference pins and TIME-DST/BLOB-MISSING tests; align 06/08 temporal lookup.
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
+
+**VAL-DECIMAL-BIND-1:** An interface `decimal-binding` member obtains its exact unit and scale solely from the implementing type's concrete Decimal declaration, and same-group members require identical units/scales; missing bindings refuse `core.values.unit_binding_required`, mismatches refuse `core.values.unit_mismatch`, with no scalar or sibling-unit fallback.
+
+**VAL-DECIMAL-SCALE-1:** Decimal member checks recurse through stored Records. The shared commit integrity check applies the existing resolved Decimal runtime value validator, including declared scale and bounds, before any proposed writes/events/outbox effects become visible. Balanced values `100 = 99.1999 + 0.8001` refuse at scale 3; exact representable values and insignificant trailing zeros admit. Generated balanced decimal partitions check this boundary independently of conservation arithmetic. Stored link values, including defaults and nested Record members, meet the same domains before commit; unsupported members refuse, and a failure leaves the entire proposal unapplied.
 
 The shared type checker marks actual Decimal reads and declared destinations; typed consumer admission admits derived exact predicates and, within the exact profile, rejects destination-free division or unsupported inexact functions as `core.values.inexact`, and the typed consumer API binds that admission and the shared exact VM to the same environment and source. Constructed Decimal record/list destinations bind each numeric leaf separately; kernel invariants and action/owned-row expressions use the same typed binding, and all object/link/default/migration writers share effective-property materialization.
 
@@ -134,3 +138,11 @@ Raw-byte duplicates may refuse earlier through the existing physical unique inde
 **ID-NORMALIZED-RETAINED:** decoding an inactive retained definition preserves its original metadata and hashes without applying a newly introduced admission profile. Verified export reconstruction runs only in a fresh, unpublished engine, binds each retained batch to its original model and receipt, and checks the complete final model/state against the current normalized-key profile before returning or publishing a writable cell. Current commits and candidate installations retain the same fail-closed profile; no serialized replay opt-out exists. A retained prefix may contain formerly accepted normalized duplicates if its final current state removes the collision.
 
 - **ID-NORMALIZED-RETAINED-LOOKUP-PROVISION:** after upgrading away from a retained profile outside current admission bounds, historical definition lookup preserves its exact metadata/hash, and an identical provisioning retry reopens the current admitted model without adding receipts or changing live facts.
+
+The action boundary implements VAL-EXACT-1 with exact decimal JSON strings. It decodes the admitted `number`/`nornType: decimal` schema at scale 0–18, preserves raw caller input for idempotency, and records a distinct effective input whenever decoding changes values. Non-string decimal values, excess scale and non-finite literals refuse as invalid input. MCP projects the same admitted decimal field as a string. Named correspondence scenarios: `decimal_input_preparation_keeps_wire_text_and_exact_execution_value`, `action_decimal_wire_is_exact_text_and_bounded_by_scale`, and the generated-coefficient `exact_action_decimal_wire_matches_the_integer_reference`. The receipt JSON Schema is generated from the kernel's actual record type and checked against it.
+
+Decimal action-input schemas admit a string `description` annotation without changing validation. Other unknown keywords and non-string descriptions refuse. `described_decimal_action_input_prepares_exactly_and_rejects_unknown_constraints` exercises this annotation through kernel input preparation.
+
+VAL-EXACT-1 widget action mappings correspond to this same decimal wire contract: dynamic strings are checked at runtime, while string constants and every member of a string enumeration are checked at admission through the shared decoder. Numeric mappings and malformed or excess-scale literals refuse. `action_mapping_accepts_decimal_text_but_not_numeric_wire_values` and `decimal_mapping_matches_the_shared_decoder` cover this correspondence; mapping admission grants no permission to execute the action.
+
+Runtime JSON schemas describe opaque exact JSON, rather than binary64 values. The generated TypeScript SDK is declarations only; its runtime-value slots remain `unknown` until an exact-number decoder interprets retained source. It supplies no JSON parser. Ordinary JavaScript `JSON.parse` is insufficient for arbitrary-precision receipt consumption. This changes schema guidance, not the canonical numeric wire encoding.

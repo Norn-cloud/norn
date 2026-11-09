@@ -144,7 +144,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 
 Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,function}.rs`, `crates/norn-kernel/src/effect.rs`, `crates/norn-cell/src/host.rs`, `registry/packs/{erpnext,shopify,odoo}/`. Source contracts and outbox/freshness machinery exist, not complete CDC/quarantine/reconciliation or public Function execution. #69's `norn-metrics` temporal tables are pending, not general ML publication. #270/#308–#312 host/surfaces must use this same authority boundary.
 
-## Work breakdown (each PR ≤400 lines; demo priority first)
+## Work breakdown (one coherent unit per PR; demo priority first)
 
 1. **Demo priority:** feed/cursor/observation contract, then atomic dedup/checkpoint capture, then FEED-RESTART tests.
 2. **Demo priority:** ERPNext/Shopify synthetic mappings + role/provenance/gap declarations, then OBS-BAD quarantine/finding evaluation; [beat 6](../acceptance/data-engineering.md).
@@ -189,6 +189,8 @@ addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
 (listing order is irrelevant) and **HOST-TREE-REFUSE**.
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
+
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of a conservative retained declaration closure (inherited, referenced-type and interface constraints, plus every catalog interface, shared property type and extension, so changing any of them invalidates the pin), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
 
 OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
 in-memory subject index only while the native engine's private SQLite change
