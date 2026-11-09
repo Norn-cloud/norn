@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
-import { amountTexts, hostRead, liveAccess, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
+import { amountTexts, hostRead, isTrace, liveAccess, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
 import * as answerLib from "../src/lib/answer.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
@@ -24,7 +24,7 @@ const answerText = text("scrap-yield.k1.answer.json")
 const answer = JSON.parse(answerText) as { lineageRef: string; rows: Record<string, { members: Record<string, { version: number; amounts: number[] }> }> }
 const [bucket = "", row] = Object.entries(answer.rows)[0] ?? []
 const traceText = `{"result":${answerText},"bucket":${JSON.stringify(bucket)},"contributions":[${Object.entries(row?.members ?? {}).map(([key, { version }], index) =>
-  `{"fact":{"key":${JSON.stringify(key)},"objectType":"demo.Conversion","version":${version}},"amounts":[237.501,242.426],"receiptHash":"r${index}","factDigest":null,"source":{"status":"restricted"},"commitSeq":${index + 1},"recordedAtMs":1,"restricted":true,"values":null}`).join(",")}]}`
+  `{"fact":{"key":${JSON.stringify(key)},"objectType":"demo.Conversion","version":${version}},"amounts":[237.501,242.426],"receiptHash":null,"factDigest":null,"source":{"status":"restricted"},"commitSeq":${index + 1},"recordedAtMs":1,"restricted":true,"values":null}`).join(",")}]}`
 
 test("a 200 is the server's document, read live with its exact number texts", async () => {
   const read = await hostRead<Trace>("/v1/x", respond(200, traceText))
@@ -78,7 +78,7 @@ test("a refused live read shows the server's reason over the recorded snapshot",
 
 // D52 / DATA-VALUES-1: a restricted row's amounts are row Values; the host sends amounts: null to a reader without Values.
 const withheldText = (shape: string) => `{"result":${answerText},"bucket":${JSON.stringify(bucket)},"contributions":[
-  {"fact":{"key":"SYN-MELT-00-0","objectType":"demo.Conversion","version":1},${shape}"receiptHash":"c4c6464b07aa","factDigest":null,"source":{"status":"restricted"},"commitSeq":7,"recordedAtMs":1,"restricted":true,"values":null},
+  {"fact":{"key":"SYN-MELT-00-0","objectType":"demo.Conversion","version":1},${shape}"receiptHash":null,"factDigest":null,"source":{"status":"restricted"},"commitSeq":7,"recordedAtMs":1,"restricted":true,"values":null},
   {"fact":{"key":"SYN-MELT-00-1","objectType":"demo.Conversion","version":1},"amounts":[55.917,57.071],"receiptHash":"d5d7","factDigest":"f","source":{"status":"resolved","provenance":{}},"commitSeq":8,"recordedAtMs":1,"restricted":false,"values":{}}]}`
 
 test("a contribution the server withholds (amounts: null) has no amount; none is computed", () => {
@@ -89,7 +89,14 @@ test("a contribution the server withholds (amounts: null) has no amount; none is
   }
 })
 
-test("the drawer shows Withheld for that row and keeps its record, receipt and commit", () => {
+test("a withheld receipt hash (null) is a trace; any other non-string is not", () => {
+  const trace = JSON.parse(withheldText('"amounts":null,')) as { contributions: { receiptHash: unknown }[] }
+  expect(isTrace(trace)).toBe(true)
+  trace.contributions[0]!.receiptHash = 7
+  expect(isTrace(trace)).toBe(false)
+})
+
+test("the drawer shows Withheld for that row, its receipt hash withheld, and keeps its record and commit", () => {
   const client = new QueryClient()
   const lineageRef = "lineage-1"
   client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(withheldText('"amounts":null,'), "live") })
@@ -97,10 +104,12 @@ test("the drawer shows Withheld for that row and keeps its record, receipt and c
   const rows = html.split("<tr").slice(2)
   expect(rows[0]).toContain("SYN-MELT-00-0")
   expect(rows[0]).toContain(">Withheld<")
-  expect(rows[0]).toContain("Copy c4c6464b07aa")
+  expect(rows[0]).toContain(">Receipt withheld<")
+  expect(rows[0]).not.toContain("Copy ")
   expect(rows[0]).toContain("commit 7")
   expect(rows[0]).not.toMatch(/\d+\.\d+ \/ /)
   expect(rows[1]).toContain("55.917 / 57.071")
+  expect(rows[1]).toContain("Copy d5d7")
 })
 
 test("an answer whose members' amounts are withheld still reads, its totals intact, each member Withheld", () => {

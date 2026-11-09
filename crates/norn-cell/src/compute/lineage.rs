@@ -42,7 +42,9 @@ pub struct NumericContribution {
     /// amounts are row values, and one withheld amount would follow from the totals.
     pub amounts: Option<Vec<Option<Decimal>>>,
     /// Emitting receipt identity; a reference, not an independently verifiable proof.
-    pub receipt_hash: String,
+    /// `None` when any member of the bucket is restricted (DATA-VALUES-1): the
+    /// receipt hash commits to the commit's values, so it would confirm a guess.
+    pub receipt_hash: Option<String>,
     /// Full-incarnation digest, disclosed only with the canonical property values.
     pub fact_digest: Option<String>,
     /// Authorized source lineage, separate from numeric amounts and catalog enrichment.
@@ -177,7 +179,7 @@ impl<E: SqlEngine> CellStore<E> {
                     fact_digest: allowed.then(|| evidence.snapshot_sha256().to_owned()),
                     source,
                     amounts: member.amounts.clone(),
-                    receipt_hash: receipt.hash.clone(),
+                    receipt_hash: Some(receipt.hash.clone()),
                     commit_seq: receipt.body.commit_seq,
                     recorded_at_ms: receipt.body.logical_time,
                     restricted: !allowed,
@@ -205,8 +207,10 @@ impl<E: SqlEngine> CellStore<E> {
 }
 
 /// DATA-VALUES-1 (D53): one restricted member withholds every value-bearing
-/// field of every member in the bucket: amounts, canonical values and the
-/// snapshot digest (a guessing oracle for the values). Otherwise the visible
+/// field of every member in the bucket: amounts, canonical values, the
+/// snapshot digest and the receipt hash (each a guessing oracle for the
+/// values: the receipt hash commits to the commit batch, values included, so a
+/// single-write commit's hash confirms a guess offline). Otherwise the visible
 /// members subtracted from the totals would reconstruct the restricted one. The
 /// same holds for the source digests (bundle and payload), which hash the same
 /// values and would confirm a guess of a small-domain value offline. Source
@@ -223,6 +227,7 @@ fn withhold_restricted_bucket(contributions: &mut [NumericContribution]) {
         contribution.amounts = None;
         contribution.values = None;
         contribution.fact_digest = None;
+        contribution.receipt_hash = None;
         if let ContributionSource::Resolved { provenance } = &mut contribution.source {
             provenance.bundle_digest = None;
             provenance.document_digest = None;
