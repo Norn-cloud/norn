@@ -2272,6 +2272,7 @@ fn owned_rows_use_prepared_input_and_persist_precondition_evidence() {
         &request.input,
         request.action_artifact_id,
         request.action_version,
+        &request.actor,
     )
     .expect("prepare action input once");
     let outcome = norn_kernel::commit_action_with_preparation(

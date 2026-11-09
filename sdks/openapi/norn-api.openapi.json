@@ -17517,6 +17517,10 @@
             },
             "description": "The source states, non-empty and distinct; none is `to`."
           },
+          "guardRefusalCode": {
+            "type": "string",
+            "description": "GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.\nOmission inherits a parent's diagnostic; guard evidence is retained."
+          },
           "guards": {
             "type": "array",
             "items": {

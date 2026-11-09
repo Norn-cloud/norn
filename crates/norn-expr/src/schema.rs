@@ -776,6 +776,48 @@ pub fn action_environment(
     catalog: Option<&crate::ZenTypeEnv>,
     completed: usize,
 ) -> Result<crate::ZenTypeEnv, String> {
+    action_environment_with(action, catalog, completed, false)
+}
+
+/// ACTION-ACTOR-1: the environment of one derivation, with the same `actor`
+/// binding checker admission uses. Values come only from the authenticated call.
+///
+/// # Errors
+/// Returns the reason the action input or a completed derivation cannot be typed.
+pub fn action_derivation_environment(
+    action: &norn_ir::ActionRoot,
+    completed: usize,
+) -> Result<crate::ZenTypeEnv, String> {
+    action_environment_with(action, None, completed, true)
+}
+
+/// #1105: each aggregate is a count (an integer) or a sum typed as its
+/// summed property, read as `aggregates.<name>`.
+fn aggregate_types(
+    action: &norn_ir::ActionRoot,
+    records: &BTreeMap<String, BTreeMap<String, crate::Type>>,
+) -> Result<BTreeMap<String, crate::Type>, String> {
+    let mut aggregates = BTreeMap::new();
+    for aggregate in &action.aggregates {
+        let ty = match &aggregate.aggregate {
+            norn_ir::AggregateFunction::Count {} => crate::Type::Integer,
+            norn_ir::AggregateFunction::Sum { property } => records
+                .get(aggregate.object_type.as_str())
+                .and_then(|record| record.get(property.as_str()))
+                .cloned()
+                .ok_or("unresolved action aggregate property")?,
+        };
+        aggregates.insert(aggregate.name.clone(), ty);
+    }
+    Ok(aggregates)
+}
+
+fn action_environment_with(
+    action: &norn_ir::ActionRoot,
+    catalog: Option<&crate::ZenTypeEnv>,
+    completed: usize,
+    principal: bool,
+) -> Result<crate::ZenTypeEnv, String> {
     use crate::{EnvOptions, Type, ZenTypeEnv};
     let schema = Schema::parse_action(&JsonValue::Object(action.input_schema.clone()), "input")
         .map_err(|e| e.reason)?;
@@ -820,28 +862,19 @@ pub fn action_environment(
     }
     let slice_record = "exact.action.slice".to_owned();
     records.insert(slice_record.clone(), slice);
-    // #1105: each aggregate is a count (an integer) or a sum typed as its
-    // summed property, read as `aggregates.<name>`.
-    let mut aggregates = BTreeMap::new();
-    for aggregate in &action.aggregates {
-        let ty = match &aggregate.aggregate {
-            norn_ir::AggregateFunction::Count {} => Type::Integer,
-            norn_ir::AggregateFunction::Sum { property } => records
-                .get(aggregate.object_type.as_str())
-                .and_then(|record| record.get(property.as_str()))
-                .cloned()
-                .ok_or("unresolved action aggregate property")?,
-        };
-        aggregates.insert(aggregate.name.clone(), ty);
-    }
+    let aggregates = aggregate_types(action, &records)?;
     let aggregate_record = "exact.action.aggregates".to_owned();
     let declares_aggregates = !aggregates.is_empty();
     if declares_aggregates {
         records.insert(aggregate_record.clone(), aggregates);
     }
+    let build = if principal {
+        ZenTypeEnv::action_derivation_with_records
+    } else {
+        ZenTypeEnv::input_only_with_records
+    };
     let mut env =
-        ZenTypeEnv::input_only_with_records(records, fields.clone(), EnvOptions::default())
-            .map_err(|e| e.to_string())?;
+        build(records, fields.clone(), EnvOptions::default()).map_err(|e| e.to_string())?;
     env = env
         .bind_operand("slice", Type::Record(slice_record))
         .map_err(|e| e.to_string())?;

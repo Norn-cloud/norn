@@ -467,16 +467,24 @@ fn lifecycle_guard(
     transition: &str,
     guard: &str,
     error: Option<&str>,
+    underlying_code: Option<&str>,
 ) -> BTreeMap<String, RuntimeValue> {
     let mut values = refusal_values([("transition", transition.into()), ("guard", guard.into())]);
     let (name, value) = error.map_or(("result", RuntimeValue::Bool(false)), |error| {
         ("error", error.into())
     });
     values.insert(name.to_owned(), value);
+    if let Some(code) = underlying_code {
+        values.insert("underlyingCode".to_owned(), code.into());
+    }
     values
 }
 
 impl<X> DecisionRefusal<X> {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per lifecycle refusal, each with its own reason values"
+    )]
     fn lifecycle_reason_parts(&self) -> Option<(&str, &FactKey, BTreeMap<String, RuntimeValue>)> {
         match self {
             Self::NotFromState {
@@ -538,20 +546,32 @@ impl<X> DecisionRefusal<X> {
                 key,
                 transition,
                 guard,
+                diagnostic,
             } => Some((
                 "lifecycle.guard",
                 key,
-                lifecycle_guard(transition, guard, None),
+                lifecycle_guard(
+                    transition,
+                    guard,
+                    None,
+                    diagnostic.map(|_| "decision.guard_false"),
+                ),
             )),
             Self::GuardError {
                 key,
                 transition,
                 guard,
                 reason,
+                diagnostic,
             } => Some((
                 "lifecycle.guard_evaluable",
-                key,
-                lifecycle_guard(transition, guard, Some(reason)),
+                key.as_ref(),
+                lifecycle_guard(
+                    transition,
+                    guard,
+                    Some(reason),
+                    diagnostic.map(|_| "decision.guard_error"),
+                ),
             )),
             Self::IdentityReuse
             | Self::IdentityCollision { .. }

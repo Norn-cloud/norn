@@ -70,6 +70,8 @@ pub const SELF_VARIABLE: &str = "self";
 pub const INPUT_VARIABLE: &str = "input";
 /// The closed actor operand (#2419), always present.
 pub const ACTOR_VARIABLE: &str = "actor";
+/// Record name of the authenticated action principal.
+pub const ACTION_PRINCIPAL_RECORD: &str = "norn:ActionPrincipal";
 
 /// Record name of a bound `input` (outside the object type name grammar, so
 /// it never collides with a model type).
@@ -653,6 +655,29 @@ impl ZenTypeEnv {
             variables: BTreeMap::new(),
         }
         .bind_input(fields)
+    }
+
+    /// ACTION-ACTOR-1: the one action-derivation environment, shared by checker
+    /// admission and runtime evaluation so the two cannot drift. `actor` exposes
+    /// only `subjectId`, whose value comes from the authenticated call.
+    ///
+    /// # Errors
+    ///
+    /// [`EnvError::DuplicateName`] for a duplicate or reserved name;
+    /// [`EnvError::Unresolved`] for an unknown record reference.
+    pub fn action_derivation_with_records(
+        mut records: BTreeMap<String, BTreeMap<String, Type>>,
+        fields: BTreeMap<String, Type>,
+        options: EnvOptions,
+    ) -> Result<Self, EnvError> {
+        records.insert(
+            ACTION_PRINCIPAL_RECORD.to_owned(),
+            BTreeMap::from([("subjectId".to_owned(), Type::text())]),
+        );
+        Self::input_only_with_records(records, fields, options)?.bind_operand(
+            ACTOR_VARIABLE,
+            Type::Record(ACTION_PRINCIPAL_RECORD.to_owned()),
+        )
     }
 
     /// An actor-free environment that binds only `input`, with explicitly

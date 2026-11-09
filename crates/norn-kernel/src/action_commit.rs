@@ -323,6 +323,7 @@ pub struct ActionInputPreparation<'a> {
     raw_input: &'a JsonObject,
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
+    actor: Option<String>,
     effective_input: JsonObject,
     derived_values: Vec<ActionDerivedValue>,
     remaining_fuel: u64,
@@ -341,6 +342,7 @@ impl ActionInputPreparation<'_> {
             && self.raw_input == &call.input
             && self.action_artifact_id == Some(call.action_artifact_id)
             && self.action_version == Some(call.action_version)
+            && self.actor.as_deref() == Some(call.actor.as_str())
     }
 
     /// The caller input after all derivations, before the action reads facts.
@@ -999,6 +1001,7 @@ where
             &call.input,
             call.action_artifact_id,
             call.action_version,
+            &call.actor,
         )?,
     };
     match action.effect_program.as_ref() {
@@ -4974,11 +4977,13 @@ pub fn prepare_action_input<'a, X>(
     action: &'a ActionRoot,
     raw_input: &'a JsonObject,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
-    prepare_action_input_inner(action, raw_input, None, None)
+    prepare_action_input_inner(action, raw_input, None, None, None)
 }
 
 /// Prepares one action call's input, binding the opaque result to the action
 /// artifact version and exact raw input that the kernel will commit.
+/// ACTION-ACTOR-1: `actor.subjectId` is this authenticated host principal;
+/// caller identity fields refuse and a preparation cannot move to another actor.
 ///
 /// # Errors
 ///
@@ -4989,12 +4994,14 @@ pub fn prepare_action_input_for_call<'a, X>(
     raw_input: &'a JsonObject,
     action_artifact_id: &'a str,
     action_version: &'a str,
+    actor: &str,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     prepare_action_input_inner(
         action,
         raw_input,
         Some(action_artifact_id),
         Some(action_version),
+        Some(actor),
     )
 }
 
@@ -5033,15 +5040,15 @@ fn prepare_action_input_inner<'a, X>(
     raw_input: &'a JsonObject,
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
+    actor: Option<&str>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     let profile = ResourceLimitProfile::norn_limits_v1();
     let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
+    // Rejects injected identity fields and, for prepared actions, refuses
+    // oversized raw input by its canonical size before any clone, decode or
+    // normalization work.
+    check_action_identity_input::<X>(action, raw_input, actor, max_input_bytes)?;
     let has_preparation = has_action_preparation_features(action);
-    if has_preparation {
-        // Refuse oversized raw input by its canonical size before any clone,
-        // decode or normalization work.
-        check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
-    }
     let normalized = normalize_action_input::<X>(action, raw_input)?;
     if !has_preparation && normalized == *raw_input {
         validate_action_input(action, &normalized)?;
@@ -5050,6 +5057,7 @@ fn prepare_action_input_inner<'a, X>(
             raw_input,
             action_artifact_id,
             action_version,
+            actor: actor.map(str::to_owned),
             effective_input: normalized,
             derived_values: Vec::new(),
             remaining_fuel: profile.turn.fuel_units,
@@ -5106,6 +5114,7 @@ fn prepare_action_input_inner<'a, X>(
             index,
             derivation,
             &effective_input,
+            actor,
             &mut remaining_fuel,
             receipt_evidence_bytes,
         )?;
@@ -5131,12 +5140,61 @@ fn prepare_action_input_inner<'a, X>(
         raw_input,
         action_artifact_id,
         action_version,
+        actor: actor.map(str::to_owned),
         effective_input,
         derived_values,
         remaining_fuel,
         receipt_evidence_bytes,
         precondition_outcomes: Vec::new(),
     })
+}
+
+/// ACTION-ACTOR-1: caller JSON cannot supply identity or approval claims.
+fn check_action_identity_input<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+    actor: Option<&str>,
+    max_bytes: usize,
+) -> Result<(), ActionRefusal<X>> {
+    // Validate the principal before any traversal of caller input.
+    if actor.is_some_and(|a| {
+        a.len() > max_bytes || a.trim().is_empty() || norn_ir::canonical::nfc(a) != a
+    }) {
+        return Err(ActionRefusal::InvalidInput {
+            field: "actor".into(),
+        });
+    }
+    if has_action_preparation_features(action)
+        || matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::MutateParentWithRows { .. })
+        )
+    {
+        check_canonical_object_bound::<X>("caller input", raw_input, max_bytes)?;
+    }
+    let mut objects = vec![raw_input];
+    let mut values = Vec::new();
+    while let Some(object) = objects.pop() {
+        for field in ["actor", "approved"] {
+            if object.contains_key(field) {
+                return Err(ActionRefusal::InvalidInput {
+                    field: field.into(),
+                });
+            }
+        }
+        values.extend(object.values());
+        while let Some(value) = values.pop() {
+            match value {
+                RuntimeValue::Object(object) => objects.push(object),
+                RuntimeValue::Array(items) => values.extend(items),
+                RuntimeValue::Null
+                | RuntimeValue::Bool(_)
+                | RuntimeValue::Number(_)
+                | RuntimeValue::String(_) => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 fn action_derivation_destination(
@@ -5161,22 +5219,45 @@ fn action_derivation_destination(
     declared
 }
 
+/// ACTION-ACTOR-1: bind actor data only from the authenticated call principal.
+fn action_derivation_context<X>(
+    effective_input: &JsonObject,
+    actor: Option<&str>,
+    derivation: &norn_ir::ActionInputDerivation,
+) -> Result<ExprValue, ActionRefusal<X>> {
+    let mut context = action_expression_context(effective_input, &JsonObject::new(), None)
+        .map_err(|reason| ActionRefusal::DerivationFailed {
+            field: derivation.field.clone(),
+            expression: derivation.expression.as_str().to_owned(),
+            reason,
+        })?;
+    if let Some(principal) = actor {
+        let ExprValue::Object(fields) = &mut context else {
+            return Err(ActionRefusal::InvalidInput {
+                field: "actor".into(),
+            });
+        };
+        fields.insert(
+            "actor".into(),
+            ExprValue::Object(BTreeMap::from([(
+                "subjectId".into(),
+                ExprValue::String(principal.into()),
+            )])),
+        );
+    }
+    Ok(context)
+}
+
 fn prepare_action_derivation<X>(
     action: &ActionRoot,
     completed: usize,
     derivation: &norn_ir::ActionInputDerivation,
     effective_input: &JsonObject,
+    actor: Option<&str>,
     remaining_fuel: &mut u64,
     receipt_evidence_bytes: usize,
 ) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
-    let context =
-        action_expression_context(effective_input, &JsonObject::new(), None).map_err(|reason| {
-            ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason,
-            }
-        })?;
+    let context = action_derivation_context(effective_input, actor, derivation)?;
     let expression = Expression::compile(derivation.expression.as_str()).map_err(|error| {
         ActionRefusal::DerivationFailed {
             field: derivation.field.clone(),
@@ -5184,13 +5265,14 @@ fn prepare_action_derivation<X>(
             reason: error.to_string(),
         }
     })?;
-    let env = norn_expr::schema::action_environment(action, None, completed).map_err(|reason| {
-        ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason,
-        }
-    })?;
+    let env =
+        norn_expr::schema::action_derivation_environment(action, completed).map_err(|reason| {
+            ActionRefusal::DerivationFailed {
+                field: derivation.field.clone(),
+                expression: derivation.expression.as_str().to_owned(),
+                reason,
+            }
+        })?;
     let expected = action_derivation_destination(action, derivation, &env);
     let attempt = expression.evaluate_admitted_metered(
         &context,

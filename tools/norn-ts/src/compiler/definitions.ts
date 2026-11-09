@@ -1227,10 +1227,11 @@ class DefinitionCompiler {
   }
 
   private transition(input: ts.Expression): E.TransitionDecl {
-    const m = this.closedRecord(input, ["id", "description", "from", "to", "guards"], ["id", "from", "to"])
+    const m = this.closedRecord(input, ["id", "description", "from", "to", "guards", "guardRefusalCode"], ["id", "from", "to"])
     const description = m.get("description"), guards = m.get("guards")
     return {
       id: this.string(m.get("id")!),
+      ...(m.has("guardRefusalCode") ? { guardRefusalCode: this.string(m.get("guardRefusalCode")!) } : {}),
       ...(description ? { description: this.string(description) } : {}),
       from: this.strings(m.get("from")!),
       to: this.string(m.get("to")!),
