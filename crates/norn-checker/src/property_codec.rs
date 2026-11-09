@@ -109,7 +109,9 @@ pub fn encode(
                 String::from_utf8_lossy(&bytes).into_owned(),
             ))
         }
-        PropertyKind::Ref => Err(PropertyCodecError::ValueType("a resolved property kind")),
+        PropertyKind::Ref | PropertyKind::DecimalBinding => {
+            Err(PropertyCodecError::ValueType("a resolved property kind"))
+        }
     }
 }
 

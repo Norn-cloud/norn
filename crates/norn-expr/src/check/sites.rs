@@ -84,7 +84,8 @@ fn visit(
     if matches!(node, Node::Null) {
         return Ok(());
     }
-    if matches!(expected, Type::Decimal { .. }) {
+    // A conditional's parser span starts at `?`, so each branch is its own site.
+    if matches!(expected, Type::Decimal { .. }) && !matches!(node, Node::Conditional { .. }) {
         return add_site(node, expected, metadata, edits, false);
     }
     match node {

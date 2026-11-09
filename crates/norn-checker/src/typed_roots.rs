@@ -389,6 +389,15 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
+            SliceKey::Parameter { .. } => {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    "parameter slice execution is not qualified in this cut",
+                    format!("{path}.key"),
+                    artifact_id,
+                ));
+                0
+            }
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
@@ -761,10 +770,7 @@ fn validate_action_derivation_steps(
             ));
             continue;
         };
-        let Some(environment) = fields
-            .clone()
-            .and_then(|fields| ZenTypeEnv::input_only(fields, EnvOptions::default()).ok())
-        else {
+        let Some(environment) = fields.clone().and_then(action_derivation_environment) else {
             diagnostics.push(invalid_diagnostic(
                 codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
                 "derivation expressions require an object input schema with a derivable expression environment",
@@ -1054,7 +1060,7 @@ fn action_post_derivation_fields(
     let mut fields = action_input_fields(schema, &optional, &required)?;
     let mut cost = 0_u64;
     for step in derive {
-        let environment = ZenTypeEnv::input_only(fields.clone(), EnvOptions::default()).ok()?;
+        let environment = action_derivation_environment(fields.clone())?;
         let expected = action_input_field_type(Some(schema), &step.field)?;
         let expression = Expression::compile(step.expression.as_str()).ok()?;
         let checked = check_expression_with_root_bounds(
@@ -1372,6 +1378,12 @@ fn action_input_environment(
     } else {
         Some(environment)
     }
+}
+
+// ACTION-ACTOR-1: only the authenticated principal identity is available here.
+// Other general actor members have no trusted action-call binding and refuse typing.
+fn action_derivation_environment(fields: BTreeMap<String, Type>) -> Option<ZenTypeEnv> {
+    ZenTypeEnv::action_derivation_with_records(BTreeMap::new(), fields, EnvOptions::default()).ok()
 }
 
 fn bind_flat_input_aliases(mut environment: ZenTypeEnv) -> Option<ZenTypeEnv> {
@@ -2030,7 +2042,21 @@ fn check_document_root(
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
-    if matches!(payload, ArtifactPayload::Mapping(_)) {
+    if matches!(payload, ArtifactPayload::Mapping(_))
+        && object.get("format").is_some_and(
+            |value| matches!(value, JsonValue::String(format) if format == "norn.interpretation/1"),
+        )
+    {
+        check_root!(
+            norn_ir::mapping::LawInterpretationIr,
+            "mapping.validation.invalid_document",
+            object,
+            diagnostics,
+            artifact_id,
+            members {}
+            arrays {}
+        );
+    } else if matches!(payload, ArtifactPayload::Mapping(_)) {
         check_root!(
             norn_ir::mapping::MappingIr,
             "mapping.validation.invalid_document",
@@ -2962,6 +2988,110 @@ mod tests {
             "action.validation.invalid_payload",
             "payload.writes[1]"
         ));
+    }
+
+    #[test]
+    fn action_actor_binding_is_typed_and_unsupported_principal_claims_refuse() {
+        let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["preconditions"] = json!([]);
+        action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"code":{"type":"string"}},"required":["code"]});
+        action["payload"]["derive"] = json!([
+            {"field":"code","expression":"actor.subjectId","inputRequired":false}
+        ]);
+        assert_eq!(findings(action.clone()), []);
+        let mut decimal = action.clone();
+        let amount = json!({"type":"number","nornType":{"kind":"decimal","scale":2}});
+        for field in ["amount", "base", "discount"] {
+            decimal["payload"]["inputSchema"]["properties"][field] = amount.clone();
+        }
+        decimal["payload"]["inputSchema"]["required"] = json!(["code", "base", "discount"]);
+        decimal["payload"]["derive"] = json!([{"field":"amount",
+            "expression":"actor.subjectId == 'person:vip' ? input.discount : input.base",
+            "inputRequired":false}]);
+        assert_eq!(findings(decimal), []);
+        for unsupported in ["actor.roles", "actor.agentSessionId", "actor.approved"] {
+            action["payload"]["derive"][0]["expression"] = json!(unsupported);
+            assert!(has(
+                &findings(action.clone()),
+                "action.validation.invalid_payload",
+                "payload.derive[0].expression"
+            ));
+        }
+    }
+
+    fn action_with_nested_input_field(field: &str, arrays: &[bool]) -> (Value, String) {
+        let mut schema = json!({"type":"object","additionalProperties":false,
+            "properties":{(field):{"type":"string"}},"required":[field]});
+        let mut path = format!(".properties.{field}");
+        for array in arrays {
+            if *array {
+                schema = json!({"type":"array","items":schema});
+                path = format!(".items{path}");
+            } else {
+                schema = json!({"type":"object","additionalProperties":false,
+                    "properties":{"node":schema},"required":["node"]});
+                path = format!(".properties.node{path}");
+            }
+        }
+        let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["preconditions"] = json!([]);
+        action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"details":schema},"required":["details"]});
+        (
+            action,
+            format!("payload.inputSchema.properties.details{path}"),
+        )
+    }
+
+    #[test]
+    fn action_actor_reserved_input_schemas_refuse_at_nested_object_and_array_paths() {
+        for arrays in [vec![], vec![false], vec![true], vec![true, false, true]] {
+            for field in ["actor", "approved", "subjectId", "recorded_by"] {
+                let (action, path) = action_with_nested_input_field(field, &arrays);
+                let found = findings(action);
+                if matches!(field, "actor" | "approved") {
+                    assert_eq!(
+                        found,
+                        [("action.validation.invalid_schema".to_owned(), path)]
+                    );
+                } else {
+                    assert!(found.is_empty(), "{found:?}");
+                }
+            }
+        }
+        for field in ["actor", "approved"] {
+            let mut action = fixture(ACTION_FIXTURE);
+            action["payload"]["preconditions"] = json!([]);
+            action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+                "properties":{(field):{"type":"string"}},"required":[field]});
+            action["payload"]["derive"] = json!([
+                {"field":field,"expression":"actor.subjectId","inputRequired":false}
+            ]);
+            assert!(has(
+                &findings(action),
+                "action.validation.invalid_schema",
+                &format!("payload.inputSchema.properties.{field}")
+            ));
+        }
+        let (mut action, _) = action_with_nested_input_field("recorded_by", &[]);
+        action["payload"]["outputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"actor":{"type":"string"},"approved":{"type":"boolean"}}});
+        assert!(findings(action).is_empty());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn action_actor_reserved_schema_names_refuse_under_generated_containers(
+            field in proptest::sample::select(vec!["actor", "approved", "subjectId", "recorded_by"]),
+            arrays in proptest::collection::vec(proptest::bool::ANY, 0..12),
+        ) {
+            let (action, path) = action_with_nested_input_field(field, &arrays);
+            let expected = if matches!(field, "actor" | "approved") {
+                vec![("action.validation.invalid_schema".to_owned(), path)]
+            } else { vec![] };
+            proptest::prop_assert_eq!(findings(action), expected);
+        }
     }
 
     #[test]

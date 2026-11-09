@@ -321,3 +321,23 @@ fn d1a_evidence_only_preserves_bad_purity_and_refuses_missing_fields() {
     .expect("JSON");
     assert!(mapping.apply(&[absent], &recorded).is_err());
 }
+
+#[test]
+fn d3_purity_law_governs_the_concrete_measurement_type() {
+    let artifact: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json"
+    ))
+    .expect("generated law");
+    let value = serde_json::to_value(artifact).expect("law envelope");
+    let law: norn_ir::LawIR =
+        serde_json::from_value(value["payload"].clone()).expect("law declaration");
+    assert_eq!(law.subject, "demo.erpnext.StockEntryMeasurement");
+    assert_eq!(
+        law.scope.root,
+        norn_ir::LawRoot::Entity(law.subject.clone())
+    );
+    assert_eq!(law.scope.object_types, [law.subject]);
+    assert_eq!(law.severity, norn_ir::LawSeverity::Error);
+    assert!(matches!(law.modality, norn_ir::LawModality::Always {}));
+    compiled();
+}

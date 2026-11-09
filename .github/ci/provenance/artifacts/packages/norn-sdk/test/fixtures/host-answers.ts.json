@@ -1,0 +1,21 @@
+{
+  "sha256": "dfb7302b673afae8255b2946de81b84626956dc88994f46471e3aa8b8839f978",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-api/tests/question_routes.rs",
+    "crates/norn-cell/tests/support/query_lineage.rs",
+    "crates/norn-cell/tests/query_support/mod.rs"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
