@@ -76,8 +76,8 @@ export class Cell {
   }
   async fetch(request) {
     // A submission (an ad-hoc question) is read once, bounded, before the cell sees it.
-    const body = request.method === "POST" ? await request.text() : undefined;
-    if (body !== undefined && body.length > MAX_BODY) {
+    const body = request.method === "POST" ? await readBounded(request, MAX_BODY) : undefined;
+    if (body === null) {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${MAX_BODY} bytes` }, { status: 413 });
     }
     await this.open(request);
@@ -89,6 +89,25 @@ export class Cell {
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
+}
+
+/** Read a request body as text, counting bytes as they arrive; null once it passes `limit` (the stream is cancelled, never buffered whole). */
+async function readBounded(request, limit) {
+  const reader = request.body?.getReader();
+  if (reader === undefined) return "";
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new Blob(chunks).text();
 }
 
 function cors(request, env) {
