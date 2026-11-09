@@ -233,7 +233,8 @@ byte-identical to an issued receipt the cell has no record of, refuses
 `decision.receipt_not_cell_issued`. Refusals: `decision.not_a_decider`,
 `decision.law_not_satisfied`, `decision.unknown_choice`, `decision.note_too_long`,
 `decision.expired`, `decision.not_this_command` and the `decision.*` request
-bounds. An action-based decide route can instead consume the receipt through
+bounds; a request blob over the manifest's 64 KiB `max_input_bytes` refuses
+`decision.request_too_large` before it is parsed or hashed. An action-based decide route can instead consume the receipt through
 RECEIPT-CONSUME-1. Named scenarios (`crates/norn-builtins/tests/`):
 **DECISION-RESOLVE**, **DECISION-FORGED**, **DECISION-NON-DECIDER**,
 **DECISION-BOUNDS**, **DECISION-EXPIRE**, **DECISION-WITHDRAW**,
