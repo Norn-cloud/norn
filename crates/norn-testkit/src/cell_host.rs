@@ -715,6 +715,9 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<Infallible>> {
+        if proof.quantity().is_some() {
+            return Err(CommitError::ObservationAuthorization);
+        }
         self.commit_with_authorization(commit, None, Some(proof))
     }
 
