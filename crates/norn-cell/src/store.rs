@@ -3049,10 +3049,9 @@ impl<E: SqlEngine> CellStore<E> {
         self.conn.transaction(|| -> Result<bool, CellError> {
             let parked = StoreReader::new(&self.conn, &self.model)
                 .with_source_disputes(&self.source_disputes)
-                .parked_commands()?
-                .into_iter()
-                .find(|row| {
-                    row.command.command_id == command_id
+                .pending_command(command_id)?
+                .filter(|row| {
+                    crate::read::is_parked(&row.command)
                         && row.command.generation == generation
                         && row.result.is_none()
                 });

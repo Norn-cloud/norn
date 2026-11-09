@@ -178,7 +178,7 @@ fn decision_manifest() -> Result<FunctionManifest, RegistryError> {
             max_cpu_millis: None,
             max_wall_millis: None,
             max_memory_bytes: None,
-            max_input_bytes: Some(64 * 1024),
+            max_input_bytes: Some(decision::MAX_REQUEST_BYTES),
             max_decoded_bytes: None,
             max_output_bytes: Some(norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES),
         },

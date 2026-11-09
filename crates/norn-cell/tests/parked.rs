@@ -453,3 +453,50 @@ fn a_claim_on_a_parked_command_is_refused_by_name() {
         "nothing changed"
     );
 }
+
+/// Sol S1 (#1163): ordinary queue progress reads only the rows it selects. A
+/// backlog of parked decisions whose recorded results no longer decode never
+/// blocks the FIFO head, its claim, its completion or its consumption, nor
+/// the completion of another parked command.
+#[test]
+fn queue_progress_never_decodes_unrelated_parked_results() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cell.sqlite");
+    let mut cell = open_at(&path);
+    let mut commands: Vec<_> = (0..8)
+        .map(|index| command(&format!("ask{index}"), decision()))
+        .collect();
+    commands.push(command("notify", tool()));
+    commands.push(command("late", decision()));
+    dispatch(&mut cell, commands);
+    for index in 0..8 {
+        cell.complete_parked(
+            &CommandId(format!("ask{index}")),
+            Generation(1),
+            answer("approve"),
+        )
+        .unwrap()
+        .unwrap();
+    }
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let corrupted = raw
+        .execute(
+            "UPDATE \"_norn_outbox\" SET \"result\" = 'unreadable' WHERE \"command_id\" LIKE 'ask%'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(corrupted, 8);
+    drop(raw);
+    // The corruption is real: a queue-wide read of parked rows fails.
+    assert!(cell.store().read().parked_commands().is_err());
+    let performed = cell.perform().unwrap().expect("the tool call is the head");
+    assert_eq!(performed.command.0, "notify");
+    consume(&mut cell, "notify").unwrap();
+    assert!(
+        cell.complete_parked(&CommandId("late".into()), Generation(1), answer("reject"))
+            .unwrap()
+            .is_some()
+    );
+    consume(&mut cell, "late").unwrap();
+    assert!(cell.perform().unwrap().is_none());
+}

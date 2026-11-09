@@ -3153,10 +3153,9 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         });
         if !is_head {
             let parked = StoreReader::new(self.conn, self.model)
-                .parked_commands()?
-                .into_iter()
-                .any(|row| {
-                    row.command.command_id == command_id && row.command.generation == generation
+                .pending_command(command_id)?
+                .is_some_and(|row| {
+                    crate::read::is_parked(&row.command) && row.command.generation == generation
                 });
             if parked {
                 return Err(CellError::ParkedClaimUnsupported {

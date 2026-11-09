@@ -637,6 +637,12 @@ pub struct PendingCommand {
     pub result: Option<Value>,
 }
 
+/// PARKED-1: the SQL form of [`is_parked`] over the stored `command` JSON,
+/// so queue selection skips parked rows without loading them. A string
+/// comparison is false for a non-string or missing member, exactly as
+/// [`norn_builtins::parks`] reads it; [`is_parked`] still re-checks each row.
+const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IS 'norn.decision' AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
+
 /// PARKED-1: whether `command` waits outside the FIFO perform queue.
 #[must_use]
 pub fn is_parked(command: &OutboxCommand) -> bool {
@@ -3947,20 +3953,36 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     ///
     /// SQL engine or decode errors.
     pub fn pending_commands(&self) -> Result<Vec<PendingCommand>, CellError> {
-        self.outbox_rows("")
+        self.outbox_rows("", params![], "")
     }
 
     /// The oldest pending command that does not park (the next to
     /// `perform`), if any. Parked commands never block it (PARKED-1).
     ///
+    /// Bounded: SQL skips parked rows and reads one row, so a backlog of
+    /// parked commands (or an unreadable result of one) never costs or
+    /// blocks ordinary queue progress.
+    ///
     /// # Errors
     ///
     /// SQL engine or decode errors.
     pub fn head_command(&self) -> Result<Option<PendingCommand>, CellError> {
-        Ok(self
-            .outbox_rows("")?
-            .into_iter()
-            .find(|row| !is_parked(&row.command)))
+        let mut after = 0_i64;
+        loop {
+            let filter = format!("AND \"position\" > ?1 AND NOT {PARKED_SQL}");
+            let Some(row) = self
+                .outbox_rows(&filter, params![after], " LIMIT 1")?
+                .into_iter()
+                .next()
+            else {
+                return Ok(None);
+            };
+            // [`is_parked`] stays the authority; `PARKED_SQL` only narrows.
+            if !is_parked(&row.command) {
+                return Ok(Some(row));
+            }
+            after = to_i64(row.position, "position")?;
+        }
     }
 
     /// PARKED-1: pending commands that wait for the cell to resolve them, in
@@ -3971,7 +3993,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// SQL engine or decode errors.
     pub fn parked_commands(&self) -> Result<Vec<PendingCommand>, CellError> {
         Ok(self
-            .outbox_rows("")?
+            .outbox_rows(&format!("AND {PARKED_SQL}"), params![], "")?
             .into_iter()
             .filter(|row| is_parked(&row.command))
             .collect())
@@ -3979,7 +4001,8 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
 
     /// The pending result delivery of `command_id` at `generation`: the FIFO
     /// head, or a parked command, once its result is recorded and until a
-    /// commit consumes it.
+    /// commit consumes it. Reads and decodes only that command's row (and the
+    /// head's, for a non-parked command).
     ///
     /// # Errors
     ///
@@ -3989,15 +4012,45 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         command_id: &str,
         generation: u64,
     ) -> Result<Option<PendingCommand>, CellError> {
-        let matches = |row: &PendingCommand| {
-            row.command.command_id == command_id
-                && row.command.generation == generation
-                && row.result.is_some()
+        let Some(row) = self.pending_command(command_id)?.filter(|row| {
+            row.command.generation == generation && row.result.is_some()
+        }) else {
+            return Ok(None);
         };
-        if let Some(head) = self.head_command()?.filter(|head| matches(head)) {
-            return Ok(Some(head));
+        if is_parked(&row.command) {
+            return Ok(Some(row));
         }
-        Ok(self.parked_commands()?.into_iter().find(|row| matches(row)))
+        let head = self.head_command()?.map(|head| head.position);
+        Ok((head == Some(row.position)).then_some(row))
+    }
+
+    /// The unconsumed outbox row of `command_id`, if any, read and decoded
+    /// alone (command ids are unique in the outbox).
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn pending_command(&self, command_id: &str) -> Result<Option<PendingCommand>, CellError> {
+        Ok(self
+            .outbox_rows("AND \"command_id\" = ?1", params![command_id], " LIMIT 1")?
+            .into_iter()
+            .next())
+    }
+
+    /// The unconsumed outbox row at `position`, if any, read and decoded alone.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub(crate) fn pending_at(&self, position: u64) -> Result<Option<PendingCommand>, CellError> {
+        Ok(self
+            .outbox_rows(
+                "AND \"position\" = ?1",
+                params![to_i64(position, "position")?],
+                " LIMIT 1",
+            )?
+            .into_iter()
+            .next())
     }
 
     /// Whether `command_id` and `generation` have a durable perform claim.
@@ -4018,12 +4071,17 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(found.is_some())
     }
 
-    fn outbox_rows(&self, limit: &str) -> Result<Vec<PendingCommand>, CellError> {
+    fn outbox_rows(
+        &self,
+        filter: &str,
+        bindings: &[SqlValue],
+        limit: &str,
+    ) -> Result<Vec<PendingCommand>, CellError> {
         let rows = self.conn.query(
             &format!(
-                "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\" FROM \"{OUTBOX}\" WHERE \"consumed_commit_seq\" IS NULL ORDER BY \"position\"{limit}"
+                "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\" FROM \"{OUTBOX}\" WHERE \"consumed_commit_seq\" IS NULL {filter} ORDER BY \"position\"{limit}"
             ),
-            params![],
+            bindings,
         )?;
         let mut out = Vec::new();
         for values in rows {

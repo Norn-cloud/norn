@@ -2163,12 +2163,14 @@ fn replayed_result<E: SqlEngine>(
     position: u64,
 ) -> Result<Option<crate::read::PendingCommand>, CellError> {
     let reader = store.read();
+    let Some(row) = reader.pending_at(position)? else {
+        return Ok(None);
+    };
+    if crate::read::is_parked(&row.command) {
+        return Ok(Some(row));
+    }
     let fifo_head = reader.head_command()?.map(|head| head.position);
-    Ok(reader
-        .pending_commands()?
-        .into_iter()
-        .find(|row| row.position == position)
-        .filter(|row| crate::read::is_parked(&row.command) || fifo_head == Some(row.position)))
+    Ok((fifo_head == Some(row.position)).then_some(row))
 }
 
 fn restore_run_history<E: SqlEngine>(

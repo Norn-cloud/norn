@@ -15,7 +15,7 @@ use std::convert::Infallible;
 use norn_builtins::Registered;
 use norn_builtins::decision::{
     DeciderEvidence, Decision, DecisionRefusal, IssuedOnly, MAX_OPTION_ID_CHARS, MAX_TEXT_CHARS,
-    REQUEST_BLOB, expire, issue, parse_request, withdraw,
+    MAX_REQUEST_BYTES, REQUEST_BLOB, expire, issue, parse_request, withdraw,
 };
 use norn_ir::function::{
     Authority, AuthorityKind, BlobRef, Digest, Fencing, FreshnessMode, FunctionInvocation,
@@ -401,6 +401,52 @@ fn answers_and_requests_are_bounded() {
             "{extra}"
         );
     }
+}
+
+/// Sol S2 (#1163): the manifest's 64 KiB `max_input_bytes` binds the parser
+/// and every issuance path, before parsing or hashing.
+#[test]
+fn an_oversized_request_is_refused_before_parsing_and_issuance() {
+    let manifest = manifest();
+    assert_eq!(
+        manifest.manifest().bounds.max_input_bytes,
+        Some(MAX_REQUEST_BYTES)
+    );
+    let body = request(&json!({ "options": [
+        { "id": "publish", "label": "Publish", "effect": { "action": "a".repeat(70_000) }, "scope": "Public" }
+    ], "agentPick": "publish" }));
+    assert!(u64::try_from(body.len()).unwrap() > MAX_REQUEST_BYTES);
+    let too_large = DecisionRefusal::InvalidRequest("decision.request_too_large");
+    assert_eq!(parse_request(&body).unwrap_err(), too_large);
+    assert_eq!(too_large.code(), "decision.request_too_large");
+    // A dispatch whose blob digest and size match the oversized bytes.
+    let invocation = invocation(&manifest, &body);
+    let held = roles(&["finance.approver"]);
+    let laws = roles(&["law.two_person"]);
+    let evidence = DeciderEvidence {
+        actor: &ada(),
+        roles: &held,
+        satisfied_laws: &laws,
+    };
+    assert_eq!(
+        issue(&manifest, &invocation, &body, &evidence, &decide("publish"), 5_000),
+        Err(too_large)
+    );
+    assert_eq!(
+        expire(&manifest, &invocation, &body, DEADLINE),
+        Err(too_large)
+    );
+    let owner = invocation.authority.clone();
+    let none = BTreeSet::new();
+    let by_owner = DeciderEvidence {
+        actor: &owner,
+        roles: &none,
+        satisfied_laws: &none,
+    };
+    assert_eq!(
+        withdraw(&manifest, &invocation, &body, &by_owner, DEADLINE - 1),
+        Err(too_large)
+    );
 }
 
 #[test]

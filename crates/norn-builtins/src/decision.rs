@@ -41,6 +41,14 @@ pub const MAX_TEXT_CHARS: usize = 500;
 pub const MAX_OPTION_ID_CHARS: usize = 64;
 /// The most options a decision offers.
 pub const MAX_OPTIONS: usize = 9;
+/// The largest request blob, in bytes: the registered manifest's
+/// `max_input_bytes`. [`parse_request`] and every issuance path refuse a
+/// larger request before parsing or hashing it.
+pub const MAX_REQUEST_BYTES: u64 = 64 * 1024;
+
+fn too_large(request: &[u8]) -> bool {
+    !u64::try_from(request.len()).is_ok_and(|len| len <= MAX_REQUEST_BYTES)
+}
 /// The longest a decision may wait: seven days.
 pub const MAX_EXPIRES_IN_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 /// Where the cell issues the receipt.
@@ -231,6 +239,9 @@ fn is_option_id(id: &str) -> bool {
 /// [`DecisionRefusal::InvalidRequest`] naming the broken bound.
 pub fn parse_request(bytes: &[u8]) -> Result<DecisionRequest, DecisionRefusal> {
     let invalid = DecisionRefusal::InvalidRequest;
+    if too_large(bytes) {
+        return Err(invalid("decision.request_too_large"));
+    }
     let request: DecisionRequest =
         serde_json::from_slice(bytes).map_err(|_shape| invalid("decision.request_shape"))?;
     if request.question.trim().is_empty() || request.question.chars().count() > MAX_TEXT_CHARS {
@@ -287,6 +298,9 @@ fn bind(
     invocation: &FunctionInvocation,
     request: &[u8],
 ) -> Result<DecisionRequest, DecisionRefusal> {
+    if too_large(request) {
+        return Err(DecisionRefusal::InvalidRequest("decision.request_too_large"));
+    }
     let manifest = registered.manifest();
     let blob = invocation
         .blobs

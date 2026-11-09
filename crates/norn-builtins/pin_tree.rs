@@ -4,10 +4,12 @@
 use std::path::Path;
 
 /// The crate's regular files (path relative to `root`, exact bytes), skipping
-/// dot-entries and a `target` directory; a symlink is refused.
+/// dot-entries and a `target` directory; a symlink or any other kind of entry
+/// (a FIFO, socket or device) is refused.
 ///
 /// # Errors
-/// An unreadable entry, a non-UTF-8 name or a symlink.
+/// An unreadable entry, a non-UTF-8 name, a symlink or another entry that is
+/// neither a directory nor a regular file.
 pub(crate) fn files(root: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut files = Vec::new();
     walk(root, root, &mut files)?;
@@ -36,6 +38,10 @@ fn walk(root: &Path, dir: &Path, files: &mut Vec<(String, Vec<u8>)>) -> Result<(
         }
         if kind.is_dir() {
             walk(root, &path, files)?;
+        } else if !kind.is_file() {
+            // HOST-TREE-1 hashes regular files only; reading a FIFO or a
+            // device could block or never end.
+            return Err(format!("{}: not a regular file", path.display()));
         } else {
             let relative = path
                 .strip_prefix(root)

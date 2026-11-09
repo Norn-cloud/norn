@@ -81,3 +81,21 @@ fn only_the_compiled_in_table_registers_built_ins() {
         );
     }
 }
+
+/// Sol S3 (#1163): HOST-TREE-1 hashes regular files only. Another kind of
+/// entry (here a Unix socket; a FIFO would block a read) is refused by name
+/// instead of being read.
+#[cfg(unix)]
+#[test]
+fn an_entry_that_is_not_a_regular_file_is_refused() {
+    let copy = Path::new(env!("CARGO_TARGET_TMPDIR")).join("norn-builtins-pin-kind");
+    let _fresh = std::fs::remove_dir_all(&copy);
+    std::fs::create_dir_all(copy.join("src")).unwrap();
+    std::fs::write(copy.join("src/lib.rs"), b"// a crate\n").unwrap();
+    let socket = copy.join("src/listener.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let refused = pin_tree::files(&copy).unwrap_err();
+    assert!(refused.contains("not a regular file"), "{refused}");
+    assert!(refused.contains("listener.sock"), "{refused}");
+    std::fs::remove_dir_all(&copy).unwrap();
+}
