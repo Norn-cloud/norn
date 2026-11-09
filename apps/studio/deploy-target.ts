@@ -39,6 +39,8 @@ export interface AuthDeploy {
   readonly secret: string
   /** The origin users sign in on: the stage's first domain. */
   readonly url: string
+  /** The exact HTTPS origins served by this stage. */
+  readonly origins: readonly string[]
   /** Optional Cloudflare Email Service sender for magic links. */
   readonly emailFrom?: string
   /** Optional organization members' sessions start in, e.g. `org_demo` on preview. */
@@ -53,7 +55,7 @@ export function authDeploy(env: Readonly<Record<string, string | undefined>>, ta
   if (emailFrom !== undefined && !/^[^@\s]+@[a-z0-9.-]+$/.test(emailFrom)) throw new Error("STUDIO_EMAIL_FROM must be an email address")
   const defaultOrg = env.STUDIO_DEFAULT_ORG
   if (defaultOrg !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(defaultOrg)) throw new Error("STUDIO_DEFAULT_ORG must be an organization id")
-  return { secret, url: `https://${target.domains[0]}`, ...emailFrom === undefined ? {} : { emailFrom }, ...defaultOrg === undefined ? {} : { defaultOrg } }
+  return { secret, url: `https://${target.domains[0]}`, origins: target.domains.map((domain) => `https://${domain}`), ...emailFrom === undefined ? {} : { emailFrom }, ...defaultOrg === undefined ? {} : { defaultOrg } }
 }
 
 /** Environment variable names whose values are credentials. */
@@ -89,4 +91,27 @@ export function scanState(stateDir: string, app: string, env: Readonly<Record<st
   const leaks: Record<string, number> = {}
   for (const file of files) for (const [name, count] of Object.entries(leakedSecrets(readFileSync(file, "utf8"), env))) leaks[name] = (leaks[name] ?? 0) + count
   return { files: files.length, leaks }
+}
+
+/** The Norn cell Worker each stage's Studio reaches as `NORN_HOST`; prod has none until promotion. */
+export const CELL_HOSTS: Readonly<Record<string, string>> = { preview: "norn-cell-preview" }
+
+export const cellHost = (target: DeployTarget): string | undefined => CELL_HOSTS[target.stage]
+
+/**
+ * Fail the deploy, naming the script, unless the cell Worker the stage binds to
+ * already exists on the account: a binding to a missing script must not deploy.
+ */
+export async function requireWorkerScript(script: string, env: Readonly<Record<string, string | undefined>>, fetcher: typeof fetch = fetch): Promise<void> {
+  const account = env.CLOUDFLARE_ACCOUNT_ID
+  if (account === undefined) throw new Error("CLOUDFLARE_ACCOUNT_ID is required to check the cell Worker binding")
+  const { CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_EMAIL: email, CLOUDFLARE_API_KEY: key } = env
+  if (token === undefined && (email === undefined || key === undefined)) throw new Error("CLOUDFLARE_API_TOKEN, or CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY, is required to check the cell Worker binding")
+  const headers: Record<string, string> = token !== undefined
+    ? { authorization: `Bearer ${token}` }
+    : { "x-auth-email": email ?? "", "x-auth-key": key ?? "" }
+  // Bounded: a stalled connection fails the deploy instead of hanging it.
+  const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${script}/settings`, { headers, signal: AbortSignal.timeout(30_000) })
+  if (response.status === 404) throw new Error(`The cell Worker ${script} does not exist on this account; deploy it before binding Studio to it as NORN_HOST`)
+  if (!response.ok) throw new Error(`Could not check the cell Worker ${script}: Cloudflare answered ${response.status}`)
 }

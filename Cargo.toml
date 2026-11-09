@@ -4,9 +4,11 @@ members = [
   "crates/norn-authz",
   "crates/norn-canonical",
   "crates/norn-cell",
+  "crates/norn-cell-do",
   "crates/norn-checker",
   "crates/norn-checker-wasm",
   "crates/norn-cli",
+  "crates/norn-datalog",
   "crates/norn-decisions",
   "crates/norn-dataplane",
   "crates/norn-expr",
@@ -27,9 +29,11 @@ default-members = [
   "crates/norn-authz",
   "crates/norn-canonical",
   "crates/norn-cell",
+  "crates/norn-cell-do",
   "crates/norn-checker",
   "crates/norn-checker-wasm",
   "crates/norn-cli",
+  "crates/norn-datalog",
   "crates/norn-decisions",
   "crates/norn-dataplane",
   "crates/norn-expr",
@@ -45,6 +49,7 @@ default-members = [
   "vendor/zen/core/template",
   "vendor/zen/core/expression"
 ]
+exclude = ["third_party/ascent/ascent", "third_party/ascent/ascent_macro"]
 resolver = "2"
 
 [workspace.package]

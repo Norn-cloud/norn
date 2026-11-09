@@ -7016,9 +7016,9 @@ norn_testkit::proptest::proptest! {
         let predicate: norn_kernel::PredicateQuery = serde_json::from_value(serde_json::json!({"objectType": "quality.Measurement"})).expect("predicate");
         // A disputed stored object refuses the governed read; without one there is nothing to match.
         if first_nfc {
-            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4), Err(CellError::SourceIdentityDisputed)));
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4, u64::MAX), Err(CellError::SourceIdentityDisputed)));
         } else {
-            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4), Ok(Some(ref objects)) if objects.is_empty()));
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4, u64::MAX), Ok(Some(ref objects)) if objects.is_empty()));
         }
         let mut pinned = norn_kernel::CellCommit::empty();
         pinned.predicate_reads.push(norn_kernel::PredicateReadExpectation { predicate, members: vec![norn_kernel::PredicateReadMember { key: key.clone(), version: expected }] });

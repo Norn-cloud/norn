@@ -1,0 +1,4 @@
+{
+  "order": 70,
+  "value": "apps/studio/worker/migrations/0003_connector_binding.sql"
+}

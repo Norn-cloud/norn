@@ -275,21 +275,7 @@ impl RequirementWording {
     /// # Errors
     /// Refuses malformed/duplicate tags and incomplete or blank translations.
     pub fn validate(&self) -> Result<(), &'static str> {
-        use std::collections::BTreeSet;
-        let mut tags = BTreeSet::new();
-        if self.0.is_empty() {
-            return Err("law.wording.incomplete_locale");
-        }
-        for (tag, entry) in &self.0 {
-            if !valid_locale_tag(tag) {
-                return Err("law.wording.invalid_locale");
-            }
-            if !tags.insert(tag.to_ascii_lowercase()) {
-                return Err("law.wording.duplicate_locale");
-            }
-            entry.validate()?;
-        }
-        Ok(())
+        crate::reviewed_locale::validate(&self.0, LocalizedRequirement::validate)
     }
 
     /// Select only the requested BCP 47 tag (case insensitive); never fall back.
@@ -297,15 +283,7 @@ impl RequirementWording {
     /// # Errors
     /// Refuses invalid wording or an unavailable requested locale.
     pub fn locale(&self, tag: &str) -> Result<&LocalizedRequirement, &'static str> {
-        self.validate()?;
-        if !valid_locale_tag(tag) {
-            return Err("law.wording.invalid_locale");
-        }
-        self.0
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(tag))
-            .map(|(_, entry)| entry)
-            .ok_or("law.wording.unknown_locale")
+        crate::reviewed_locale::select(&self.0, tag, LocalizedRequirement::validate)
     }
 }
 
@@ -351,37 +329,7 @@ impl LocalizedRequirement {
 
 impl<'de> Deserialize<'de> for RequirementWording {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct WordingVisitor;
-        impl<'de> serde::de::Visitor<'de> for WordingVisitor {
-            type Value = RequirementWording;
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("an ordered map of complete BCP 47 translations")
-            }
-            fn visit_map<M: serde::de::MapAccess<'de>>(
-                self,
-                mut map: M,
-            ) -> Result<Self::Value, M::Error> {
-                use serde::de::Error as _;
-                let mut entries = std::collections::BTreeMap::new();
-                let mut tags = std::collections::BTreeSet::new();
-                while let Some(tag) = map.next_key::<String>()? {
-                    if !valid_locale_tag(&tag) {
-                        return Err(M::Error::custom("law.wording.invalid_locale"));
-                    }
-                    if !tags.insert(tag.to_ascii_lowercase()) {
-                        return Err(M::Error::custom("law.wording.duplicate_locale"));
-                    }
-                    let entry = map.next_value::<LocalizedRequirement>().map_err(|e| {
-                        M::Error::custom(format!("law.wording.incomplete_locale: {e}"))
-                    })?;
-                    entries.insert(tag, entry);
-                }
-                let wording = RequirementWording(entries);
-                wording.validate().map_err(M::Error::custom)?;
-                Ok(wording)
-            }
-        }
-        deserializer.deserialize_map(WordingVisitor)
+        crate::reviewed_locale::deserialize(deserializer, LocalizedRequirement::validate).map(Self)
     }
 }
 
@@ -452,7 +400,7 @@ pub fn structured_requirement_schema() -> schemars::Schema {
 }
 
 // RFC 5646 §§2.1, 2.2.9: syntactic well-formedness, not registry membership.
-fn valid_locale_tag(tag: &str) -> bool {
+pub(crate) fn valid_locale_tag(tag: &str) -> bool {
     const IRREGULAR: &[&str] = &[
         "en-gb-oed",
         "i-ami",

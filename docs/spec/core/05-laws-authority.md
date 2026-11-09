@@ -63,6 +63,8 @@ The cell's committed clock is a nonnegative SQLite INTEGER, so `t ≤ 2^63 − 1
 
 Replaying the same commits yields the same events. The accountable subject is carried on every activation and violation and grants no authority. A violation is evidence, never a silent pass or a refusal of the later commit. Status: IR (data only), `check_requirement`, `render_requirement` and `lower_requirement` are CURRENT. All LAW-WITHIN-1 validation (`within_shape`, `MAX_WITHIN_MILLIS`, `check_wording`) lives in norn-checker. `render_requirement` is the checked render entry; norn-ir's `RequirementView::slots` is a render-only projection that refuses only what it cannot render. `lower_requirement` refuses `within` (`ActivationTiming`) rather than drop the trigger, retrigger and cancel policy in plain `LawIR`. The kernel monitor, cell deadline timer and lifecycle-graph obligations (non-vacuity: a discharging trace exists; bounded discharge/violation checking, reported bounded or unknown) are TARGET, so runtime law evaluation and theorem lowering still refuse timed laws.
 
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures name `norn.values.property_validity` and a conservative retained property-domain declaration digest, including inherited, referenced-type and interface constraints. It also covers every catalog interface, shared property type and extension, so changing any of them makes an existing pin Unverified; stale or forged pins are Unverified and never attributed to an unrelated conservation law.
+
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
 | Invariant / layer | Stable target diagnostic |
@@ -123,7 +125,7 @@ These scenarios do not simulate a solver or claim a completed constitution drop.
 
 Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-checker/src/{deontic,verification,law_enrollment}.rs`, `obligations/`, `crates/norn-authz/src/grants.rs`, `crates/norn-kernel/src/decision_commit.rs`. #316 merged; #322 open. Narrow induction generation exists; general aggregate laws, retained interface/containment closure, generated solver dispatch and full delegation chains are not established. Core physics declarations in `registry/core/src/physics.ts` are not complete runtime law enforcement.
 
-## Work breakdown (each PR ≤400 lines)
+## Work breakdown (one coherent unit per PR)
 
 1. Complete B0b #322 deterministic EN/AR slot rendering; retain #316 safety refusals.
 2. B2 effective law instance contract, then interface resolution, then containment/diamond/weakening tests as separate cuts; coordinate 06 B1.
@@ -508,3 +510,7 @@ quarantined, while native writes refuse atomically. Non-law quality warnings
 retain their separate quality classification. The named cell scenario
 `warning_severity_governing_law_quarantines_observed_fact` checks native refusal,
 persisted warning/pin, quarantine and recovery after a valid correction.
+
+## Shared reviewed locale selection
+
+**REVIEWED-LOCALE-1:** laws and question-view consumers use the same reviewed locale-map decoding, completeness validation, BCP 47 syntax and case-insensitive exact selection. Duplicate wire keys or case variants refuse before collection; an incomplete unselected translation refuses too. No fallback is introduced. Existing law wire types, schemas, wording error codes and EN/AR display bytes remain unchanged. Named scenarios: `reviewed_locale_rejects_duplicate_wire_keys_and_incomplete_unselected_entries`, generated `reviewed_locale_selection_is_exact_without_fallback`, and the existing law locale scenarios. This refactoring changes no law or execution semantics.

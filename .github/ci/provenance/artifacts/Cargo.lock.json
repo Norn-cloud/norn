@@ -1,5 +1,5 @@
 {
-  "sha256": "2fa1e6dd62637316647ddd50a06c0c2e16116505a75369a586704cc411f3660e",
+  "sha256": "9167c8f87aac0ceb1aa5956a73dcf7ddc449d8755f0c9f3657c9c7322d0e26f0",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -14,6 +14,7 @@
     "crates/norn-checker-wasm/Cargo.toml",
     "crates/norn-checker/Cargo.toml",
     "crates/norn-cli/Cargo.toml",
+    "crates/norn-datalog/Cargo.toml",
     "crates/norn-dataplane/Cargo.toml",
     "crates/norn-decisions/Cargo.toml",
     "crates/norn-expr/Cargo.toml",
