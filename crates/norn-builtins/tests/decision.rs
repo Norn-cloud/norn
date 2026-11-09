@@ -12,8 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 
 use norn_builtins::decision::{
-    DeciderEvidence, Decision, DecisionRefusal, IssuedOnly, REQUEST_BLOB, expire, issue,
-    parse_request, withdraw,
+    DeciderEvidence, Decision, DecisionRefusal, IssuedOnly, MAX_OPTION_ID_CHARS, MAX_REQUEST_BYTES,
+    MAX_TEXT_CHARS, REQUEST_BLOB, expire, issue, parse_request, withdraw,
 };
 use norn_ir::function::{
     Authority, AuthorityKind, BlobRef, Digest, Fencing, FreshnessMode, FunctionInvocation,
@@ -410,7 +410,7 @@ fn expiry_and_withdrawal_are_typed_failures_the_cell_issues() {
         Err(DecisionRefusal::NotExpired)
     );
     let expired = expire(&manifest, &invocation, &body, DEADLINE + 1).unwrap();
-    let withdrawn = withdraw(&manifest, &invocation, &body, &ada()).unwrap();
+    let withdrawn = withdraw(&manifest, &invocation, &body, &ada(), DEADLINE).unwrap();
     for (issued, tag) in [(expired, "Expired"), (withdrawn, "Withdrawn")] {
         let FunctionOutcome::Failure(failure) = &issued.receipt().outcome else {
             panic!("{tag} is a typed failure")
@@ -419,6 +419,111 @@ fn expiry_and_withdrawal_are_typed_failures_the_cell_issues() {
         assert_eq!(
             failure.detail.get("_tag"),
             Some(&norn_ir::RuntimeValue::String(tag.to_owned()))
+        );
+    }
+}
+
+/// Sol S5 (#1173): after the deadline only `Expired` may be issued; a
+/// withdrawal then refuses, exactly as a decision does.
+#[test]
+fn a_withdrawal_after_the_deadline_is_refused() {
+    let manifest = manifest();
+    let body = request(&json!({}));
+    let invocation = invocation(&manifest, &body);
+    assert!(withdraw(&manifest, &invocation, &body, &ada(), DEADLINE - 1).is_ok());
+    assert!(withdraw(&manifest, &invocation, &body, &ada(), DEADLINE).is_ok());
+    assert_eq!(
+        withdraw(&manifest, &invocation, &body, &ada(), DEADLINE + 1),
+        Err(DecisionRefusal::Expired)
+    );
+    assert!(expire(&manifest, &invocation, &body, DEADLINE + 1).is_ok());
+}
+
+/// Sol S2 (#1173): the manifest's 64 KiB `max_input_bytes` binds the parser
+/// and every issuance path, before parsing or hashing.
+#[test]
+fn an_oversized_request_is_refused_before_parsing_and_issuance() {
+    let manifest = manifest();
+    assert_eq!(manifest.bounds.max_input_bytes, Some(MAX_REQUEST_BYTES));
+    let body = request(&json!({ "options": [
+        { "id": "publish", "label": "Publish", "effect": { "action": "a".repeat(70_000) }, "scope": "Public" }
+    ], "agentPick": "publish" }));
+    assert!(u64::try_from(body.len()).unwrap() > MAX_REQUEST_BYTES);
+    let too_large = DecisionRefusal::InvalidRequest("decision.request_too_large");
+    assert_eq!(parse_request(&body).unwrap_err(), too_large);
+    assert_eq!(too_large.code(), "decision.request_too_large");
+    // A dispatch whose blob digest and size match the oversized bytes.
+    let invocation = invocation(&manifest, &body);
+    let held = roles(&["finance.approver"]);
+    let laws = roles(&["law.two_person"]);
+    let evidence = DeciderEvidence {
+        actor: &ada(),
+        roles: &held,
+        satisfied_laws: &laws,
+    };
+    assert_eq!(
+        issue(&manifest, &invocation, &body, &evidence, &decide("publish"), 5_000),
+        Err(too_large)
+    );
+    assert_eq!(
+        expire(&manifest, &invocation, &body, DEADLINE + 1),
+        Err(too_large)
+    );
+    assert_eq!(
+        withdraw(&manifest, &invocation, &body, &ada(), DEADLINE - 1),
+        Err(too_large)
+    );
+}
+
+/// Sol S4 (#1173): an unbounded option id fit the input budget but overflowed
+/// the 32 KiB receipt summary. Ids are bounded, and the widest accepted
+/// answer still issues a receipt within the summary bound.
+#[test]
+fn every_accepted_choice_fits_the_receipt_summary() {
+    let option =
+        |id: &str| json!({ "id": id, "label": "L", "effect": { "action": "a" }, "scope": "S" });
+    let refused = |extra: serde_json::Value| {
+        parse_request(&request(&extra))
+            .map(|_| ())
+            .unwrap_err()
+            .code()
+    };
+    let longest = format!("o{}", "x".repeat(MAX_OPTION_ID_CHARS - 1));
+    assert_eq!(
+        refused(json!({ "options": [option(&format!("{longest}x"))], "agentPick": null })),
+        "decision.option_id"
+    );
+    assert_eq!(
+        refused(json!({ "options": [option(&"o".repeat(33_000))], "agentPick": null })),
+        "decision.option_id"
+    );
+    // The widest accepted answer: the longest id and the longest note of the
+    // widest characters (4-byte UTF-8; U+0958 also changes under NFC).
+    let body = request(&json!({ "options": [option(&longest)], "agentPick": null }));
+    let manifest = manifest();
+    let dispatch = invocation(&manifest, &body);
+    let held = roles(&["finance.approver"]);
+    let laws = roles(&["law.two_person"]);
+    let evidence = DeciderEvidence {
+        actor: &ada(),
+        roles: &held,
+        satisfied_laws: &laws,
+    };
+    for wide in ['\u{1f600}', '\u{958}', '\u{1}'] {
+        let answer = Decision {
+            choice: longest.clone(),
+            note: Some(wide.to_string().repeat(MAX_TEXT_CHARS)),
+        };
+        let issued = issue(&manifest, &dispatch, &body, &evidence, &answer, 5_000).unwrap();
+        let FunctionOutcome::Success(success) = &issued.receipt().outcome else {
+            panic!("a decision succeeds")
+        };
+        let size = norn_ir::canonical::canonical_json_of(&success.summary)
+            .unwrap()
+            .len();
+        assert!(
+            u64::try_from(size).unwrap() <= norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES,
+            "{wide:?}: {size} bytes"
         );
     }
 }

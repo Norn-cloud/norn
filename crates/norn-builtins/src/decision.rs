@@ -35,8 +35,14 @@ pub const ERROR_SCHEMA: &str = include_str!("schemas/decision.error.json");
 pub const REQUEST_BLOB: &str = "request";
 /// The longest question and note, in characters.
 pub const MAX_TEXT_CHARS: usize = 500;
+/// The longest option id, in characters (ASCII, so also bytes).
+pub const MAX_OPTION_ID_CHARS: usize = 64;
 /// The most options a decision offers.
 pub const MAX_OPTIONS: usize = 9;
+/// The largest request blob, in bytes: the registered manifest's
+/// `max_input_bytes`. [`parse_request`] and every issuance path refuse a
+/// larger request before parsing or hashing it.
+pub const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 /// The longest a decision may wait: seven days.
 pub const MAX_EXPIRES_IN_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 /// Where the cell issues the receipt.
@@ -70,7 +76,8 @@ pub struct OptionEffect {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DecisionOption {
-    /// `[a-z][a-z0-9_]*`, unique within the decision; `choice` names it.
+    /// `[a-z][a-z0-9_]*`, at most [`MAX_OPTION_ID_CHARS`] characters, unique
+    /// within the decision; `choice` names it.
     pub id: String,
     /// What the decider reads.
     pub label: String,
@@ -151,6 +158,10 @@ pub enum DecisionRefusal {
     UnknownChoice,
     /// The note is longer than [`MAX_TEXT_CHARS`].
     NoteTooLong,
+    /// The answer's summary would exceed the receipt summary bound. The id
+    /// and note bounds keep every accepted choice far below it; this check
+    /// keeps that true if a bound moves.
+    SummaryTooLarge,
     /// The decision's deadline passed; only [`expire`] can resolve it now.
     Expired,
     /// The deadline has not passed, so it cannot expire yet.
@@ -170,6 +181,7 @@ impl DecisionRefusal {
             Self::LawNotSatisfied => "decision.law_not_satisfied",
             Self::UnknownChoice => "decision.unknown_choice",
             Self::NoteTooLong => "decision.note_too_long",
+            Self::SummaryTooLarge => "decision.summary_too_large",
             Self::Expired => "decision.expired",
             Self::NotExpired => "decision.not_expired",
             Self::Canonical => "decision.canonical",
@@ -207,9 +219,14 @@ impl IssuedReceipt {
     }
 }
 
+fn too_large(request: &[u8]) -> bool {
+    !u64::try_from(request.len()).is_ok_and(|len| len <= MAX_REQUEST_BYTES)
+}
+
 fn is_option_id(id: &str) -> bool {
     let mut chars = id.chars();
-    chars.next().is_some_and(|first| first.is_ascii_lowercase())
+    id.len() <= MAX_OPTION_ID_CHARS
+        && chars.next().is_some_and(|first| first.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
@@ -219,6 +236,9 @@ fn is_option_id(id: &str) -> bool {
 /// [`DecisionRefusal::InvalidRequest`] naming the broken bound.
 pub fn parse_request(bytes: &[u8]) -> Result<DecisionRequest, DecisionRefusal> {
     let invalid = DecisionRefusal::InvalidRequest;
+    if too_large(bytes) {
+        return Err(invalid("decision.request_too_large"));
+    }
     let request: DecisionRequest =
         serde_json::from_slice(bytes).map_err(|_shape| invalid("decision.request_shape"))?;
     if request.question.trim().is_empty() || request.question.chars().count() > MAX_TEXT_CHARS {
@@ -261,6 +281,9 @@ fn bind(
     invocation: &FunctionInvocation,
     request: &[u8],
 ) -> Result<(DecisionRequest, Digest), DecisionRefusal> {
+    if too_large(request) {
+        return Err(DecisionRefusal::InvalidRequest("decision.request_too_large"));
+    }
     let digest = manifest
         .content_digest()
         .map_err(|_canonical| DecisionRefusal::Canonical)?;
@@ -372,6 +395,12 @@ pub fn issue(
         }
         summary.insert("note".to_owned(), RuntimeValue::String(note.clone()));
     }
+    let size = norn_ir::canonical::canonical_json_of(&summary)
+        .map_err(|_canonical| DecisionRefusal::Canonical)?
+        .len();
+    if !u64::try_from(size).is_ok_and(|size| size <= norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES) {
+        return Err(DecisionRefusal::SummaryTooLarge);
+    }
     let output_manifest = norn_ir::function::output_manifest_digest(&[], &summary)
         .map_err(|_canonical| DecisionRefusal::Canonical)?;
     receipt(
@@ -417,17 +446,23 @@ pub fn expire(
     )
 }
 
-/// Issue the `Withdrawn` receipt for `withdrawer`, whom the caller authorized.
+/// Issue the `Withdrawn` receipt for `withdrawer`, whom the caller
+/// authorized, while the decision is still open: after the deadline only
+/// [`expire`] resolves it.
 ///
 /// # Errors
-/// The command does not bind.
+/// The command does not bind, or the deadline passed.
 pub fn withdraw(
     manifest: &FunctionManifest,
     invocation: &FunctionInvocation,
     request: &[u8],
     withdrawer: &norn_ir::function::Authority,
+    now_ms: u64,
 ) -> Result<IssuedReceipt, DecisionRefusal> {
     let (_request, manifest_digest) = bind(manifest, invocation, request)?;
+    if now_ms > invocation.deadline_millis {
+        return Err(DecisionRefusal::Expired);
+    }
     receipt(
         manifest,
         manifest_digest,

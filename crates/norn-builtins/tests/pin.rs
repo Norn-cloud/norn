@@ -22,6 +22,8 @@ fn walk(root: &Path, dir: &Path, files: &mut Vec<(String, Vec<u8>)>) {
         if kind.is_dir() {
             walk(root, &path, files);
         } else {
+            // HOST-TREE-1 hashes regular files only; reading a FIFO could block.
+            assert!(kind.is_file(), "{}: not a regular file", path.display());
             let relative = path
                 .strip_prefix(root)
                 .unwrap()
@@ -79,4 +81,23 @@ fn only_the_compiled_in_table_registers_built_ins() {
             "{id}@{version}"
         );
     }
+}
+
+/// Sol S3 (#1173): the walk refuses an entry that is not a regular file (here
+/// a Unix socket; a FIFO would block a read) instead of reading it.
+#[cfg(unix)]
+#[test]
+fn an_entry_that_is_not_a_regular_file_is_refused() {
+    let copy = Path::new(env!("CARGO_TARGET_TMPDIR")).join("norn-builtins-pin-kind");
+    let _fresh = std::fs::remove_dir_all(&copy);
+    std::fs::create_dir_all(copy.join("src")).unwrap();
+    std::fs::write(copy.join("src/lib.rs"), b"// a crate\n").unwrap();
+    let _listener = std::os::unix::net::UnixListener::bind(copy.join("src/listener.sock")).unwrap();
+    let refused = std::panic::catch_unwind(|| walk(&copy, &copy, &mut Vec::new())).unwrap_err();
+    let message = refused
+        .downcast_ref::<String>()
+        .cloned()
+        .unwrap_or_default();
+    assert!(message.contains("not a regular file"), "{message}");
+    std::fs::remove_dir_all(&copy).unwrap();
 }
