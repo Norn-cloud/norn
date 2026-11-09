@@ -2140,6 +2140,7 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "tempfile",
  "utoipa",
 ]
 
@@ -2196,6 +2197,8 @@ dependencies = [
 name = "norn-cell-do"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
  "form_urlencoded",
  "http",
  "norn-api",

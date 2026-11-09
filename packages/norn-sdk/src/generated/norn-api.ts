@@ -3,7 +3,50 @@
  * Do not make direct changes to the file.
  */
 
-export type paths = Record<string, never>;
+export interface paths {
+    "/v1/questions/{question}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Evaluate using the native exact engine; analytical freshness labels are preserved.
+         *     # Errors
+         *     Denied scope/authority, unavailable trusted inputs, or typed compute refusal.
+         */
+        get: operations["get_answer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/questions/{question}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
+         *     # Errors
+         *     Nonexact/stale results, historical tracing, changed pins or unavailable evidence refuse.
+         */
+        get: operations["get_numeric_trace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
@@ -717,10 +760,16 @@ export interface components {
          *     `norn_cell::source_provenance::InstanceSourceProvenance`; it grants no authority.
          */
         NornInstanceSourceProvenance: {
-            /** @description Content address of the recomputed mapping bundle. */
-            bundleDigest: string;
-            /** @description Digest of the source document payload. */
-            documentDigest: string;
+            /**
+             * @description Content address of the recomputed mapping bundle; omitted in a numeric trace
+             *     when the caller may not read the contributing values.
+             */
+            bundleDigest?: string | null;
+            /**
+             * @description Digest of the source document payload; omitted in a numeric trace when the
+             *     caller may not read the contributing values.
+             */
+            documentDigest?: string | null;
             /** @description A source system and the record's identity in it. */
             documentRef: components["schemas"]["NornIrSourceRecordRef"];
             /** @description Field-level source and rule provenance, by property id. */
@@ -7833,6 +7882,54 @@ export interface components {
             /** @description Admitted artifact version. */
             version: string;
         };
+        /** @description One original numeric member; enrichment does not enter this list. */
+        NornNumericContribution: {
+            /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
+            amounts: (number | null)[] | null;
+            /**
+             * Format: int64
+             * @description Writer's immutable commit position.
+             */
+            commitSeq: number;
+            fact: components["schemas"]["NornIrFactRef"];
+            /** @description Full incarnation digest, disclosed with canonical values. */
+            factDigest: string | null;
+            /** @description Emitting receipt identity; no export capability. */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description Receipt-authenticated knowledge time.
+             */
+            recordedAtMs: number;
+            /** @description Canonical property content was withheld. */
+            restricted: boolean;
+            /** @description A source grant never follows from membership or canonical-value disclosure. */
+            source: {
+                /** @description Original semantic source edges. */
+                provenance: components["schemas"]["NornInstanceSourceProvenance"];
+                /** @enum {string} */
+                status: "resolved";
+            } | {
+                /** @enum {string} */
+                status: "restricted";
+            } | {
+                /** @enum {string} */
+                status: "unavailable";
+            };
+            /** @description Complete canonical values, only under their own grant. */
+            values: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** @description LINEAGE-SUM-1: exact numeric membership with independently disclosed evidence. */
+        NornNumericTrace: {
+            /** @description Canonical selected bucket key. */
+            bucket: string;
+            /** @description Ordered original fact incarnations. */
+            contributions: components["schemas"]["NornNumericContribution"][];
+            /** @description Revalidated exact result at its original frontier. */
+            result: components["schemas"]["NornQueryResult"];
+        };
         /** @description One bounded page of a concept's authoritative objects. */
         NornObjectPage: {
             /** @description The concept read; records may be of its subtypes. */
@@ -7877,8 +7974,10 @@ export interface components {
         NornQueryFreshness: "fresh" | "exact" | "stale" | "incomplete";
         /** @description One object version's contribution to a bucket. */
         NornQueryMember: {
-            /** @description Operand contributions, in `totals` order; null means a predicate excluded the operand. */
-            amounts: (number | null)[];
+            /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
+            amounts: (number | null)[] | null;
+            /** @description The reader holds no Values grant on this member; absent when false. */
+            restricted?: boolean;
             /**
              * Format: int64
              * @description Original cell object version.
@@ -7913,7 +8012,10 @@ export interface components {
              * @description Actual knowledge revision (commit count), not a historical timestamp.
              */
             knownAsOf: number;
-            /** @description Content-addressed membership and source lineage. */
+            /**
+             * @description Opaque handle to this result's membership and source lineage, for its
+             *     trace: keyed by the cell (D53), never a content hash of the rows.
+             */
             lineageRef: string;
             /** @description Admitted mapping version/digest. */
             mappingPin: string;
@@ -7957,9 +8059,15 @@ export interface components {
             members: {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
-            /** @description One sum, or numerator then denominator. */
+            /**
+             * @description DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket
+             *     has fewer members than the server's declared minimum, so `totals` is
+             *     empty and `value` null; membership stays. Absent when false.
+             */
+            suppressed?: boolean;
+            /** @description One sum, or numerator then denominator; empty when the bucket is `suppressed`. */
             totals: number[];
-            /** @description The bucket's value; null means a zero-denominator ratio is unavailable. An exact decimal as a raw JSON number token; read its text, not a binary float. */
+            /** @description The bucket's value; null means a zero-denominator ratio is unavailable, or the bucket is `suppressed` (DATA-VALUES-1). An exact decimal as a raw JSON number token; read its text, not a binary float. */
             value: number | null;
         };
         /** @description A source partition's observed watermark. */
@@ -7974,6 +8082,8 @@ export interface components {
             /** @description Connector's observed high-water cursor. */
             observed: string;
         };
+        /** @description Current or authenticated historical answer, matching the native service envelope. */
+        NornQuestionAnswer: components["schemas"]["NornQueryResult"] | components["schemas"]["NornHistoricalQuestionResult"];
         /** @description An execution world. */
         NornWorld: "main" | {
             /** @description A scenario fork. */
@@ -8023,4 +8133,171 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    get_answer: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                question: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The exact answer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornQuestionAnswer"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: over a resource bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused by a typed compute refusal. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_numeric_trace: {
+        parameters: {
+            query: {
+                /** @description Organization, matched against physical scope. */
+                orgId: string;
+                /** @description Environment, matched against physical scope. */
+                environmentId: string;
+                /** @description The `lineageRef` handle a complete exact answer returned (keyed, D53). */
+                lineageRef: string;
+                /** @description Canonical bucket key from that result. */
+                bucket: string;
+            };
+            header?: never;
+            path: {
+                question: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The numeric trace. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornNumericTrace"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: over a resource bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused by a typed compute refusal. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+}

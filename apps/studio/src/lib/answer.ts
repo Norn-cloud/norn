@@ -64,13 +64,13 @@ export function buckets({ question, metrics, objectType }: Declarations, { answe
         id,
         version,
         // The server sends `amounts: null` for a member whose values the reader may not see.
-        amounts: (amounts as readonly (number | null)[] | null) === null ? null : amounts.map((amount, index) => amount === null ? null : operand(`${path}/members/${member(id)}/amounts/${index}`, index)),
+        amounts: amounts === null ? null : amounts.map((amount, index) => amount === null ? null : operand(`${path}/members/${member(id)}/amounts/${index}`, index)),
       })),
     }
   })
 }
 
-export const fraction = (totals: readonly (string | null)[]): string => totals.map((total) => total ?? "left out").join(" / ")
+export const fraction = (totals: readonly (string | null)[] | null): string => totals === null ? "Values withheld" : totals.map((total) => total ?? "left out").join(" / ")
 
 /** A member's contribution in words: its exact amounts, or "Withheld" when the server sent none for this reader. */
 export const contribution = (amounts: readonly (string | null)[] | null): string => amounts === null ? "Withheld" : fraction(amounts)
