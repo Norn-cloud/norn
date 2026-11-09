@@ -2748,7 +2748,7 @@ fn inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically() {
 }
 
 #[test]
-fn a_stale_write_to_an_immutable_object_is_refused_as_immutable_not_as_a_conflict() {
+fn an_immutable_refusal_outranks_conflict_only_when_the_write_observed_the_object_present() {
     let mut definitions = types();
     definitions[0].immutable = true;
     let mut host = cell().with_types(definitions);
@@ -2766,8 +2766,29 @@ fn a_stale_write_to_an_immutable_object_is_refused_as_immutable_not_as_a_conflic
         ..CellCommit::empty()
     })
     .unwrap();
-    // `ABSENT` is stale now: the object exists. The write can never succeed, so the
-    // permanent refusal wins over the retryable version conflict.
+    let observed = host.load(&key).unwrap().version;
+    // A write that read the object present can never succeed, so the permanent
+    // refusal is reported, not a retryable conflict.
+    for mutation in [
+        FactMutation::Put {
+            values: values.clone(),
+        },
+        FactMutation::Delete,
+    ] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: observed,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.immutable_object");
+    }
+    // A create that expected the object absent lost a race with the commit above:
+    // a retryable `Conflict`, so action retry and replay can re-read the winner.
     for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
         let error = host
             .commit(CellCommit {
@@ -2779,7 +2800,7 @@ fn a_stale_write_to_an_immutable_object_is_refused_as_immutable_not_as_a_conflic
                 ..CellCommit::empty()
             })
             .unwrap_err();
-        assert_eq!(error.code(), "commit.immutable_object");
+        assert_eq!(error.code(), "commit.conflict");
     }
 }
 

@@ -2518,6 +2518,97 @@ impl CellHost for BaseCollisionBeforeFirstCandidate {
     }
 }
 
+/// A host on which a rival naming-series create commits just before the first commit it is given.
+struct RivalNamingCreate {
+    cell: Cell,
+    types: Vec<ObjectTypeDef>,
+    action: ActionRoot,
+    injected: bool,
+}
+
+impl CellHost for RivalNamingCreate {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = Infallible;
+
+    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
+        self.cell.load(key)
+    }
+
+    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
+        self.cell.load_link(key)
+    }
+
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "This test fixture must panic when the rival create fails rather than simulate a recoverable domain refusal"
+    )]
+    fn commit(
+        &mut self,
+        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
+    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        if !self.injected {
+            self.injected = true;
+            let catalog = TypeCatalog::new(&self.types);
+            let rival = naming_call(&self.action, "ACME", "rival", 1_767_225_600_000);
+            let outcome = commit_action(&mut self.cell, &catalog, &rival, &Allow).unwrap();
+            assert_eq!(outcome_key(outcome), "SO-ACME-2025-00001");
+        }
+        CellHost::commit(&mut self.cell, commit)
+    }
+
+    fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, Self::Error> {
+        self.cell.perform()
+    }
+
+    fn observe(&mut self) -> Result<Option<Observed<JsonObject>>, Self::Error> {
+        self.cell.observe()
+    }
+
+    fn clock(&mut self) -> Result<Option<DueTimer<JsonObject>>, Self::Error> {
+        self.cell.clock()
+    }
+
+    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
+        self.cell.publish(receipt)
+    }
+}
+
+#[test]
+fn a_losing_create_of_an_immutable_naming_series_type_retries_with_the_next_number() {
+    for gap_policy in ["gapless_within_commit", "allow_gaps"] {
+        let mut types = naming_series_types(gap_policy, "year");
+        types[0].immutable = true;
+        let catalog = TypeCatalog::new(&types);
+        let action = naming_series_action("commerce.named_order.create.immutable_race");
+        let mut host = RivalNamingCreate {
+            cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+                .with_types(types.clone()),
+            types: types.clone(),
+            action: action.clone(),
+            injected: false,
+        };
+        // Both calls select SO-ACME-2025-00001, absent when each read it. The rival commits
+        // first; the loser's absent-expecting create is a retryable conflict, not an
+        // immutability refusal, so it allocates the next number.
+        let call = naming_call(&action, "ACME", "loser", 1_767_225_600_000);
+        let outcome = commit_action(&mut host, &catalog, &call, &Allow).unwrap();
+        assert_eq!(outcome_key(outcome), "SO-ACME-2025-00002", "{gap_policy}");
+        assert!(host.injected, "the rival create committed first");
+        assert_eq!(host.cell.ledger().len(), 2);
+        for key in ["SO-ACME-2025-00001", "SO-ACME-2025-00002"] {
+            assert!(
+                host.cell
+                    .load(&FactKey::new("commerce.NamedOrder", key))
+                    .unwrap()
+                    .exists(),
+                "{key}"
+            );
+        }
+    }
+}
+
 #[test]
 fn inherited_naming_series_candidate_cas_catches_concurrent_base_create() {
     for gap_policy in ["gapless_within_commit", "allow_gaps"] {
