@@ -20576,8 +20576,11 @@
             "description": "Full incarnation digest, disclosed with canonical values."
           },
           "receiptHash": {
-            "type": "string",
-            "description": "Emitting receipt identity; no export capability."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Emitting receipt identity; no export capability. Null when any member of\nthe bucket is restricted (DATA-VALUES-1): the hash commits to the values."
           },
           "recordedAtMs": {
             "type": "integer",

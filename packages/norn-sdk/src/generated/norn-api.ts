@@ -7894,8 +7894,11 @@ export interface components {
             fact: components["schemas"]["NornIrFactRef"];
             /** @description Full incarnation digest, disclosed with canonical values. */
             factDigest: string | null;
-            /** @description Emitting receipt identity; no export capability. */
-            receiptHash: string;
+            /**
+             * @description Emitting receipt identity; no export capability. Null when any member of
+             *     the bucket is restricted (DATA-VALUES-1): the hash commits to the values.
+             */
+            receiptHash: string | null;
             /**
              * Format: int64
              * @description Receipt-authenticated knowledge time.
