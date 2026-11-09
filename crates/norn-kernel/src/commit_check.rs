@@ -512,6 +512,24 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
+    // A write that observed an object already present and immutable can never succeed on
+    // retry, so `ImmutableObject` outranks the stale-version `Conflict`. A write whose
+    // expectation differs from the current version (an absent object that a concurrent
+    // create has since made present) is a retryable `Conflict` that `check_versions` reports,
+    // so creates can still re-read and replay or allocate the next number.
+    for write in &commit.writes {
+        let key = model.canonical(&write.key);
+        let concrete = view.concrete(&key).map_err(CommitError::Host)?;
+        if concrete
+            .as_ref()
+            .is_some_and(|concrete| model.catalog.immutable(concrete))
+            && view.version(&key).map_err(CommitError::Host)? == write.expected
+        {
+            return Err(CommitError::ImmutableObject {
+                key: write.key.clone(),
+            });
+        }
+    }
     check_versions(commit, model, view, authorization)?;
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;

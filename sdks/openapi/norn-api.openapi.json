@@ -11964,6 +11964,10 @@
             },
             "description": "Declared keys. Each is unique among the type's live objects within one\ntenant scope and world, enforced at commit. Omitted when empty: every\nobject always has its kernel-assigned object id, and a type need not\ndeclare a business key."
           },
+          "immutable": {
+            "type": "boolean",
+            "description": "FA-IMM-1: existing instances are append-only; subtypes inherit this flag."
+          },
           "implements": {
             "type": "array",
             "items": {
@@ -16431,8 +16435,7 @@
               {
                 "properties": {
                   "value": {
-                    "type": "number",
-                    "format": "double"
+                    "$ref": "#/components/schemas/NornIrDecimalLiteral"
                   },
                   "valueType": {
                     "enum": [
@@ -16535,7 +16538,7 @@
       },
       "NornIrSettingValueType": {
         "type": "string",
-        "description": "The JSON type of a setting's `value`.",
+        "description": "The setting value kind; numbers use exact decimal-string literals.",
         "enum": [
           "text",
           "number",

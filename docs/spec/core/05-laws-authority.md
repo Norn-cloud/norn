@@ -496,6 +496,11 @@ fractional candidate with full evidence, holdout near-miss with exact residual,
 no-signal control, duplicate record, unit separation, oversize window and measured
 256-record fixture. Law drift, misfit rules and statistical guards remain open.
 
+**CONTROL-REFS-1:** finite control-model projection requires exactly one
+ActionRoot for every referenced policy action. Missing or duplicate roots yield
+unknown (`None`), never safety proof evidence. This closure check grants no
+runtime access or availability witness. Named scenarios cover complete grants,
+an undeclared policy action, duplicate roots and sampled undeclared identities.
 
 ### Warning-severity governing laws (LAW-COMMIT-1 / OBS-EVIDENCE-1)
 

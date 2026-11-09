@@ -824,6 +824,7 @@ pub fn law_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, links: Vec<Link>| ObjectTypeDef {
+        immutable: false,
         role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
@@ -2011,7 +2012,7 @@ macro_rules! rehost {
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
     Ok(rehost!(error;
-        IdentityReuse, AtomicBoundary { key }, AtomicDeliveryBoundary { consumed },
+        IdentityReuse, AtomicBoundary { key }, AtomicDeliveryBoundary { consumed }, ImmutableObject { key },
         Law { key, reason }, IdentityCollision { owner, key, conflicts },
         OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed },
         Conflict { key, expected, current }, DuplicateLink { key },
@@ -2167,6 +2168,7 @@ pub fn override_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, link: Link| ObjectTypeDef {
+        immutable: false,
         role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,

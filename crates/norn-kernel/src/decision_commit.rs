@@ -509,6 +509,12 @@ impl<'a> TypeCatalog<'a> {
         Ok(declared || temporal)
     }
 
+    pub(crate) fn immutable(&self, object_type: &ObjectTypeName) -> bool {
+        self.ancestry(object_type)
+            .iter()
+            .any(|definition| definition.immutable)
+    }
+
     /// `object_type` and then its supertypes, nearest first. Bounded by the
     /// catalog size, so a cyclic `extends` chain (which the checker rejects)
     /// cannot loop.
@@ -2009,6 +2015,9 @@ impl<X> DecisionRefusal<X> {
                 actual_bytes,
                 max_bytes,
             } => Self::commit_identifier_refusal(field, actual_bytes, max_bytes),
+            CommitError::ImmutableObject { key } => Self::InvalidOutput {
+                reason: format!("{key} is immutable"),
+            },
             CommitError::NotPending { consumed } => Self::NotPending { consumed },
             CommitError::Conflict {
                 key,
@@ -2133,6 +2142,7 @@ impl<X> DecisionRefusal<X> {
             | CommitError::DuplicateKey { .. }
             | CommitError::OwnedRowsProtected { .. }
             | CommitError::IdentifierTooLong { .. }
+            | CommitError::ImmutableObject { .. }
             | CommitError::NotPending { .. }
             | CommitError::Conflict { .. }
             | CommitError::TypeMismatch { .. }
@@ -2787,6 +2797,14 @@ fn apply_change<X>(
     if forbidden {
         return Err(DecisionRefusal::InvalidOutput {
             reason: format!("{key} has protected properties writable only by rules"),
+        });
+    }
+    if slice.get(&key).is_some_and(|state| state.values.is_some())
+        && catalog.immutable(&key.object_type)
+        && !matches!(change, FactChange::Create { .. })
+    {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!("{key} is immutable"),
         });
     }
     let event = match change {

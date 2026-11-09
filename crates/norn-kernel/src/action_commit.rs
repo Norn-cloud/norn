@@ -960,6 +960,10 @@ where
     commit_action_inner(host, catalog, call, authorizer, None, &limits, Some(meter))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dispatch resolves closure, scope, input and effect program before any commit"
+)]
 fn commit_action_inner<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
@@ -4514,6 +4518,7 @@ fn precondition_read_refusal<X>(
         | CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -4554,6 +4559,7 @@ fn precondition_read_refusal<X>(
         | CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
