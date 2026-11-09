@@ -47,7 +47,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The exact answer.",
             "content": {
               "application/json": {
                 "schema": {
@@ -57,7 +57,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -67,7 +67,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -77,7 +77,7 @@
             }
           },
           "404": {
-            "description": "",
+            "description": "The request was refused: not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -87,7 +87,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -97,7 +97,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused by a typed compute refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -107,7 +107,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -174,7 +174,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The numeric trace.",
             "content": {
               "application/json": {
                 "schema": {
@@ -184,7 +184,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -194,7 +194,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -204,7 +204,7 @@
             }
           },
           "404": {
-            "description": "",
+            "description": "The request was refused: not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -214,7 +214,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -224,7 +224,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused by a typed compute refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -234,7 +234,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {

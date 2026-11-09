@@ -8144,6 +8144,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description The exact answer. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8152,6 +8153,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornQuestionAnswer"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8160,6 +8162,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8168,6 +8171,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8176,6 +8180,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: over a resource bound. */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -8184,6 +8189,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused by a typed compute refusal. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -8192,6 +8198,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8222,6 +8229,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description The numeric trace. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8230,6 +8238,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornNumericTrace"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8238,6 +8247,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8246,6 +8256,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8254,6 +8265,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: over a resource bound. */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -8262,6 +8274,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused by a typed compute refusal. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -8270,6 +8283,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;
