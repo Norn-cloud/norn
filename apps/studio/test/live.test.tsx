@@ -14,7 +14,9 @@ const { LiveRecords, QuestionPage } = await import("../src/questions.tsx")
 
 const answers = join(import.meta.dir, "../../../fixtures/demo/answers")
 const text = (name: string) => readFileSync(join(answers, name), "utf8")
-const respond = (status: number, body: string) => async () => new Response(body, { status, headers: { "content-type": "application/json" } })
+const respond = (status: number, body: string) => async (url: string) => url === "/api/me"
+  ? Response.json({ organization: { id: "org_other" }, environmentId: "warehouse" })
+  : new Response(body, { status, headers: { "content-type": "application/json" } })
 
 // Stands in for the host: the engine's own answer document (the same NornQueryResult the host returns),
 // and a trace in the host's NornNumericTrace shape over that answer's first bucket.
@@ -41,10 +43,10 @@ test("the host's 403 is shown as its refusal; the Worker's own errors and a miss
 
 test("the trace is asked for by the answer's lineage and the row key exactly as the server wrote it", async () => {
   let asked = ""
-  await liveTrace("demo.yield_week", answer.lineageRef, bucket, async (url: string) => { asked = url; return new Response(traceText) })
+  await liveTrace("demo.yield_week", answer.lineageRef, bucket, async (url: string) => { if (url === "/api/me") return Response.json({ organization: { id: "org_other" }, environmentId: "warehouse" }); asked = url; return new Response(traceText) })
   const url = new URL(asked, "https://studio")
   expect(url.pathname).toBe("/api/host/v1/questions/demo.yield_week/trace")
-  expect(Object.fromEntries(url.searchParams)).toEqual({ orgId: "org_demo", environmentId: "analytics", lineageRef: answer.lineageRef, bucket })
+  expect(Object.fromEntries(url.searchParams)).toEqual({ orgId: "org_other", environmentId: "warehouse", lineageRef: answer.lineageRef, bucket })
 })
 
 /** The question page with the recorded board and a given live read already answered. */
@@ -112,6 +114,31 @@ test("an answer whose members' amounts are withheld still reads, its totals inta
   const rows = buckets(declared, { answer: JSON.parse(source), numbers: readDocument(source, "live").numbers, at: "" })
   expect(rows.map(({ value, totals }) => ({ value, totals }))).toEqual(plain.map(({ value, totals }) => ({ value, totals })))
   expect(rows.every(({ members }) => members.every(({ amounts }) => amounts === null && contribution(amounts) === "Withheld"))).toBe(true)
+})
+
+
+test("live answers and traces follow the current server scope and never call a missing cell", async () => {
+  let environmentId: string | null = "first"
+  let orgId = "org_one"
+  const paths: string[] = []
+  const fetcher = async (url: string) => {
+    if (url === "/api/me") return Response.json({ organization: { id: orgId }, environmentId })
+    paths.push(url)
+    return new Response(traceText)
+  }
+  await liveAnswer("demo.yield_week", fetcher)
+  orgId = "org_two"; environmentId = "second"
+  await liveTrace("demo.yield_week", "lin:/+", "row & value", fetcher)
+  await liveAccess(fetcher)
+  expect(Object.fromEntries(new URL(paths[0] ?? "", "https://studio").searchParams)).toEqual({ orgId: "org_one", environmentId: "first" })
+  expect(Object.fromEntries(new URL(paths[1] ?? "", "https://studio").searchParams)).toEqual({ lineageRef: "lin:/+", bucket: "row & value", orgId: "org_two", environmentId: "second" })
+  expect(Object.fromEntries(new URL(paths[2] ?? "", "https://studio").searchParams)).toEqual({ orgId: "org_two", environmentId: "second" })
+  environmentId = null
+  expect(await liveAccess(fetcher)).toEqual({ kind: "unavailable", status: 0, reason: "no-cell" })
+  expect(await liveAnswer("demo.yield_week", fetcher)).toEqual({ kind: "unavailable", status: 0, reason: "no-cell" })
+  expect(await liveTrace("demo.yield_week", "lin", "row", fetcher)).toEqual({ kind: "unavailable", status: 0, reason: "no-cell" })
+  expect(paths).toHaveLength(3)
+  expect(await liveAnswer("demo.yield_week", async () => new Response("", { status: 401 }))).toEqual({ kind: "unavailable", status: 401 })
 })
 
 test("a network failure or a 200 that is not JSON is no live read, so the page keeps its recording", async () => {

@@ -1,4 +1,5 @@
 import { readDocument, type Read } from "./exact.ts"
+import { CellUnavailable, NO_DATA_CELL, StudioScopeError, readStudioScope, scopedHostFetch } from "./definitions.ts"
 import { FRESHNESS } from "./format.ts"
 import type { Answer, Schemas } from "./transport.ts"
 
@@ -14,7 +15,7 @@ export interface Refusal {
 export type LiveRead<T> =
   | { readonly kind: "read"; readonly read: Read<T> }
   | { readonly kind: "refused"; readonly refusal: Refusal }
-  | { readonly kind: "unavailable"; readonly status: number }
+  | { readonly kind: "unavailable"; readonly status: number; readonly reason?: "no-cell" }
 
 /** The one call this module makes to fetch; narrower than the global fetch type, so tests can pass a plain function. */
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>
@@ -50,11 +51,13 @@ export async function hostRead<T>(path: string, fetcher: Fetch = fetch, isDocume
   let response: Response
   let text: string
   try {
-    response = await fetcher(`/api/host${path}`, { headers: { accept: "application/json" } })
+    const scoped = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
+    response = await scoped(path, { headers: { accept: "application/json" } })
     text = await response.text()
-  } catch {
-    // The network failed: no live read, so the page shows its recording rather than a stale "Live".
-    return { kind: "unavailable", status: 0 }
+  } catch (error) {
+    return error instanceof StudioScopeError && error.message === NO_DATA_CELL
+      ? { kind: "unavailable", status: 0, reason: "no-cell" }
+      : { kind: "unavailable", status: error instanceof CellUnavailable ? error.status : 0 }
   }
   if (response.ok) {
     try {
@@ -72,8 +75,6 @@ export async function hostRead<T>(path: string, fetcher: Fetch = fetch, isDocume
   }
   return { kind: "unavailable", status: response.status }
 }
-
-const DEMO = "orgId=org_demo"
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
@@ -100,11 +101,13 @@ export const isTrace = (value: unknown): boolean =>
     typeof contribution.receiptHash === "string" && typeof contribution.commitSeq === "number" && typeof contribution.restricted === "boolean")
 
 export const liveAnswer = (question: string, fetcher?: Fetch) =>
-  hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer?${DEMO}&environmentId=analytics`, fetcher, isAnswer)
+  hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer`, fetcher, isAnswer)
 
 /** One bucket of a live answer; `bucket` is the answer's row key exactly as the server wrote it. */
-export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) =>
-  hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${DEMO}&environmentId=analytics&lineageRef=${encodeURIComponent(lineageRef)}&bucket=${encodeURIComponent(bucket)}`, fetcher, isTrace)
+export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) => {
+  const query = new URLSearchParams({ lineageRef, bucket })
+  return hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${query}`, fetcher, isTrace)
+}
 
 /**
  * A contribution's amounts as the exact number texts the server sent, or `null`
@@ -117,7 +120,7 @@ export function amountTexts(read: Read<Trace>, index: number): readonly (string 
   return amounts.map((amount, at) => amount === null ? null : read.numbers.get(`/contributions/${index}/amounts/${at}`) ?? String(amount))
 }
 
-/** The host's access document (`GET /v1/access`): who the server verified, and its decision per read capability. */
+/** The host's access document (`GET /v1/access`): who the server verified, and its decision per read capability, for the active cell. */
 export interface Access {
   readonly principal: { readonly subjectId: string; readonly actorKind: string; readonly roles: readonly string[]; readonly roleTable: string }
   readonly policy: string
@@ -136,4 +139,4 @@ export const isAccess = (value: unknown): boolean =>
   (["population", "values", "sources"] as const).every((name) => isCapability((value.capabilities as Record<string, unknown>)[name]))
 
 /** The signed-in account's access decisions in the demo cell, computed by the host on each read. */
-export const liveAccess = (fetcher?: Fetch) => hostRead<Access>(`/v1/access?${DEMO}&environmentId=dev`, fetcher, isAccess)
+export const liveAccess = (fetcher?: Fetch) => hostRead<Access>("/v1/access", fetcher, isAccess)

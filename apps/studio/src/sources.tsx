@@ -11,14 +11,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useView, type View } from "@/lib/view"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { transport } from "./lib/transport.ts"
-import { ObjectRecords } from "./objects.tsx"
+import { RecordsGrid } from "./grid/records-grid.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
 export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-lg border">
-      <Table className="text-[13px] tabular-nums">
+      <Table className="text-[0.8125rem] tabular-nums">
         <TableHeader className="bg-muted">{head}</TableHeader>
         <TableBody>{children}</TableBody>
       </Table>
@@ -186,7 +186,7 @@ export function ObjectTypePage() {
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
-      {concept?.definition === "object type" && <ObjectRecords concept={concept} />}
+      {concept?.definition === "object type" && <RecordsGrid key={concept.name} concept={concept} />}
     </div>
   )
 }
