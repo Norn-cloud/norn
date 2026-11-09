@@ -279,7 +279,7 @@ fn action_actor_decimal_derivation_commits_and_forged_actor_refuses() {
     .unwrap();
     let catalog = TypeCatalog::new(&definitions);
     let priced = |code: &str| -> JsonObject {
-        serde_json::from_value(json!({"code": code, "base": 2.25, "discount": 1.5})).unwrap()
+        serde_json::from_value(json!({"code": code, "base": "2.25", "discount": "1.5"})).unwrap()
     };
     for (principal, code, expected) in [
         ("person:vip", "VIP", "1.50"),
