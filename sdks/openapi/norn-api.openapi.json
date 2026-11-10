@@ -251,7 +251,7 @@
         "tags": [
           "crate::question_routes"
         ],
-        "summary": "F2b: admit an ad-hoc question against the cell's declared metrics and\nanswer it once, under the same row gates and D53 redaction as a named\nquestion. Nothing is installed.\n# Errors\nAny ungranted or undeclared metric or type (one opaque 403, before\nadmission), an inadmissible question (422 `question.refused` with\ndiagnostics), a bound (413), or a compute refusal.",
+        "summary": "F2b: admit an ad-hoc question against the cell's declared metrics and\nanswer it once, under the same row gates and D53 redaction as a named\nquestion. Nothing is installed.\n# Errors\nAny ungranted metric or type, or an undeclared metric from a caller who\ncannot read every declared metric (one opaque 403, before admission); an\ninadmissible question, including an undeclared metric from a caller who\ncan (422 `question.refused` with diagnostics); a bound (413); or a\ncompute refusal.",
         "operationId": "evaluate_question",
         "parameters": [
           {
@@ -285,7 +285,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "The exact answer.",
             "content": {
               "application/json": {
                 "schema": {
@@ -295,7 +295,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -305,7 +305,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -315,7 +315,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -325,7 +325,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused by a typed compute refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -335,7 +335,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -386,7 +386,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "The numeric trace.",
             "content": {
               "application/json": {
                 "schema": {
@@ -396,7 +396,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -406,7 +406,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -416,7 +416,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -426,7 +426,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused by a typed compute refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -436,7 +436,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21443,11 +21443,11 @@
           "span": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/RefusalSpan",
                 "description": "Where in the submitted document, when the check can say."
+              },
+              {
+                "type": "null"
               }
             ]
           }
