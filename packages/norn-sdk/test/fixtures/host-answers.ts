@@ -3132,7 +3132,7 @@ export const restricted_trace = {
         "version": 1
       },
       "amounts": null,
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "receiptHash": null,
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3149,7 +3149,7 @@ export const restricted_trace = {
         "version": 1
       },
       "amounts": null,
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "receiptHash": null,
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3166,7 +3166,7 @@ export const restricted_trace = {
         "version": 1
       },
       "amounts": null,
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "receiptHash": null,
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3183,7 +3183,7 @@ export const restricted_trace = {
         "version": 1
       },
       "amounts": null,
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "receiptHash": null,
       "factDigest": null,
       "source": {
         "status": "restricted"
