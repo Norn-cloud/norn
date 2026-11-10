@@ -60,7 +60,7 @@ From `tools/norn-ts` (heavy runs go to Boat, per repo rules):
 
 1. `bun src/cli.ts profile <file.ts>`: profile recognition (not admission).
 2. `bun src/cli.ts check <pack-dir|file.ts> --org ID --env ID` with `NORN_CHECKER_WASM_PKG` built as the SDK README says: the authoritative Rust checker.
-3. `bun src/cli.ts compile ... --out FILE`, then diff against the checked-in `registry/*/artifacts/*.json` when you changed a registry source. Generated artifacts change only when meaning changed.
+3. When you changed a registry source, regenerate through the registry path, not `compile`: `compile` emits one scoped draft array, while checked-in `registry/*/artifacts/*.json` are separate files with system envelopes, so a direct diff reports changes even when the definition is unchanged. `NORN_PACKS_UPDATE=1 bun test test/registry-packs.test.ts` regenerates packs; core artifacts are written per `test/core-physics.test.ts`. Generated artifacts change only when meaning changed.
 4. `bun run typecheck` and `bun test` for any SDK change; `bash scripts/ci/core.sh cheap` from the repo root.
 5. For changed semantics add named positive and refusal scenarios (no partial writes, replay/idempotency, the relevant races). For a new law on a type with live data, record what `norn plan` would report (spec §9); until `plan` evaluates laws, say so.
 

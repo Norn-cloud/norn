@@ -227,7 +227,7 @@ declare function final(opts?: { immutable?: boolean }): Final
 | `initial` | `LifecycleDecl.initial` |
 | `final()` / `final({ immutable: true })` | `terminal` / `terminal` + `immutable` |
 | each event `e` from states `A, B` to `T` | one `TransitionDecl { id: e, from: [A, B], to: T }` |
-| the same event from states with different `to`, `when` or `refuse` | **compile error** `NORN-MACHINE-EVENT-CONFLICT` (PROPOSED code). A `TransitionDecl` has one target and one guard set, so one event cannot carry different behavior per state; the author names two events |
+| the same event from states with different `to`, `when`, `refuse` or `by` role sets (an omitted `by` counts as a role set) | **compile error** `NORN-MACHINE-EVENT-CONFLICT` (PROPOSED code). A `TransitionDecl` has one target and one guard set, and one generated access rule cannot keep per-state role sets apart, so one event cannot carry different behavior per state; the author names two events |
 | `when` | `TransitionDecl.guards` (lambda → ZEN) |
 | `refuse` | `TransitionDecl.guardRefusalCode` |
 | each event | one generated `ActionIR` `<pack>.<type>.<event>` with `effect: fire_transition` (`builder/action.ts`) |
@@ -282,7 +282,7 @@ Lowering to `LawIR` (`builder/law.ts`, `crates/norn-ir/src/verification.rs`):
 |---|---|---|
 | `name` | `id` = `<pack>.<type>.<name>`; artifact `<id>.law` | pack + subject |
 | `id` (optional, codemod only) | `id` = the given value verbatim; artifact `<id>.law`. The codemod (§11) sets it whenever a source id differs from the derived one (`constitution.fine_mass` vs derived `constitution.Melt.fine_mass`) so the artifact id and bytes stay identical; new laws omit it | existing artifact |
-| `on` | `subject`, `scope.root = { kind: "entity" }`, `scope.objectTypes` | the import, plus every type the lambdas read |
+| `on` | `subject`, `scope.root = { kind: "entity" }`, `scope.objectTypes` | the import. `scope.objectTypes` is `[subject]` only: `governing_laws.rs` refuses any other value (`UnsupportedUntilB2`), so types the lambdas read are not listed there; link reads need the declared read set (§8.3) |
 | `when` | `condition` | lambda → ZEN |
 | `must` / `never` / `eventually` with a lambda | `modality` + `response: { kind: "predicate" }` | lambda → ZEN |
 | `must` / `never` / `eventually` with `invariant(Type, "id")`, `action(Ref)` or `transition(Type, "property", "id")` (PROPOSED helpers) | `response: { kind: "invariant" \| "action" \| "transition" }` naming the existing member, never a second expression copy (`LawResponse`, `crates/norn-ir/src/verification.rs`) | the codemod needs these for laws such as `registry/core/src/restatement.ts` (`invariant`); a source using a response form with no helper yet stays in today's syntax |
@@ -558,7 +558,6 @@ $ norn plan --cell demo
     all 3 are "issued", which is immutable, so they cannot be edited to comply.
   fix: narrow it: when: i => i.issue_date >= date("2026-11-10")
   fix: or adopt it as override first: severity: { override: { fixWithin: { days: 30 }, by: Controller } }
-  fix: or issue a credit note for each (a new Invoice that reverses the original)
 plan blocked: 1 new law violated by live data (cli.plan.law_violated_live)
 ```
 
@@ -770,7 +769,7 @@ export default pack("accounting", {
 | `balanced` | lambda types (PROPOSED) | expression typing and cost (CURRENT for ZEN) | hand-written Quint model + Lean proof of `core.law.value_conservation` (`CoreValueLedger.lean`); nothing generated for this pack | ✔ the kernel accounting-leg commit check, once `JournalLine` lowers to `accountingLeg` (IR CURRENT, builder field PROPOSED) | live violations counted (PROPOSED) |
 | `account_code_matches`, `posts_to_leaf`, `same_currency` | lambda types | typing, bounded link reads (CURRENT) | — | **GAP §8.3**: today's commit check evaluates a law over the written object's own values only; link reads need the declared read set | PROPOSED |
 | `not_over_allocated`, `payment_covers_allocations` | lambda types | typing; `sum(map(...))` over a to-many link is within `norn-zen/6` and the 1,000-record slice cap | — | **GAP §8.3**: a write to Allocation does not re-evaluate the Invoice and Payment it links; the engine must derive affected objects from inverse links | PROPOSED |
-| `post` guard `period.status === "open"` | lambda types | guard typing (CURRENT) | — | ✔ guard evaluated at commit; refusal `period_not_open` | — |
+| `post` guard `period.status === "open"` | lambda types | guard typing (CURRENT) | — | **GAP §8.3**: `check_guards` (`decision_commit.rs`) binds `self` to the written object's own values only, so a guard that reads the linked `period` (or `settle`'s `allocations`) is not evaluated at commit today; linked guard reads and their commit-time validation are engine work | — |
 | Account `parent` acyclic | — | ✔ `acyclic` link admission (CURRENT) | — | ✔ (CURRENT) | — |
 | `due_after_issue` | lambda types | typing | — | ✔ | ✔ new law against live invoices (example 3) |
 | `sale_invoiced` (`eventually`, `within`) | lambda types | ✔ structural admission of `within` (CURRENT since #982) | — | ✗ no runtime deadline monitor yet (#1126 slice 1b) | PROPOSED |
@@ -795,7 +794,7 @@ Required semantics:
 
 ### 8.2 Override mode: `severity: { override }`
 
-A third severity beside `error` (refuse) and `warning` (record). An override law is **allowed, logged, and must be fixed later**:
+A third severity beside `error` and `warning`. Today the kernel refuses a violated governing law on a native write whatever its declared severity (`warning` only changes how the finding is displayed); the semantics below are PROPOSED. An override law is **allowed, logged, and must be fixed later**:
 
 1. A write that violates it commits, and the commit records a `Violation` (law id and version, object, actor, time, the evaluated inputs) atomically with it.
 2. Each open violation carries a deadline (`fixWithin`) and an owner role (`by`). It closes when a later write to that object makes the law hold; it never closes by being deleted.
@@ -808,12 +807,13 @@ Wire: extend `LawSeverity` (`crates/norn-ir/src/verification.rs`) with `Override
 
 ### 8.3 Cross-object law evaluation
 
-`governing_laws::evaluate` (`crates/norn-kernel/src/governing_laws.rs`) binds `self` to the values of the object being written and nothing else, and `supported` refuses laws with `timing` and the `eventually` modality. Two things the examples rely on therefore do not exist yet:
+`governing_laws::evaluate` (`crates/norn-kernel/src/governing_laws.rs`) binds `self` to the values of the object being written and nothing else, and `supported` refuses laws with `timing` and the `eventually` modality. Three things the examples rely on therefore do not exist yet:
 
 1. **Link reads.** A law that reads `self.invoice.currency` or sums `self.allocations` needs the linked records in its evaluation context, bounded by the declared read set and the 1,000-record slice cap.
 2. **Inverse re-evaluation.** A write to an `Allocation` must re-evaluate the laws of the `Invoice` and `Payment` it links (derived from inverse links), because it can break their laws without writing them.
+3. **Linked guard reads.** `check_guards` in `decision_commit.rs` also binds `self` to the written object's own values, so the `post` guard on `period.status` and the `settle` guard on `allocations` cannot be evaluated at commit. The guard context needs the same bounded linked reads, validated at commit.
 
-Both are kernel changes in the commit check and need their own Sol security review (state and concurrency). Until they land, the rows marked GAP §8.3 are specified, not enforced.
+All three are kernel changes in the commit check and need their own Sol security review (state and concurrency). Until they land, the rows marked GAP §8.3 are specified, not enforced.
 
 ## 9. CLI loop
 
