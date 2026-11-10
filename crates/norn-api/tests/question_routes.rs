@@ -232,6 +232,8 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
                     frontier: single.body.commit_seq,
                 });
                 cutoff_receipt = Some(single.hash.clone());
+                // The historical clock is the cutoff's knowledge time.
+                context.now_ms = single.body.logical_time;
             }
         }
         Mode::Fresh => context.now_ms = context.now_ms.checked_add(1000).expect("fresh clock"),
