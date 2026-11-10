@@ -266,7 +266,7 @@ export interface components {
             restatement: string | null;
             /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
             restatementSha256: string | null;
-            signoff: null | components["schemas"]["SignoffDocument"];
+            signoff: components["schemas"]["SignoffDocument"] | null;
             /**
              * Format: int64
              * @description This version.
@@ -343,7 +343,7 @@ export interface components {
             kind: string;
             /** @description The kind's payload. */
             payload: Record<string, never>;
-            signoff?: null | components["schemas"]["SignoffRequest"];
+            signoff?: components["schemas"]["SignoffRequest"] | null;
         };
         /** @description An installed (or retired) version. */
         InstallDefinitionResponse: {
@@ -8417,7 +8417,7 @@ export interface components {
             };
         };
         /** @description A refused request. */
-        Refusal: (null | {
+        Refusal: ({
             /**
              * @description The plain-words restatement the host recomputed. Present, with its
              *     digest, only on `definition.signoff_mismatch`.
@@ -8425,7 +8425,7 @@ export interface components {
             restatement?: string;
             /** @description Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes. */
             restatementSha256?: string;
-        }) & {
+        } | null) & {
             /** @description What the caller can do about it (the discriminant SDKs switch on). */
             category: components["schemas"]["RefusalCategory"];
             /** @description Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …). */

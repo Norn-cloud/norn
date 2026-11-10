@@ -1130,11 +1130,11 @@
           "signoff": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SignoffDocument",
                 "description": "This version's sign-off; null when it was installed unsigned."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1288,11 +1288,11 @@
           "signoff": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SignoffRequest",
                 "description": "A sign-off of the payload's plain-words restatement (D59). The host\nrecomputes the restatement and records the installing principal."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -22197,9 +22197,6 @@
           {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "type": "object",
                 "description": "The words a signer can sign: what the host reads the submission as.",
                 "properties": {
@@ -22212,6 +22209,9 @@
                     "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
                   }
                 }
+              },
+              {
+                "type": "null"
               }
             ],
             "description": "On `definition.signoff_mismatch` only: the host's restatement of the\ncaller's own admitted payload, flattened into the refusal as\n`restatement` and `restatementSha256`. Absent otherwise."
