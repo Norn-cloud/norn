@@ -58,6 +58,9 @@ declare module "@norn/authoring" {
       | { readonly kind: "undeclared" | "additive" | "semi_additive" | "non_additive" }
       | { readonly kind: "ratio"; readonly numerator: string; readonly denominator: string }
 
+    /** Interface-only Decimal; members sharing a group require identical concrete unit and scale. */
+    function boundDecimal(group: string): Schema.Finite
+
     /**
      * Exact decimal value type (EntityIR `decimal`): every value is held at
      * `scale` fraction digits, optionally a quantity in `unit`, or money whose
@@ -92,6 +95,7 @@ declare module "@norn/authoring" {
       readonly to: V
       /** ZEN Expression guards, conjoined. */
       readonly guards?: ReadonlyArray<Expression<boolean>>
+      readonly guardRefusalCode?: string
     }
 
     /** A lifecycle over one enum property of `T`; its states are that property's values. */

@@ -88,7 +88,8 @@ pub fn render_question(
             | PropertyType::Enum { .. }
             | PropertyType::Record { .. }
             | PropertyType::JsonExt { .. }
-            | PropertyType::Ref { .. } => "1".to_owned(),
+            | PropertyType::Ref { .. }
+            | PropertyType::DecimalBinding { .. } => "1".to_owned(),
         };
         operands.push(format!(
             "Σ({}) [{units}]; {}",

@@ -1908,7 +1908,21 @@ where
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[], None)
+        let quantity = proof
+            .quantity()
+            .map(|(request, key)| (request.clone(), key.to_owned()));
+        self.commit_with_authorization(
+            commit,
+            None,
+            Some(proof),
+            quantity
+                .as_ref()
+                .map(|(request, key)| (std::slice::from_ref(request), key.as_str())),
+            &[],
+            &[],
+            &[],
+            None,
+        )
     }
 
     fn commit_observed(

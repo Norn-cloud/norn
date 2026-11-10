@@ -2964,6 +2964,9 @@ impl CountedEngine {
 }
 
 impl SqlEngine for CountedEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         let Some((writes, remote)) = self.inner.read_cache_revision()? else {
             return Ok(None);
@@ -3048,6 +3051,9 @@ struct ExplainEngine {
 }
 
 impl SqlEngine for ExplainEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -5244,11 +5250,22 @@ fn purity_quality_host(
     norn_kernel::cell_host::JsonObject,
     norn_kernel::cell_host::JsonObject,
 > {
+    purity_quality_host_with_severity(path, "error")
+}
+
+fn purity_quality_host_with_severity(
+    path: &std::path::Path,
+    severity: &str,
+) -> norn_cell::SqliteCell<
+    norn_kernel::ObservationEvent,
+    norn_kernel::cell_host::JsonObject,
+    norn_kernel::cell_host::JsonObject,
+> {
     let object = json!({"name":"quality.Measurement", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
     let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(json!([
         {"irVersion":"0.1", "artifactId":"quality.Measurement.entity", "kind":"entity", "namespace":"quality", "name":"Measurement", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[], "provenance":{"source":"authoring_sdk"}, "payload":{"entityVersion":"2.0", "objectType":object}},
         {"irVersion":"0.1", "artifactId":"quality.purity.law", "kind":"law", "namespace":"quality", "name":"purity", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[{"artifactId":"quality.Measurement.entity", "kind":"entity", "version":"0.1.0", "required":true}], "provenance":{"source":"authoring_sdk"}, "payload":{
-            "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":"error", "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
+            "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":severity, "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
         }}
     ])).expect("typed synthetic declarations");
     assert!(
@@ -5474,6 +5491,72 @@ fn obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses() {
         .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
         .expect("persisted findings");
     assert_eq!(findings.len(), 1);
+    assert!(
+        matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range")
+    );
+}
+
+#[test]
+fn warning_severity_governing_law_quarantines_observed_fact() {
+    use norn_kernel::{CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite};
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell =
+        purity_quality_host_with_severity(&directory.path().join("quality.sqlite"), "warning");
+    let mut native = CellCommit::empty();
+    native.writes.push(FactWrite {
+        key: FactKey::new("quality.Measurement", "MEAS-1"),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: BTreeMap::from([(
+                "purity".into(),
+                Value::from_json_text("1.20").expect("decimal"),
+            )]),
+        },
+    });
+    let refusal = cell.commit(native).expect_err("native invalid purity");
+    assert_eq!(refusal.code(), "core.laws.violated");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("raw")
+            .is_none()
+    );
+    capture_purity(&mut cell, "purity-120", "1.20");
+    let findings = cell
+        .store()
+        .read()
+        .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("persisted findings");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].severity, norn_ir::DataQualitySeverity::Warning);
+    assert!(
+        cell.store()
+            .read()
+            .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("authority")
+            .is_none()
+    );
+    let raw = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("raw record")
+        .expect("captured");
+    assert!(
+        cell.store()
+            .read()
+            .observation_is_quarantined(MAIN_WORLD, &raw)
+            .expect("quarantine")
+    );
+    capture_purity(&mut cell, "corrected-warning", "0.50");
+    assert!(
+        cell.store()
+            .read()
+            .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("corrected")
+            .is_some()
+    );
     assert!(
         matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range")
     );
@@ -6207,13 +6290,19 @@ fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version()
         .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
         .expect("checked source lineage")
         .expect("bundle");
-    assert_eq!(id, format!("mapping-bundle:{}", evidence.bundle_digest));
+    assert_eq!(
+        id,
+        format!(
+            "mapping-bundle:{}",
+            evidence.bundle_digest.as_deref().expect("digest")
+        )
+    );
     assert_eq!(evidence.source_record_ref.record, "Rows/MEAS-1");
     assert_eq!(evidence.source_record_ref.system, "synthetic-erpnext");
     assert_eq!(evidence.document_ref.system, "synthetic-erpnext");
     assert_eq!(evidence.document_ref.record, "MEAS-1");
     assert_eq!(
-        evidence.document_digest,
+        evidence.document_digest.as_deref().expect("digest"),
         raw.input
             .get("payload_digest")
             .and_then(Value::as_str)
@@ -6309,7 +6398,7 @@ fn instance_source_provenance_charges_external_payloads_and_omits_non_bundle_fac
             &mut DecodeBudget::new(&limits(100_000)),
             |_| Ok(true)
         ),
-        Err(CellError::MappingBundleMismatch)
+        Err(CellError::ComputeRefused("core.compute.bound_exceeded"))
     ));
     assert!(
         reader
@@ -6491,6 +6580,9 @@ impl ProvisionFault {
 }
 
 impl SqlEngine for ProvisionFault {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)?;
         self.boundary()
@@ -7650,4 +7742,18 @@ fn active_definition_pointer_and_latest_version_share_one_snapshot_during_instal
         .expect("v2");
     assert_eq!(after.version, 2);
     assert_eq!(after.receipt_sha256, "receipt-v2");
+}
+
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(12))]
+    #[test]
+    fn warning_law_invalid_observations_never_enter_authority(fraction in 1u16..1000) {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut cell = purity_quality_host_with_severity(&directory.path().join("warning.sqlite"), "warning");
+        capture_purity(&mut cell, "warning-generated", &format!("1.{fraction:03}"));
+        norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("authority").is_none());
+        let findings = cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
+        norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+        norn_testkit::proptest::prop_assert_eq!(findings[0].severity, norn_ir::DataQualitySeverity::Warning);
+    }
 }

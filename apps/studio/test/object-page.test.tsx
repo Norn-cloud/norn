@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
+import type { SourceLineage } from "../src/lib/transport.ts"
 
 // These pages read the view from localStorage, which the tests replace; put the original back so later files in the same bun process see their own.
 const originalStorage = globalThis.localStorage
@@ -15,6 +16,7 @@ mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport
 const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
 const { ObjectTypePage } = await import("../src/sources.tsx")
 const { ViewProvider } = await import("../src/lib/view.tsx")
+const { ProvenanceChain } = await import("../src/components/provenance.tsx")
 
 const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
@@ -166,4 +168,43 @@ test("the technical view shows the host's live access decision as the server wro
   expect(refused).not.toContain(">Permit<")
   const unavailable = await page("canon.Item", "demo/item/gold", "technical", undefined, { kind: "unavailable", status: 503 })
   expect(unavailable).toContain("This page shows a recorded snapshot.")
+})
+
+
+const lineage = (digests: Partial<Pick<SourceLineage, "bundleDigest" | "documentDigest">>): SourceLineage => ({
+  mappingPin: { artifactId: "demo.mapping", version: "0.1.0", sha256: "m".repeat(64) },
+  sourceRecordRef: { system: "synthetic-erpnext", record: "Rows/1" },
+  documentRef: { system: "synthetic-erpnext", record: "DOC-1" },
+  fieldProvenance: {
+    recovered: { source: { system: "synthetic-erpnext", record: "Rows/1" }, mappingVersion: "0.1.0", transform: "rule.recovered", recordedAt: "2026-01-01T00:00:00Z", sourceFields: ["recovered"] },
+  },
+  ...digests,
+}) as SourceLineage
+
+const html = (value: SourceLineage) => renderToStaticMarkup(<ProvenanceChain lineage={value} fact="recovered" />)
+
+test("digests the server withheld read withheld, absent or null, and never leak an old value", () => {
+  for (const withheld of [{}, { bundleDigest: null, documentDigest: null }]) {
+    const out = html(lineage(withheld))
+    expect(out.match(/withheld/g)?.length).toBe(2)
+    expect(out).not.toContain("b".repeat(12))
+    expect(out).not.toContain("d".repeat(12))
+  }
+})
+
+test("disclosed digests render, and one withheld digest does not hide the other", () => {
+  const both = html(lineage({ bundleDigest: "b".repeat(64), documentDigest: "d".repeat(64) }))
+  expect(both).toContain("b".repeat(12))
+  expect(both).toContain("d".repeat(12))
+  expect(both).not.toContain("withheld")
+  const one = html(lineage({ bundleDigest: "b".repeat(64) }))
+  expect(one).toContain("b".repeat(12))
+  expect(one.match(/withheld/g)?.length).toBe(1)
+})
+
+test("rendering again with a different lineage shows only that lineage's digests", () => {
+  const first = html(lineage({ bundleDigest: "b".repeat(64), documentDigest: "d".repeat(64) }))
+  const second = html(lineage({}))
+  expect(first).toContain("b".repeat(12))
+  expect(second).not.toContain("b".repeat(12))
 })

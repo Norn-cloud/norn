@@ -77,6 +77,7 @@ use crate::snapshot_observe::{ObservationAuthorization, ObservationEvent};
 /// created only after the kernel has prepared and authorized the complete
 /// parent/child mutation, then consumed by the host admission check.
 pub struct OwnedRowsCommitProof {
+    quantity: Option<(norn_ir::quantity_ledger::QuantityRequest, String)>,
     max_events: u32,
     consumes: Option<Consumed>,
     reads: Vec<FactExpectation>,
@@ -87,8 +88,13 @@ pub struct OwnedRowsCommitProof {
 }
 
 impl OwnedRowsCommitProof {
-    pub(crate) fn new<E, C, T>(commit: &CellCommit<E, C, T>, max_events: u32) -> Self {
+    pub(crate) fn new<E, C, T>(
+        commit: &CellCommit<E, C, T>,
+        max_events: u32,
+        quantity: Option<(norn_ir::quantity_ledger::QuantityRequest, String)>,
+    ) -> Self {
         Self {
+            quantity,
             max_events,
             consumes: commit.consumes.clone(),
             reads: commit.reads.clone(),
@@ -97,6 +103,15 @@ impl OwnedRowsCommitProof {
             link_reads: commit.link_reads.clone(),
             predicate_reads: commit.predicate_reads.clone(),
         }
+    }
+
+    /// Kernel-prepared quantity intent and action identity, if this transaction
+    /// has one. Hosts must commit it atomically with the owned-row writes.
+    #[must_use]
+    pub fn quantity(&self) -> Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)> {
+        self.quantity
+            .as_ref()
+            .map(|(request, key)| (request, key.as_str()))
     }
 
     pub(crate) const fn max_events(&self) -> u32 {
@@ -130,6 +145,7 @@ impl OwnedRowsCommitProof {
 
 /// Identity of one ontology object in a cell: its type and identity key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactKey {
     /// The object type.
@@ -632,6 +648,12 @@ pub enum CommitError<X> {
         /// Internal lookup subjects for authorized diagnostics; never displayed.
         conflicts: Box<[FactKey; 2]>,
     },
+    /// An existing instance of an append-only type was changed or deleted.
+    #[error("{key} is immutable")]
+    ImmutableObject {
+        /// The stored object.
+        key: FactKey,
+    },
     /// Atomic closure includes another cell or unknown ownership.
     #[error("core.txn.atomic_boundary: dependency {key} is outside the supported local profile")]
     AtomicBoundary {
@@ -905,6 +927,7 @@ impl<X> CommitError<X> {
         match self {
             Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
             Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
+            Self::ImmutableObject { .. } => "commit.immutable_object",
             Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
                 norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
             }
@@ -1173,8 +1196,11 @@ pub trait CellHost {
     fn commit_owned_rows(
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _proof: OwnedRowsCommitProof,
+        proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        if proof.quantity().is_some() {
+            return Err(CommitError::ObservationAuthorization);
+        }
         self.commit(commit)
     }
 

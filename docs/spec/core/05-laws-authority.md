@@ -41,6 +41,8 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 **LAW-INTERFACE-1:** a retained law whose subject, entity root and sole scoped object type name one object type or interface T governs T and every type that extends or implements T, directly or transitively, as one instance per governed type; a diamond adds no second instance. An `Invariant` response binds only when T's effective contract and the governed type's effective contract each hold exactly one invariant with that id and both name the same owner. Findings keep the law's own pin and the invariant's original owner. Every other inherited, mixed or effective-instance scope still refuses with `core.laws.unsupported_semantics`.
 
+**ACTION-ACTOR-1:** Evidence/approval actions derive principal identity only from authenticated `actor.subjectId` and retain it in kernel call receipts, so independent-person checks compare retained receipt principals rather than caller-supplied actors, approval flags or session counts.
+
 **LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 
 **LAW-WITHIN-1 (deadline obligation):** a structured requirement with `timing = within {trigger, retrigger, cancel?, accountable, calendar?}` is admitted only as an `obligation` whose law is `eventually` with `law.timing = within {millis}` (positive canonical u64 decimal text, the ordinary LawIR rule, and at most `MAX_WITHIN_MILLIS` = 2^63) and a `predicate` response, with no `condition`, lifecycle-state or commitment filter, exception or `defeatedBy` entry, no calendar pin, nonblank `trigger` and `accountable`, and Boolean response and cancel predicates. Any other pairing refuses with `law.validation.unsupported_temporal` (calendar, gated or defeasible activations included), `law.validation.invalid_document` (grade mismatch, invalid or over-cap duration, or non-predicate response), `law.model.unknown_binding` or `law.model.predicate_type`. Monitor semantics, per law instance and subject, over commits in ledger order, using only each commit's ledger position `seq` and the cell's committed clock `t` (never a wall clock):
@@ -60,6 +62,8 @@ The cell's committed clock is a nonnegative SQLite INTEGER, so `t ≤ 2^63 − 1
 *Retired or revised law, deleted or archived subject.* An open activation stays pinned to its `lawDigest` (D08/D10). Retiring or revising the law, archiving the subject, leaving a class or deleting the subject never discharges or cancels it. It runs to its outcome under the pinned instance. Only a satisfying response commit or the declared cancel predicate on a committed subject state closes it before the deadline. Otherwise it is `violated` at the deadline timer. A checked migration plan is the only way to move an open activation to another instance.
 
 Replaying the same commits yields the same events. The accountable subject is carried on every activation and violation and grants no authority. A violation is evidence, never a silent pass or a refusal of the later commit. Status: IR (data only), `check_requirement`, `render_requirement` and `lower_requirement` are CURRENT. All LAW-WITHIN-1 validation (`within_shape`, `MAX_WITHIN_MILLIS`, `check_wording`) lives in norn-checker. `render_requirement` is the checked render entry; norn-ir's `RequirementView::slots` is a render-only projection that refuses only what it cannot render. `lower_requirement` refuses `within` (`ActivationTiming`) rather than drop the trigger, retrigger and cancel policy in plain `LawIR`. The kernel monitor, cell deadline timer and lifecycle-graph obligations (non-vacuity: a discharging trace exists; bounded discharge/violation checking, reported bounded or unknown) are TARGET, so runtime law evaluation and theorem lowering still refuse timed laws.
+
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures name `norn.values.property_validity` and a conservative retained property-domain declaration digest, including inherited, referenced-type and interface constraints. It also covers every catalog interface, shared property type and extension, so changing any of them makes an existing pin Unverified; stale or forged pins are Unverified and never attributed to an unrelated conservation law.
 
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
@@ -491,6 +495,21 @@ and the existing discovery coefficient/work ceilings. Named scenarios: true
 fractional candidate with full evidence, holdout near-miss with exact residual,
 no-signal control, duplicate record, unit separation, oversize window and measured
 256-record fixture. Law drift, misfit rules and statistical guards remain open.
+
+**CONTROL-REFS-1:** finite control-model projection requires exactly one
+ActionRoot for every referenced policy action. Missing or duplicate roots yield
+unknown (`None`), never safety proof evidence. This closure check grants no
+runtime access or availability witness. Named scenarios cover complete grants,
+an undeclared policy action, duplicate roots and sampled undeclared identities.
+
+### Warning-severity governing laws (LAW-COMMIT-1 / OBS-EVIDENCE-1)
+
+Severity controls display, never governing authority. Every verified governing-law
+failure is integrity-classified: observed facts retain warning evidence and are
+quarantined, while native writes refuse atomically. Non-law quality warnings
+retain their separate quality classification. The named cell scenario
+`warning_severity_governing_law_quarantines_observed_fact` checks native refusal,
+persisted warning/pin, quarantine and recovery after a valid correction.
 
 ## Shared reviewed locale selection
 

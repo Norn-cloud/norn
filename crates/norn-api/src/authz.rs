@@ -106,7 +106,10 @@ pub trait Authorizer: Send + Sync {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal>;
 }
 
-pub(crate) fn read_denied() -> Refusal {
+/// The one opaque read denial: the same document whatever was denied, so a
+/// refusal never tells an ungranted resource from an absent one.
+#[must_use]
+pub fn read_denied() -> Refusal {
     Refusal::new(
         http::StatusCode::FORBIDDEN,
         codes::AUTHZ_DENIED,

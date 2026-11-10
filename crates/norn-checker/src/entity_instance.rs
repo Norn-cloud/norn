@@ -179,7 +179,9 @@ impl EffectiveObjectType {
                 let mut effective = EffectiveProperty::new(
                     property,
                     match &property.property_type {
-                        PropertyType::Ref { .. } => EffectiveKind::Unresolved,
+                        PropertyType::Ref { .. } | PropertyType::DecimalBinding { .. } => {
+                            EffectiveKind::Unresolved
+                        }
                         base @ (PropertyType::Text { .. }
                         | PropertyType::Integer { .. }
                         | PropertyType::Decimal { .. }
@@ -224,6 +226,7 @@ impl EffectiveObjectType {
                     PropertyType::Text { .. }
                     | PropertyType::Integer { .. }
                     | PropertyType::Decimal { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Boolean { .. }
                     | PropertyType::Timestamp { .. }
                     | PropertyType::Date { .. }
@@ -594,9 +597,10 @@ impl EffectiveProperty {
             | PropertyType::Date {}
             | PropertyType::JsonExt { schema: None } => false,
             PropertyType::JsonExt { .. } => json_ext_type(base).is_none(),
-            PropertyType::Decimal { .. } | PropertyType::Duration {} | PropertyType::Ref { .. } => {
-                true
-            }
+            PropertyType::Decimal { .. }
+            | PropertyType::Duration {}
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Ref { .. } => true,
         };
         if unsupported_kind {
             return Some(match base {
@@ -612,6 +616,7 @@ impl EffectiveProperty {
                 | PropertyType::Duration { .. }
                 | PropertyType::Enum { .. }
                 | PropertyType::Record { .. }
+                | PropertyType::DecimalBinding { .. }
                 | PropertyType::Ref { .. }) => format!(
                     "property kind '{}' on '{id}' (instance encoding is T3-NUM-1, #2770)",
                     other.kind().as_str()
@@ -706,6 +711,7 @@ impl EffectiveProperty {
             }
             other @ (PropertyType::Decimal { .. }
             | PropertyType::Duration { .. }
+            | PropertyType::DecimalBinding { .. }
             | PropertyType::Ref { .. }) => Err(InstanceError::Unsupported(format!(
                 "property kind '{}' on '{}'",
                 other.kind().as_str(),
@@ -814,13 +820,13 @@ impl EffectiveProperty {
             PropertyType::JsonExt { .. } => {
                 self.check_runtime_json(value, closed_json_schema, base)
             }
-            other @ (PropertyType::Duration { .. } | PropertyType::Ref { .. }) => {
-                Err(InstanceError::Unsupported(format!(
-                    "property kind '{}' on '{}'",
-                    other.kind().as_str(),
-                    self.id.as_str()
-                )))
-            }
+            other @ (PropertyType::Duration { .. }
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Ref { .. }) => Err(InstanceError::Unsupported(format!(
+                "property kind '{}' on '{}'",
+                other.kind().as_str(),
+                self.id.as_str()
+            ))),
         }
     }
 

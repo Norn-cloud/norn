@@ -47,11 +47,7 @@ pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
     artifact["payload"] = json!({"entityVersion":"2.0","objectType":object});
     let artifact: ArtifactEnvelope = serde_json::from_value(artifact).expect("typed artifact");
     let catalog = EffectiveCatalog::from_artifacts(&[artifact]);
-    let model = Model::new(&norn_projections::SqliteDdlInput {
-        object_types: &[object],
-        property_types: &[],
-    })
-    .expect("model");
+    let model = Model::from_definitions(&[object], &[]).expect("model");
     let mut out: MetricDefinition = serde_json::from_str(include_str!(
         "../../../../fixtures/ir/metrics/net-sales.definition.json"
     ))
@@ -230,6 +226,42 @@ pub(crate) fn loss_plan() -> QuestionPlan {
     admit(&[metric], &question, &catalog, 100).expect("admitted exact loss")
 }
 
+pub(crate) fn asof_plan(
+    store: &norn_cell::CellStore,
+    base: &norn_checker::metric::compute::QuestionPlan,
+    at: &str,
+) -> norn_checker::metric::compute::QuestionPlan {
+    use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, EntityIrVersion, EntityRootV2};
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+        "../../../../fixtures/ir/metrics/ontology.json"
+    ))
+    .expect("template");
+    let object = store.model().object_types().next().expect("type").clone();
+    artifacts[0].artifact_id = "demo.Conversion.entity.v2".into();
+    artifacts[0].name = TYPE.into();
+    artifacts[0].namespace = "demo".into();
+    artifacts[0].payload = ArtifactPayload::from_kind_json(
+        &ArtifactKind::Entity,
+        norn_ir::json_tree_from_value(
+            serde_json::to_value(EntityRootV2 {
+                entity_version: EntityIrVersion::V2_0,
+                object_type: object,
+                mutation_authority: None,
+                extensions: None,
+            })
+            .expect("typed entity"),
+        )
+        .expect("tree"),
+    )
+    .expect("payload");
+    let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts[..1]);
+    let mut question = base.question().clone();
+    question.freshness = norn_ir::metric::FreshnessPolicy::AsOf {
+        at: norn_ir::UtcTimestamp(at.into()),
+    };
+    norn_checker::metric::compute::admit(base.definitions(), &question, &catalog, 100)
+        .expect("admitted AsOf")
+}
 pub(crate) type QualityHost = norn_cell::SqliteCell<
     norn_kernel::ObservationEvent,
     norn_kernel::cell_host::JsonObject,
