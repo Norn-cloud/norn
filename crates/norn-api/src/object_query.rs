@@ -968,7 +968,7 @@ impl Cursor {
     pub(crate) fn encode(&self) -> String {
         format!(
             "{}.{}",
-            URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).unwrap_or_default()),
+            URL_SAFE_NO_PAD.encode(serde_json::to_string(self).unwrap_or_default()),
             URL_SAFE_NO_PAD.encode(self.p.as_bytes()),
         )
     }
