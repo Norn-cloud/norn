@@ -72,6 +72,83 @@ impl NornObjectPage {
     }
 }
 
+/// One object as a grid query shows it (HOST-READ-3, D67). A row the caller
+/// may count but not read is listed with `withheld: true` and nothing
+/// value-derived: no values and no version.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornQueriedRecord {
+    /// The concrete object type.
+    pub object_type: String,
+    /// The object's identity.
+    pub id: String,
+    /// The tenant scope.
+    pub scope: String,
+    /// The owner version; null when the row is withheld.
+    #[schema(required = true, nullable = true)]
+    pub version: Option<u64>,
+    /// Every stored property by property id; null when the row is withheld.
+    #[schema(required = true, nullable = true, value_type = Option<Object>)]
+    pub values: Option<BTreeMap<String, RuntimeValue>>,
+    /// The caller holds Population but not Values on this row.
+    pub withheld: bool,
+    /// Properties withheld by policy on a readable row. Always present; empty
+    /// until field-level policy exists, and never derived from which values a
+    /// row has.
+    pub withheld_properties: Vec<String>,
+}
+
+/// One applied sort key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornSortKey {
+    /// The property sorted on.
+    pub property: String,
+    /// `asc` or `desc`.
+    pub direction: String,
+}
+
+/// The sort and filter a page actually applied.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornAppliedQuery {
+    /// The applied sort keys, before the id tie-break; empty means scan order.
+    pub sort: Vec<NornSortKey>,
+    /// The applied filter, normalized; null without one.
+    #[schema(required = true, nullable = true, value_type = Option<Object>)]
+    pub filter: Option<serde_json::Value>,
+}
+
+/// How many rows match the query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornQueryTotal {
+    /// The matching rows counted.
+    pub count: u64,
+    /// The count is a lower bound: the collection is larger than one scan.
+    pub approximate: bool,
+}
+
+/// One page of a grid query over a concept's objects.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornObjectQueryPage {
+    /// The concept read; records may be of its subtypes.
+    pub object_type: String,
+    /// The page, in the applied order.
+    pub records: Vec<NornQueriedRecord>,
+    /// Readable candidates held back by source disputes or open findings.
+    pub quarantine_count: u64,
+    /// The sort and filter applied.
+    pub query: NornAppliedQuery,
+    /// The cursor for the next page; null at the end.
+    #[schema(required = true, nullable = true)]
+    pub next: Option<String>,
+    /// The matching rows, under the same visibility as the list.
+    #[schema(required = true, nullable = true)]
+    pub total: Option<NornQueryTotal>,
+}
+
 /// One live link touching the requested object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -128,6 +205,23 @@ impl NornLinkPage {
             has_more: page.next_after.is_some() || page.has_more_candidates,
         }
     }
+}
+
+/// HOST-READ-4: one page of the links touching an object that the caller may
+/// see at both ends (D67); links to rows it cannot see are neither listed nor
+/// counted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornObjectLinkPage {
+    /// The requested object's type.
+    pub object_type: String,
+    /// The requested object's identity.
+    pub id: String,
+    /// Visible links, in the cell's stable order.
+    pub items: Vec<NornLinkEdge>,
+    /// The cursor for the next page, when one exists.
+    #[schema(required = true, nullable = true)]
+    pub next: Option<String>,
 }
 
 /// The exact admitted mapping declaration that produced an object version.

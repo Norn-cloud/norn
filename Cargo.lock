@@ -2219,6 +2219,7 @@ dependencies = [
  "norn-ir",
  "norn-kernel",
  "norn-projections",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tempfile",
