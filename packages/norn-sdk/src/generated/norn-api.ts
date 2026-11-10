@@ -8539,6 +8539,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description The definition version. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8547,6 +8548,7 @@ export interface operations {
                     "application/json": components["schemas"]["DefinitionDocument"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8555,6 +8557,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8563,6 +8566,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8571,6 +8575,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8602,6 +8607,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description The retired version. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8610,6 +8616,7 @@ export interface operations {
                     "application/json": components["schemas"]["InstallDefinitionResponse"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8618,6 +8625,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8626,6 +8634,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8634,6 +8643,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: the definition changed since it was read. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8642,6 +8652,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: the definition is not admissible. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -8650,6 +8661,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8678,6 +8690,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description The admission decision. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8686,6 +8699,7 @@ export interface operations {
                     "application/json": components["schemas"]["AdmitDefinitionResponse"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8694,6 +8708,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8702,6 +8717,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: over a resource bound. */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -8710,6 +8726,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: the definition is not admissible. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -8718,6 +8735,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8746,6 +8764,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description The installed version. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8754,6 +8773,7 @@ export interface operations {
                     "application/json": components["schemas"]["InstallDefinitionResponse"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8762,6 +8782,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8770,6 +8791,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: the definition changed since it was read. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8778,6 +8800,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: over a resource bound. */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -8786,6 +8809,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: the definition is not admissible. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -8794,6 +8818,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8826,6 +8851,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description One page of definitions. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8834,6 +8860,7 @@ export interface operations {
                     "application/json": components["schemas"]["DefinitionPage"];
                 };
             };
+            /** @description The request was refused as invalid. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8842,6 +8869,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: scope or authority denied. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8850,6 +8878,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: host failure. */
             500: {
                 headers: {
                     [name: string]: unknown;

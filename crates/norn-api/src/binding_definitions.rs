@@ -132,6 +132,22 @@ fn nfc_members(members: &Map<String, Value>, at: &str, findings: &mut Vec<Refusa
     }
 }
 
+/// Unknown members of the binding payload, and any string or member name
+/// not in NFC.
+fn member_findings(payload: &Map<String, Value>, findings: &mut Vec<RefusalDiagnostic>) {
+    nfc_members(payload, "", findings);
+    for key in payload
+        .keys()
+        .filter(|key| !MEMBERS.contains(&key.as_str()))
+    {
+        findings.push(error(
+            codes::INVALID_PAYLOAD,
+            format!("unknown member {key:?}"),
+            format!("/{}", pointer_token(key)),
+        ));
+    }
+}
+
 fn text<'v>(object: &'v Map<String, Value>, key: &str) -> Option<&'v str> {
     object.get(key).and_then(Value::as_str)
 }
@@ -146,17 +162,7 @@ pub fn check(raw: &str, roles: &[&str]) -> Vec<RefusalDiagnostic> {
         findings.push(error(codes::INVALID_PAYLOAD, "a binding is an object", ""));
         return findings;
     };
-    nfc_members(&payload, "", &mut findings);
-    for key in payload
-        .keys()
-        .filter(|key| !MEMBERS.contains(&key.as_str()))
-    {
-        findings.push(error(
-            codes::INVALID_PAYLOAD,
-            format!("unknown member {key:?}"),
-            format!("/{}", pointer_token(key)),
-        ));
-    }
+    member_findings(&payload, &mut findings);
     let connector = payload.get("connector").and_then(Value::as_object);
     let parts = connector.map(|connector| {
         ["gateway", "origin", "app", "tool", "version"].map(|key| (key, text(connector, key)))

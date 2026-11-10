@@ -840,7 +840,7 @@ fn layout(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>
 /// # Errors
 /// A denied caller (403), a malformed request or id (400), an unknown kind
 /// (422 `definition.kind_unknown`), or a host failure.
-#[utoipa::path(post, path = "/v1/definitions:admit", params(ScopeQuery), request_body = AdmitDefinitionRequest, responses((status = 200, body = AdmitDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/definitions:admit", params(ScopeQuery), request_body = AdmitDefinitionRequest, responses((status = 200, description = "The admission decision.", body = AdmitDefinitionResponse), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused: the definition is not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn admit_definition<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -1018,7 +1018,7 @@ fn append<E: SqlEngine>(
 /// As [`admit_definition`]; an inadmissible payload (422 `definition.refused`
 /// with diagnostics); a stale `expectedVersion` (409
 /// `definition.version_conflict`).
-#[utoipa::path(post, path = "/v1/definitions:install", params(ScopeQuery), request_body = InstallDefinitionRequest, responses((status = 200, body = InstallDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 409, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/definitions:install", params(ScopeQuery), request_body = InstallDefinitionRequest, responses((status = 200, description = "The installed version.", body = InstallDefinitionResponse), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 409, description = "The request was refused: the definition changed since it was read.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused: the definition is not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn install_definition<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -1123,7 +1123,7 @@ fn verify_signoff(
 /// # Errors
 /// A denied caller (403), an unknown id (404 `definition.not_found`), a stale
 /// `expectedVersion` (409), an already retired definition (422).
-#[utoipa::path(post, path = "/v1/definitions/{id}:retire", params(("id" = String, Path, description = "The definition id."), ScopeQuery), request_body = RetireDefinitionRequest, responses((status = 200, body = InstallDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 409, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/definitions/{id}:retire", params(("id" = String, Path, description = "The definition id."), ScopeQuery), request_body = RetireDefinitionRequest, responses((status = 200, description = "The retired version.", body = InstallDefinitionResponse), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 409, description = "The request was refused: the definition changed since it was read.", body = Refusal), (status = 422, description = "The request was refused: the definition is not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn retire_definition<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -1194,7 +1194,7 @@ fn cursor_invalid() -> Refusal {
 /// kind, ordered by id, retired ones only with `include=retired`.
 /// # Errors
 /// A denied caller (403), a missing kind, a bad limit or cursor (400).
-#[utoipa::path(get, path = "/v1/definitions:list", params(ListDefinitionsQuery), responses((status = 200, body = DefinitionPage), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/definitions:list", params(ListDefinitionsQuery), responses((status = 200, description = "One page of definitions.", body = DefinitionPage), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn list_definitions<E: SqlEngine>(
     host: &DevHost<E>,
     query: &ListDefinitionsQuery,
@@ -1288,7 +1288,7 @@ pub fn list_definitions<E: SqlEngine>(
 /// # Errors
 /// A denied caller (403), an invalid id (400), an unknown id or version (404
 /// `definition.not_found`).
-#[utoipa::path(get, path = "/v1/definitions/{id}", params(("id" = String, Path, description = "The definition id."), GetDefinitionQuery), responses((status = 200, body = DefinitionDocument), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/definitions/{id}", params(("id" = String, Path, description = "The definition id."), GetDefinitionQuery), responses((status = 200, description = "The definition version.", body = DefinitionDocument), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_definition<E: SqlEngine>(
     host: &DevHost<E>,
     query: &GetDefinitionQuery,

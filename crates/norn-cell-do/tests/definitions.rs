@@ -15,7 +15,7 @@ use norn_api::definition_routes::{
     AgentAdmissionContext, AgentToolBinding, DefinitionKinds, connector_well_formed,
 };
 use norn_api::host::DevHost;
-use norn_cell::compute::lineage::keyed_receipt_handle;
+use norn_cell::compute::lineage::{keyed_lineage_handle, keyed_receipt_handle};
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::analytics::{self, DemoQuestions};
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
@@ -30,8 +30,15 @@ const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
 /// The fixture principal holding `viewer`.
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
-/// The cell's lineage handle key.
+/// The host secret the cell's lineage handle key derives from.
 const HANDLE_KEY: [u8; 32] = [5; 32];
+
+/// The keyed receipt handle a reader without whole-world Values sees: the
+/// cell derives its handle key from the host secret and its scope.
+fn receipt_handle(raw: &str) -> String {
+    let key = keyed_lineage_handle(&HANDLE_KEY, &analytics::analytics_scope().key());
+    keyed_receipt_handle(key.as_bytes(), raw)
+}
 
 struct Cell {
     host: DevHost<NativeEngine>,
@@ -329,7 +336,7 @@ fn install_versions_compare_and_set_and_read_back() {
     let handle = |receipt: &Value| {
         let mut receipt = receipt.clone();
         let raw = receipt["receiptHash"].as_str().unwrap().to_owned();
-        receipt["receiptHash"] = json!(keyed_receipt_handle(&HANDLE_KEY, &raw));
+        receipt["receiptHash"] = json!(receipt_handle(&raw));
         receipt
     };
     assert_eq!(current["receipt"], handle(&second["receipt"]));
@@ -1054,7 +1061,7 @@ fn a_population_reader_never_sees_a_definition_receipt_hash() {
         assert_eq!(document["payload"], dashboard(title));
         assert_eq!(
             document["receipt"]["receiptHash"],
-            json!(keyed_receipt_handle(&HANDLE_KEY, raw))
+            json!(receipt_handle(raw))
         );
         for any in &raws {
             assert!(!viewer.body.contains(any.as_str()), "{}", viewer.body);
