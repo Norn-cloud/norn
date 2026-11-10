@@ -569,6 +569,76 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }))
     }
 
+    /// #1175 (DATA-VALUES-1, D53): the exact incarnations an authenticated
+    /// receipt's `written` span names, so a host can decide whether its reader
+    /// holds Values over every record the receipt hash commits to. One indexed
+    /// read per commit; its row count and bytes are admitted before decoding.
+    /// `None` means the budget cannot admit them, or a written row has no
+    /// retained snapshot bound by the receipt (a legacy commitment): the cover
+    /// is then unproven.
+    ///
+    /// # Errors
+    /// Corrupt snapshots or engine failures.
+    pub fn receipt_written_with_budget(
+        &self,
+        receipt: &Receipt,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<Vec<FactSnapshot>>, CellError> {
+        let suffix = format!(
+            "FROM \"{FACT_VALUES}\" INDEXED BY \"_norn_fact_values/commit\" WHERE \"world\"=?1 AND \"commit_seq\"=?2"
+        );
+        let world = receipt.body.world.as_str();
+        let seq = to_i64(receipt.body.commit_seq, "receipt commit seq")?;
+        let (count, bytes): (i64, i64) = self
+            .conn
+            .query_optional(
+                &format!("SELECT count(*), COALESCE(sum(octet_length(\"snapshot\")+octet_length(\"hash\")+octet_length(\"object_type\")+octet_length(\"id\")+64),0) {suffix}"),
+                params![world, seq],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?
+            .unwrap_or((0, 0));
+        let count = usize::try_from(count).map_err(|_count| unproven_snapshot())?;
+        if !budget.charge_rows(count) || !budget.charge(to_u64(bytes, "written bytes")?) {
+            return Ok(None);
+        }
+        let mut stored = BTreeMap::new();
+        for row in self.conn.query(
+            &format!("SELECT \"object_type\",\"id\",\"version\",\"snapshot\",\"hash\" {suffix}"),
+            params![world, seq],
+        )? {
+            let row = SqlRow(row);
+            let identity: (String, String, u64) = (
+                row.get(0)?,
+                row.get(1)?,
+                to_u64(row.get(2)?, "fact version")?,
+            );
+            stored.insert(identity, (row.get::<String>(3)?, row.get::<String>(4)?));
+        }
+        let mut written = Vec::with_capacity(receipt.body.written.len());
+        for row in &receipt.body.written {
+            let Some((encoded, hash)) =
+                stored.get(&(row.object_type.clone(), row.key.clone(), row.version))
+            else {
+                return Ok(None);
+            };
+            if !crate::receipt_commitment::receipt_digest_matches(
+                row.snapshot_sha256.as_deref(),
+                hash,
+            ) {
+                return Ok(None);
+            }
+            written.push(decode_snapshot(
+                world,
+                &row.object_type,
+                &row.key,
+                row.version,
+                encoded,
+                hash,
+            )?);
+        }
+        Ok(Some(written))
+    }
+
     /// Read a pinned receipt only after admitting its complete encoded size.
     /// ASOF-KNOWLEDGE-1: absence/corruption refuses; None means budget exhaustion.
     /// # Errors

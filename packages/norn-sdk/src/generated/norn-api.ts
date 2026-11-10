@@ -7962,7 +7962,7 @@ export interface components {
             factDigest: string | null;
             /**
              * @description Emitting receipt identity; no export capability. Null when any member of
-             *     the bucket is restricted (DATA-VALUES-1): the hash commits to the values.
+             *     the bucket is restricted, or its commit wrote a record the reader lacks Values on.
              */
             receiptHash: string | null;
             /**

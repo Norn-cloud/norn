@@ -1,12 +1,15 @@
 //! LINEAGE-SUM-1: native contribution drill-through, pinned to one exact result.
 use super::{Freshness, QueryContext, QueryResult, Totals, decimal, refused};
 use crate::{
-    CellError, CellStore, ObjectRecord, engine::SqlEngine,
+    CellError, CellStore, ObjectRecord, Receipt, StoreReader,
+    engine::SqlEngine,
+    reactive::{DecodeBudget, ReactiveLimits},
     source_provenance::InstanceSourceProvenance,
 };
 use norn_checker::metric::compute::QuestionPlan;
-use norn_ir::{Decimal, FactRef, RuntimeObject};
+use norn_ir::{Decimal, FactRef, ResourceLimitProfile, RuntimeObject};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Independent current host grants; numeric visibility grants neither disclosure.
 pub struct LineageDisclosure<'a> {
@@ -42,8 +45,9 @@ pub struct NumericContribution {
     /// amounts are row values, and one withheld amount would follow from the totals.
     pub amounts: Option<Vec<Option<Decimal>>>,
     /// Emitting receipt identity; a reference, not an independently verifiable proof.
-    /// `None` when any member of the bucket is restricted (DATA-VALUES-1): the
-    /// receipt hash commits to the commit's values, so it would confirm a guess.
+    /// `None` when any member of the bucket is restricted, or the reader lacks
+    /// Values on any record the emitting commit wrote (DATA-VALUES-1): the
+    /// receipt hash commits to the whole commit's values, so it would confirm a guess.
     pub receipt_hash: Option<String>,
     /// Full-incarnation digest, disclosed only with the canonical property values.
     pub fact_digest: Option<String>,
@@ -129,6 +133,7 @@ impl<E: SqlEngine> CellStore<E> {
             let mut totals = Totals::default();
             let mut contributions = Vec::with_capacity(row.members.len());
             let reader = self.read();
+            let mut covers = CommitCovers::new();
             for (id, member) in &row.members {
                 let (_, value) = snapshot.contributions.get(id).ok_or_else(incomplete)?;
                 totals.adjust(value, false)?;
@@ -156,6 +161,7 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(incomplete());
                 }
                 let allowed = values(&record)?;
+                let covered = allowed && covers.covered(&reader, receipt, values)?;
                 let fact = FactRef::new(&record.object_type, id, member.version);
                 let mut source_allowed = false;
                 let source = reader.instance_source_provenance(
@@ -179,7 +185,7 @@ impl<E: SqlEngine> CellStore<E> {
                     fact_digest: allowed.then(|| evidence.snapshot_sha256().to_owned()),
                     source,
                     amounts: member.amounts.clone(),
-                    receipt_hash: Some(receipt.hash.clone()),
+                    receipt_hash: covered.then(|| receipt.hash.clone()),
                     commit_seq: receipt.body.commit_seq,
                     recorded_at_ms: receipt.body.logical_time,
                     restricted: !allowed,
@@ -204,6 +210,106 @@ impl<E: SqlEngine> CellStore<E> {
             })
         })
     }
+}
+
+impl<E: SqlEngine> CellStore<E> {
+    /// #1175 (DATA-VALUES-1, D53): the receipt hash of commit `commit_seq`,
+    /// only when `values` grants every record that commit wrote. The hash
+    /// commits to the whole commit batch, values included, so a reader missing
+    /// any of them could confirm a guess offline. `None` withholds it, also when
+    /// the cover cannot be proven within the read bound. Genesis has no receipt.
+    /// # Errors
+    /// Missing/corrupt receipt or snapshots, the grant's own failure, or engine failures.
+    pub fn disclosable_receipt_hash(
+        &self,
+        commit_seq: u64,
+        values: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<Option<String>, CellError> {
+        self.conn.transaction(|| {
+            let reader = self.read();
+            let mut budget = DecodeBudget::new(&ReactiveLimits::from_profile(
+                &ResourceLimitProfile::norn_limits_v1(),
+            ));
+            let Some(receipt) = reader.receipt_at_with_budget(commit_seq, &mut budget)? else {
+                return Ok(None);
+            };
+            Ok(
+                receipt_values_covered(&reader, &receipt, values, &mut budget)?
+                    .then_some(receipt.hash),
+            )
+        })
+    }
+}
+
+/// #1175: per-trace commit covers, one verdict per emitting commit, under a
+/// bound of their own so withholding a receipt hash never starves the trace's
+/// evidence reads. Over the bound, a cover is unproven and the hash withheld.
+struct CommitCovers {
+    budget: DecodeBudget,
+    verdicts: BTreeMap<u64, bool>,
+}
+
+impl CommitCovers {
+    fn new() -> Self {
+        Self {
+            budget: DecodeBudget::new(&ReactiveLimits::from_profile(
+                &ResourceLimitProfile::norn_limits_v1(),
+            )),
+            verdicts: BTreeMap::new(),
+        }
+    }
+
+    fn covered<E: SqlEngine>(
+        &mut self,
+        reader: &StoreReader<'_, E>,
+        receipt: &Receipt,
+        values: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<bool, CellError> {
+        if let Some(verdict) = self.verdicts.get(&receipt.body.commit_seq) {
+            return Ok(*verdict);
+        }
+        let verdict = receipt_values_covered(reader, receipt, values, &mut self.budget)?;
+        self.verdicts.insert(receipt.body.commit_seq, verdict);
+        Ok(verdict)
+    }
+}
+
+/// Whether `values` grants every live record `receipt` wrote. Tombstones carry
+/// no values. An unprovable or over-budget cover is not a cover.
+fn receipt_values_covered<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    receipt: &Receipt,
+    values: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    budget: &mut DecodeBudget,
+) -> Result<bool, CellError> {
+    let Some(written) = reader.receipt_written_with_budget(receipt, budget)? else {
+        return Ok(false);
+    };
+    for snapshot in written {
+        let Some(row_values) = snapshot.values else {
+            continue;
+        };
+        let record = ObjectRecord {
+            object_type: snapshot.object_type,
+            id: snapshot.key,
+            scope: snapshot.scope,
+            version: snapshot.version,
+            values: row_values,
+        };
+        if !values(&record)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// D53 (3) for a receipt coordinate: the public handle a reader without the
+/// cover sees in place of a receipt hash (HMAC under the cell's handle key,
+/// domain-separated from result pins). It names the commit stably for that
+/// cell and says nothing about the values the hash commits to.
+#[must_use]
+pub fn keyed_receipt_handle(key: &[u8], receipt_hash: &str) -> String {
+    keyed_lineage_handle(key, &format!("norn.receipt/1:{receipt_hash}"))
 }
 
 /// DATA-VALUES-1 (D53): one restricted member withholds every value-bearing

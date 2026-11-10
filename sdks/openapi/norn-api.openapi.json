@@ -20820,7 +20820,7 @@
               "string",
               "null"
             ],
-            "description": "Emitting receipt identity; no export capability. Null when any member of\nthe bucket is restricted (DATA-VALUES-1): the hash commits to the values."
+            "description": "Emitting receipt identity; no export capability. Null when any member of\nthe bucket is restricted, or its commit wrote a record the reader lacks Values on."
           },
           "recordedAtMs": {
             "type": "integer",

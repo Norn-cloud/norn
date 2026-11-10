@@ -12,7 +12,10 @@ use norn_cell::{
     CellError, CellStore, KnowledgeCutoff, ObjectRecord,
     compute::{
         HistoricalQuestionResult, QueryContext, QueryResult,
-        lineage::{LineageDisclosure, NumericTrace, keyed_lineage_handle, lineage_handle_matches},
+        lineage::{
+            LineageDisclosure, NumericTrace, keyed_lineage_handle, keyed_receipt_handle,
+            lineage_handle_matches,
+        },
     },
     engine::SqlEngine,
 };
@@ -170,11 +173,42 @@ fn answer_plan<E: SqlEngine>(
     .map_err(Refusal::from_compute)?;
     let result = match &mut answer {
         QuestionAnswer::Live(result) => result,
-        QuestionAnswer::Historical(historical) => &mut historical.result,
+        QuestionAnswer::Historical(historical) => {
+            withhold_cutoff_receipt(cell.store(), historical, key, &permits)?;
+            &mut historical.result
+        }
     };
     withhold_values(result, &withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(answer)
+}
+
+/// #1175 (DATA-VALUES-1, D53): the historical world names its cutoff commit by
+/// receipt hash, which commits to that commit's values. A reader without Values
+/// over every record the commit wrote sees the keyed receipt handle instead, so
+/// the coordinate never confirms a guess offline. Genesis has no receipt.
+fn withhold_cutoff_receipt<E: SqlEngine>(
+    store: &CellStore<E>,
+    historical: &mut HistoricalQuestionResult,
+    key: &[u8],
+    permits: &dyn Fn(&ObjectRecord, ReadCapability) -> Result<bool, CellError>,
+) -> Result<(), Refusal> {
+    let norn_kernel::World::Historical { commit } = &mut historical.world else {
+        return Err(Refusal::from_compute(CellError::ComputeRefused(
+            "core.compute.unsupported_engine",
+        )));
+    };
+    let frontier = historical.result.known_as_of;
+    if frontier == 0 {
+        return Ok(());
+    }
+    let disclosed = store
+        .disclosable_receipt_hash(frontier, &mut |row| permits(row, Values))
+        .map_err(Refusal::from_compute)?;
+    if disclosed.as_deref() != Some(commit.0.as_str()) {
+        commit.0 = keyed_receipt_handle(key, &commit.0);
+    }
+    Ok(())
 }
 
 /// Population decides membership; a member without Values is recorded so its

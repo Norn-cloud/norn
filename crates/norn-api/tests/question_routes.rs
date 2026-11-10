@@ -23,7 +23,10 @@ use norn_api::{
 };
 use norn_cell::{
     CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, ObjectRecord,
-    compute::{Freshness, QueryContext, lineage::keyed_lineage_handle},
+    compute::{
+        Freshness, QueryContext,
+        lineage::{keyed_lineage_handle, keyed_receipt_handle},
+    },
     engine::NativeEngine,
 };
 use norn_checker::metric::compute::QuestionPlan;
@@ -54,6 +57,8 @@ enum Mode {
     Historical,
     MissingCutoff,
     WrongCutoff,
+    /// The cutoff is K2: one write, of SYN-MELT-15-1 (#1175).
+    SingleWriteCutoff,
     /// WEEK keeps only SYN-MELT-15-1: its other members move a week earlier.
     Singleton,
 }
@@ -62,6 +67,8 @@ struct Runtime {
     plan: QuestionPlan,
     context: QueryContext,
     cutoff: Option<KnowledgeCutoff>,
+    /// The cutoff commit's raw receipt hash, when the fixture pins one.
+    cutoff_receipt: Option<String>,
     resolved: Arc<AtomicUsize>,
     min_disclosed: usize,
 }
@@ -186,8 +193,9 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
         .expect("K1");
     let receipt = initial.receipt();
     let mut cutoff = None;
+    let mut cutoff_receipt = None;
     match mode {
-        Mode::Historical | Mode::MissingCutoff | Mode::WrongCutoff => {
+        Mode::Historical | Mode::MissingCutoff | Mode::WrongCutoff | Mode::SingleWriteCutoff => {
             plan = asof_plan(&store, &plan, "2026-10-26T00:00:00Z");
             if !matches!(mode, Mode::MissingCutoff) {
                 cutoff = Some(KnowledgeCutoff {
@@ -201,7 +209,8 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
                     ..point
                 });
             }
-            store
+            cutoff_receipt = Some(receipt.hash.clone());
+            let corrected = store
                 .commit(&CommitBatch {
                     world: WORLD.into(),
                     scope: context.scope.clone(),
@@ -216,6 +225,14 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
                     ..CommitBatch::default()
                 })
                 .expect("K2");
+            if matches!(mode, Mode::SingleWriteCutoff) {
+                let single = corrected.receipt();
+                cutoff = Some(KnowledgeCutoff {
+                    recorded_at: LogicalTime::from_millis(single.body.logical_time),
+                    frontier: single.body.commit_seq,
+                });
+                cutoff_receipt = Some(single.hash.clone());
+            }
         }
         Mode::Fresh => context.now_ms = context.now_ms.checked_add(1000).expect("fresh clock"),
         Mode::Stale => context.now_ms = context.now_ms.checked_add(6000).expect("stale clock"),
@@ -254,6 +271,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
             plan,
             context,
             cutoff,
+            cutoff_receipt,
             resolved: Arc::new(AtomicUsize::new(0)),
             min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
         },
@@ -633,6 +651,7 @@ fn resolved_trace_document() -> SdkDocument {
         plan,
         context,
         cutoff: None,
+        cutoff_receipt: None,
         resolved: Arc::new(AtomicUsize::new(0)),
         min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
     };
@@ -944,6 +963,38 @@ fn a_mixed_bucket_discloses_no_member_value_from_which_the_hidden_one_follows() 
     // The aggregate stays: four members meet the default minimum of three.
     assert!(!mixed.rows[WEEK].suppressed);
     assert_eq!(mixed.rows[WEEK].totals, auditor.rows[WEEK].totals);
+}
+
+/// #1175: a historical answer names its cutoff commit. Its receipt hash commits
+/// to that commit's values, so for a single write the reader lacks Values on it
+/// would confirm a guess offline. Such a reader sees the keyed receipt handle,
+/// and the raw hash appears nowhere in its document; `mixed` lacks Values on
+/// that one row only. A reader holding Values over the whole commit keeps it.
+#[test]
+fn a_historical_cutoff_on_a_restricted_single_write_withholds_its_receipt_hash() {
+    let (host, runtime) = configured(Mode::SingleWriteCutoff);
+    let raw = runtime.cutoff_receipt.clone().expect("K2 receipt");
+    let commit = |actor| {
+        let QuestionAnswer::Historical(answer) =
+            get_answer(&host, &scope(), Some(actor), QUESTION, &runtime).expect("historical")
+        else {
+            panic!("historical")
+        };
+        assert_eq!(answer.result.known_as_of, 2);
+        let norn_kernel::World::Historical { commit } = &answer.world else {
+            panic!("historical world")
+        };
+        (
+            commit.0.clone(),
+            serde_json::to_string(&answer).expect("document"),
+        )
+    };
+    for actor in ["reader", "mixed"] {
+        let (handle, document) = commit(actor);
+        assert_eq!(handle, keyed_receipt_handle(&HANDLE_KEY, &raw), "{actor}");
+        assert!(!document.contains(&raw), "{actor}: {document}");
+    }
+    assert_eq!(commit("auditor").0, raw);
 }
 
 /// D53 (2): to a reader lacking Values on any of its members, a bucket with

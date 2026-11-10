@@ -139,6 +139,59 @@ fn a_restricted_bucket_withholds_the_receipt_hash_of_a_single_write() {
     );
 }
 
+/// #1175: one commit writes every fixture row, across buckets, and its receipt
+/// hash commits to all of their values. Tracing a bucket whose members are all
+/// readable still withholds that shared hash from a reader missing Values on a
+/// row of another bucket; the members' own values stay disclosed.
+#[test]
+fn a_shared_commit_withholds_its_receipt_hash_from_every_bucket_it_wrote() {
+    let (mut store, plan, context) = fixture();
+    load(&mut store);
+    let result = store
+        .evaluate_question(&plan, context.clone(), |_| Ok(true))
+        .expect("result");
+    let other = result
+        .rows
+        .keys()
+        .find(|bucket| *bucket != WEEK)
+        .expect("bucket");
+    let trace = |hidden: &str| {
+        store
+            .trace_question(
+                &plan,
+                context.clone(),
+                &result.lineage_ref,
+                other,
+                |_| Ok(true),
+                LineageDisclosure {
+                    values: &mut |row| Ok(row.id != hidden),
+                    source: &mut |_| Ok(true),
+                },
+            )
+            .expect("trace")
+    };
+    let shared = store
+        .read()
+        .receipt_for_fact_version(WORLD, TYPE, "SYN-MELT-15-1", 1)
+        .expect("shared receipt");
+    let withheld = trace("SYN-MELT-15-1");
+    assert!(!withheld.contributions.is_empty());
+    for member in &withheld.contributions {
+        assert_eq!(member.commit_seq, shared.body.commit_seq);
+        assert!(!member.restricted && member.values.is_some());
+        assert_eq!(member.receipt_hash, None);
+    }
+    let wire = serde_json::to_string(&withheld).expect("wire");
+    assert!(!wire.contains(&shared.hash), "{wire}");
+    let granted = trace("");
+    assert!(
+        granted
+            .contributions
+            .iter()
+            .all(|member| member.receipt_hash.as_deref() == Some(shared.hash.as_str()))
+    );
+}
+
 #[test]
 fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealing() {
     let (mut store, plan, context) = fixture();
