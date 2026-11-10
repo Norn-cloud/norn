@@ -25,7 +25,8 @@ export interface Contribution {
   readonly fact: Schemas["NornIrFactRef"]
   /** Sum or numerator/denominator; `null` when the reader may not see this row's values (D52, DATA-VALUES-1). */
   readonly amounts: readonly (number | null)[] | null
-  readonly receiptHash: string
+  /** `null` when the bucket has a restricted record: the receipt hash commits to the values (DATA-VALUES-1, #1175). */
+  readonly receiptHash: string | null
   readonly factDigest: string | null
   readonly source: { readonly status: "resolved" | "restricted" | "unavailable" }
   readonly commitSeq: number
@@ -98,7 +99,7 @@ export const isTrace = (value: unknown): boolean =>
   isRecord(value) && typeof value.bucket === "string" && Array.isArray(value.contributions) &&
   value.contributions.every((contribution) => isRecord(contribution) && isRecord(contribution.fact) &&
     typeof contribution.fact.key === "string" && typeof contribution.fact.version === "number" && isAmounts(contribution.amounts) &&
-    typeof contribution.receiptHash === "string" && typeof contribution.commitSeq === "number" && typeof contribution.restricted === "boolean")
+    (typeof contribution.receiptHash === "string" || contribution.receiptHash === null) && typeof contribution.commitSeq === "number" && typeof contribution.restricted === "boolean")
 
 export const liveAnswer = (question: string, fetcher?: Fetch) =>
   hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer`, fetcher, isAnswer)

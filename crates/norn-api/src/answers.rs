@@ -63,6 +63,7 @@ pub struct NornQueryResult {
     /// Watermarks for required dependencies: source → partition → watermark.
     pub watermarks: BTreeMap<String, BTreeMap<String, NornQueryWatermark>>,
     /// Quarantined identities excluded from the answer → their finding or evidence pin.
+    /// For a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.
     pub exclusions: BTreeMap<String, String>,
 }
 
@@ -96,7 +97,8 @@ pub enum NornQueryFreshness {
 pub struct NornLedgerHead {
     /// The last event sequence number (`0` when empty).
     pub seq: u64,
-    /// The last event hash.
+    /// The last event hash for a reader with whole-world Values (D53);
+    /// otherwise a keyed handle of it, stable per revision: compare it only for equality.
     pub hash: String,
     /// How many commits.
     pub commits: u64,

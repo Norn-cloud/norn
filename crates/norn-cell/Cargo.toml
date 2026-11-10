@@ -32,6 +32,7 @@ transparency-sha2 = { package = "sha2", version = "0.11" }
 base64 = "0.22.1"
 norn-checker = { path = "../norn-checker" }
 norn-ir = { path = "../norn-ir" }
+norn-builtins = { path = "../norn-builtins" }
 norn-kernel = { path = "../norn-kernel" }
 norn-projections = { path = "../norn-projections" }
 # The default host adapter. Bundled SQLite, no default features (no statement

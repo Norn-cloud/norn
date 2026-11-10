@@ -2131,7 +2131,7 @@ impl<E: SqlEngine> CellStore<E> {
 
     fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
         validate_store_format(conn)?;
-        for statement in SYSTEM_DDL {
+        for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
             conn.execute_batch(statement)?;
         }
         crate::system::intern_marking_subjects(conn)?;
@@ -2661,6 +2661,11 @@ impl<E: SqlEngine> CellStore<E> {
                         )?;
                     }
                 } else {
+                    // A file provisioned before a system table existed gains it here,
+                    // so the next run start or write finds it (idempotent DDL).
+                    for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
+                        self.conn.execute_batch(statement)?;
+                    }
                     let binding = |key: &str| self.conn.query_optional(
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),
@@ -2875,7 +2880,9 @@ impl<E: SqlEngine> CellStore<E> {
                 // Verified-prefix reconstruction retains the original admission semantics.
                 writer.admit_created_identities()?;
             }
+            crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             let written = writer.apply_writes()?;
+            crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;
@@ -3006,7 +3013,9 @@ impl<E: SqlEngine> CellStore<E> {
         outcome: &Value,
     ) -> Result<bool, CellError> {
         self.conn.transaction(|| -> Result<bool, CellError> {
-            let head = StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes).head_command()?;
+            let head = StoreReader::new(&self.conn, &self.model)
+                .with_source_disputes(&self.source_disputes)
+                .head_command()?;
             let is_head = head.as_ref().is_some_and(|head| {
                 head.command.command_id == command_id
                     && head.command.generation == generation
@@ -3015,37 +3024,91 @@ impl<E: SqlEngine> CellStore<E> {
             if !is_head {
                 return Ok(false);
             }
-            let head = head.ok_or_else(|| CellError::Encoding("pending result command disappeared".to_owned()))?;
-            crate::payload_storage::remember_command(&self.conn, command_id, generation, head.commit_seq)?;
-            let outcome = match self.export_record(head.commit_seq)? {
-                Some(record) => crate::payload_storage::encode_result(&self.conn, &record.batch.scope, &record.batch.world, outcome)?,
-                None => canonical_json(outcome)?,
-            };
-            let generation = to_i64(generation, "generation")?;
-            self.conn.execute(
-                &format!(
-                    "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"
-                ),
-                params![outcome, command_id, generation],
-            )?;
-            let attempts: i64 = self.conn.query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
-                ),
-                params![command_id, generation],
-                |row| row.get::<i64>(0),
-            )?;
-            let attempt = to_u64(attempts, "attempt")?
-                .checked_add(1)
-                .ok_or(CellError::OutOfRange("attempt"))?;
-            self.conn.execute(
-                &format!(
-                    "INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, ?4, NULL)"
-                ),
-                params![command_id, generation, to_i64(attempt, "attempt")?, outcome],
-            )?;
-            Ok(true)
+            let head = head.ok_or_else(|| {
+                CellError::Encoding("pending result command disappeared".to_owned())
+            })?;
+            self.store_result(&head, command_id, generation, outcome)
         })
+    }
+
+    /// PARKED-1: record the result of a parked command (one the cell resolves
+    /// itself, such as a `norn.decision@1` the cell issued a receipt for). A
+    /// parked command may complete out of FIFO order, but at most once: a
+    /// second record of the same generation, or of a command that is not
+    /// parked and pending, returns `false` and writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Serialization or SQL engine errors.
+    pub fn record_parked(
+        &mut self,
+        command_id: &str,
+        generation: u64,
+        outcome: &Value,
+    ) -> Result<bool, CellError> {
+        self.conn.transaction(|| -> Result<bool, CellError> {
+            let parked = StoreReader::new(&self.conn, &self.model)
+                .with_source_disputes(&self.source_disputes)
+                .pending_command(command_id)?
+                .filter(|row| {
+                    crate::read::is_parked(&row.command)
+                        && row.command.generation == generation
+                        && row.result.is_none()
+                });
+            let Some(parked) = parked else {
+                return Ok(false);
+            };
+            self.store_result(&parked, command_id, generation, outcome)
+        })
+    }
+
+    /// Record `outcome` as `head`'s result, with its run attempt.
+    fn store_result(
+        &self,
+        head: &crate::read::PendingCommand,
+        command_id: &str,
+        generation: u64,
+        outcome: &Value,
+    ) -> Result<bool, CellError> {
+        crate::payload_storage::remember_command(
+            &self.conn,
+            command_id,
+            generation,
+            head.commit_seq,
+        )?;
+        let outcome = match self.export_record(head.commit_seq)? {
+            Some(record) => crate::payload_storage::encode_result(
+                &self.conn,
+                &record.batch.scope,
+                &record.batch.world,
+                outcome,
+            )?,
+            None => canonical_json(outcome)?,
+        };
+        let generation = to_i64(generation, "generation")?;
+        self.conn.execute(
+            &format!(
+                "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"
+            ),
+            params![outcome, command_id, generation],
+        )?;
+        let attempts: i64 = self.conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
+            ),
+            params![command_id, generation],
+            |row| row.get::<i64>(0),
+        )?;
+        let attempt = to_u64(attempts, "attempt")?
+            .checked_add(1)
+            .ok_or(CellError::OutOfRange("attempt"))?;
+        self.conn.execute(
+            &format!(
+                "INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, ?4, NULL)"
+            ),
+            params![command_id, generation, to_i64(attempt, "attempt")?, outcome],
+        )?;
+        Ok(true)
     }
 
     /// Ingest one external observation into the inbox, in its own

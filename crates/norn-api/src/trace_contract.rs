@@ -30,8 +30,10 @@ pub struct NornNumericContribution {
     /// member of the bucket is restricted (DATA-VALUES-1).
     #[schema(required = true, schema_with = crate::answers::amounts_schema)]
     pub amounts: Option<Vec<Option<String>>>,
-    /// Emitting receipt identity; no export capability.
-    pub receipt_hash: String,
+    /// Emitting receipt identity; no export capability. Null when any member of
+    /// the bucket is restricted; a keyed handle (D53) for a reader without whole-world Values.
+    #[schema(required = true, nullable = true)]
+    pub receipt_hash: Option<String>,
     /// Full incarnation digest, disclosed with canonical values.
     #[schema(required = true, nullable = true)]
     pub fact_digest: Option<String>,
