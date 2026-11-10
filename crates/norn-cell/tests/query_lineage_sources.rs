@@ -112,10 +112,8 @@ fn scrap_yield_drills_from_294_over_300_to_exact_authorized_source_rows_and_docu
             contribution.fact_digest.as_deref(),
             Some(proof.snapshot_sha256())
         );
-        assert_eq!(
-            contribution.receipt_hash.as_deref(),
-            Some(proof.receipt().hash.as_str())
-        );
+        let receipt_hash = proof.receipt().hash.clone();
+        assert_eq!(contribution.receipt_hash, Some(receipt_hash));
     }
 }
 #[test]
