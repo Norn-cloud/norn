@@ -79,7 +79,7 @@ test("a refused live read shows the server's reason over the recorded snapshot",
 // D52 / DATA-VALUES-1: a restricted row's amounts are row Values; the host sends amounts: null to a reader without Values.
 const withheldText = (shape: string) => `{"result":${answerText},"bucket":${JSON.stringify(bucket)},"contributions":[
   {"fact":{"key":"SYN-MELT-00-0","objectType":"demo.Conversion","version":1},${shape}"receiptHash":null,"factDigest":null,"source":{"status":"restricted"},"commitSeq":7,"recordedAtMs":1,"restricted":true,"values":null},
-  {"fact":{"key":"SYN-MELT-00-1","objectType":"demo.Conversion","version":1},"amounts":[55.917,57.071],"receiptHash":"d5d7","factDigest":"f","source":{"status":"resolved","provenance":{}},"commitSeq":8,"recordedAtMs":1,"restricted":false,"values":{}}]}`
+  {"fact":{"key":"SYN-MELT-00-1","objectType":"demo.Conversion","version":1},"amounts":[55.917,57.071],"receiptHash":null,"factDigest":"f","source":{"status":"resolved","provenance":{}},"commitSeq":8,"recordedAtMs":1,"restricted":false,"values":{}}]}`
 
 test("a contribution the server withholds (amounts: null) has no amount; none is computed", () => {
   for (const shape of ['"amounts":null,']) {
@@ -109,7 +109,23 @@ test("the drawer shows Withheld for that row, its receipt hash withheld, and kee
   expect(rows[0]).toContain("commit 7")
   expect(rows[0]).not.toMatch(/\d+\.\d+ \/ /)
   expect(rows[1]).toContain("55.917 / 57.071")
-  expect(rows[1]).toContain("Copy d5d7")
+  // #1175: a restricted bucket withholds every member's receipt hash.
+  expect(rows[1]).toContain(">Receipt withheld<")
+  expect(rows[1]).not.toContain("Copy ")
+})
+
+test("a disclosed receipt hash can be copied", () => {
+  const client = new QueryClient()
+  const lineageRef = "lineage-1"
+  const trace = JSON.parse(withheldText('"amounts":null,')) as { contributions: { receiptHash: unknown }[] }
+  trace.contributions = trace.contributions.slice(1)
+  trace.contributions[0]!.receiptHash = "d5d7"
+  client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(JSON.stringify(trace), "live") })
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
+  const [row] = html.split("<tr").slice(2)
+  expect(row).toContain("SYN-MELT-00-1")
+  expect(row).toContain("Copy d5d7")
+  expect(row).not.toContain(">Receipt withheld<")
 })
 
 test("an answer whose members' amounts are withheld still reads, its totals intact, each member Withheld", () => {

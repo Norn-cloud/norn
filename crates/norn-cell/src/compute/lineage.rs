@@ -275,7 +275,10 @@ impl CommitCovers {
 }
 
 /// Whether `values` grants every live record `receipt` wrote. Tombstones carry
-/// no values. An unprovable or over-budget cover is not a cover.
+/// no values. An unprovable or over-budget cover is not a cover, and neither is
+/// a sibling record the grant cannot decide (a host that cannot map it): the
+/// receipt hash is withheld, the trace or answer is not refused. Engine
+/// failures still refuse.
 fn receipt_values_covered<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     receipt: &Receipt,
@@ -296,7 +299,7 @@ fn receipt_values_covered<E: SqlEngine>(
             version: snapshot.version,
             values: row_values,
         };
-        if !values(&record)? {
+        if !values(&record).unwrap_or(false) {
             return Ok(false);
         }
     }
