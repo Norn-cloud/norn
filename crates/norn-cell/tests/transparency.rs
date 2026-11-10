@@ -193,6 +193,9 @@ fn cache_read_failure_cannot_turn_a_durable_commit_into_an_error() {
     use std::{cell::Cell, rc::Rc};
     struct FaultEngine(NativeEngine, Rc<Cell<bool>>);
     impl SqlEngine for FaultEngine {
+        fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+            self.0.read_isolation()
+        }
         fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
             self.0.execute(sql, params)
         }
