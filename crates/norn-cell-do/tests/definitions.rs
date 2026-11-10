@@ -759,17 +759,17 @@ fn manifest_digests_match_the_shared_jcs_vectors() {
 fn binding(label: &str, run_role: &str, mapping: &Value) -> Value {
     let input = json!({ "type": "object", "properties": {
         "repo": { "type": "string" }, "limit": { "type": "integer" }, "state": { "enum": ["open", "closed"] } } });
-    binding_over(input, label, run_role, mapping)
+    binding_over(&input, label, run_role, mapping)
 }
 
 /// A binding over `input` with the host's own JCS digest of its manifest.
-fn binding_over(input: Value, label: &str, run_role: &str, mapping: &Value) -> Value {
+fn binding_over(input: &Value, label: &str, run_role: &str, mapping: &Value) -> Value {
     let output = json!({ "type": "object" });
     let digest = norn_api::binding_definitions::manifest_digest(
         "executor",
         "github",
         "list_issues",
-        &input,
+        input,
         &output,
     )
     .unwrap();
@@ -1135,7 +1135,7 @@ fn binding_strings_and_member_names_are_nfc_so_the_stored_manifest_keeps_its_dig
         (decomposed_enum, "/inputSchema/properties/state/enum/0"),
         (decomposed_name, "/inputSchema/properties/e\u{301}tat"),
     ] {
-        let payload = binding_over(input, "Accents", "member", &json!({}));
+        let payload = binding_over(&input, "Accents", "member", &json!({}));
         // The submitted digest is the correct JCS one over the decomposed text.
         assert!(
             payload["manifestDigest"]
@@ -1157,7 +1157,7 @@ fn binding_strings_and_member_names_are_nfc_so_the_stored_manifest_keeps_its_dig
     let composed = json!({ "type": "object", "properties": {
         "\u{e9}tat": { "type": "string" }, "state": { "enum": ["\u{e9}"] } } });
     let payload = binding_over(
-        composed,
+        &composed,
         "Accents",
         "member",
         &json!({ "state": { "fixed": "\u{e9}" } }),
