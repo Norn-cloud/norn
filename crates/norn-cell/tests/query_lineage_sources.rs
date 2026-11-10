@@ -366,7 +366,9 @@ fn source_budget_exhaustion_refuses_instead_of_returning_a_partial_trace() {
                 source: &mut |_| Ok(true)
             }
         ),
-        Err(norn_cell::CellError::MappingBundleMismatch)
+        Err(norn_cell::CellError::ComputeRefused(
+            "core.compute.bound_exceeded"
+        ))
     ));
 }
 #[test]

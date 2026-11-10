@@ -17,6 +17,8 @@ pub use clock::{Clock, ManualClock};
 pub mod host;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+/// HOST-READ-2: authorized typed object pages and objects.
+pub mod object_routes;
 /// Typed object, link and source-lineage reads for the Data Explorer.
 pub mod objects;
 /// Authorized exact question answers and numeric traces.
