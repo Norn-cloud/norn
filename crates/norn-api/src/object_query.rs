@@ -60,7 +60,7 @@ pub(crate) enum Kind {
     Duration,
     Boolean,
     Enum(Vec<String>),
-    /// `record`, `json-ext`, `ref` or a type this cell cannot resolve.
+    /// `record`, `json-ext`, `ref`, a decimal binding (an interface slot with no stored value) or a type this cell cannot resolve.
     Opaque,
 }
 
@@ -80,7 +80,8 @@ impl Kind {
             Some(
                 PropertyType::Record { .. }
                 | PropertyType::JsonExt { .. }
-                | PropertyType::Ref { .. },
+                | PropertyType::Ref { .. }
+                | PropertyType::DecimalBinding { .. },
             )
             | None => Self::Opaque,
         }
