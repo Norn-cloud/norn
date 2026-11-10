@@ -104,6 +104,8 @@ neither natural-language rendering nor ambiguity interpretation.
 5. At equal definition, time, scope, source-frontier and input multiset, all engines must return canonically equal rows and lineage contributions. Physical plans may differ. Freshness uses observed per-source high-water marks and heartbeat time; unavailable sources make completeness unknown. A bounded-stale result is usable analytically only with its label, never to authorize a commit.
 6. Changes invalidate dependent questions/derived concepts; schedules and backfills are generated from dependency/freshness declarations. IVM restart resumes durable cursors or performs a labelled full rebuild; never publish a partially rebuilt generation as complete.
 
+Under QUERY-ENGINE-1, IVM retains unchanged finding exclusions and reevaluates subjects of authenticated changed receipts; source evidence arriving without a receipt invalidates affected members through the existing rechecked index, with rebuild cache pins captured in the snapshot transaction. The named `finding_lookups_are_limited_to_changed_receipt_members`, `unchanged_receipt_preserves_quarantine_without_rechecking_members` and `same_frontier_untrusted_source_evidence_refuses_atomically_like_recompute` scenarios supplement delta/recompute correspondence and quarantine→restatement→rebuild evidence; the bounded benchmark claims lookup reduction, not constant-time maintenance.
+
 | Invariant / layer | Stable target diagnostic |
 |---|---|
 | COMPUTE-DETERMINISTIC-1: pinned inputs yield same output; construction/evaluation | `core.compute.nondeterministic` |
@@ -128,7 +130,7 @@ Current evidence: structural typing and narrow induction substrate at the baseli
 
 Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/src/{metric,jdm_profile}.rs`, `crates/norn-cell/src/reactive.rs`, `crates/norn-expr/`, `crates/norn-checker/src/obligations/induction.rs`. Ordered fold #323 and membership fencing #324 are open. Full folds, three-engine lowering, freshness frontiers and grain-aware analytical execution are not established on main. #69 introduces `norn-metrics` temporal admission in an open PR; the crate is absent at this baseline. #97/#103 are open WellDB prerequisites, not a shipped IVM/OLAP engine; #71 history-at-cursor is also open.
 
-## Work breakdown (each PR ≤400 lines; beat 6 is demo priority)
+## Work breakdown (one coherent unit per PR; beat 6 is demo priority)
 
 1. Land/adapt A1 #323 fold contract with fail-closed unsupported execution; complete accumulator/step typing.
 2. A2 exact arithmetic evaluator, then bounded interpreter, then FOLD-ALLOCATE/CAPACITY correspondence as separate cuts; remove refusal only for supported semantics.

@@ -5,6 +5,7 @@
 
 pub mod compute;
 pub mod derive;
+pub mod question_display;
 pub mod restate;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -878,6 +879,7 @@ impl<'a> Checker<'a> {
                     | PropertyType::Duration {}
                     | PropertyType::Record { .. }
                     | PropertyType::JsonExt { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Ref { .. },
                 )
                 | EffectiveKind::Unresolved => false,

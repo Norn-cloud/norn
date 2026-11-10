@@ -114,7 +114,7 @@ pub struct TraceQuery {
 /// Evaluate using the native exact engine; analytical freshness labels are preserved.
 /// # Errors
 /// Denied scope/authority, unavailable trusted inputs, or typed compute refusal.
-#[utoipa::path(get, path = "/v1/questions/{question}/answer", params(ScopeQuery, ("question" = String, Path)), responses((status = 200, body = crate::answers::NornQuestionAnswer), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/questions/{question}/answer", params(ScopeQuery, ("question" = String, Path)), responses((status = 200, description = "The exact answer.", body = crate::answers::NornQuestionAnswer), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused by a typed compute refusal.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_answer<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -203,7 +203,7 @@ fn withhold_values(result: &mut QueryResult, withheld: &BTreeSet<String>, min_di
 /// LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
 /// # Errors
 /// Nonexact/stale results, historical tracing, changed pins or unavailable evidence refuse.
-#[utoipa::path(get, path = "/v1/questions/{question}/trace", params(TraceQuery, ("question" = String, Path)), responses((status = 200, body = crate::trace_contract::NornNumericTrace), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/questions/{question}/trace", params(TraceQuery, ("question" = String, Path)), responses((status = 200, description = "The numeric trace.", body = crate::trace_contract::NornNumericTrace), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused by a typed compute refusal.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_numeric_trace<E: SqlEngine>(
     host: &DevHost<E>,
     query: &TraceQuery,
@@ -516,7 +516,7 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
 /// inadmissible question, including an undeclared metric from a caller who
 /// can (422 `question.refused` with diagnostics); a bound (413); or a
 /// compute refusal.
-#[utoipa::path(post, path = "/v1/questions:evaluate", params(ScopeQuery), request_body = EvaluateRequest, responses((status = 200, body = crate::answers::NornQuestionAnswer), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/questions:evaluate", params(ScopeQuery), request_body = EvaluateRequest, responses((status = 200, description = "The exact answer.", body = crate::answers::NornQuestionAnswer), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused by a typed compute refusal.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn evaluate_question<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -542,7 +542,7 @@ pub fn evaluate_question<E: SqlEngine>(
 /// keyed handle that answer returned. Authorized and admitted as `:evaluate`.
 /// # Errors
 /// As [`evaluate_question`], and as [`get_numeric_trace`] for the trace.
-#[utoipa::path(post, path = "/v1/questions:trace", params(ScopeQuery), request_body = AdHocTraceRequest, responses((status = 200, body = crate::trace_contract::NornNumericTrace), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/questions:trace", params(ScopeQuery), request_body = AdHocTraceRequest, responses((status = 200, description = "The numeric trace.", body = crate::trace_contract::NornNumericTrace), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused by a typed compute refusal.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn trace_ad_hoc<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,

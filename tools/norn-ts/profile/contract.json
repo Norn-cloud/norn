@@ -25,6 +25,7 @@
     "`@norn/authoring#Norn.mapping`",
     "`@norn/authoring#Norn.law`",
     "`@norn/authoring#Norn.decimal`",
+    "`@norn/authoring#Norn.boundDecimal`",
     "`@norn/authoring#Norn.rate`",
     "`@norn/authoring#Norn.ref`",
     "`@norn/authoring#Norn.timestamp`",

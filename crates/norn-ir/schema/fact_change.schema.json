@@ -22,7 +22,7 @@
           "description": "Property values by property id.",
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
+            "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
           }
         }
       },
@@ -52,7 +52,7 @@
           "$ref": "#/$defs/PropertyId"
         },
         "value": {
-          "$ref": "#/$defs/JsonValue"
+          "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
         }
       },
       "additionalProperties": false,
@@ -120,35 +120,6 @@
     }
   ],
   "$defs": {
-    "JsonValue": {
-      "anyOf": [
-        {
-          "type": "null"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "number",
-          "format": "double"
-        },
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        }
-      ]
-    },
     "ObjectTypeName": {
       "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
       "type": "string",
