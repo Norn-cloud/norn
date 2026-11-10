@@ -52,6 +52,8 @@ pub mod codes {
     pub const MAPPING_UNKNOWN_FIELD: &str = "definition.binding_mapping_unknown_field";
     /// An `inputMapping` entry is not `{fixed: value}` of the property's type.
     pub const MAPPING_INVALID: &str = "definition.binding_mapping_invalid";
+    /// A string or member name is not in Unicode Normalization Form C.
+    pub const NOT_NFC: &str = "definition.binding_not_nfc";
 }
 
 /// `sha256:<hex>` of the JCS text of the binding's tool manifest.
@@ -91,6 +93,45 @@ fn error(code: &str, message: impl Into<String>, pointer: impl Into<String>) -> 
     RefusalDiagnostic::error(code, message, pointer)
 }
 
+fn pointer_token(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
+/// #1164: every string and member name of `value` is in NFC. A binding is
+/// checked and digested as submitted (JCS keeps strings as given) but stored
+/// as Norn1, which normalizes them to NFC; refusing any other form keeps the
+/// checked, digested and stored manifest one and the same.
+fn nfc_findings(value: &Value, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
+    match value {
+        Value::String(text) if norn_ir::canonical::nfc(text) != *text => findings.push(error(
+            codes::NOT_NFC,
+            "a string is in Unicode Normalization Form C",
+            at,
+        )),
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                nfc_findings(item, &format!("{at}/{index}"), findings);
+            }
+        }
+        Value::Object(members) => nfc_members(members, at, findings),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn nfc_members(members: &Map<String, Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
+    for (key, member) in members {
+        let pointer = format!("{at}/{}", pointer_token(key));
+        if norn_ir::canonical::nfc(key) != *key {
+            findings.push(error(
+                codes::NOT_NFC,
+                "a member name is in Unicode Normalization Form C",
+                pointer.as_str(),
+            ));
+        }
+        nfc_findings(member, &pointer, findings);
+    }
+}
+
 fn text<'v>(object: &'v Map<String, Value>, key: &str) -> Option<&'v str> {
     object.get(key).and_then(Value::as_str)
 }
@@ -105,6 +146,7 @@ pub fn check(raw: &str, roles: &[&str]) -> Vec<RefusalDiagnostic> {
         findings.push(error(codes::INVALID_PAYLOAD, "a binding is an object", ""));
         return findings;
     };
+    nfc_members(&payload, "", &mut findings);
     for key in payload
         .keys()
         .filter(|key| !MEMBERS.contains(&key.as_str()))
@@ -112,7 +154,7 @@ pub fn check(raw: &str, roles: &[&str]) -> Vec<RefusalDiagnostic> {
         findings.push(error(
             codes::INVALID_PAYLOAD,
             format!("unknown member {key:?}"),
-            format!("/{}", key.replace('~', "~0").replace('/', "~1")),
+            format!("/{}", pointer_token(key)),
         ));
     }
     let connector = payload.get("connector").and_then(Value::as_object);

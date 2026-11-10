@@ -287,8 +287,14 @@ export interface components {
              * @description The commit sequence.
              */
             commitSeq: number;
-            /** @description The commit receipt's hash. */
-            receiptHash: string;
+            /**
+             * @description The commit receipt's hash, for a reader granted Values on every object
+             *     type of the cell; every other reader gets its keyed handle
+             *     (`norn.receipt/1`, D53), since the receipt commits to the ledger head
+             *     and so to every earlier event's values. Null when the cell holds no
+             *     handle key.
+             */
+            receiptHash: string | null;
             /**
              * Format: int64
              * @description Host time of the commit, in Unix milliseconds.

@@ -1185,8 +1185,11 @@
             "minimum": 0
           },
           "receiptHash": {
-            "type": "string",
-            "description": "The commit receipt's hash."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The commit receipt's hash, for a reader granted Values on every object\ntype of the cell; every other reader gets its keyed handle\n(`norn.receipt/1`, D53), since the receipt commits to the ledger head\nand so to every earlier event's values. Null when the cell holds no\nhandle key."
           },
           "recordedAtMs": {
             "type": "integer",

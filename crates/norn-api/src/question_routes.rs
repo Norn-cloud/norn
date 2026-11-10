@@ -203,6 +203,33 @@ fn answer_plan<E: SqlEngine>(
     Ok(answer)
 }
 
+/// #1164 (D53): the receipt coordinate `actor` may see for a commit outside
+/// any answer (a retained definition's install). The receipt hash commits to
+/// the ledger head, which chains every earlier event's values, so only a
+/// reader with whole-world Values sees it raw; every other reader sees its
+/// keyed receipt handle. A cell without a question runtime holds no handle
+/// key and decides no collection grant, so it discloses neither (`None`).
+/// # Errors
+/// A handle key shorter than 32 bytes.
+pub(crate) fn disclosed_receipt<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: Option<&dyn AdHocQuestions<E>>,
+    store: &CellStore<E>,
+    actor: &str,
+    receipt_hash: &str,
+) -> Result<Option<String>, Refusal> {
+    let Some(runtime) = runtime else {
+        return Ok(None);
+    };
+    let runtime: &dyn QuestionRuntime<E> = runtime;
+    let key = handle_key(runtime)?;
+    Ok(Some(if world_values(host, runtime, store, actor) {
+        receipt_hash.to_owned()
+    } else {
+        keyed_receipt_handle(key, receipt_hash)
+    }))
+}
+
 /// #1175 (D53): whether `actor` holds Values over the whole world: a
 /// collection-level grant on every object type of the cell, decided by the
 /// host policy without reading cell data. Raw ledger and receipt hashes chain

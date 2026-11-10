@@ -31,7 +31,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::authz::{AccessRequest, Operation, read_denied};
 use crate::host::DevHost;
-use crate::question_routes::{AdHocQuestions, check_ad_hoc};
+use crate::question_routes::{AdHocQuestions, check_ad_hoc, disclosed_receipt};
 use crate::refusal::{Refusal, RefusalDiagnostic, RefusalRestatement};
 use crate::scope::ScopeQuery;
 
@@ -304,8 +304,13 @@ pub struct AdmitDefinitionResponse {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DefinitionReceipt {
-    /// The commit receipt's hash.
-    pub receipt_hash: String,
+    /// The commit receipt's hash, for a reader granted Values on every object
+    /// type of the cell; every other reader gets its keyed handle
+    /// (`norn.receipt/1`, D53), since the receipt commits to the ledger head
+    /// and so to every earlier event's values. Null when the cell holds no
+    /// handle key.
+    #[schema(required = true, nullable = true)]
+    pub receipt_hash: Option<String>,
     /// The commit sequence.
     pub commit_seq: u64,
     /// Host time of the commit, in Unix milliseconds.
@@ -888,17 +893,22 @@ fn restate<E: SqlEngine>(
         })
 }
 
+/// The receipt of `record`'s commit as `actor` may see it (#1164, D53): the
+/// raw hash only for a reader with whole-world Values, else its keyed handle.
 fn receipt<E: SqlEngine>(
     host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: &str,
     record: &RetainedDefinitionRecord,
 ) -> Result<DefinitionReceipt, Refusal> {
     let cell = host.cell()?;
-    let receipt_hash = cell
+    let raw = cell
         .store()
         .read()
         .receipt_hash_at(record.commit_seq)
         .map_err(Refusal::host)?
         .ok_or_else(|| Refusal::host("retained definition commit has no receipt"))?;
+    let receipt_hash = disclosed_receipt(host, questions, cell.store(), actor, &raw)?;
     Ok(DefinitionReceipt {
         receipt_hash,
         commit_seq: record.commit_seq,
@@ -910,6 +920,8 @@ fn receipt<E: SqlEngine>(
 /// definitions install, at host time `now_ms`.
 fn append<E: SqlEngine>(
     host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: &str,
     mut definition: RetainedDefinition,
     expected: Option<u64>,
     signed: Option<(&str, String)>,
@@ -996,7 +1008,7 @@ fn append<E: SqlEngine>(
         installed: true,
         id: record.definition.id.clone(),
         version: record.definition.revision,
-        receipt: receipt(host, &record)?,
+        receipt: receipt(host, questions, actor, &record)?,
     })
 }
 
@@ -1048,6 +1060,8 @@ pub fn install_definition<E: SqlEngine>(
         .ok_or_else(version_conflict)?;
     append(
         host,
+        questions,
+        actor,
         RetainedDefinition {
             kind: request.kind.clone(),
             id: request.id.clone(),
@@ -1114,11 +1128,13 @@ pub fn retire_definition<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
     actor: Option<&str>,
+    questions: Option<&dyn AdHocQuestions<E>>,
     id: &str,
     request: &RetireDefinitionRequest,
     now_ms: u64,
 ) -> Result<InstallDefinitionResponse, Refusal> {
     authorize(host, scope, actor, Operation::WriteDefinitions)?;
+    let actor = actor.ok_or_else(read_denied)?;
     check_id(id)?;
     let current = {
         let cell = host.cell()?;
@@ -1149,6 +1165,8 @@ pub fn retire_definition<E: SqlEngine>(
     definition.signoff = None;
     append(
         host,
+        questions,
+        actor,
         definition,
         Some(request.expected_version),
         None,
@@ -1284,6 +1302,7 @@ pub fn get_definition<E: SqlEngine>(
         environment_id: query.environment_id.clone(),
     };
     authorize(host, &scope, actor, Operation::ReadDefinitions)?;
+    let actor = actor.ok_or_else(read_denied)?;
     check_id(id)?;
     let _epoch = host.definition_read()?;
     let record = {
@@ -1294,7 +1313,7 @@ pub fn get_definition<E: SqlEngine>(
             .map_err(Refusal::host)?
             .ok_or_else(not_found)?
     };
-    let receipt = receipt(host, &record)?;
+    let receipt = receipt(host, questions, actor, &record)?;
     let (restatement, restatement_sha256) = restate(
         kinds,
         questions,

@@ -469,6 +469,7 @@ fn definitions<E: SqlEngine>(
             host,
             &scope,
             actor,
+            questions,
             id,
             &submission(request.body)?,
             now_ms,
