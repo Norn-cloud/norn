@@ -2,6 +2,7 @@
 members = [
   "crates/norn-api",
   "crates/norn-authz",
+  "crates/norn-builtins",
   "crates/norn-canonical",
   "crates/norn-cell",
   "crates/norn-cell-do",
@@ -27,6 +28,7 @@ members = [
 default-members = [
   "crates/norn-api",
   "crates/norn-authz",
+  "crates/norn-builtins",
   "crates/norn-canonical",
   "crates/norn-cell",
   "crates/norn-cell-do",

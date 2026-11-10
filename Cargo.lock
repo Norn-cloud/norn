@@ -2224,6 +2224,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-builtins"
+version = "0.1.0"
+dependencies = [
+ "norn-ir",
+ "norn-kernel",
+ "norn-testkit",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "norn-canonical"
 version = "0.1.0"
 dependencies = [
@@ -2243,6 +2254,7 @@ dependencies = [
  "ct-merkle",
  "duckdb",
  "js-sys",
+ "norn-builtins",
  "norn-checker",
  "norn-ir",
  "norn-kernel",
