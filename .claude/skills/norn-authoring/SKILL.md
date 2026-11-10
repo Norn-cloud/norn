@@ -37,7 +37,7 @@ description: Write or review Norn definitions (types, machines, laws, flows, pac
 Hard rules in both syntaxes:
 
 - No string expressions you could write as a typed lambda. `Norn.unsafeZen` and raw JDM are the open [#58 gap](https://github.com/Norn-cloud/norn/issues/58), never an endorsed pattern.
-- Lambdas are compiled, never run: only the subset in spec §4.5 (comparisons, boolean ops, arithmetic, `?:`, `??`, path reads, `some`/`every`/`filter`/`map`/`length`, `sum`). No local helper calls, clocks, randomness, mutation or loops.
+- Lambdas are compiled, never run: only the subset in spec §4.5 (comparisons, boolean ops, arithmetic, `?:`, `??`, path reads, string builtins, `date`/`timestamp` parsing). In CURRENT syntax the typed builder (`tools/norn-ts/src/builder/expr.ts`) has no closures and no `sum`, so `some`/`every`/`filter`/`map`/`sum` are PROPOSED (v2 only); do not write them in CURRENT sources. `%` is not admitted by `norn-zen/6` in either syntax. No local helper calls, clocks, randomness, mutation or loops.
 - Object references are links, never scalar `*_id` strings or `Norn.ref` (which names a **value type**).
 - Money and quantities are exact: `Norn.decimal(scale, { unit })`, `{ currency: "<prop>" }`, `Norn.rate(...)`. Never `Schema.Number` in exact arithmetic.
 - No domain code or opcodes in the kernel. Domain meaning lives in packs.

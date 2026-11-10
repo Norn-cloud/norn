@@ -1,6 +1,6 @@
 # Authoring DX v2
 
-Status: **design spec, approved direction 2026-11-09. Nothing here is implemented yet** unless a row says CURRENT. It changes how definitions are written, not what they mean. The IR (`crates/norn-ir`) and the Rust checker (`crates/norn-checker`) stay as they are, except for the two engine gaps in [§8](#8-engine-gaps-specified-here-not-built).
+Status: **design spec, approved direction 2026-11-09. Nothing here is implemented yet** unless a row says CURRENT. It changes how definitions are written, not what they mean. The IR (`crates/norn-ir`) and the Rust checker (`crates/norn-checker`) stay as they are, except for the three engine gaps in [§8](#8-engine-gaps-specified-here-not-built).
 
 Markers used throughout:
 
@@ -227,11 +227,12 @@ declare function final(opts?: { immutable?: boolean }): Final
 | `initial` | `LifecycleDecl.initial` |
 | `final()` / `final({ immutable: true })` | `terminal` / `terminal` + `immutable` |
 | each event `e` from states `A, B` to `T` | one `TransitionDecl { id: e, from: [A, B], to: T }` |
+| the same event from states with different `to`, `when` or `refuse` | **compile error** `NORN-MACHINE-EVENT-CONFLICT` (PROPOSED code). A `TransitionDecl` has one target and one guard set, so one event cannot carry different behavior per state; the author names two events |
 | `when` | `TransitionDecl.guards` (lambda → ZEN) |
 | `refuse` | `TransitionDecl.guardRefusalCode` |
 | each event | one generated `ActionIR` `<pack>.<type>.<event>` with `effect: fire_transition` (`builder/action.ts`) |
 | `by` | one generated `AccessIR` rule permitting that action for those roles (`builder/access.ts`) |
-| no `by` | no access rule: no person may send the event; only rules, flows and timers inside the pack can (`settle` below) |
+| no `by` | no access rule: no person may send the event; only rules, flows and timers inside the pack can |
 | `after` | a generated `decide` RuleIR (`builder/rule.ts`): trigger `transitioned` into the state emits a timer; the timer event fires the transition if the object is still in that state (the same timer pattern `lower-flow.ts` uses for `sleep`) |
 | `run` | a generated `decide` RuleIR with trigger `transitioned` that emits the flow's `start` event |
 
@@ -262,10 +263,11 @@ declare function law<T extends ObjectType | Interface>(
     must?: (self: SelfOf<T>) => boolean  // modality "always"
     never?: (self: SelfOf<T>) => boolean // modality "never"
     eventually?: (self: SelfOf<T>) => boolean
-    within?: { days?: number; hours?: number } | { before: (self: SelfOf<T>) => Date }
+    within?: { days?: number; hours?: number } | { before: (self: SelfOf<T>) => Date }  // `before`: a bare read of a timestamp property only
     severity?: "error" | "warning" | Override   // default "error"
     unless?: ReadonlyArray<Exception<T>>        // GAP §8.1
     because: string                      // rationale, required
+    id?: string                          // codemod only: keep an existing law id (see below)
   },
 ): Law<T>
 type Exception<T> = { name: string; when: (self: SelfOf<T>) => boolean; because: string }
@@ -279,10 +281,12 @@ Lowering to `LawIR` (`builder/law.ts`, `crates/norn-ir/src/verification.rs`):
 | Surface | LawIR member | Inferred from |
 |---|---|---|
 | `name` | `id` = `<pack>.<type>.<name>`; artifact `<id>.law` | pack + subject |
+| `id` (optional, codemod only) | `id` = the given value verbatim; artifact `<id>.law`. The codemod (§11) sets it whenever a source id differs from the derived one (`constitution.fine_mass` vs derived `constitution.Melt.fine_mass`) so the artifact id and bytes stay identical; new laws omit it | existing artifact |
 | `on` | `subject`, `scope.root = { kind: "entity" }`, `scope.objectTypes` | the import, plus every type the lambdas read |
 | `when` | `condition` | lambda → ZEN |
-| `must` / `never` / `eventually` | `modality` + `response: { kind: "predicate" }` | lambda → ZEN |
-| `within` | `timing` (`within` / `before_deadline`) | |
+| `must` / `never` / `eventually` with a lambda | `modality` + `response: { kind: "predicate" }` | lambda → ZEN |
+| `must` / `never` / `eventually` with `invariant(Type, "id")`, `action(Ref)` or `transition(Type, "property", "id")` (PROPOSED helpers) | `response: { kind: "invariant" \| "action" \| "transition" }` naming the existing member, never a second expression copy (`LawResponse`, `crates/norn-ir/src/verification.rs`) | the codemod needs these for laws such as `registry/core/src/restatement.ts` (`invariant`); a source using a response form with no helper yet stays in today's syntax |
+| `within` | `timing` (`within` / `before_deadline`). `before` lowers only when the lambda is a bare read of a timestamp property (`self.due_at`): `LawTiming::BeforeDeadline` stores a property name, so a computed deadline such as `addDays(self.due_date, 3)` is a compile error until the IR gains an expression form | |
 | `severity` | `severity` | |
 | `because` | `rationale` | |
 | — | `lawVersion`, `owner` (= pack), `provenance`, `dependencies` | compiler |
@@ -293,9 +297,9 @@ Laws declared on an interface lower once per interface; every implementation inh
 
 | TypeScript | norn-expr |
 |---|---|
-| `a === b`, `a !== b`, `<` `<=` `>` `>=` | `==`, `!=`, ordering |
+| `a === b`, `a !== b`, `<` `<=` `>` `>=` | `==`, `!=`, ordering. Ordering on `date` / `timestamp` properties lowers each operand through `date(...)` / `timestamp(...)` (`due_date >= issue_date` becomes `date(self.due_date) >= date(self.issue_date)`), because `norn-zen/6` rejects ordering on raw temporal properties and mixed raw/parsed operands |
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
-| `+ - * / %` | checked arithmetic |
+| `+ - * /` | checked arithmetic (`%` is not admitted by `norn-zen/6`; it is a compile error, not part of the subset) |
 | `c ? a : b`, `a ?? b` | conditional, coalesce |
 | `self.link.prop` | path read (link reads become slice entries) |
 | `xs.some(f)`, `xs.every(f)`, `xs.filter(f)`, `xs.map(f)`, `xs.length` | `some`, `all`, `filter`, `map`, `len` / `count` |
@@ -688,7 +692,7 @@ export const Invoice = thing("Invoice", {
     initial: "draft",
     states: {
       draft:  { on: { issue: { to: "issued", by: Accountant }, discard: "void" } },
-      issued: { on: { settle: { to: "paid", when: i => sum(i.allocations.map(a => a.amount)) === i.amount } } },
+      issued: { on: { settle: { to: "paid", by: Accountant, when: i => sum(i.allocations.map(a => a.amount)) === i.amount } } },
       paid:   final({ immutable: true }),
       void:   final(),
     },
@@ -764,8 +768,8 @@ export default pack("accounting", {
 | State and event names in every machine | ✔ `NoInfer` (PROPOSED) | ✔ `lifecycle.validation.unknown_state` (CURRENT) | — | — | — |
 | `posted` / `paid` / `closed` immutable | — | ✔ lifecycle admission (CURRENT) | hand-written model of `core.law.posted_immutable` (`verification/core-physics-v1/models/core-value-ledger.qnt`) | ✔ the cell refuses writes in immutable states (CURRENT) | narrowing warning (CURRENT `plan.ts`) |
 | `balanced` | lambda types (PROPOSED) | expression typing and cost (CURRENT for ZEN) | hand-written Quint model + Lean proof of `core.law.value_conservation` (`CoreValueLedger.lean`); nothing generated for this pack | ✔ the kernel accounting-leg commit check, once `JournalLine` lowers to `accountingLeg` (IR CURRENT, builder field PROPOSED) | live violations counted (PROPOSED) |
-| `account_code_matches`, `posts_to_leaf`, `same_currency` | lambda types | typing, bounded link reads (CURRENT) | — | ✔ law evaluated at commit over the declared read set | PROPOSED |
-| `not_over_allocated`, `payment_covers_allocations` | lambda types | typing; `sum(map(...))` over a to-many link is within `norn-zen/6` and the 1,000-record slice cap | — | ✔ every write to Allocation re-evaluates the Invoice and Payment it links (read set from inverse links) | PROPOSED |
+| `account_code_matches`, `posts_to_leaf`, `same_currency` | lambda types | typing, bounded link reads (CURRENT) | — | **GAP §8.3**: today's commit check evaluates a law over the written object's own values only; link reads need the declared read set | PROPOSED |
+| `not_over_allocated`, `payment_covers_allocations` | lambda types | typing; `sum(map(...))` over a to-many link is within `norn-zen/6` and the 1,000-record slice cap | — | **GAP §8.3**: a write to Allocation does not re-evaluate the Invoice and Payment it links; the engine must derive affected objects from inverse links | PROPOSED |
 | `post` guard `period.status === "open"` | lambda types | guard typing (CURRENT) | — | ✔ guard evaluated at commit; refusal `period_not_open` | — |
 | Account `parent` acyclic | — | ✔ `acyclic` link admission (CURRENT) | — | ✔ (CURRENT) | — |
 | `due_after_issue` | lambda types | typing | — | ✔ | ✔ new law against live invoices (example 3) |
@@ -797,9 +801,19 @@ A third severity beside `error` (refuse) and `warning` (record). An override law
 2. Each open violation carries a deadline (`fixWithin`) and an owner role (`by`). It closes when a later write to that object makes the law hold; it never closes by being deleted.
 3. Past its deadline, an open violation becomes an obligation breach visible in Studio and `norn plan`, using the deadline monitor from #1126 slice 1b.
 4. Promoting an override law to `error` is a plan step: `norn plan` blocks it while open violations exist.
-5. Use cases: adopting a law over imported legacy data (the `invoice_has_sale` example), and a controlled emergency bypass. Overrides never apply to core constitutional laws (value conservation, posted immutability); the checker refuses `override` on a law whose owner is `core`.
+5. Adoption backfills. Activating an override law (`norn plan` apply) evaluates it over the existing objects of its subject type, in bounded pages, and records a `Violation` with its owner and deadline (adoption time + `fixWithin`) for each object that already fails, keyed by (law, object) so a re-run creates no duplicates. The law is not active until the backfill completes, so no object is left without either a passing state or an open violation. Objects that fail only after a later write get theirs from rule 1.
+6. Use cases: adopting a law over imported legacy data (the `invoice_has_sale` example), and a controlled emergency bypass. Overrides never apply to core constitutional laws (value conservation, posted immutability); the checker refuses `override` on a law whose owner is `core`.
 
 Wire: extend `LawSeverity` (`crates/norn-ir/src/verification.rs`) with `Override { fix_within, owner_role }`, plus a violation record kind in the cell. Both are engine changes and need their own Sol security review (state and authority).
+
+### 8.3 Cross-object law evaluation
+
+`governing_laws::evaluate` (`crates/norn-kernel/src/governing_laws.rs`) binds `self` to the values of the object being written and nothing else, and `supported` refuses laws with `timing` and the `eventually` modality. Two things the examples rely on therefore do not exist yet:
+
+1. **Link reads.** A law that reads `self.invoice.currency` or sums `self.allocations` needs the linked records in its evaluation context, bounded by the declared read set and the 1,000-record slice cap.
+2. **Inverse re-evaluation.** A write to an `Allocation` must re-evaluate the laws of the `Invoice` and `Payment` it links (derived from inverse links), because it can break their laws without writing them.
+
+Both are kernel changes in the commit check and need their own Sol security review (state and concurrency). Until they land, the rows marked GAP §8.3 are specified, not enforced.
 
 ## 9. CLI loop
 
