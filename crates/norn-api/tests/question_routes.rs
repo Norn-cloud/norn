@@ -83,13 +83,18 @@ impl Authorizer for Policy {
         let actor = request.access.principal.subject_id.as_str();
         let allowed = match request.capability {
             ReadCapability::Population => {
-                ["reader", "auditor", "partial", "mixed"].contains(&actor)
+                ["reader", "auditor", "partial", "mixed", "slice"].contains(&actor)
                     && !(actor == "partial" && request.access.resource.id == "SYN-MELT-15-1")
             }
-            // `mixed` sees every member's values but one.
+            // `mixed` sees every member's values but one. `slice` sees every
+            // row's values but holds no collection grant (whole-world Values,
+            // #1175); only `auditor` does.
             ReadCapability::Values => {
+                let id = request.access.resource.id.as_str();
+                let collection = id == request.access.resource.object_type;
                 actor == "auditor"
-                    || (actor == "mixed" && request.access.resource.id != "SYN-MELT-15-1")
+                    || (actor == "mixed" && !collection && id != "SYN-MELT-15-1")
+                    || (actor == "slice" && !collection)
             }
             ReadCapability::Sources => actor == "auditor",
         };
@@ -177,6 +182,17 @@ impl QuestionRuntime<NativeEngine> for Runtime {
     }
     fn handle_key(&self) -> &[u8] {
         &HANDLE_KEY
+    }
+    fn collection_access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+    ) -> Result<PdpRequest, Refusal> {
+        let mut access = self.access(scope, actor, object_type, capability, None)?;
+        object_type.clone_into(&mut access.resource.object_type);
+        Ok(access)
     }
 }
 fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
@@ -973,7 +989,7 @@ fn a_mixed_bucket_discloses_no_member_value_from_which_the_hidden_one_follows() 
 /// to that commit's values, so for a single write the reader lacks Values on it
 /// would confirm a guess offline. Such a reader sees the keyed receipt handle,
 /// and the raw hash appears nowhere in its document; `mixed` lacks Values on
-/// that one row only. A reader holding Values over the whole commit keeps it.
+/// that one row only. A reader with whole-world Values keeps it.
 #[test]
 fn a_historical_cutoff_on_a_restricted_single_write_withholds_its_receipt_hash() {
     let (host, runtime) = configured(Mode::SingleWriteCutoff);
@@ -1044,7 +1060,7 @@ fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain
     // The precondition of the oracle: the new head chains exactly one event,
     // carrying the restricted value, from a predecessor the reader saw.
     assert!(predecessor.seq > 0, "K1 chains its created events");
-    assert_eq!(head.seq, predecessor.seq + 1);
+    assert_eq!(Some(head.seq), predecessor.seq.checked_add(1));
     let entries = store.read().ledger(head.seq).expect("ledger");
     let [entry] = entries.as_slice() else {
         panic!("one K2 event")
@@ -1120,11 +1136,11 @@ struct Chain {
 
 /// #1175 (B3): `revision.hash` is the unkeyed ledger chain hash. A reader who
 /// saw the K1 head and then reads the K2 answer could hash candidate values
-/// of K2's one restricted `set` event and compare. A reader without Values
-/// over everything the head chains sees the keyed revision handle instead,
-/// in the answer and in the trace's embedded answer, stable per revision; no
-/// raw ledger hash appears in either document. A fully granted reader keeps
-/// the raw head.
+/// of K2's one restricted `set` event and compare. A reader without
+/// whole-world Values sees the keyed revision handle instead, in the answer
+/// and in the trace's embedded answer, stable per revision; no raw ledger hash
+/// appears in either document. That includes `slice`, who reads every row's
+/// values but holds no collection grant. A whole-world reader keeps the raw head.
 #[test]
 fn a_live_answer_and_its_trace_withhold_the_ledger_head_from_a_reader_without_values() {
     let (
@@ -1152,7 +1168,7 @@ fn a_live_answer_and_its_trace_withhold_the_ledger_head_from_a_reader_without_va
         )
         .expect("trace")
     };
-    for actor in ["reader", "mixed"] {
+    for actor in ["reader", "mixed", "slice"] {
         let answer = live(actor);
         assert_eq!(answer.revision.hash, handle, "{actor}");
         assert_eq!(answer.revision.seq, head.seq, "{actor}");
@@ -1174,10 +1190,10 @@ fn a_live_answer_and_its_trace_withhold_the_ledger_head_from_a_reader_without_va
 }
 
 /// #1175 (B3): a historical answer's revision is the cutoff ledger head, the
-/// same unkeyed chain. A reader without Values over everything it chains
-/// sees the keyed revision handle (and the keyed receipt handle for the
-/// cutoff commit); neither the cutoff head, its predecessor nor the live head
-/// appears raw. A fully granted reader keeps the raw cutoff head.
+/// same unkeyed chain. A reader without whole-world Values (`slice`
+/// included) sees the keyed revision handle and the keyed receipt handle for
+/// the cutoff commit; neither the cutoff head, its predecessor, the live head
+/// nor the cutoff receipt appears raw. A whole-world reader keeps both raw.
 #[test]
 fn a_historical_answer_withholds_its_cutoff_ledger_head_from_a_reader_without_values() {
     let (
@@ -1196,7 +1212,7 @@ fn a_historical_answer_withholds_its_cutoff_ledger_head_from_a_reader_without_va
         QuestionAnswer::Historical(answer) => answer,
         QuestionAnswer::Live(_) => panic!("historical"),
     };
-    for actor in ["reader", "mixed"] {
+    for actor in ["reader", "mixed", "slice"] {
         let answer = historical(actor);
         assert_eq!(
             answer.result.revision.hash,
@@ -1215,6 +1231,71 @@ fn a_historical_answer_withholds_its_cutoff_ledger_head_from_a_reader_without_va
         panic!("historical world")
     };
     assert_eq!(commit.0, receipt);
+}
+
+/// #1175: one commit writes every fixture row, across buckets, and its receipt
+/// hash commits to all of their values and to the ledger head. A reader
+/// without whole-world Values sees the keyed receipt handle on every
+/// contribution, even in a bucket whose members it may all read (`slice`
+/// everywhere, `mixed` outside SYN-MELT-15-1's week), with the members' own
+/// values still disclosed; the raw hash appears nowhere. A whole-world reader
+/// keeps the raw hash.
+#[test]
+fn a_shared_commit_withholds_its_receipt_hash_from_every_bucket_it_wrote() {
+    let (host, runtime) = configured(Mode::Live);
+    let answer = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    let other = answer("auditor")
+        .rows
+        .keys()
+        .find(|bucket| bucket.as_str() != WEEK)
+        .expect("another bucket")
+        .clone();
+    let trace = |actor, bucket: &str| {
+        let lineage = answer(actor).lineage_ref;
+        let query = TraceQuery {
+            bucket: Some(bucket.into()),
+            ..trace_query(&lineage)
+        };
+        get_numeric_trace(&host, &query, Some(actor), QUESTION, &runtime).expect("trace")
+    };
+    let audited = trace("auditor", &other);
+    let raw = audited.contributions[0]
+        .receipt_hash
+        .clone()
+        .expect("whole-world receipt");
+    assert!(
+        audited
+            .contributions
+            .iter()
+            .all(|member| member.receipt_hash.as_deref() == Some(raw.as_str())),
+        "one commit wrote every row"
+    );
+    for (actor, bucket) in [
+        ("slice", WEEK),
+        ("slice", other.as_str()),
+        ("mixed", other.as_str()),
+    ] {
+        let traced = trace(actor, bucket);
+        assert!(!traced.contributions.is_empty(), "{actor} {bucket}");
+        for member in &traced.contributions {
+            assert!(
+                !member.restricted && member.values.is_some(),
+                "{actor} {bucket}"
+            );
+            assert_eq!(
+                member.receipt_hash.as_deref(),
+                Some(keyed_receipt_handle(&HANDLE_KEY, &raw).as_str()),
+                "{actor} {bucket}"
+            );
+        }
+        let wire = serde_json::to_string(&traced).expect("wire");
+        assert!(!wire.contains(&raw), "{actor} {bucket}: {wire}");
+    }
 }
 
 /// D53 (2): to a reader lacking Values on any of its members, a bucket with

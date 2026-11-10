@@ -20662,7 +20662,7 @@
           },
           "hash": {
             "type": "string",
-            "description": "The last event hash for a reader with Values over everything it chains;\notherwise a keyed handle of it (D53), stable per revision: compare it only for equality."
+            "description": "The last event hash for a reader with whole-world Values (D53);\notherwise a keyed handle of it, stable per revision: compare it only for equality."
           },
           "seq": {
             "type": "integer",
@@ -20820,7 +20820,7 @@
               "string",
               "null"
             ],
-            "description": "Emitting receipt identity; no export capability. Null when any member of\nthe bucket is restricted, or its commit wrote a record the reader lacks Values on."
+            "description": "Emitting receipt identity; no export capability. Null when any member of\nthe bucket is restricted; a keyed handle (D53) for a reader without whole-world Values."
           },
           "recordedAtMs": {
             "type": "integer",

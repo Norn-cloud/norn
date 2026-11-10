@@ -71,6 +71,22 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     /// held by the host (Durable Object storage or a Worker secret), never
     /// derived from cell data. A shorter key refuses every answer and trace.
     fn handle_key(&self) -> &[u8];
+    /// #1175 (D53): map `capability` over the whole collection `object_type`
+    /// (resource ID and type are the type) without reading cell data. A
+    /// reader granted Values on every object type of the cell sees raw ledger
+    /// and receipt hashes; every other reader sees their keyed handles. The
+    /// default maps nothing, so every reader sees handles.
+    /// # Errors
+    /// Missing principal claims or an unavailable mapping deny the read.
+    fn collection_access(
+        &self,
+        _scope: &CellScope,
+        _actor: &str,
+        _capability: ReadCapability,
+        _object_type: &str,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        Err(read_denied())
+    }
 }
 
 /// The declared default minimum disclosed bucket size (D53).
@@ -172,68 +188,77 @@ fn answer_plan<E: SqlEngine>(
             .map(QuestionAnswer::Live),
     }
     .map_err(Refusal::from_compute)?;
+    let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     let result = match &mut answer {
         QuestionAnswer::Live(result) => result,
         QuestionAnswer::Historical(historical) => {
-            withhold_cutoff_receipt(cell.store(), historical, key, &permits)?;
+            withhold_cutoff_receipt(historical, key, world)?;
             &mut historical.result
         }
     };
-    withhold_ledger_head(cell.store(), result, key, &permits, &withheld)?;
+    withhold_ledger_head(result, key, world);
     withhold_values(result, &withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(answer)
 }
 
+/// #1175 (D53): whether `actor` holds Values over the whole world: a
+/// collection-level grant on every object type of the cell, decided by the
+/// host policy without reading cell data. Raw ledger and receipt hashes chain
+/// every event's values, so only such a reader sees them. An unmappable or
+/// mismatched mapping is no grant.
+fn world_values<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: &dyn QuestionRuntime<E>,
+    store: &CellStore<E>,
+    actor: &str,
+) -> bool {
+    let mut types = store.model().object_types().peekable();
+    types.peek().is_some()
+        && types.all(|object_type| {
+            let name = object_type.name.as_str();
+            runtime
+                .collection_access(host.scope(), actor, Values, name)
+                .is_ok_and(|access| {
+                    access.principal.subject_id == actor
+                        && access.resource.object_type == name
+                        && access.resource.id == name
+                        && host.read_permitted(&ReadRequest {
+                            capability: Values,
+                            access: &access,
+                        })
+                })
+        })
+}
+
 /// #1175 (DATA-VALUES-1, D53): `revision.hash` is the unkeyed ledger chain
 /// hash, and the chained events carry record values: a reader who saw the
 /// previous revision could confirm a guessed value of one new event offline.
-/// Unless the reader holds Values over everything that hash chains
-/// ([`CellStore::ledger_head_disclosable`]), the wire carries the keyed
-/// revision handle instead. A reader the answer already withholds a member
-/// from never qualifies; the genesis head chains nothing and stays. Internal
-/// pins keep the raw head.
-fn withhold_ledger_head<E: SqlEngine>(
-    store: &CellStore<E>,
-    result: &mut QueryResult,
-    key: &[u8],
-    permits: &dyn Fn(&ObjectRecord, ReadCapability) -> Result<bool, CellError>,
-    withheld: &BTreeSet<String>,
-) -> Result<(), Refusal> {
-    let disclosed = withheld.is_empty()
-        && store
-            .ledger_head_disclosable(&result.revision, &mut |row| permits(row, Values))
-            .map_err(Refusal::from_compute)?;
+/// A reader without whole-world Values sees the keyed revision handle; the
+/// genesis head chains nothing and stays. Internal pins keep the raw head.
+fn withhold_ledger_head(result: &mut QueryResult, key: &[u8], world: bool) {
     let genesis = result.revision.seq == 0 && result.revision.hash == GENESIS_HASH;
-    if !(disclosed || genesis) {
+    if !(world || genesis) {
         result.revision.hash = keyed_revision_handle(key, &result.revision.hash);
     }
-    Ok(())
 }
 
 /// #1175 (DATA-VALUES-1, D53): the historical world names its cutoff commit by
-/// receipt hash, which commits to that commit's values. A reader without Values
-/// over every record the commit wrote sees the keyed receipt handle instead, so
-/// the coordinate never confirms a guess offline. Genesis has no receipt.
-fn withhold_cutoff_receipt<E: SqlEngine>(
-    store: &CellStore<E>,
+/// receipt hash, which commits to that commit's values and to the ledger head.
+/// A reader without whole-world Values sees the keyed receipt handle instead,
+/// so the coordinate never confirms a guess offline.
+fn withhold_cutoff_receipt(
     historical: &mut HistoricalQuestionResult,
     key: &[u8],
-    permits: &dyn Fn(&ObjectRecord, ReadCapability) -> Result<bool, CellError>,
+    world: bool,
 ) -> Result<(), Refusal> {
     let norn_kernel::World::Historical { commit } = &mut historical.world else {
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.compute.unsupported_engine",
         )));
     };
-    let frontier = historical.result.known_as_of;
-    if frontier == 0 {
-        return Ok(());
-    }
-    let disclosed = store
-        .disclosable_receipt_hash(frontier, &mut |row| permits(row, Values))
-        .map_err(Refusal::from_compute)?;
-    if disclosed.as_deref() != Some(commit.0.as_str()) {
+    // Genesis has no receipt: its coordinate commits to nothing.
+    if !world && historical.result.known_as_of != 0 {
         commit.0 = keyed_receipt_handle(key, &commit.0);
     }
     Ok(())
@@ -341,7 +366,17 @@ fn trace_plan<E: SqlEngine>(
             },
         )
         .map_err(Refusal::from_compute)?;
-    withhold_ledger_head(cell.store(), &mut trace.result, key, &permits, &withheld)?;
+    let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
+    withhold_ledger_head(&mut trace.result, key, world);
+    if !world {
+        for receipt in trace
+            .contributions
+            .iter_mut()
+            .filter_map(|c| c.receipt_hash.as_mut())
+        {
+            *receipt = keyed_receipt_handle(key, receipt);
+        }
+    }
     withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
     lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)

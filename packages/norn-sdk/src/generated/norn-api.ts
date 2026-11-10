@@ -7903,8 +7903,8 @@ export interface components {
              */
             commits: number;
             /**
-             * @description The last event hash for a reader with Values over everything it chains;
-             *     otherwise a keyed handle of it (D53), stable per revision: compare it only for equality.
+             * @description The last event hash for a reader with whole-world Values (D53);
+             *     otherwise a keyed handle of it, stable per revision: compare it only for equality.
              */
             hash: string;
             /**
@@ -7965,7 +7965,7 @@ export interface components {
             factDigest: string | null;
             /**
              * @description Emitting receipt identity; no export capability. Null when any member of
-             *     the bucket is restricted, or its commit wrote a record the reader lacks Values on.
+             *     the bucket is restricted; a keyed handle (D53) for a reader without whole-world Values.
              */
             receiptHash: string | null;
             /**

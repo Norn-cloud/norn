@@ -96,8 +96,8 @@ pub enum NornQueryFreshness {
 pub struct NornLedgerHead {
     /// The last event sequence number (`0` when empty).
     pub seq: u64,
-    /// The last event hash for a reader with Values over everything it chains;
-    /// otherwise a keyed handle of it (D53), stable per revision: compare it only for equality.
+    /// The last event hash for a reader with whole-world Values (D53);
+    /// otherwise a keyed handle of it, stable per revision: compare it only for equality.
     pub hash: String,
     /// How many commits.
     pub commits: u64,
