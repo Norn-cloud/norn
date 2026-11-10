@@ -232,7 +232,9 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
                     frontier: single.body.commit_seq,
                 });
                 cutoff_receipt = Some(single.hash.clone());
-                // The historical clock is the cutoff's knowledge time.
+                // The as-of instant and the historical clock are the cutoff's
+                // knowledge time, one second after K1.
+                plan = asof_plan(&store, &plan, "2026-10-26T00:00:01Z");
                 context.now_ms = single.body.logical_time;
             }
         }
