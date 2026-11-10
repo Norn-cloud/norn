@@ -54,7 +54,7 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace }: { read
           <TableRow key={`${contribution.fact.key}@${contribution.fact.version}`}>
             <TableCell className="font-mono">{contribution.fact.key}{contribution.restricted && <Badge variant="outline" className="ms-2 font-sans" title="The server withheld this record's values from your role.">Values withheld</Badge>}</TableCell>
             <TableCell className="text-right tabular-nums">{amounts(read, index)}</TableCell>
-            <TableCell><CopyId value={contribution.receiptHash} short={10} /><div className="text-xs text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
+            <TableCell>{contribution.receiptHash === null ? <span className="text-muted-foreground" title="The server withheld this receipt hash with the bucket's values: it commits to them.">Receipt withheld</span> : <CopyId value={contribution.receiptHash} short={10} />}<div className="text-xs text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
           </TableRow>
         ))}
       </TableBody>
