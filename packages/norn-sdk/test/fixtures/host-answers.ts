@@ -2079,7 +2079,7 @@ export const incomplete = {
 export const historical = {
   "world": {
     "historical": {
-      "commit": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2"
+      "commit": "7fa0070300972bc4c90be57ffb2e0bb7436290afa72cc2299b2363a4ce546ee1"
     }
   },
   "knowledgeTimeMs": 1792972800000,
@@ -3132,7 +3132,7 @@ export const restricted_trace = {
         "version": 1
       },
       "amounts": null,
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "receiptHash": null,
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3149,7 +3149,7 @@ export const restricted_trace = {
         "version": 1
       },
       "amounts": null,
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "receiptHash": null,
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3166,7 +3166,7 @@ export const restricted_trace = {
         "version": 1
       },
       "amounts": null,
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "receiptHash": null,
       "factDigest": null,
       "source": {
         "status": "restricted"
@@ -3183,7 +3183,7 @@ export const restricted_trace = {
         "version": 1
       },
       "amounts": null,
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
+      "receiptHash": null,
       "factDigest": null,
       "source": {
         "status": "restricted"

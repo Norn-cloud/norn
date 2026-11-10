@@ -39,7 +39,9 @@ export class Cell {
     // error: no JWKS fetch, no provisioning reads and no 5 s hold on the object per
     // request while the issuer is unreachable or the stage is misconfigured.
     if (this.openFailure !== null) {
-      if (Date.now() - this.openFailure.at < OPEN_RETRY_MS) return Promise.reject(this.openFailure.error);
+      // A clock that moved backwards (negative elapsed) expires the entry too, so recovery is never delayed past the interval.
+      const elapsed = Date.now() - this.openFailure.at;
+      if (elapsed >= 0 && elapsed < OPEN_RETRY_MS) return Promise.reject(this.openFailure.error);
       this.openFailure = null;
     }
     // One opening per object; provisioning and dispatch are synchronous Wasm.
@@ -74,8 +76,8 @@ export class Cell {
   }
   async fetch(request) {
     // A submission (an ad-hoc question) is read once, bounded, before the cell sees it.
-    const body = request.method === "POST" ? await request.text() : undefined;
-    if (body !== undefined && body.length > MAX_BODY) {
+    const body = request.method === "POST" ? await readBounded(request, MAX_BODY) : undefined;
+    if (body === null) {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${MAX_BODY} bytes` }, { status: 413 });
     }
     await this.open(request);
@@ -87,6 +89,25 @@ export class Cell {
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
+}
+
+/** Read a request body as text, counting bytes as they arrive; null once it passes `limit` (the stream is cancelled, never buffered whole). */
+async function readBounded(request, limit) {
+  const reader = request.body?.getReader();
+  if (reader === undefined) return "";
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new Blob(chunks).text();
 }
 
 function cors(request, env) {

@@ -104,7 +104,7 @@ struct LinkCursor {
 impl LinkCursor {
     /// The opaque wire form: base64url of the cursor's JSON.
     fn encode(&self) -> String {
-        URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).unwrap_or_default())
+        URL_SAFE_NO_PAD.encode(serde_json::to_string(self).unwrap_or_default())
     }
 
     /// The cursor `text` encodes, if it is a version-1 links cursor.

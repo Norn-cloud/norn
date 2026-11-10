@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "_tag": { "type": "string", "enum": ["Expired", "Withdrawn"] }
+  },
+  "required": ["_tag"],
+  "additionalProperties": false
+}

@@ -1,0 +1,37 @@
+[package]
+name = "ascent"
+version.workspace = true
+edition = "2021"
+rust-version = "1.85" # the CI (../.github/workflows/rust.yml) toolchain version must match this
+authors = ["Arash Sahebolamri"]
+description = "Logic programming in Rust"
+keywords = ["logic-programming", "program-analysis", "Datalog", "procedural-macro"]
+categories = ["compilers"]
+homepage = "https://s-arash.github.io/ascent/"
+repository = "https://github.com/s-arash/ascent"
+license = "MIT"
+readme = "../README.MD"
+
+[dependencies]
+ascent_macro = { workspace = true }
+ascent_base = { workspace = true }
+cfg-if = "1.0"
+hashbrown = { workspace = true, features = ["raw"] }
+rustc-hash = "2.0"
+dashmap = { version = "5.5", features = ["raw-api", "rayon"], optional = true }
+rayon = { version = "1.5", optional = true }
+boxcar = "0.1.0"
+once_cell = { version = "1.13.1", optional = true }
+pastey = { workspace = true }
+web-time = "1.1.0"
+
+[dev-dependencies]
+
+[features]
+default = ["par"]
+wasm-bindgen = []
+par = ["dashmap", "hashbrown/rayon", "once_cell", "rayon"]
+# Compile each rule/SCC of the generated program as a separate
+# `inline(never)` function instead of one giant `run`. Allows
+# faster compilation.
+segment-codegen = []

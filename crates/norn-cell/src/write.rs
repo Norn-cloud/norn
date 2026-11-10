@@ -899,6 +899,9 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         catalog
             .effective_object_values(&ObjectTypeName(object_type.to_owned()), values)
             .map_err(|error| match error {
+                error @ EffectiveValuesError::Unsupported { .. } => {
+                    CellError::EffectiveValues(error)
+                }
                 EffectiveValuesError::Runtime(error) => CellError::Value(error),
                 EffectiveValuesError::ValueType { property, expected } => CellError::ValueType {
                     owner: object_type.to_owned(),
@@ -3152,6 +3155,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 && head.result.is_none()
         });
         if !is_head {
+            let parked = StoreReader::new(self.conn, self.model)
+                .pending_command(command_id)?
+                .is_some_and(|row| {
+                    crate::read::is_parked(&row.command) && row.command.generation == generation
+                });
+            if parked {
+                return Err(CellError::ParkedClaimUnsupported {
+                    command_id: command_id.to_owned(),
+                    generation,
+                });
+            }
             return Err(CellError::PerformClaimNotPending {
                 command_id: command_id.to_owned(),
                 generation,

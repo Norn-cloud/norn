@@ -25,14 +25,15 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
     let mut action = fixture_action();
     action.input_schema = serde_json::from_value(json!({
         "type": "object", "additionalProperties": false,
-        "properties": {"code": {"type": "string"}, "brand": {"type": "string"}},
-        "required": ["code", "brand"]
+        "properties": {"code": {"type": "string"}, "brand": {"type": "string"}, "amount": {"type": "number", "nornType": {"kind":"decimal", "scale":2}}},
+        "required": ["code", "brand", "amount"]
     }))
     .expect("schema decodes");
     action.derive = serde_json::from_value(json!([
         {"field": "code", "expression": "trim(input.code)"},
         {"field": "code", "expression": "upper(input.code)"},
-        {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false}
+        {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false},
+        {"field": "amount", "expression": "input.amount ?? 0", "inputRequired": false}
     ]))
     .expect("derivations decode");
     let hints = action_tool(&fixture_action())
@@ -50,11 +51,17 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
         json!([{"type": "string"}, {"type": "null"}])
     );
     assert_eq!(
+        tool["inputSchema"]["properties"]["amount"]["anyOf"],
+        json!([{"type":"string", "nornType":{"kind":"decimal","scale":2.0},
+            "description":"Exact decimal text as a JSON string, for example \"125\". Use a dot decimal separator; do not send a JSON number."},{"type":"null"}])
+    );
+    assert_eq!(
         tool["_meta"]["norn/inputDerivations"],
         json!([
             {"field": "code", "expression": "trim(input.code)", "inputRequired": true},
             {"field": "code", "expression": "upper(input.code)", "inputRequired": true},
-            {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false}
+            {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false},
+            {"field": "amount", "expression": "input.amount ?? 0", "inputRequired": false}
         ])
     );
     assert_eq!(
@@ -63,7 +70,16 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
             .get("required")
             .and_then(norn_ir::JsonValue::as_array)
             .map(<[norn_ir::JsonValue]>::len),
-        Some(2)
+        Some(3)
+    );
+    let mut schema = serde_json::to_value(&action.input_schema).expect("schema");
+    schema["properties"]["amount"]["description"] = json!("Author supplied decimal guidance");
+    action.input_schema = serde_json::from_value(schema).expect("typed schema");
+    let described =
+        serde_json::to_value(action_tool(&action).expect("described tool")).expect("tool");
+    assert_eq!(
+        described["inputSchema"]["properties"]["amount"]["anyOf"][0]["description"],
+        "Author supplied decimal guidance"
     );
 }
 
