@@ -17,7 +17,7 @@ export interface Field {
 
 /** A property's value kind as the admitted definition declares it, with named types resolved. */
 export type Scalar =
-  | { readonly kind: "text" | "integer" | "decimal" | "boolean" | "timestamp" | "date" | "duration" | "record" | "json-ext" }
+  | { readonly kind: "text" | "integer" | "decimal" | "boolean" | "timestamp" | "date" | "duration" | "record" | "json-ext" | "decimal-binding" }
   | { readonly kind: "enum"; readonly values: readonly string[] }
   | { readonly kind: "unresolved"; readonly name: string }
 

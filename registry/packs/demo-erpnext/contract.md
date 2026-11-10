@@ -23,3 +23,9 @@ law findings/quarantine; a purity-1.20 observation must remain representable her
 Ingress authentication, durable acceptance, canonical promotion and signed
 synthetic feed replay depend on D2 and the ingress lane. Historical corrections
 require new evidence and reconciliation; this cut supplies no restatement API.
+
+The directly attached `demo.erpnext.purity_in_range` law governs the measurement
+population. Purity `1.20` remains source evidence: observation evaluation emits
+a finding and quarantine; the same native proposal refuses. Mapping preserves
+the source value. Runtime enforcement is qualified by the Core 07 integration
+cuts, independently from this declaration's checker admission.

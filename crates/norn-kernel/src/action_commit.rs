@@ -294,16 +294,20 @@ pub trait ActionAuthorizer {
 
 /// One field produced by an ordered action input derivation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionDerivedValue {
     /// The derived field.
     pub field: String,
-    /// The exact runtime value written to the effective input.
+    /// The exact runtime value written to the effective input. Preserve source
+    /// text and use an exact-number JSON parser; JavaScript `JSON.parse` may
+    /// lose precision.
     pub value: RuntimeValue,
 }
 
 /// The successful outcome of one action precondition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionPreconditionOutcome {
     /// The expression evaluated.
@@ -319,6 +323,7 @@ pub struct ActionInputPreparation<'a> {
     raw_input: &'a JsonObject,
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
+    actor: Option<String>,
     effective_input: JsonObject,
     derived_values: Vec<ActionDerivedValue>,
     remaining_fuel: u64,
@@ -327,11 +332,17 @@ pub struct ActionInputPreparation<'a> {
 }
 
 impl ActionInputPreparation<'_> {
+    fn recorded_effective_input(&self) -> Option<JsonObject> {
+        (!self.action.derive.is_empty() || self.effective_input != *self.raw_input)
+            .then(|| self.effective_input.clone())
+    }
+
     fn matches_call(&self, call: &ActionCall<'_>) -> bool {
         self.action == call.action
             && self.raw_input == &call.input
             && self.action_artifact_id == Some(call.action_artifact_id)
             && self.action_version == Some(call.action_version)
+            && self.actor.as_deref() == Some(call.actor.as_str())
     }
 
     /// The caller input after all derivations, before the action reads facts.
@@ -370,6 +381,7 @@ struct ActionPreconditionOutcomeRef<'a> {
 /// The idempotency record of a committed call (the values of its
 /// [`ACTION_CALL_TYPE`] object).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionCallRecord {
     /// The action.
@@ -394,6 +406,8 @@ pub struct ActionCallRecord {
     /// The call's input.
     pub input: JsonObject,
     /// The final input after ordered derivations. Legacy records use `input`.
+    /// Preserve source text and use an exact-number JSON parser for its values;
+    /// JavaScript `JSON.parse` may lose precision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_input: Option<JsonObject>,
     /// The values produced by each derivation, in declaration order.
@@ -418,6 +432,13 @@ pub struct ActionCallRecord {
 }
 
 impl ActionCallRecord {
+    /// Generated JSON Schema of this record's wire contract.
+    /// The kernel's schema correspondence test regenerates and checks it.
+    #[must_use]
+    pub const fn schema_json() -> &'static str {
+        include_str!("../schema/action_call_record.schema.json")
+    }
+
     fn for_transition(
         call: &ActionCall<'_>,
         preparation: &ActionInputPreparation<'_>,
@@ -433,8 +454,7 @@ impl ActionCallRecord {
             rule_binding: None,
             object: target.clone(),
             input: call.input.clone(),
-            effective_input: (!action.derive.is_empty())
-                .then(|| preparation.effective_input.clone()),
+            effective_input: preparation.recorded_effective_input(),
             derived_values: preparation.derived_values.clone(),
             precondition_outcomes: Vec::new(),
             actor: call.actor.clone(),
@@ -940,6 +960,10 @@ where
     commit_action_inner(host, catalog, call, authorizer, None, &limits, Some(meter))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dispatch resolves closure, scope, input and effect program before any commit"
+)]
 fn commit_action_inner<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
@@ -958,7 +982,7 @@ where
     let action = call.action;
     // TXN-RULE-1: a declared closure never degrades to its primary effect.
     crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
-    if (action.quantity_effect.is_some() || !action.create_links.is_empty())
+    if !action.create_links.is_empty()
         && matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
@@ -981,6 +1005,7 @@ where
             &call.input,
             call.action_artifact_id,
             call.action_version,
+            &call.actor,
         )?,
     };
     match action.effect_program.as_ref() {
@@ -1454,7 +1479,7 @@ where
         rule_binding: None,
         object: target.clone(),
         input: call.input.clone(),
-        effective_input: (!action.derive.is_empty()).then(|| preparation.effective_input.clone()),
+        effective_input: preparation.recorded_effective_input(),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
         actor: call.actor.clone(),
@@ -2636,8 +2661,7 @@ where
         rule_binding: None,
         object: target.clone(),
         input: call.input.clone(),
-        effective_input: (!call.action.derive.is_empty())
-            .then(|| preparation.effective_input.clone()),
+        effective_input: preparation.recorded_effective_input(),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
         actor: call.actor.clone(),
@@ -3332,7 +3356,9 @@ where
             })
         })?;
     }
-    let proof = OwnedRowsCommitProof::new(&commit, limits.max_events);
+    let quantity =
+        super::action_quantity::prepare_quantity_action(call, &preparation.effective_input)?;
+    let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, quantity);
     match host.commit_owned_rows(commit, proof) {
         Ok(receipt) => {
             if let Some(meter) = meter {
@@ -3994,16 +4020,7 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some(request) = quantity {
-        let identity = norn_ir::canonical::canonical_json_of(&(
-            "action.quantity/1",
-            &call.action.action_id,
-            &call.idempotency_key,
-        ))
-        .map_err(|_encoding_error| ActionRefusal::InvalidInput {
-            field: "idempotencyKey".to_owned(),
-        })?;
-        let key = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&identity);
+    let result = if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {
@@ -4501,6 +4518,7 @@ fn precondition_read_refusal<X>(
         | CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -4541,6 +4559,7 @@ fn precondition_read_refusal<X>(
         | CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -4964,11 +4983,13 @@ pub fn prepare_action_input<'a, X>(
     action: &'a ActionRoot,
     raw_input: &'a JsonObject,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
-    prepare_action_input_inner(action, raw_input, None, None)
+    prepare_action_input_inner(action, raw_input, None, None, None)
 }
 
 /// Prepares one action call's input, binding the opaque result to the action
 /// artifact version and exact raw input that the kernel will commit.
+/// ACTION-ACTOR-1: `actor.subjectId` is this authenticated host principal;
+/// caller identity fields refuse and a preparation cannot move to another actor.
 ///
 /// # Errors
 ///
@@ -4979,13 +5000,45 @@ pub fn prepare_action_input_for_call<'a, X>(
     raw_input: &'a JsonObject,
     action_artifact_id: &'a str,
     action_version: &'a str,
+    actor: &str,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     prepare_action_input_inner(
         action,
         raw_input,
         Some(action_artifact_id),
         Some(action_version),
+        Some(actor),
     )
+}
+
+fn normalize_action_input<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+) -> Result<JsonObject, ActionRefusal<X>> {
+    let schema = norn_expr::schema::Schema::parse_action(
+        &norn_ir::JsonValue::Object(action.input_schema.clone()),
+        "$input",
+    )
+    .map_err(|violation| ActionRefusal::InvalidInput {
+        field: violation.path,
+    })?;
+    let mut supplied = raw_input.clone();
+    for step in action.derive.iter().filter(|step| !step.input_required) {
+        if supplied.get(&step.field) == Some(&RuntimeValue::Null) {
+            supplied.remove(&step.field);
+        }
+    }
+    let normalized = schema
+        .decode_action_input(RuntimeValue::Object(supplied), "$input")
+        .map_err(|violation| ActionRefusal::InvalidInput {
+            field: violation.path,
+        })?;
+    let RuntimeValue::Object(normalized) = normalized else {
+        return Err(ActionRefusal::InvalidInput {
+            field: "$input".to_owned(),
+        });
+    };
+    Ok(normalized)
 }
 
 fn prepare_action_input_inner<'a, X>(
@@ -4993,26 +5046,36 @@ fn prepare_action_input_inner<'a, X>(
     raw_input: &'a JsonObject,
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
+    actor: Option<&str>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     let profile = ResourceLimitProfile::norn_limits_v1();
-    if !has_action_preparation_features(action) {
-        validate_action_input(action, raw_input)?;
+    let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
+    // Rejects injected identity fields and, for prepared actions, refuses
+    // oversized raw input by its canonical size before any clone, decode or
+    // normalization work.
+    check_action_identity_input::<X>(action, raw_input, actor, max_input_bytes)?;
+    let has_preparation = has_action_preparation_features(action);
+    let normalized = normalize_action_input::<X>(action, raw_input)?;
+    if !has_preparation && normalized == *raw_input {
+        validate_action_input(action, &normalized)?;
         return Ok(ActionInputPreparation {
             action,
             raw_input,
             action_artifact_id,
             action_version,
-            effective_input: raw_input.clone(),
+            actor: actor.map(str::to_owned),
+            effective_input: normalized,
             derived_values: Vec::new(),
             remaining_fuel: profile.turn.fuel_units,
             receipt_evidence_bytes: 0,
             precondition_outcomes: Vec::new(),
         });
     }
-    let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
     let max_receipt_bytes =
         usize::try_from(profile.envelope.max_output_bytes).unwrap_or(usize::MAX);
-    check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
+    if !has_preparation {
+        check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
+    }
     let raw_bytes = canonical_object_bytes::<X>(raw_input)?;
     if raw_bytes > max_receipt_bytes {
         return Err(ActionRefusal::InputBoundExceeded {
@@ -5021,7 +5084,7 @@ fn prepare_action_input_inner<'a, X>(
             max_bytes: max_receipt_bytes,
         });
     }
-    let mut effective_input = raw_input.clone();
+    let mut effective_input = normalized;
     for derivation in &action.derive {
         if derivation.input_required && !raw_input.contains_key(&derivation.field) {
             return Err(ActionRefusal::InvalidInput {
@@ -5033,8 +5096,8 @@ fn prepare_action_input_inner<'a, X>(
         }
     }
     check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
-    let effective_bytes = if action.derive.is_empty() {
-        0 // The receipt retains only raw input when no derivation ran.
+    let effective_bytes = if action.derive.is_empty() && effective_input == *raw_input {
+        0 // Raw input already describes the exact execution value.
     } else {
         canonical_object_bytes::<X>(&effective_input)?
     };
@@ -5057,6 +5120,7 @@ fn prepare_action_input_inner<'a, X>(
             index,
             derivation,
             &effective_input,
+            actor,
             &mut remaining_fuel,
             receipt_evidence_bytes,
         )?;
@@ -5082,12 +5146,61 @@ fn prepare_action_input_inner<'a, X>(
         raw_input,
         action_artifact_id,
         action_version,
+        actor: actor.map(str::to_owned),
         effective_input,
         derived_values,
         remaining_fuel,
         receipt_evidence_bytes,
         precondition_outcomes: Vec::new(),
     })
+}
+
+/// ACTION-ACTOR-1: caller JSON cannot supply identity or approval claims.
+fn check_action_identity_input<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+    actor: Option<&str>,
+    max_bytes: usize,
+) -> Result<(), ActionRefusal<X>> {
+    // Validate the principal before any traversal of caller input.
+    if actor.is_some_and(|a| {
+        a.len() > max_bytes || a.trim().is_empty() || norn_ir::canonical::nfc(a) != a
+    }) {
+        return Err(ActionRefusal::InvalidInput {
+            field: "actor".into(),
+        });
+    }
+    if has_action_preparation_features(action)
+        || matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::MutateParentWithRows { .. })
+        )
+    {
+        check_canonical_object_bound::<X>("caller input", raw_input, max_bytes)?;
+    }
+    let mut objects = vec![raw_input];
+    let mut values = Vec::new();
+    while let Some(object) = objects.pop() {
+        for field in ["actor", "approved"] {
+            if object.contains_key(field) {
+                return Err(ActionRefusal::InvalidInput {
+                    field: field.into(),
+                });
+            }
+        }
+        values.extend(object.values());
+        while let Some(value) = values.pop() {
+            match value {
+                RuntimeValue::Object(object) => objects.push(object),
+                RuntimeValue::Array(items) => values.extend(items),
+                RuntimeValue::Null
+                | RuntimeValue::Bool(_)
+                | RuntimeValue::Number(_)
+                | RuntimeValue::String(_) => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 fn action_derivation_destination(
@@ -5112,22 +5225,45 @@ fn action_derivation_destination(
     declared
 }
 
+/// ACTION-ACTOR-1: bind actor data only from the authenticated call principal.
+fn action_derivation_context<X>(
+    effective_input: &JsonObject,
+    actor: Option<&str>,
+    derivation: &norn_ir::ActionInputDerivation,
+) -> Result<ExprValue, ActionRefusal<X>> {
+    let mut context = action_expression_context(effective_input, &JsonObject::new(), None)
+        .map_err(|reason| ActionRefusal::DerivationFailed {
+            field: derivation.field.clone(),
+            expression: derivation.expression.as_str().to_owned(),
+            reason,
+        })?;
+    if let Some(principal) = actor {
+        let ExprValue::Object(fields) = &mut context else {
+            return Err(ActionRefusal::InvalidInput {
+                field: "actor".into(),
+            });
+        };
+        fields.insert(
+            "actor".into(),
+            ExprValue::Object(BTreeMap::from([(
+                "subjectId".into(),
+                ExprValue::String(principal.into()),
+            )])),
+        );
+    }
+    Ok(context)
+}
+
 fn prepare_action_derivation<X>(
     action: &ActionRoot,
     completed: usize,
     derivation: &norn_ir::ActionInputDerivation,
     effective_input: &JsonObject,
+    actor: Option<&str>,
     remaining_fuel: &mut u64,
     receipt_evidence_bytes: usize,
 ) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
-    let context =
-        action_expression_context(effective_input, &JsonObject::new(), None).map_err(|reason| {
-            ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason,
-            }
-        })?;
+    let context = action_derivation_context(effective_input, actor, derivation)?;
     let expression = Expression::compile(derivation.expression.as_str()).map_err(|error| {
         ActionRefusal::DerivationFailed {
             field: derivation.field.clone(),
@@ -5135,13 +5271,14 @@ fn prepare_action_derivation<X>(
             reason: error.to_string(),
         }
     })?;
-    let env = norn_expr::schema::action_environment(action, None, completed).map_err(|reason| {
-        ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason,
-        }
-    })?;
+    let env =
+        norn_expr::schema::action_derivation_environment(action, completed).map_err(|reason| {
+            ActionRefusal::DerivationFailed {
+                field: derivation.field.clone(),
+                expression: derivation.expression.as_str().to_owned(),
+                reason,
+            }
+        })?;
     let expected = action_derivation_destination(action, derivation, &env);
     let attempt = expression.evaluate_admitted_metered(
         &context,
@@ -5290,6 +5427,12 @@ fn check_action_record_size<X>(
     // Existing actions without the new preparation phases retain their
     // admitted input/receipt behavior, including command-only actions.
     if !has_action_preparation_features(action)
+        && !record.effective_input.as_ref().is_some_and(|effective| {
+            record
+                .input
+                .iter()
+                .any(|(key, value)| effective.get(key).is_some_and(|current| current != value))
+        })
         && !matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
@@ -6304,6 +6447,77 @@ mod reference_lineage_tests {
     use super::*;
 
     #[test]
+    fn decimal_input_preparation_keeps_wire_text_and_exact_execution_value() {
+        let mut action: ActionRoot = serde_json::from_str(
+            r#"{
+          "actionId":"test.decimal", "scopeRequired":["orgId","environmentId"],
+          "idempotent":true, "ledgered":true,
+          "inputSchema":{"type":"object","properties":{"amount":{"type":"number","nornType":{"kind":"decimal","scale":2}}},
+            "required":["amount"],"additionalProperties":false},
+          "outputSchema":{"type":"object","properties":{},"additionalProperties":false}
+        }"#,
+        )
+        .expect("action");
+        action.derive.clear();
+        action.slice.clear();
+        action.preconditions.clear();
+        let raw = JsonObject::from([(
+            "amount".to_owned(),
+            RuntimeValue::String("9007199254740993.25".to_owned()),
+        )]);
+        let prepared = prepare_action_input::<()>(&action, &raw).expect("exact input");
+        assert_eq!(prepared.raw_input, &raw);
+        assert_eq!(
+            prepared.recorded_effective_input(),
+            Some(prepared.effective_input.clone())
+        );
+        assert!(prepared.receipt_evidence_bytes > 0);
+        assert_eq!(
+            prepared.effective_input.get("amount"),
+            Some(&RuntimeValue::Number(
+                Decimal::parse("9007199254740993.25").expect("decimal")
+            ))
+        );
+        let number = JsonObject::from([(
+            "amount".to_owned(),
+            RuntimeValue::Number(Decimal::from(1_u64)),
+        )]);
+        assert!(matches!(
+            prepare_action_input::<()>(&action, &number),
+            Err(ActionRefusal::InvalidInput { .. })
+        ));
+        action.derive = serde_json::from_str(
+            r#"[{"field":"amount","expression":"input.amount ?? 0","inputRequired":false}]"#,
+        )
+        .expect("default");
+        for raw in [
+            JsonObject::new(),
+            JsonObject::from([("amount".to_owned(), RuntimeValue::Null)]),
+        ] {
+            assert_eq!(
+                prepare_action_input::<()>(&action, &raw)
+                    .expect("defaulted decimal")
+                    .effective_input
+                    .get("amount"),
+                Some(&RuntimeValue::Number(Decimal::ZERO))
+            );
+        }
+    }
+
+    norn_testkit::proptest::proptest! {
+        #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn exact_action_decimal_wire_matches_the_integer_reference(coefficient in norn_testkit::proptest::prelude::any::<i64>(), fraction in 0_u8..100) {
+            let text = format!("{coefficient}.{fraction:02}");
+            let wire = serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#).unwrap();
+            let schema = norn_expr::schema::Schema::parse_action(&wire, "amount").unwrap();
+            let decoded = schema.decode_action_input(RuntimeValue::String(text.clone()), "amount").unwrap();
+            let expected = if fraction == 0 { coefficient.to_string() } else { text.trim_end_matches('0').to_owned() };
+            norn_testkit::proptest::prop_assert_eq!(decoded.as_decimal().unwrap().canonical(), expected);
+        }
+    }
+
+    #[test]
     fn reference_proof_rejects_changed_outputs_and_keeps_added_guards_full() {
         let reference = FactExpectation {
             key: FactKey::new("example.Customer", "customer"),
@@ -6356,5 +6570,45 @@ mod reference_lineage_tests {
                 .with_read_guards(&mut commit.clone(), &[mismatch])
                 .is_none()
         );
+    }
+
+    #[test]
+    #[allow(
+        clippy::expect_used,
+        reason = "generated receipt schema correspondence"
+    )]
+    fn action_call_record_schema_matches_generated_contract() {
+        let generated = serde_json::to_string_pretty(&schemars::schema_for!(ActionCallRecord))
+            .expect("receipt schema")
+            + "\n";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("schema/action_call_record.schema.json");
+        if std::env::var("NORN_KERNEL_UPDATE_SCHEMAS").as_deref() == Ok("1") {
+            std::fs::create_dir_all(path.parent().expect("schema directory"))
+                .expect("schema directory");
+            std::fs::write(&path, &generated).expect("write generated schema");
+        }
+        assert_eq!(
+            generated,
+            std::fs::read_to_string(path).expect("generated schema")
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::expect_used,
+        reason = "receipt schema precision guidance assertion"
+    )]
+    fn receipt_schema_keeps_exact_number_guidance_on_runtime_value_fields() {
+        let schema =
+            serde_json::to_value(schemars::schema_for!(ActionCallRecord)).expect("receipt schema");
+        for description in [
+            &schema["properties"]["effectiveInput"]["description"],
+            &schema["$defs"]["ActionDerivedValue"]["properties"]["value"]["description"],
+        ] {
+            let text = description.as_str().expect("field description");
+            assert!(text.contains("exact-number JSON parser"), "{text}");
+            assert!(text.contains("JSON.parse"), "{text}");
+        }
     }
 }

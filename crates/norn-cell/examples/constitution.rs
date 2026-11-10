@@ -148,7 +148,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                 ]),
                 actor: "driver:operator".into(),
                 input: serde_json::from_value(
-                    json!({"id":"melt", "input_fine_g":input,"output_fine_g":output}),
+                    json!({"id":"melt", "input_fine_g":input.to_string(),"output_fine_g":output.to_string()}),
                 )?,
                 idempotency_key: "convert".into(),
                 object_type: None,

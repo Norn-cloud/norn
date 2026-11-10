@@ -160,6 +160,9 @@ impl LawEngine for RestrictedEngine {
 }
 
 impl SqlEngine for RestrictedEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.native.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         validate_do_sql(sql, params)?;
         self.native.execute(sql, params)

@@ -7,19 +7,19 @@
 //! in a flattened `additional` map (see [`crate::members`]).
 //!
 //! `value` is a [`SettingValue`], a union tagged by the wire `valueType`: a
-//! `text` setting carries a string, `number` a finite number, `boolean` a
-//! boolean, and `json` any JSON value including `null`. The wire keeps the
-//! two members side by side (`valueType`, `value`), so bytes and hashes are
-//! unchanged; a disagreement is a decode error here and the validator's
-//! diagnostic in `norn-checker`. The `effectiveTo > effectiveFrom` ordering
-//! stays a checker rule.
+//! `number` settings use the shared exact decimal-string literal on the wire.
+//! This keeps economic values out of definition JSON's binary64 representation;
+//! execution decodes them to exact runtime numbers. Numeric JSON tokens refuse.
+//! PARAM-EXACT-1: numeric settings retain their literal through admission and
+//! decode to the common exact runtime profile without rounding. Other value
+//! kinds retain their existing wire representation.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::JsonValue;
 use crate::members::{IrVersion01, present_non_null};
 use crate::rule::JsonObject;
+use crate::{Decimal, DecimalLiteral, JsonValue, RuntimeValue, RuntimeValueError};
 
 /// Typed payload of a `setting` artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,8 +46,8 @@ pub struct SettingRoot {
 pub enum SettingValue {
     /// `valueType: "text"`: a string.
     Text(String),
-    /// `valueType: "number"`: a finite binary64 number.
-    Number(f64),
+    /// `valueType: "number"`: an exact decimal-string literal.
+    Number(DecimalLiteral),
     /// `valueType: "boolean"`: a boolean.
     Boolean(bool),
     /// `valueType: "json"`: any JSON value, including `null`.
@@ -56,17 +56,47 @@ pub enum SettingValue {
 
 impl SettingValue {
     /// Pair a wire `valueType` with its `value`, or `None` when the value's
-    /// JSON type disagrees with `valueType` (or a number is not finite).
+    /// JSON type disagrees with `valueType` or a decimal literal is inexact.
     #[must_use]
     pub fn from_wire(value_type: SettingValueType, value: JsonValue) -> Option<Self> {
         match (value_type, value) {
             (SettingValueType::Text, JsonValue::String(text)) => Some(Self::Text(text)),
-            (SettingValueType::Number, JsonValue::Number(number)) if number.is_finite() => {
-                Some(Self::Number(number))
+            (SettingValueType::Number, JsonValue::String(text)) => {
+                Self::decimal(&text).ok()?;
+                Some(Self::Number(DecimalLiteral(text)))
             }
             (SettingValueType::Boolean, JsonValue::Bool(flag)) => Some(Self::Boolean(flag)),
             (SettingValueType::Json, value) => Some(Self::Json(value)),
             _ => None,
+        }
+    }
+
+    /// Decode the common decimal literal without a binary floating-point step.
+    ///
+    /// # Errors
+    /// Refuses non-literal syntax and the shared exact decimal range/scale overflow.
+    pub fn decimal(text: &str) -> Result<Decimal, RuntimeValueError> {
+        if text
+            .bytes()
+            .any(|byte| !byte.is_ascii_digit() && byte != b'-' && byte != b'.')
+        {
+            return Err(RuntimeValueError::Inexact {
+                number: text.into(),
+            });
+        }
+        Decimal::parse(text)
+    }
+
+    /// The value supplied to the evaluator.
+    ///
+    /// # Errors
+    /// Refuses invalid constructed decimal literals or unrepresentable JSON numbers.
+    pub fn runtime_value(&self) -> Result<RuntimeValue, RuntimeValueError> {
+        match self {
+            Self::Number(literal) => Self::decimal(literal.as_str()).map(RuntimeValue::Number),
+            value @ (Self::Text(_) | Self::Boolean(_) | Self::Json(_)) => {
+                RuntimeValue::from_ir(&value.to_json_value())
+            }
         }
     }
 
@@ -86,7 +116,7 @@ impl SettingValue {
     pub fn to_json_value(&self) -> JsonValue {
         match self {
             Self::Text(text) => JsonValue::String(text.clone()),
-            Self::Number(number) => JsonValue::Number(*number),
+            Self::Number(number) => JsonValue::String(number.0.clone()),
             Self::Boolean(flag) => JsonValue::Bool(*flag),
             Self::Json(value) => value.clone(),
         }
@@ -191,7 +221,7 @@ impl JsonSchema for SettingRoot {
         let mut schema = SettingRootWire::json_schema(generator);
         let [text, number, boolean, json] = [
             generator.subschema_for::<String>(),
-            generator.subschema_for::<f64>(),
+            generator.subschema_for::<DecimalLiteral>(),
             generator.subschema_for::<bool>(),
             generator.subschema_for::<JsonValue>(),
         ];
@@ -218,7 +248,7 @@ impl JsonSchema for SettingRoot {
     }
 }
 
-/// The JSON type of a setting's `value`.
+/// The setting value kind; numbers use exact decimal-string literals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingValueType {

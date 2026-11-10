@@ -95,6 +95,36 @@ pub struct Refusal {
     pub message: String,
     /// Why, and what would make the request admissible.
     pub explanation: String,
+    /// Checker findings for an inadmissible submission (a question or a
+    /// definition), each pointing into the submitted document. Absent when
+    /// empty. Only ever produced after the caller is authorized for
+    /// everything the submission reads, so no finding describes an
+    /// ungranted resource.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<RefusalDiagnostic>,
+}
+
+/// One checker finding in a refusal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefusalDiagnostic {
+    /// Stable registered checker code: the rule that refused.
+    pub code: String,
+    /// `error`, `warning` or `info`; any error refuses.
+    pub severity: String,
+    /// Human-readable message; the code is the contract.
+    pub message: String,
+    /// Where in the submitted document, when the check can say.
+    #[schema(required = true, nullable = true)]
+    pub span: Option<RefusalSpan>,
+}
+
+/// A location in the submitted document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefusalSpan {
+    /// RFC 6901 JSON pointer into the submitted document.
+    pub pointer: String,
 }
 
 impl Refusal {
@@ -115,6 +145,7 @@ impl Refusal {
         {
             Self::UNPROVEN_DETAIL.clone_into(&mut self.explanation);
             self.reason = None;
+            self.diagnostics.clear();
         }
         self
     }
@@ -136,7 +167,31 @@ impl Refusal {
             category: RefusalCategory::of_status(status),
             message: message.into(),
             explanation: explanation.into(),
+            diagnostics: Vec::new(),
         }
+    }
+
+    /// The same refusal carrying checker findings, each pointer prefixed by
+    /// `under` (the submitted document's place in the request body).
+    #[must_use]
+    pub fn with_diagnostics(mut self, findings: &[norn_checker::Diagnostic], under: &str) -> Self {
+        self.diagnostics = findings
+            .iter()
+            .map(|finding| RefusalDiagnostic {
+                code: finding.code.as_str().to_owned(),
+                severity: match finding.severity {
+                    norn_ir::DiagnosticSeverity::Error => "error",
+                    norn_ir::DiagnosticSeverity::Warning => "warning",
+                    norn_ir::DiagnosticSeverity::Info => "info",
+                }
+                .to_owned(),
+                message: finding.message.clone(),
+                span: finding.span.as_ref().map(|span| RefusalSpan {
+                    pointer: format!("{under}{}", span.pointer),
+                }),
+            })
+            .collect();
+        self
     }
 
     /// The same refusal with the category its source declared (a kernel
@@ -206,6 +261,33 @@ impl Refusal {
             "the request is malformed",
             detail,
         )
+    }
+
+    /// Preserve stable compute refusals without exposing storage diagnostics.
+    #[must_use]
+    pub fn from_compute(error: norn_cell::CellError) -> Self {
+        let code = if let norn_cell::CellError::ComputeRefused(code) = error {
+            code
+        } else if matches!(error, norn_cell::CellError::TemporalLeakage) {
+            "core.compute.stale_input"
+        } else {
+            return Self::host(error);
+        };
+        if code == "core.compute.bound_exceeded" {
+            return Self::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                code,
+                "the question exceeds its admitted bounds",
+                "no partial answer is returned",
+            );
+        }
+        Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            code,
+            "the question cannot be evaluated at the requested frontier",
+            "the admitted computation or exact-result precondition is not satisfied",
+        )
+        .with_category(RefusalCategory::Precondition)
     }
 
     /// A host failure (the request changed nothing).

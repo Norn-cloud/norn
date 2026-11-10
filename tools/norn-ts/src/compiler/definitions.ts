@@ -78,7 +78,7 @@ const ACTIONS: ReadonlySet<string> = new Set([ACTION])
 const DECISIONS: ReadonlySet<string> = new Set([DECISION])
 /** Nesting bound for literal JSON data (access conditions, graphs). */
 const MAX_DATA_DEPTH = 64
-const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.rate", "@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date"])
+const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.boundDecimal", "@norn/authoring#Norn.rate", "@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date"])
 /** `DECIMAL_LITERAL_PATTERN` without the sign (the sign is a prefix `-`). */
 const DECIMAL_TEXT = /^(0|[1-9][0-9]*)(\.[0-9]+)?$/
 
@@ -1227,10 +1227,11 @@ class DefinitionCompiler {
   }
 
   private transition(input: ts.Expression): E.TransitionDecl {
-    const m = this.closedRecord(input, ["id", "description", "from", "to", "guards"], ["id", "from", "to"])
+    const m = this.closedRecord(input, ["id", "description", "from", "to", "guards", "guardRefusalCode"], ["id", "from", "to"])
     const description = m.get("description"), guards = m.get("guards")
     return {
       id: this.string(m.get("id")!),
+      ...(m.has("guardRefusalCode") ? { guardRefusalCode: this.string(m.get("guardRefusalCode")!) } : {}),
       ...(description ? { description: this.string(description) } : {}),
       from: this.strings(m.get("from")!),
       to: this.string(m.get("to")!),

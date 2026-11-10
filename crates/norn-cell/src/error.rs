@@ -23,6 +23,10 @@ pub enum CellError {
     /// ID-STABLE-1: canonical authored creation cannot reuse a retained identity.
     #[error("{code}: {message}", code = norn_checker::IDENTITY_REUSE, message = norn_checker::IDENTITY_REUSE_MESSAGE)]
     IdentityReuse,
+
+    /// An effective property uses semantics the kernel cannot evaluate.
+    #[error(transparent)]
+    EffectiveValues(#[from] norn_kernel::EffectiveValuesError),
     /// ID-UNIQUE-1: two live objects share a normalized key in one scope/world.
     #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
     IdentityCollision {
@@ -79,6 +83,9 @@ pub enum CellError {
     /// Deterministic query semantics or snapshot preconditions refused.
     #[error("{0}")]
     ComputeRefused(&'static str),
+    /// RUN-LEDGER-1: a run start or run write was refused (`run.*`).
+    #[error("{0}")]
+    RunRefused(&'static str),
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,
@@ -303,6 +310,18 @@ pub enum CellError {
         "perform claim for `{command_id}` generation {generation} is not the unperformed outbox head"
     )]
     PerformClaimNotPending {
+        /// The command id.
+        command_id: String,
+        /// The claimed generation.
+        generation: u64,
+    },
+    /// PARKED-1: a perform claim names a parked command, which is never
+    /// performed. No build before parked commands could record one, so a
+    /// retained journal that does is refused by name rather than replayed.
+    #[error(
+        "restore.parked_claim_unsupported: perform claim for parked command `{command_id}` generation {generation}"
+    )]
+    ParkedClaimUnsupported {
         /// The command id.
         command_id: String,
         /// The claimed generation.
