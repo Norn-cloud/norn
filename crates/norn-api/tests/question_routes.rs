@@ -22,10 +22,10 @@ use norn_api::{
     scope::{CellScope, ScopeQuery},
 };
 use norn_cell::{
-    CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, ObjectRecord,
+    CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, LedgerHead, ObjectRecord,
     compute::{
         Freshness, QueryContext,
-        lineage::{keyed_lineage_handle, keyed_receipt_handle},
+        lineage::{keyed_lineage_handle, keyed_receipt_handle, keyed_revision_handle},
     },
     engine::NativeEngine,
 };
@@ -999,6 +999,222 @@ fn a_historical_cutoff_on_a_restricted_single_write_withholds_its_receipt_hash()
         assert!(!document.contains(&raw), "{actor}: {document}");
     }
     assert_eq!(commit("auditor").0, raw);
+}
+
+/// #1175 (B3): a cell whose ledger chains actual values. K1 writes every
+/// fixture row with a `created` event each, K2 sets SYN-MELT-15-1's
+/// `recovered` with a `set` event. Returns the host, its runtime, the head
+/// after K1 (the predecessor a reader may already hold) and the head after
+/// K2, whose hash is the unkeyed chain over K2's restricted value. With
+/// `historical`, the answer is at the K2 cutoff and K3 then sets a value of
+/// another row, so the live head moves past it.
+fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain) {
+    let (mut store, base, mut context) = fixture();
+    context.scope = physical().key();
+    let writes = fixture_writes();
+    store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            events: created_events(&writes),
+            writes,
+            ..CommitBatch::default()
+        })
+        .expect("K1 with created events");
+    let predecessor = store.verified_head().expect("K1 head");
+    let corrected = put(
+        "SYN-MELT-15-1",
+        75_000,
+        72_000,
+        "2026-10-23T12:01:00Z",
+        "gold",
+    );
+    let k2 = store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK + 1000,
+            events: vec![set_event(&corrected, "recovered").expect("set event")],
+            writes: vec![corrected],
+            ..CommitBatch::default()
+        })
+        .expect("K2 with a set event");
+    let head = store.verified_head().expect("K2 head");
+    // The precondition of the oracle: the new head chains exactly one event,
+    // carrying the restricted value, from a predecessor the reader saw.
+    assert!(predecessor.seq > 0, "K1 chains its created events");
+    assert_eq!(head.seq, predecessor.seq + 1);
+    let entries = store.read().ledger(head.seq).expect("ledger");
+    let [entry] = entries.as_slice() else {
+        panic!("one K2 event")
+    };
+    assert_eq!(entry.prev_hash, predecessor.hash);
+    assert_eq!(entry.hash, head.hash);
+    assert_eq!(
+        entry
+            .event
+            .get("op")
+            .and_then(norn_ir::RuntimeValue::as_str),
+        Some("set")
+    );
+    let mut plan = base.clone();
+    let mut cutoff = None;
+    let mut cutoff_receipt = None;
+    if historical {
+        let receipt = k2.receipt();
+        cutoff = Some(KnowledgeCutoff {
+            recorded_at: LogicalTime::from_millis(receipt.body.logical_time),
+            frontier: receipt.body.commit_seq,
+        });
+        cutoff_receipt = Some(receipt.hash.clone());
+        plan = asof_plan(&store, &base, "2026-10-26T00:00:01Z");
+        context.now_ms = receipt.body.logical_time;
+        let later = put(
+            "SYN-MELT-15-2",
+            50_000,
+            49_000,
+            "2026-10-23T12:02:00Z",
+            "gold",
+        );
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: context.scope.clone(),
+                logical_time: CLOCK + 2000,
+                events: vec![set_event(&later, "recovered").expect("set event")],
+                writes: vec![later],
+                ..CommitBatch::default()
+            })
+            .expect("K3 after the cutoff");
+    }
+    let live = store.verified_head().expect("live head");
+    assert_eq!(live == head, !historical);
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    (
+        host,
+        Runtime {
+            bad_row: false,
+            plan,
+            context,
+            cutoff,
+            cutoff_receipt,
+            resolved: Arc::new(AtomicUsize::new(0)),
+            min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+        },
+        Chain {
+            predecessor,
+            head,
+            live,
+        },
+    )
+}
+/// The ledger heads of [`with_value_events`].
+struct Chain {
+    predecessor: LedgerHead,
+    head: LedgerHead,
+    live: LedgerHead,
+}
+
+/// #1175 (B3): `revision.hash` is the unkeyed ledger chain hash. A reader who
+/// saw the K1 head and then reads the K2 answer could hash candidate values
+/// of K2's one restricted `set` event and compare. A reader without Values
+/// over everything the head chains sees the keyed revision handle instead,
+/// in the answer and in the trace's embedded answer, stable per revision; no
+/// raw ledger hash appears in either document. A fully granted reader keeps
+/// the raw head.
+#[test]
+fn a_live_answer_and_its_trace_withhold_the_ledger_head_from_a_reader_without_values() {
+    let (
+        host,
+        runtime,
+        Chain {
+            predecessor, head, ..
+        },
+    ) = with_value_events(false);
+    let handle = keyed_revision_handle(&HANDLE_KEY, &head.hash);
+    assert_ne!(handle, head.hash);
+    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    let trace = |actor, lineage: &str| {
+        get_numeric_trace(
+            &host,
+            &trace_query(lineage),
+            Some(actor),
+            QUESTION,
+            &runtime,
+        )
+        .expect("trace")
+    };
+    for actor in ["reader", "mixed"] {
+        let answer = live(actor);
+        assert_eq!(answer.revision.hash, handle, "{actor}");
+        assert_eq!(answer.revision.seq, head.seq, "{actor}");
+        assert_eq!(answer.revision.commits, head.commits, "{actor}");
+        assert_eq!(live(actor).revision, answer.revision, "{actor}: stable pin");
+        let traced = trace(actor, &answer.lineage_ref);
+        assert_eq!(traced.result.revision, answer.revision, "{actor}");
+        for document in [
+            serde_json::to_string(&answer).expect("answer document"),
+            serde_json::to_string(&traced).expect("trace document"),
+        ] {
+            assert!(!document.contains(&head.hash), "{actor}: {document}");
+            assert!(!document.contains(&predecessor.hash), "{actor}: {document}");
+        }
+    }
+    let audited = live("auditor");
+    assert_eq!(audited.revision, head);
+    assert_eq!(trace("auditor", &audited.lineage_ref).result.revision, head);
+}
+
+/// #1175 (B3): a historical answer's revision is the cutoff ledger head, the
+/// same unkeyed chain. A reader without Values over everything it chains
+/// sees the keyed revision handle (and the keyed receipt handle for the
+/// cutoff commit); neither the cutoff head, its predecessor nor the live head
+/// appears raw. A fully granted reader keeps the raw cutoff head.
+#[test]
+fn a_historical_answer_withholds_its_cutoff_ledger_head_from_a_reader_without_values() {
+    let (
+        host,
+        runtime,
+        Chain {
+            predecessor,
+            head: cutoff,
+            live: live_head,
+        },
+    ) = with_value_events(true);
+    let receipt = runtime.cutoff_receipt.clone().expect("K2 receipt");
+    let historical = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Historical(answer) => answer,
+        QuestionAnswer::Live(_) => panic!("historical"),
+    };
+    for actor in ["reader", "mixed"] {
+        let answer = historical(actor);
+        assert_eq!(
+            answer.result.revision.hash,
+            keyed_revision_handle(&HANDLE_KEY, &cutoff.hash),
+            "{actor}"
+        );
+        assert_eq!(answer.result.revision.seq, cutoff.seq, "{actor}");
+        let document = serde_json::to_string(&answer).expect("document");
+        for raw in [&cutoff.hash, &predecessor.hash, &live_head.hash, &receipt] {
+            assert!(!document.contains(raw.as_str()), "{actor}: {document}");
+        }
+    }
+    let audited = historical("auditor");
+    assert_eq!(audited.result.revision, cutoff);
+    let norn_kernel::World::Historical { commit } = &audited.world else {
+        panic!("historical world")
+    };
+    assert_eq!(commit.0, receipt);
 }
 
 /// D53 (2): to a reader lacking Values on any of its members, a bucket with

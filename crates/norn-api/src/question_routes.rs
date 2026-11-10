@@ -14,10 +14,11 @@ use norn_cell::{
         HistoricalQuestionResult, QueryContext, QueryResult,
         lineage::{
             LineageDisclosure, NumericTrace, keyed_lineage_handle, keyed_receipt_handle,
-            lineage_handle_matches,
+            keyed_revision_handle, lineage_handle_matches,
         },
     },
     engine::SqlEngine,
+    system::GENESIS_HASH,
 };
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
@@ -178,9 +179,36 @@ fn answer_plan<E: SqlEngine>(
             &mut historical.result
         }
     };
+    withhold_ledger_head(cell.store(), result, key, &permits, &withheld)?;
     withhold_values(result, &withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(answer)
+}
+
+/// #1175 (DATA-VALUES-1, D53): `revision.hash` is the unkeyed ledger chain
+/// hash, and the chained events carry record values: a reader who saw the
+/// previous revision could confirm a guessed value of one new event offline.
+/// Unless the reader holds Values over everything that hash chains
+/// ([`CellStore::ledger_head_disclosable`]), the wire carries the keyed
+/// revision handle instead. A reader the answer already withholds a member
+/// from never qualifies; the genesis head chains nothing and stays. Internal
+/// pins keep the raw head.
+fn withhold_ledger_head<E: SqlEngine>(
+    store: &CellStore<E>,
+    result: &mut QueryResult,
+    key: &[u8],
+    permits: &dyn Fn(&ObjectRecord, ReadCapability) -> Result<bool, CellError>,
+    withheld: &BTreeSet<String>,
+) -> Result<(), Refusal> {
+    let disclosed = withheld.is_empty()
+        && store
+            .ledger_head_disclosable(&result.revision, &mut |row| permits(row, Values))
+            .map_err(Refusal::from_compute)?;
+    let genesis = result.revision.seq == 0 && result.revision.hash == GENESIS_HASH;
+    if !(disclosed || genesis) {
+        result.revision.hash = keyed_revision_handle(key, &result.revision.hash);
+    }
+    Ok(())
 }
 
 /// #1175 (DATA-VALUES-1, D53): the historical world names its cutoff commit by
@@ -313,6 +341,7 @@ fn trace_plan<E: SqlEngine>(
             },
         )
         .map_err(Refusal::from_compute)?;
+    withhold_ledger_head(cell.store(), &mut trace.result, key, &permits, &withheld)?;
     withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
     lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)

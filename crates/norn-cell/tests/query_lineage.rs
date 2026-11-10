@@ -192,6 +192,83 @@ fn a_shared_commit_withholds_its_receipt_hash_from_every_bucket_it_wrote() {
     );
 }
 
+/// #1175 (B3): a receipt hash commits to its ledger head, which chains every
+/// earlier event. A commit whose writes the reader fully covers still
+/// withholds its hash while an earlier commit chained a value the reader
+/// lacks (the predecessor head is the genesis constant, so that one value is
+/// all a guess needs); a reader with Values over the whole prefix keeps it.
+/// The same prefix decides whether the raw ledger head is disclosable.
+#[test]
+fn a_receipt_hash_is_withheld_while_an_earlier_commit_chains_a_restricted_value() {
+    let (mut store, plan, context) = fixture();
+    let hidden = put("hidden", 1_000, 990, "2026-10-14T00:00:00Z", "gold");
+    let visible = put("visible", 1_000, 980, "2026-10-23T00:00:00Z", "gold");
+    for (offset, write) in [(0, hidden), (1000, visible)] {
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK + offset,
+                events: created_events(std::slice::from_ref(&write)),
+                writes: vec![write],
+                ..CommitBatch::default()
+            })
+            .expect("one write with its created event");
+    }
+    let head = store.verified_head().expect("head");
+    assert_eq!(head.seq, 2, "both commits chain a value");
+    let result = store
+        .evaluate_question(&plan, context.clone(), |_| Ok(true))
+        .expect("result");
+    let trace = |hidden: &str| {
+        store
+            .trace_question(
+                &plan,
+                context.clone(),
+                &result.lineage_ref,
+                WEEK,
+                |_| Ok(true),
+                LineageDisclosure {
+                    values: &mut |row| Ok(row.id != hidden),
+                    source: &mut |_| Ok(true),
+                },
+            )
+            .expect("trace")
+    };
+    let receipt = store
+        .read()
+        .receipt_for_fact_version(WORLD, TYPE, "visible", 1)
+        .expect("receipt");
+    let withheld = trace("hidden");
+    let [member] = withheld.contributions.as_slice() else {
+        panic!("one contribution")
+    };
+    assert!(!member.restricted && member.values.is_some());
+    assert_eq!(member.receipt_hash, None);
+    let wire = serde_json::to_string(&withheld).expect("wire");
+    assert!(!wire.contains(&receipt.hash), "{wire}");
+    assert_eq!(
+        trace("").contributions[0].receipt_hash.as_deref(),
+        Some(receipt.hash.as_str())
+    );
+    assert_eq!(
+        store
+            .disclosable_receipt_hash(receipt.body.commit_seq, &mut |row| Ok(row.id != "hidden"))
+            .expect("cover"),
+        None
+    );
+    assert!(
+        !store
+            .ledger_head_disclosable(&head, &mut |row| Ok(row.id != "hidden"))
+            .expect("cover")
+    );
+    assert!(
+        store
+            .ledger_head_disclosable(&head, &mut |_| Ok(true))
+            .expect("cover")
+    );
+}
+
 #[test]
 fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealing() {
     let (mut store, plan, context) = fixture();

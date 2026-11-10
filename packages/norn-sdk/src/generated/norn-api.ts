@@ -7902,7 +7902,10 @@ export interface components {
              * @description How many commits.
              */
             commits: number;
-            /** @description The last event hash. */
+            /**
+             * @description The last event hash for a reader with Values over everything it chains;
+             *     otherwise a keyed handle of it (D53), stable per revision: compare it only for equality.
+             */
             hash: string;
             /**
              * Format: int64
