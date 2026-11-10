@@ -46,10 +46,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/questions:evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * F2b: admit an ad-hoc question against the cell's declared metrics and
+         *     answer it once, under the same row gates and D53 redaction as a named
+         *     question. Nothing is installed.
+         *     # Errors
+         *     Any ungranted metric or type, or an undeclared metric from a caller who
+         *     cannot read every declared metric (one opaque 403, before admission); an
+         *     inadmissible question, including an undeclared metric from a caller who
+         *     can (422 `question.refused` with diagnostics); a bound (413); or a
+         *     compute refusal.
+         */
+        post: operations["evaluate_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/questions:trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * F2b: trace one bucket of an ad-hoc question's current exact answer, by the
+         *     keyed handle that answer returned. Authorized and admitted as `:evaluate`.
+         *     # Errors
+         *     As [`evaluate_question`], and as [`get_numeric_trace`] for the trace.
+         */
+        post: operations["trace_ad_hoc"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description `POST /v1/questions:trace`: one bucket of an ad-hoc question's answer. */
+        AdHocTraceRequest: {
+            /** @description Canonical bucket key from that answer. */
+            bucket: string;
+            /** @description The `lineageRef` handle that answer returned. */
+            lineageRef: string;
+            /** @description The same `QuestionIR` the answer was evaluated from. */
+            question: Record<string, never>;
+        };
+        /** @description `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer. */
+        EvaluateRequest: {
+            /**
+             * @description The `QuestionIR` to admit against the cell's declared metrics. It is
+             *     evaluated once and never installed.
+             */
+            question: Record<string, never>;
+        };
         /**
          * LayoutSidecar
          * @description Versioned sidecar containing editor state for semantic artifacts.
@@ -8107,6 +8173,14 @@ export interface components {
             category: components["schemas"]["RefusalCategory"];
             /** @description Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …). */
             code: string;
+            /**
+             * @description Checker findings for an inadmissible submission (a question or a
+             *     definition), each pointing into the submitted document. Absent when
+             *     empty. Only ever produced after the caller is authorized for
+             *     everything the submission reads, so no finding describes an
+             *     ungranted resource.
+             */
+            diagnostics?: components["schemas"]["RefusalDiagnostic"][];
             /** @description Why, and what would make the request admissible. */
             explanation: string;
             /** @description Versioned projection; stored checker receipts keep their original bytes. */
@@ -8123,11 +8197,26 @@ export interface components {
          * @enum {string}
          */
         RefusalCategory: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
+        /** @description One checker finding in a refusal. */
+        RefusalDiagnostic: {
+            /** @description Stable registered checker code: the rule that refused. */
+            code: string;
+            /** @description Human-readable message; the code is the contract. */
+            message: string;
+            /** @description `error`, `warning` or `info`; any error refuses. */
+            severity: string;
+            span: components["schemas"]["RefusalSpan"] | null;
+        };
         /**
          * @description Version of the public refusal projection, independent of stored receipt formats.
          * @enum {string}
          */
         RefusalFormat: "norn/refusal@2";
+        /** @description A location in the submitted document. */
+        RefusalSpan: {
+            /** @description RFC 6901 JSON pointer into the submitted document. */
+            pointer: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -8267,6 +8356,154 @@ export interface operations {
             };
             /** @description The request was refused: not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: over a resource bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused by a typed compute refusal. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    evaluate_question: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluateRequest"];
+            };
+        };
+        responses: {
+            /** @description The exact answer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornQuestionAnswer"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: over a resource bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused by a typed compute refusal. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    trace_ad_hoc: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdHocTraceRequest"];
+            };
+        };
+        responses: {
+            /** @description The numeric trace. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornNumericTrace"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

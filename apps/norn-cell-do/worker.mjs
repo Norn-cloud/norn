@@ -15,6 +15,8 @@ const CELL_HEADER = "x-norn-cell";
 const JWKS_TIMEOUT_MS = 5000;
 // Same spacing as the Rust side's JWKS_RETRY_SECS: a failed cold open is not retried sooner.
 const OPEN_RETRY_MS = 60_000;
+/** The largest submission a cell accepts (an ad-hoc QuestionIR), in UTF-16 units. */
+const MAX_BODY = 65536;
 
 export class Cell {
   constructor(ctx, env) {
@@ -58,9 +60,9 @@ export class Cell {
     });
     return this.opening;
   }
-  serve(request) {
+  serve(request, body) {
     const url = new URL(request.url);
-    return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now());
+    return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
   }
   /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
   async refreshJwks() {
@@ -73,22 +75,46 @@ export class Cell {
     }
   }
   async fetch(request) {
+    // A submission (an ad-hoc question) is read once, bounded, before the cell sees it.
+    const body = request.method === "POST" ? await readBounded(request, MAX_BODY) : undefined;
+    if (body === null) {
+      return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${MAX_BODY} bytes` }, { status: 413 });
+    }
     await this.open(request);
     // Keys at their maximum age are refetched before serving, whether or not any
     // token names an unknown key id, so a removed key stops verifying.
     if (this.cell.jwksDue(Date.now())) await this.refreshJwks();
-    let reply = this.serve(request);
+    let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
-    if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request);
+    if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
+}
+
+/** Read a request body as text, counting bytes as they arrive; null once it passes `limit` (the stream is cancelled, never buffered whole). */
+async function readBounded(request, limit) {
+  const reader = request.body?.getReader();
+  if (reader === undefined) return "";
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new Blob(chunks).text();
 }
 
 function cors(request, env) {
   const origin = request.headers.get("origin");
   const allowed = (env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
   return origin !== null && allowed.includes(origin)
-    ? { "access-control-allow-origin": origin, "access-control-allow-headers": "authorization", "access-control-allow-methods": "GET", vary: "origin" }
+    ? { "access-control-allow-origin": origin, "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST", vary: "origin" }
     : {};
 }
 

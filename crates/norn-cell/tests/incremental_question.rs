@@ -13,6 +13,9 @@ use std::{cell::Cell, rc::Rc, time::Instant};
 
 struct CountedEngine(NativeEngine, Rc<Cell<(usize, usize)>>);
 impl SqlEngine for CountedEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.0.read_isolation()
+    }
     fn execute(&self, sql: &str, p: &[SqlValue]) -> Result<(), CellError> {
         self.0.execute(sql, p)
     }

@@ -245,10 +245,250 @@
           }
         }
       }
+    },
+    "/v1/questions:evaluate": {
+      "post": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "F2b: admit an ad-hoc question against the cell's declared metrics and\nanswer it once, under the same row gates and D53 redaction as a named\nquestion. Nothing is installed.\n# Errors\nAny ungranted metric or type, or an undeclared metric from a caller who\ncannot read every declared metric (one opaque 403, before admission); an\ninadmissible question, including an undeclared metric from a caller who\ncan (422 `question.refused` with diagnostics); a bound (413); or a\ncompute refusal.",
+        "operationId": "evaluate_question",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The exact answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornQuestionAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: over a resource bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/questions:trace": {
+      "post": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "F2b: trace one bucket of an ad-hoc question's current exact answer, by the\nkeyed handle that answer returned. Authorized and admitted as `:evaluate`.\n# Errors\nAs [`evaluate_question`], and as [`get_numeric_trace`] for the trace.",
+        "operationId": "trace_ad_hoc",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdHocTraceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The numeric trace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornNumericTrace"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: over a resource bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AdHocTraceRequest": {
+        "type": "object",
+        "description": "`POST /v1/questions:trace`: one bucket of an ad-hoc question's answer.",
+        "required": [
+          "question",
+          "lineageRef",
+          "bucket"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "description": "Canonical bucket key from that answer."
+          },
+          "lineageRef": {
+            "type": "string",
+            "description": "The `lineageRef` handle that answer returned."
+          },
+          "question": {
+            "type": "object",
+            "description": "The same `QuestionIR` the answer was evaluated from."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvaluateRequest": {
+        "type": "object",
+        "description": "`POST /v1/questions:evaluate`: one ad-hoc question to admit and answer.",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "object",
+            "description": "The `QuestionIR` to admit against the cell's declared metrics. It is\nevaluated once and never installed."
+          }
+        },
+        "additionalProperties": false
+      },
       "LayoutSidecar": {
         "type": "object",
         "title": "LayoutSidecar",
@@ -21133,6 +21373,13 @@
             "type": "string",
             "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
           },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefusalDiagnostic"
+            },
+            "description": "Checker findings for an inadmissible submission (a question or a\ndefinition), each pointing into the submitted document. Absent when\nempty. Only ever produced after the caller is authorized for\neverything the submission reads, so no finding describes an\nungranted resource."
+          },
           "explanation": {
             "type": "string",
             "description": "Why, and what would make the request admissible."
@@ -21174,12 +21421,60 @@
           "internal"
         ]
       },
+      "RefusalDiagnostic": {
+        "type": "object",
+        "description": "One checker finding in a refusal.",
+        "required": [
+          "code",
+          "severity",
+          "message",
+          "span"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable registered checker code: the rule that refused."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message; the code is the contract."
+          },
+          "severity": {
+            "type": "string",
+            "description": "`error`, `warning` or `info`; any error refuses."
+          },
+          "span": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefusalSpan",
+                "description": "Where in the submitted document, when the check can say."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "RefusalFormat": {
         "type": "string",
         "description": "Version of the public refusal projection, independent of stored receipt formats.",
         "enum": [
           "norn/refusal@2"
         ]
+      },
+      "RefusalSpan": {
+        "type": "object",
+        "description": "A location in the submitted document.",
+        "required": [
+          "pointer"
+        ],
+        "properties": {
+          "pointer": {
+            "type": "string",
+            "description": "RFC 6901 JSON pointer into the submitted document."
+          }
+        }
       }
     }
   }

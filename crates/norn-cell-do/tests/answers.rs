@@ -33,11 +33,10 @@ fn cell(engine: NativeEngine) -> Cell {
     })
     .unwrap()
     .with_authorizer(policy);
-    (
-        host,
-        DemoQuestions::new(opened.plan, scope).with_handle_key(&SECRET),
-        principals,
-    )
+    let runtime = DemoQuestions::new(opened.plan, scope)
+        .with_handle_key(&SECRET)
+        .with_metrics(opened.definitions, opened.catalog);
+    (host, runtime, principals)
 }
 
 fn call(
@@ -53,6 +52,7 @@ fn call(
         query,
         authorization,
         now: 0,
+        body: "",
     };
     server::handle_with(&cell.0, &cell.2, Some(&cell.1), &request)
 }
@@ -91,42 +91,41 @@ fn granted_principals_get_the_exact_live_answer() {
     assert_eq!(answer["freshness"], "exact");
     assert_eq!(answer["complete"], true);
     assert!(!answer["rows"].as_object().unwrap().is_empty());
-    // Population alone answers the question; the pin names the population.
+    // Population alone answers the question with the same aggregate and
+    // membership; member amounts are row values and are withheld (DATA-VALUES-1).
     let guest = get(&cell, &answer_path(), SCOPE, GUEST);
     assert_eq!(guest.status, 200, "{}", guest.body);
-    // The same aggregate and membership; the guest's member amounts are
-    // withheld (DATA-VALUES-1), every bucket meeting the minimum of three.
     let guest = json(&guest);
-    let (ours, theirs) = (
-        answer["rows"].as_object().unwrap(),
-        guest["rows"].as_object().unwrap(),
-    );
-    assert_eq!(
-        ours.keys().collect::<Vec<_>>(),
-        theirs.keys().collect::<Vec<_>>()
-    );
-    for (bucket, row) in ours {
-        let other = &theirs[bucket];
-        assert_eq!(row["totals"], other["totals"], "{bucket}");
-        assert_eq!(row["value"], other["value"], "{bucket}");
-        let members = |row: &Value| {
+    for (bucket, row) in answer["rows"].as_object().unwrap() {
+        let seen = &guest["rows"][bucket];
+        assert_eq!(
+            (&seen["totals"], &seen["value"]),
+            (&row["totals"], &row["value"]),
+            "{bucket}"
+        );
+        let members = seen["members"].as_object().unwrap();
+        assert_eq!(
+            members.keys().collect::<Vec<_>>(),
             row["members"]
                 .as_object()
                 .unwrap()
                 .keys()
-                .cloned()
                 .collect::<Vec<_>>()
-        };
-        assert_eq!(members(row), members(other), "{bucket}");
+        );
         assert!(
-            other["members"]
+            members
+                .values()
+                .all(|m| m["amounts"].is_null() && m["restricted"] == true),
+            "{bucket}"
+        );
+        assert!(
+            row["members"]
                 .as_object()
                 .unwrap()
                 .values()
-                .all(|m| m["amounts"].is_null()),
-            "{bucket}"
+                .all(|m| m["amounts"].is_array())
         );
-        assert!(other.get("suppressed").is_none(), "{bucket}");
+        assert!(seen.get("suppressed").is_none(), "{bucket}");
     }
 }
 
@@ -239,14 +238,11 @@ fn cell_keyed(secret: Option<&[u8]>) -> Cell {
         .unwrap()
         .plan;
     let runtime = DemoQuestions::new(plan, scope);
-    (
-        host,
-        match secret {
-            Some(secret) => runtime.with_handle_key(secret),
-            None => runtime,
-        },
-        principals,
-    )
+    let runtime = match secret {
+        Some(secret) => runtime.with_handle_key(secret),
+        None => runtime,
+    };
+    (host, runtime, principals)
 }
 
 /// D53: without a stage lineage key the cell publishes no answer, a secret

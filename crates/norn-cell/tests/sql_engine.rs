@@ -188,6 +188,9 @@ impl MeasuredEngine {
 }
 
 impl SqlEngine for MeasuredEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.native.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.note_values(params);
         self.native.execute(sql, params)
@@ -1241,6 +1244,9 @@ struct PlatformTables(NativeEngine);
 impl SqlEngine for PlatformTables {
     fn platform_table_globs(&self) -> &'static [&'static str] {
         &["_cf_*", "__cf_*"]
+    }
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.0.read_isolation()
     }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.0.execute(sql, params)

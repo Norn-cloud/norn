@@ -12,7 +12,7 @@
 //! (`NORN_LINEAGE_KEY`, at least 32 bytes) and refuses to open without it.
 
 use norn_api::host::DevHost;
-use norn_api::question_routes::QuestionRuntime;
+use norn_api::question_routes::AdHocQuestions;
 use norn_api::scope::CellScope;
 use norn_cell::workers::WorkersEngine;
 use wasm_bindgen::prelude::*;
@@ -102,11 +102,17 @@ impl NornCell {
         let (store, questions) = if scope == seed::demo_scope() {
             (seed::provision(engine, &scope).map_err(rejected)?, None)
         } else if scope == analytics::analytics_scope() {
-            let opened = analytics::provision(engine, &scope).map_err(rejected)?;
-            let questions = DemoQuestions::new(opened.plan, scope.clone())
+            let analytics::Analytics {
+                store,
+                plan,
+                definitions,
+                catalog,
+            } = analytics::provision(engine, &scope).map_err(rejected)?;
+            let questions = DemoQuestions::new(plan, scope.clone())
                 .try_with_handle_key(lineage_key.as_deref().map(str::as_bytes))
-                .map_err(rejected)?;
-            (opened.store, Some(questions))
+                .map_err(rejected)?
+                .with_metrics(definitions, catalog);
+            (store, Some(questions))
         } else {
             return Err(JsValue::from_str("no cell is published for this scope"));
         };
@@ -192,11 +198,12 @@ impl NornCell {
         query: &str,
         authorization: Option<String>,
         now_ms: f64,
+        body: Option<String>,
     ) -> Reply {
         let questions = self
             .questions
             .as_ref()
-            .map(|questions| -> &dyn QuestionRuntime<WorkersEngine> { questions });
+            .map(|questions| -> &dyn AdHocQuestions<WorkersEngine> { questions });
         let resolver = self.principals.resolver();
         let request = server::Request {
             method,
@@ -204,6 +211,7 @@ impl NornCell {
             query,
             authorization: authorization.as_deref(),
             now: seconds(now_ms),
+            body: body.as_deref().unwrap_or_default(),
         };
         let response = if path == "/v1/access" {
             server::access(
