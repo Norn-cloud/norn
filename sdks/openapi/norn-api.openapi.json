@@ -21108,7 +21108,7 @@
           },
           "exclusions": {
             "type": "object",
-            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.",
+            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.\nFor a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.",
             "additionalProperties": {
               "type": "string"
             },

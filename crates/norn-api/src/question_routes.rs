@@ -13,8 +13,8 @@ use norn_cell::{
     compute::{
         HistoricalQuestionResult, QueryContext, QueryResult,
         lineage::{
-            LineageDisclosure, NumericTrace, keyed_lineage_handle, keyed_receipt_handle,
-            keyed_revision_handle, lineage_handle_matches,
+            LineageDisclosure, NumericTrace, keyed_finding_handle, keyed_lineage_handle,
+            keyed_receipt_handle, keyed_revision_handle, lineage_handle_matches,
         },
     },
     engine::SqlEngine,
@@ -197,6 +197,7 @@ fn answer_plan<E: SqlEngine>(
         }
     };
     withhold_ledger_head(result, key, world);
+    withhold_exclusions(result, key, world);
     withhold_values(result, &withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(answer)
@@ -240,6 +241,19 @@ fn withhold_ledger_head(result: &mut QueryResult, key: &[u8], world: bool) {
     let genesis = result.revision.seq == 0 && result.revision.hash == GENESIS_HASH;
     if !(world || genesis) {
         result.revision.hash = keyed_revision_handle(key, &result.revision.hash);
+    }
+}
+
+/// #1175 (DATA-VALUES-1, D53): an exclusion maps a quarantined record to its
+/// finding ID, and the finding identity hashes that record's canonical values
+/// without a key: Population alone shows the exclusion, so a reader without
+/// Values could confirm a guessed value offline. A reader without whole-world
+/// Values sees the keyed finding handle; the record IDs stay (Population).
+fn withhold_exclusions(result: &mut QueryResult, key: &[u8], world: bool) {
+    if !world {
+        for finding in result.exclusions.values_mut() {
+            *finding = keyed_finding_handle(key, finding);
+        }
     }
 }
 
@@ -368,6 +382,7 @@ fn trace_plan<E: SqlEngine>(
         .map_err(Refusal::from_compute)?;
     let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     withhold_ledger_head(&mut trace.result, key, world);
+    withhold_exclusions(&mut trace.result, key, world);
     if !world {
         for receipt in trace
             .contributions

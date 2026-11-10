@@ -63,6 +63,7 @@ pub struct NornQueryResult {
     /// Watermarks for required dependencies: source → partition → watermark.
     pub watermarks: BTreeMap<String, BTreeMap<String, NornQueryWatermark>>,
     /// Quarantined identities excluded from the answer → their finding or evidence pin.
+    /// For a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.
     pub exclusions: BTreeMap<String, String>,
 }
 

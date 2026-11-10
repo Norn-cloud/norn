@@ -8071,7 +8071,10 @@ export interface components {
             effectiveAsOf: components["schemas"]["NornIrUtcTimestamp"];
             /** @description Physical evaluator. */
             engine: components["schemas"]["NornQueryEngine"];
-            /** @description Quarantined identities excluded from the answer → their finding or evidence pin. */
+            /**
+             * @description Quarantined identities excluded from the answer → their finding or evidence pin.
+             *     For a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.
+             */
             exclusions: {
                 [key: string]: string;
             };

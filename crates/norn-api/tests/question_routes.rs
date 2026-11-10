@@ -25,7 +25,9 @@ use norn_cell::{
     CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, LedgerHead, ObjectRecord,
     compute::{
         Freshness, QueryContext,
-        lineage::{keyed_lineage_handle, keyed_receipt_handle, keyed_revision_handle},
+        lineage::{
+            keyed_finding_handle, keyed_lineage_handle, keyed_receipt_handle, keyed_revision_handle,
+        },
     },
     engine::NativeEngine,
 };
@@ -1464,5 +1466,169 @@ fn a_short_handle_key_refuses() {
         .expect_err("short key")
         .status,
         500
+    );
+}
+
+/// #1175 (B4): a cell holding a real quarantined observation, the retained
+/// quarantine fixture's capture of SYN-MELT-15-1 with `recovered` 80 000 above
+/// its input (`fixtures/demo/answers/scrap-yield.quarantine.finding.json`).
+/// With `historical`, the answer is at that capture's cutoff and a corrected
+/// capture then clears the live quarantine. Returns the host, its runtime, the
+/// raw finding ID and the cell directory.
+fn with_quarantine(
+    historical: bool,
+) -> (DevHost<NativeEngine>, Runtime, String, tempfile::TempDir) {
+    let (base, mut plan, mut context) = fixture();
+    let mut object = base
+        .model()
+        .object_types()
+        .find(|o| o.name.as_str() == TYPE)
+        .expect("conversion")
+        .clone();
+    let mut encoded = serde_json::to_value(&object).expect("object");
+    encoded["invariants"] = serde_json::json!([{"id":"recovery_bound","expression":"self.recovered <= self.input","message":"Recovered mass exceeds source input"}]);
+    object = serde_json::from_value(encoded).expect("invariant");
+    let model =
+        norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).expect("model");
+    let artifact = serde_json::json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
+    let key = physical().key();
+    let directory = tempfile::tempdir().expect("cell directory");
+    let path = directory.path().join("cell.sqlite");
+    let mut store =
+        CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).expect("store");
+    store
+        .install_definitions(
+            model.clone(),
+            norn_cell::InstalledDefinitionInput {
+                canonical_set: serde_json::to_string(&vec![artifact]).expect("set"),
+                registry: vec![],
+                receipt_sha256: "synthetic-quality-v1".into(),
+                admission_receipt: None,
+                readmission: None,
+                diff: serde_json::json!({}),
+                installed_at: CLOCK,
+                layout: None,
+            },
+            Some(0),
+            &key,
+        )
+        .expect("install");
+    key.clone_into(&mut context.scope);
+    context.world = norn_cell::MAIN_WORLD.into();
+    store
+        .commit(&CommitBatch {
+            world: context.world.clone(),
+            scope: key.clone(),
+            logical_time: CLOCK,
+            writes: fixture_writes(),
+            ..CommitBatch::default()
+        })
+        .expect("load");
+    let mut cell = norn_cell::SqliteCell::new(store, &key, |_| BTreeMap::new()).expect("cell");
+    capture_quality(&mut cell, 80_000, "bad-source");
+    let finding = cell
+        .store()
+        .read()
+        .observation_findings(&context.world, TYPE, "SYN-MELT-15-1")
+        .expect("findings")
+        .remove(0)
+        .id;
+    let mut cutoff = None;
+    if historical {
+        let receipt = cell
+            .store()
+            .read()
+            .receipts()
+            .expect("receipts")
+            .pop()
+            .expect("capture receipt");
+        cutoff = Some(KnowledgeCutoff {
+            recorded_at: LogicalTime::from_millis(receipt.body.logical_time),
+            frontier: receipt.body.commit_seq,
+        });
+        plan = asof_plan(cell.store(), &plan, "2026-10-26T00:00:00Z");
+        context.now_ms = receipt.body.logical_time;
+        capture_quality(&mut cell, 73_500, "corrected-source");
+    }
+    drop(cell);
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).expect("reopen");
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    (
+        host,
+        Runtime {
+            bad_row: false,
+            plan,
+            context,
+            cutoff,
+            cutoff_receipt: None,
+            resolved: Arc::new(AtomicUsize::new(0)),
+            min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+        },
+        finding,
+        directory,
+    )
+}
+
+/// #1175 (B4): `result.exclusions` maps a quarantined record to its finding
+/// ID, and the finding identity hashes that record's canonical values without
+/// a key, so the raw ID confirms a guessed hidden value offline. A reader
+/// without whole-world Values (`reader` with Population only, `mixed`, and
+/// `slice` without a collection grant) sees the keyed finding handle; the raw
+/// ID appears nowhere in its document. A whole-world reader keeps the raw ID.
+#[test]
+fn a_live_answer_withholds_its_quarantine_finding_ids_from_a_reader_without_values() {
+    let (host, runtime, finding, _directory) = with_quarantine(false);
+    let handle = keyed_finding_handle(&HANDLE_KEY, &finding);
+    assert_ne!(handle, finding);
+    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    for actor in ["reader", "mixed", "slice"] {
+        let answer = live(actor);
+        assert_eq!(
+            answer.exclusions,
+            BTreeMap::from([("SYN-MELT-15-1".to_owned(), handle.clone())]),
+            "{actor}"
+        );
+        let document = serde_json::to_string(&answer).expect("document");
+        assert!(!document.contains(&finding), "{actor}: {document}");
+    }
+    assert_eq!(
+        live("auditor").exclusions,
+        BTreeMap::from([("SYN-MELT-15-1".to_owned(), finding)])
+    );
+}
+
+/// #1175 (B4): a historical answer at the quarantining capture keeps the
+/// exclusion after a later correction cleared it live; its finding ID follows
+/// the same projection as the live answer's.
+#[test]
+fn a_historical_answer_withholds_its_quarantine_finding_ids_from_a_reader_without_values() {
+    let (host, runtime, finding, _directory) = with_quarantine(true);
+    let handle = keyed_finding_handle(&HANDLE_KEY, &finding);
+    let historical = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Historical(answer) => answer,
+        QuestionAnswer::Live(_) => panic!("historical"),
+    };
+    for actor in ["reader", "mixed", "slice"] {
+        let answer = historical(actor);
+        assert_eq!(
+            answer.result.exclusions,
+            BTreeMap::from([("SYN-MELT-15-1".to_owned(), handle.clone())]),
+            "{actor}"
+        );
+        let document = serde_json::to_string(&answer).expect("document");
+        assert!(!document.contains(&finding), "{actor}: {document}");
+    }
+    assert_eq!(
+        historical("auditor").result.exclusions,
+        BTreeMap::from([("SYN-MELT-15-1".to_owned(), finding)])
     );
 }

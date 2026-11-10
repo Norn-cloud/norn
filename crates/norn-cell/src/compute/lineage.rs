@@ -228,6 +228,17 @@ pub fn keyed_revision_handle(key: &[u8], ledger_hash: &str) -> String {
     keyed_lineage_handle(key, &format!("norn.revision/1:{ledger_hash}"))
 }
 
+/// #1175 (D53, item 3) for quarantine exclusions: the public handle a reader
+/// without whole-world Values sees in place of a quarantine finding ID. The
+/// finding identity hashes the quarantined record's canonical values, unkeyed,
+/// so the raw ID confirms a guessed value offline; this HMAC under the cell's
+/// handle key is domain-separated from result pins, receipts and revisions and
+/// stable per finding. Internal durable finding identities are unchanged.
+#[must_use]
+pub fn keyed_finding_handle(key: &[u8], finding_id: &str) -> String {
+    keyed_lineage_handle(key, &format!("norn.finding/1:{finding_id}"))
+}
+
 /// DATA-VALUES-1 (D53): one restricted member withholds every value-bearing
 /// field of every member in the bucket: amounts, canonical values, the
 /// snapshot digest and the receipt hash (each a guessing oracle for the
