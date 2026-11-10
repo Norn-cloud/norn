@@ -2643,60 +2643,6 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
     }
 }
 
-// A catalog whose effective view is refused never materializes values or
-// resolves types from an empty view.
-
-fn budget_types(count: usize) -> Vec<ObjectTypeDef> {
-    (0..count)
-        .map(|index| {
-            serde_json::from_value(serde_json::json!({ "name": format!("budget.T{index:04}") }))
-                .unwrap()
-        })
-        .collect()
-}
-
-#[test]
-fn a_refused_catalog_errors_instead_of_passing_values_through() {
-    let objects = budget_types(4_097);
-    let catalog = TypeCatalog::new(&objects);
-    let refusal = catalog.effective_refusal().unwrap();
-    assert_eq!(
-        (refusal.dimension, refusal.limit),
-        ("registered types", 4_096)
-    );
-    let error = catalog
-        .effective_object_values(
-            &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
-            &JsonObject::new(),
-        )
-        .unwrap_err();
-    assert!(matches!(error, EffectiveValuesError::ViewRefused(_)));
-    assert!(
-        catalog
-            .effective_link_values(
-                &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
-                "any",
-                &JsonObject::new()
-            )
-            .is_err()
-    );
-}
-
-#[test]
-fn a_catalog_within_budget_has_an_effective_view() {
-    let objects = budget_types(4_096);
-    let catalog = TypeCatalog::new(&objects);
-    assert!(catalog.effective_refusal().is_none());
-    assert!(
-        catalog
-            .effective_object_values(
-                &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
-                &JsonObject::new()
-            )
-            .is_ok()
-    );
-}
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
     #[test]
@@ -2874,4 +2820,58 @@ proptest! {
             prop_assert_eq!(result.is_err(), immutable);
         }
     }
+}
+
+// A catalog whose effective view is refused never materializes values or
+// resolves types from an empty view.
+
+fn budget_types(count: usize) -> Vec<ObjectTypeDef> {
+    (0..count)
+        .map(|index| {
+            serde_json::from_value(serde_json::json!({ "name": format!("budget.T{index:04}") }))
+                .unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn a_refused_catalog_errors_instead_of_passing_values_through() {
+    let objects = budget_types(4_097);
+    let catalog = TypeCatalog::new(&objects);
+    let refusal = catalog.effective_refusal().unwrap();
+    assert_eq!(
+        (refusal.dimension, refusal.limit),
+        ("registered types", 4_096)
+    );
+    let error = catalog
+        .effective_object_values(
+            &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
+            &JsonObject::new(),
+        )
+        .unwrap_err();
+    assert!(matches!(error, EffectiveValuesError::ViewRefused(_)));
+    assert!(
+        catalog
+            .effective_link_values(
+                &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
+                "any",
+                &JsonObject::new()
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn a_catalog_within_budget_has_an_effective_view() {
+    let objects = budget_types(4_096);
+    let catalog = TypeCatalog::new(&objects);
+    assert!(catalog.effective_refusal().is_none());
+    assert!(
+        catalog
+            .effective_object_values(
+                &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
+                &JsonObject::new()
+            )
+            .is_ok()
+    );
 }
