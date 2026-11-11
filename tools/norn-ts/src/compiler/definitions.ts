@@ -145,7 +145,7 @@ function labelsArtifact(def: Definition, artifact: Json, options: EnvelopeOption
     : def._tag === "Law" ? { kind: "law", lawId: def.law.id }
     : undefined
   if (target === undefined) return undefined
-  return LB.lowerLabels(artifact as unknown as LB.LabelOwner, LB.labelEntries(target, def), options)
+  return LB.lowerLabels(artifact as unknown as LB.LabelOwner, LB.labelEntries(target, def as LB.Localized & LB.MemberLabels), options)
 }
 
 /**

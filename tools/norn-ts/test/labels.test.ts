@@ -52,6 +52,6 @@ test.skipIf(!checker)("Rust admits the labelled set and refuses a label on an un
   expect(checker!.checkArtifactSet(artifacts).diagnostics.diagnostics).toEqual([])
   expect(checker!.checkArtifactSet(artifacts).admitted).toBe(true)
   const unknown = compile(readFileSync(file, "utf8").replace("posted: { en: \"Posted\"", "void: { en: \"Void\""))
-  const codes = (checker!.checkArtifactSet(unknown).diagnostics.diagnostics as { code: string }[]).map(d => d.code)
+  const codes = (checker!.checkArtifactSet(unknown).diagnostics.diagnostics as unknown as readonly { code: string }[]).map(d => d.code)
   expect(codes).toContain("labels.admission.unknown_target")
 }, 30_000)
