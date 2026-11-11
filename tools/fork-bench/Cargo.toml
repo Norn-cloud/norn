@@ -1,0 +1,20 @@
+[package]
+name = "fork-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Experiment (#3148 / D81): content-addressed copy-on-write page VFS under SQLite vs file-copy and reflink forks. Not production code."
+
+# Isolated from the main workspace, like tools/tsrs-wasm-query.
+[workspace]
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+blake3 = "1"
+im = "15"
+parking_lot = "0.12"
+libc = "0.2"
+rand = { version = "0.8", features = ["small_rng"] }
+
+[profile.release]
+debug = 1
