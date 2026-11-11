@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,954 records across 142 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,955 records across 142 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -113,7 +113,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `proof.gate.exact_arith.s` | 2,946 | s (single) | boat | 10 | 647 / 4,663 | ▁▂▂▃▃█▃▁▅▅ | `07f5325866` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_binding.s` | 344 | s (single) | boat | 2 | 236 / 344 | ▁█ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_commit.s` | 194 | s (single) | boat | 2 | 194 / 301 | █▁ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
-| `proof.gate.kernel_decider.s` | 253 | s (single) | boat | 2 | 214 / 253 | ▁█ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
+| `proof.gate.kernel_decider.s` | 365 | s (single) | boat | 3 | 214 / 365 | ▁▃█ | `07f5325866` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_ka.s` | 170 | s (single) | boat | 1 | 170 / 170 | ▁ | `c920cf7c87` | [link](https://github.com/Norn-cloud/norn/pull/1228) |
 | `proof.gate.kernel_l1.s` | 9 | s (single) | boat | 2 | 9 / 9 | ▁▁ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.law-exceptions-correspondence.s` | 1,039 | s (single) | boat | 2 | 153 / 1,039 | ▁█ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
@@ -275,7 +275,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.gate.exact_arith.s`: affected mode, 24 mutants (mutant phase 2787 s); contended: 2-3 steps ran at once on one 4 vCPU VM for most of the run
 - `proof.gate.kernel_binding.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
 - `proof.gate.kernel_commit.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
-- `proof.gate.kernel_decider.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
+- `proof.gate.kernel_decider.s`: contended: 2-3 steps ran at once on one 4 vCPU VM; gate now also elaborates FoldProof and StepProof per mutant as a requirement
 - `proof.gate.kernel_ka.s`: K-A gate on the tree of this head. measured_at is the head's commit time; the run time was not stated. No durations were stated for the K-B and K-C gates. Cold or warm tool caches not stated. One run.
 - `proof.gate.kernel_l1.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
 - `proof.gate.law-exceptions-correspondence.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
