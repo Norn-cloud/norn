@@ -1,0 +1,1716 @@
+{
+  "format": "norn.messages/1",
+  "locale": "en",
+  "messages": {
+    "action.validation.command_environment_underivable": {
+      "message": "outbound command expressions require an object input schema with a derivable expression environment"
+    },
+    "action.validation.invalid_effect_program": {
+      "message": "payload.effectProgram is invalid: {$detail}"
+    },
+    "action.validation.invalid_payload": {
+      "message": "ActionIR payload is invalid at {$path}: {$detail}"
+    },
+    "action.validation.invalid_schema": {
+      "message": "ActionIR {$schema} is not a closed schema: {$detail}"
+    },
+    "agent.validation.budget_unbounded": {
+      "message": "{$budget} must be a positive exact bound at most {$cap}"
+    },
+    "agent.validation.invalid_decision_policy": {
+      "message": "the decision policy cannot decide: {$detail}"
+    },
+    "agent.validation.invalid_payload": {
+      "message": "the agent payload is invalid: {$detail}"
+    },
+    "agent.validation.unbound_tool": {
+      "message": "tool {$tool} is not a binding bound for this org, or is listed more than once"
+    },
+    "agent.validation.unknown_law": {
+      "message": "law {$law} is not admitted"
+    },
+    "agent.validation.unknown_model": {
+      "message": "model {$model} is not in the model allowlist"
+    },
+    "artifact_set.action.create_link": {
+      "message": "the action's create-only link effect or its authorized target slice is invalid"
+    },
+    "artifact_set.action.duplicate_action_id": {
+      "message": "actionId {$actionId} is already used by another action of the artifact set or the installed base"
+    },
+    "artifact_set.action.effect_kind_mismatch": {
+      "message": "the effect writes {$objectKind}, but entity artifact {$artifactId} version {$version} defines {$definition}"
+    },
+    "artifact_set.action.invalid_aggregate": {
+      "message": "an action aggregate input names an unknown type or property, or a property the fold cannot read"
+    },
+    "artifact_set.action.invalid_slice": {
+      "message": "an action slice reads an unknown key property or link"
+    },
+    "artifact_set.action.invalid_write_mode": {
+      "message": "the action write mode is not valid for its effective lifecycle"
+    },
+    "artifact_set.action.naming_series_target_mismatch": {
+      "message": "the action input does not match the target key's naming-series create or update contract"
+    },
+    "artifact_set.action.quantity_effect": {
+      "message": "the action's quantity effect or its input bindings are invalid: {$detail}"
+    },
+    "artifact_set.action.target_not_writable": {
+      "message": "{$target} of {$objectKind} is not writable by a generic action: {$reason}"
+    },
+    "artifact_set.action.undeclared_effect_write": {
+      "message": "the effect program may write {$objectKind} ({$change}), but the write set does not declare it"
+    },
+    "artifact_set.action.unknown_slice_kind": {
+      "message": "the action slice names an object type that is not in the artifact set or installed base"
+    },
+    "artifact_set.action.unknown_write_kind": {
+      "message": "the write set names {$entityKind}, which is not an object type of the artifact set or the installed base"
+    },
+    "artifact_set.action.unresolved_effect_entity": {
+      "message": "the effect pins entity artifact {$artifactId} version {$version}, which is not an entity artifact of the artifact set or the installed base"
+    },
+    "artifact_set.action.write_without_effect": {
+      "message": "the write set declares {$entityKind} ({$change}), which the effect program never writes"
+    },
+    "artifact_set.decision.fact_literal_outside_schema": {
+      "message": "the literal {$member} {$value} is not admitted by the facts item schema's {$member} enum {$admitted}"
+    },
+    "artifact_set.decision.invalid_source_command": {
+      "message": "a declared source command does not bind an exact observed mapping and guarded connector capability: {$detail}"
+    },
+    "artifact_set.decision.invalid_stored_property_write": {
+      "message": "the decision writes {$property} of {$objectType}, which violates its effective stored-property contract: {$detail}"
+    },
+    "artifact_set.decision.sub_decision_bound": {
+      "message": "sub-decision {$key} nests {$depth} levels deep, or the closure holds {$count} graphs; the Norn profile admits at most {$max}"
+    },
+    "artifact_set.decision.sub_decision_target": {
+      "message": "sub-decision {$key} resolves to {$artifactId} version {$version}, which is not a RuleIR v2 decision graph"
+    },
+    "artifact_set.decision.unknown_binding": {
+      "message": "{$detail}"
+    },
+    "artifact_set.decision.unknown_fact_object_type": {
+      "message": "the decision writes {$objectType}, which is not an object type of the artifact set or the installed base"
+    },
+    "artifact_set.decision.unresolved_stored_property_contract": {
+      "message": "the decision writes {$objectType}, whose effective stored-property contracts cannot be resolved: {$reason}"
+    },
+    "artifact_set.entity.duplicate_object_type": {
+      "message": "object type {$name} is already defined by entity artifact {$artifactId}"
+    },
+    "artifact_set.expression.environment_underivable": {
+      "message": "the ZEN Expression type environment of the artifact set cannot be derived: {$detail}"
+    },
+    "artifact_set.flow_source_map.duplicate_flow": {
+      "message": "flow id {$flowId} appears more than once in the flow source map"
+    },
+    "artifact_set.flow_source_map.duplicate_step": {
+      "message": "step id {$stepId} is empty or appears more than once in the flow"
+    },
+    "artifact_set.flow_source_map.invalid_edge": {
+      "message": "edge {$from} -> {$to} must reference steps in the same flow"
+    },
+    "artifact_set.flow_source_map.invalid_location": {
+      "message": "source location requires a file and one-based line and column numbers"
+    },
+    "artifact_set.flow_source_map.invalid_mapping": {
+      "message": "flow source map contains an invalid or duplicate mapping: {$detail}"
+    },
+    "artifact_set.flow_source_map.missing_artifact": {
+      "message": "flow artifact {$artifactId} version {$version} is not in the admitted set"
+    },
+    "artifact_set.flow_source_map.missing_decision_row": {
+      "message": "decision row id {$rowId} is not declared by a mapped RuleIR artifact"
+    },
+    "artifact_set.flow_source_map.missing_state": {
+      "message": "state id {$stateId} is not declared by a mapped entity artifact"
+    },
+    "artifact_set.flow_source_map.stale_artifact": {
+      "message": "flow artifact {$artifactId} hash does not match its admitted version"
+    },
+    "artifact_set.lifecycle.delete_lifecycle_object": {
+      "message": "the decision may delete {$objectType}, which has a declared lifecycle; delete then create would reset its status without a transition"
+    },
+    "artifact_set.lifecycle.direct_write": {
+      "message": "{$writer} writes {$property} of {$objectType}, which its lifecycle owns; a status changes only through a declared transition"
+    },
+    "artifact_set.lifecycle.not_a_lifecycle": {
+      "message": "{$property} of {$objectType} has no declared lifecycle to transition"
+    },
+    "artifact_set.lifecycle.unconstrained_state": {
+      "message": "the decision creates {$objectType} with lifecycle property {$property}, which must be a string enum of initial states"
+    },
+    "artifact_set.lifecycle.undeclared_transition_literal": {
+      "message": "the expression fires transition {$transition}, but {$reason}"
+    },
+    "artifact_set.lifecycle.unknown_transition": {
+      "message": "{$transition} is not a declared transition of the {$property} lifecycle of {$objectType}"
+    },
+    "artifact_set.lifecycle.unresolved_lifecycles": {
+      "message": "{$writer} writes {$objectType}, whose lifecycles cannot be resolved ({$reason}); its status writes fail closed"
+    },
+    "artifact_set.marking.duplicate": {
+      "message": "marking id {$id} is already declared in the base or candidate set, or a marking reference is repeated"
+    },
+    "artifact_set.marking.unknown": {
+      "message": "marking reference {$id} has no declaration in the base or candidate set"
+    },
+    "artifact_set.resolution.conflicting_version": {
+      "message": "artifact {$artifactId} is in the artifact set at versions {$first} and {$second}; a resolved set holds one version of each artifact"
+    },
+    "artifact_set.resolution.dependency_cycle": {
+      "message": "artifacts {$artifactIds} depend on each other in a cycle; the set has no installation order"
+    },
+    "artifact_set.resolution.duplicate_artifact": {
+      "message": "artifact {$artifactId} version {$version} appears more than once in the artifact set"
+    },
+    "artifact_set.resolution.kind_incompatible": {
+      "message": "a {$fromKind} artifact may not reference a {$toKind} artifact ({$artifactId})"
+    },
+    "artifact_set.resolution.kind_mismatch": {
+      "message": "{$artifactId} is referenced as a {$declaredKind} artifact but is a {$kind} artifact"
+    },
+    "artifact_set.resolution.missing_dependency": {
+      "message": "required {$kind} {$artifactId} version {$version} is neither in the artifact set nor installed"
+    },
+    "artifact_set.resolution.shadows_base": {
+      "message": "{$artifactId} is an installed base artifact, which is read-only"
+    },
+    "artifact_set.resolution.version_mismatch": {
+      "message": "{$artifactId} is pinned at version {$version}, but resolves only at {$available}"
+    },
+    "artifact_set.scope.incompatible_reference": {
+      "message": "{$artifactId} is scoped to {$dimension} {$value}, which the referring artifact's scope cannot see"
+    },
+    "business_pack.validation.invalid_payload": {
+      "message": "BusinessPackIR payload is invalid at {$path}: {$detail}"
+    },
+    "cli.format.io": {
+      "message": "Cannot format sources; check paths and permissions."
+    },
+    "cli.format.usage": {
+      "message": "Unknown formatter option; use norn fmt [path...] [--check] [--json]."
+    },
+    "cli.project.exists": {
+      "message": "Target is not an empty directory; choose a new directory."
+    },
+    "cli.project.install": {
+      "message": "Dependency installation failed; retry bun install in the project directory."
+    },
+    "cli.project.invalid_manifest": {
+      "message": "Invalid norn.json; use norn-project/1 with explicit sources, scope, dev and cell, and remove unknown keys."
+    },
+    "cli.project.invalid_name": {
+      "message": "Invalid namespace; use a lowercase letter followed by lowercase letters, digits or underscores."
+    },
+    "cli.project.io": {
+      "message": "Cannot write project; check directory permissions."
+    },
+    "cli.project.not_found": {
+      "message": "No norn.json found; run norn init <dir> first."
+    },
+    "cli.project.usage": {
+      "message": "Usage: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]"
+    },
+    "cli.setup.unpublished": {
+      "message": "Published distribution is unavailable; run init from the repository."
+    },
+    "connector.effect.invalid": {
+      "message": "a tool binding's effect must be \\{kind: query\\} or \\{kind: command\\} with only providerKey and reconcile"
+    },
+    "connector.effect.key_fixed": {
+      "message": "a command's providerKey must not be fixed by the binding; the cell fills it for each operation"
+    },
+    "connector.effect.key_not_input": {
+      "message": "a command's providerKey must name one of the tool's own string inputs"
+    },
+    "connector.effect.no_dedup_contract": {
+      "message": "a command binding needs providerKey or reconcile, so an unknown outcome is never retried blind"
+    },
+    "connector.effect.query_contract": {
+      "message": "a query binding is safe to retry and declares no providerKey or reconcile; only a command does"
+    },
+    "connector.effect.reconcile_not_query": {
+      "message": "a command's reconcile must name an existing query binding"
+    },
+    "connector.validation.invalid_payload": {
+      "message": "ConnectorIR payload is invalid at {$path}: {$detail}"
+    },
+    "connector.validation.unknown_resource": {
+      "message": "resourceId '{$resourceId}' does not match a declared connector resource"
+    },
+    "consistency.chase.refused": {
+      "message": "the chase exceeded its {$resource} budget of {$limit}; consistency is unknown"
+    },
+    "consistency.diagnosis.conflict": {
+      "message": "These declarations cannot hold together; edit only authorized inputs and resubmit for admission"
+    },
+    "consistency.diagnosis.no_editable_repair": {
+      "message": "No correction exists using only explicitly editable inputs; protected laws remain unchanged"
+    },
+    "consistency.diagnosis.unknown": {
+      "message": "Diagnosis is unknown because a fragment or resource limit prevents a complete check"
+    },
+    "consistency.instance.violation": {
+      "message": "the data breaks {$rule}: {$detail}"
+    },
+    "consistency.mapping.non_total": {
+      "message": "{$element} never reaches the target"
+    },
+    "consistency.normative.conflict": {
+      "message": "Declared priority cycle, unresolved opposing rules or protected layer clash"
+    },
+    "consistency.normative.legacy_resolution": {
+      "message": "Legacy precedence resolves rules diagnosed by declared-only layer analysis"
+    },
+    "consistency.path_equation.invalid": {
+      "message": "A declared path equation is malformed or leaves the functional concrete-type fragment"
+    },
+    "consistency.path_mapping.invalid": {
+      "message": "A declared path mapping or composite is malformed, ill-typed or non-functional"
+    },
+    "consistency.path_mapping.missing_binding": {
+      "message": "Mapped target declares or inherits path equations without a covering preservation binding"
+    },
+    "consistency.path_mapping.preserved": {
+      "message": "Required path mapping has bounded-no-counterexample evidence bound to its exact inputs"
+    },
+    "consistency.schema.incompatible": {
+      "message": "no {$relation} tuple can be mapped: {$detail}"
+    },
+    "consistency.schema.unpreserved_constraint": {
+      "message": "the source admits data that breaks {$rule}: {$witness}"
+    },
+    "consistency.theory.malformed": {
+      "message": "the lowered theory is malformed: {$detail}"
+    },
+    "consistency.theory.not_weakly_acyclic": {
+      "message": "TGDs [{$rules}] create existential values on a cycle, so the chase may not terminate"
+    },
+    "consistency.theory.vacuous": {
+      "message": "{$relation} can never hold a tuple: from {$witness} the rules [{$rules}] force {$left} = {$right}"
+    },
+    "core.composition.duplicate_instance": {
+      "message": "instance ID must be unique in the retained scoped graph"
+    },
+    "core.composition.instance_cycle": {
+      "message": "instance imports and containment must be acyclic"
+    },
+    "core.composition.mapping_gap": {
+      "message": "interpretation must cover the retained source contract exactly with unique compatible target members"
+    },
+    "core.composition.parameter_ambiguous": {
+      "message": "multiple effective candidates at equal scope precedence"
+    },
+    "core.composition.parameter_missing": {
+      "message": "no effective candidate or explicit default"
+    },
+    "core.composition.unresolved_pin": {
+      "message": "instance reference must resolve to an exact scoped pack pin"
+    },
+    "core.compute.ambiguous_grain": {
+      "message": "Query requires an explicit unambiguous identity grain."
+    },
+    "core.compute.unsupported_engine": {
+      "message": "Query semantics are unsupported by the selected compute profile."
+    },
+    "core.graph.catalog_write": {
+      "message": "catalog projections cannot activate definitions"
+    },
+    "core.graph.cycle": {
+      "message": "classification dependencies must be acyclic"
+    },
+    "core.graph.incomplete_classification": {
+      "message": "classification requires complete supported semantic admission and evaluation"
+    },
+    "core.graph.role_conflict": {
+      "message": "inherited concept roles disagree"
+    },
+    "core.graph.role_mismatch": {
+      "message": "declared concept role contradicts an inherited role"
+    },
+    "core.identity.collision": {
+      "message": "ID-UNIQUE-1: normalized key collides within its declaring root, scope and world"
+    },
+    "core.identity.reuse": {
+      "message": "this identity was deleted; restore it explicitly or use a new identity"
+    },
+    "core.laws.stale_evidence": {
+      "message": "evidence identity differs from the current generated goal or independently retained result pin"
+    },
+    "core.laws.unresolved_scope": {
+      "message": "retained instance membership is missing, ambiguous, stale or exceeds its budget"
+    },
+    "core.projection.publication_guard": {
+      "message": "analytical publication refused by declared policy: {$detail}"
+    },
+    "core.txn.atomic_boundary": {
+      "message": "TXN-CELL-1: the complete supported atomic closure must belong to one cell; foreign or unknown ownership refuses without effects"
+    },
+    "core.values.inexact": {
+      "message": "the number is outside the exact 96-bit decimal profile (scale at most 28)"
+    },
+    "core.values.literal_unit": {
+      "message": "numeric literal inherits declared unit {$unit}"
+    },
+    "core.values.unit_binding_required": {
+      "message": "an interface Decimal requires an explicit implementing unit and scale"
+    },
+    "core.values.unit_mismatch": {
+      "message": "VAL-UNIT-1 / VAL-DECIMAL-BIND-1: unit requires a visible exact core catalog pin and admitted UCUM code; interface Decimal groups require the same unit and scale; conversion must be explicit"
+    },
+    "customization.validation.invalid_payload": {
+      "message": "CustomizationIR payload is invalid at {$path}: {$detail}"
+    },
+    "customization.validation.retired_boundary": {
+      "message": "executable boundary \"{$boundary}\" is retired: inline custom execution is not admitted; move the code into a pool Function invoked through perform"
+    },
+    "defined_concept.validation.invalid_payload": {
+      "message": "defined-concept payload does not match its strict root"
+    },
+    "derived.validation.incremental_not_supported": {
+      "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\""
+    },
+    "derived.validation.invalid_payload": {
+      "message": "DerivedIR payload is invalid at {$path}: {$detail}"
+    },
+    "derived.validation.io_in_view": {
+      "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)"
+    },
+    "entity.deprecation.v1_payload": {
+      "message": "entity {$artifactId} uses the deprecated EntityIR v1 payload form; it is accepted during the migration and lowered to EntityIR v2 on read; author new versions with entityVersion \"2.0\""
+    },
+    "entity.validation.invalid_mutation_authority": {
+      "message": "payload.mutationAuthority is invalid: {$detail}"
+    },
+    "entity.validation.invalid_payload": {
+      "message": "EntityIR payload is invalid at {$path}: {$detail}"
+    },
+    "entity.validation.layer_scope_mismatch": {
+      "message": "artifact scope.tenantId {$detail} does not match the {$layer} layer it is checked in"
+    },
+    "function.invocation.blank_value": {
+      "message": "{$member} must not be blank"
+    },
+    "function.invocation.fork_perform": {
+      "message": "world {$world} is a fork; only main performs, and a fork never dispatches a Function"
+    },
+    "function.invocation.freshness_shape": {
+      "message": "{$freshness} freshness needs {$requirement}"
+    },
+    "function.invocation.input_bound": {
+      "message": "the staged inputs hold {$staged} bytes; the manifest admits {$bound}"
+    },
+    "function.invocation.manifest_mismatch": {
+      "message": "the command names manifest {$manifest}, but the admitted manifest is {$admitted}"
+    },
+    "function.invocation.mutable_input": {
+      "message": "input {$name} is a mutable URL or object key; stage the bytes and pass their digest as a blob"
+    },
+    "function.invocation.non_canonical_text": {
+      "message": "an invocation string or key is not in NFC form; hashing normalizes it, so it would share an identity with a different value"
+    },
+    "function.invocation.non_scalar_input": {
+      "message": "input {$name} is not a canonical scalar; pass structured data as a blob"
+    },
+    "function.invocation.secret_input": {
+      "message": "input {$name} is or names a secret; credentials are capabilities, never inputs"
+    },
+    "function.invocation.unbounded_command": {
+      "message": "the command needs {$ceiling}"
+    },
+    "function.manifest.authored_host": {
+      "message": "host Functions are engine built-ins and cannot be installed by authored or pack definitions; use a typed WASM component or external worker"
+    },
+    "function.manifest.blank_value": {
+      "message": "{$member} must not be blank"
+    },
+    "function.manifest.conflicting_golden_runs": {
+      "message": "golden runs produced {$count} different output digests; the key is quarantined"
+    },
+    "function.manifest.dependency_closure_mismatch": {
+      "message": "the dependency closure {$detail}"
+    },
+    "function.manifest.duplicate_step": {
+      "message": "pipeline step {$id} is declared twice"
+    },
+    "function.manifest.embedded_secret": {
+      "message": "{$member} can carry a credential; credentials are bound by the supervisor, never part of a manifest"
+    },
+    "function.manifest.inadmissible_evidence": {
+      "message": "{$profile} evidence {$member}: {$detail}"
+    },
+    "function.manifest.missing_dependency_closure": {
+      "message": "the transitive dependency/asset closure is required"
+    },
+    "function.manifest.missing_determinism_evidence": {
+      "message": "the {$profile} claim needs evidence field {$member}"
+    },
+    "function.manifest.mutable_identity": {
+      "message": "{$what} {$value} is not a content digest (sha256:<64 hex>); a tag, URI, or object key is never an identity"
+    },
+    "function.manifest.non_canonical_text": {
+      "message": "a manifest string or key is not in NFC form; hashing normalizes it, so it would share an identity with a different value"
+    },
+    "function.manifest.profile_mismatch": {
+      "message": "{$profile} {$detail}"
+    },
+    "function.manifest.unbounded_resource": {
+      "message": "bound {$member} must be a positive number"
+    },
+    "function.manifest.uncacheable_profile": {
+      "message": "profile {$profile} is not qualified for content-based reuse; declare cache \"none\""
+    },
+    "function.manifest.unsupported_abi": {
+      "message": "abi {$abi} is not supported; expected norn.function-abi/1"
+    },
+    "function.receipt.attempt_out_of_range": {
+      "message": "attempt {$attempt} is outside 1..={$maxAttempts}"
+    },
+    "function.receipt.blank_value": {
+      "message": "{$member} must not be blank"
+    },
+    "function.receipt.bound_exceeded": {
+      "message": "a completed attempt reports {$member} {$value}, beyond the manifest's bound"
+    },
+    "function.receipt.cache_origin": {
+      "message": "{$detail}"
+    },
+    "function.receipt.dispatch_mismatch": {
+      "message": "{$member} is {$found}, but the dispatch pinned {$expected}"
+    },
+    "function.receipt.non_canonical_text": {
+      "message": "a receipt string or key is not in NFC form; hashing normalizes it, so it would share an identity with a different value"
+    },
+    "function.receipt.output_manifest_mismatch": {
+      "message": "the output manifest {$digest} does not match the outputs and summary ({$computed})"
+    },
+    "function.receipt.summary_bound": {
+      "message": "the {$what} holds {$size} canonical bytes; at most 32768 cross the receipt"
+    },
+    "function.validation.invalid_document": {
+      "message": "the document is not a Function {$record}: {$detail}"
+    },
+    "graph_load.validation.excessive_depth": {
+      "message": "graph depth {$depth} exceeds budget {$budget}"
+    },
+    "graph_load.validation.invalid_shape": {
+      "message": "graph load shape is invalid: {$detail}"
+    },
+    "graph_load.validation.missing_relation_kind": {
+      "message": "relationKind must be present"
+    },
+    "graph_load.validation.missing_scope": {
+      "message": "required scope '{$key}' is missing"
+    },
+    "graph_load.validation.n_plus_one_risk": {
+      "message": "relation batch '{$sourceKind}:{$relationKind}' risks unbounded fan-out"
+    },
+    "graph_load.validation.over_budget": {
+      "message": "{$measure} exceeds budget {$budget}"
+    },
+    "identifier.validation.too_long": {
+      "message": "{$identifier} is {$actualBytes} UTF-8 bytes; the admission limit is {$limitBytes}; rename it before installing updated definitions"
+    },
+    "interface.validation.duplicate_link_id": {
+      "message": "required link id {$link} is already a required link or property id"
+    },
+    "interface.validation.duplicate_name": {
+      "message": "interface {$name} is already defined at index {$index}"
+    },
+    "interface.validation.duplicate_property_id": {
+      "message": "required property id {$property} is declared twice"
+    },
+    "interface.validation.invalid_inheritance": {
+      "message": "interface parent contract is repeated, missing, cyclic or incompatible"
+    },
+    "interface.validation.invalid_link_id": {
+      "message": "required link id {$link} must match [a-z][a-z0-9_]* without the reserved extension separator \"__\""
+    },
+    "interface.validation.invalid_name": {
+      "message": "interface name {$name} must be dotted lower-case namespace segments and a PascalCase name, such as \"party.Party\""
+    },
+    "interface.validation.invalid_property_id": {
+      "message": "required property id {$property} must match [a-z][a-z0-9_]* without the reserved extension separator \"__\""
+    },
+    "interface.validation.invalid_status_date": {
+      "message": "deprecated since {$date}, which is not a calendar date \"YYYY-MM-DD\""
+    },
+    "interface.validation.shadows_base": {
+      "message": "{$name} is an installed base definition, which is read-only"
+    },
+    "interface.validation.tenant_interface": {
+      "message": "interface {$name} is declared by a tenant layer; interfaces are registry definitions a tenant implements, never authors"
+    },
+    "interface.validation.unknown_link_target": {
+      "message": "required link {$link} targets {$target}, which names no object type or interface"
+    },
+    "interface.validation.unknown_replacement": {
+      "message": "replacedBy {$name} must name another definition of the same kind"
+    },
+    "ir.validation.invalid_artifact": {
+      "message": "artifact envelope is malformed: {$detail}"
+    },
+    "ir.validation.invalid_dependency": {
+      "message": "dependency is malformed or self-referential: {$detail}"
+    },
+    "ir.validation.invalid_envelope": {
+      "message": "artifact envelope does not decode: {$error}"
+    },
+    "ir.validation.kind_mismatch": {
+      "message": "envelope kind '{$kind}' does not match its payload root '{$payloadKind}'"
+    },
+    "ir.validation.required_field": {
+      "message": "{$path} is required"
+    },
+    "ir.validation.retired_kind": {
+      "message": "artifact kind '{$kind}' is retired: {$reason}"
+    },
+    "ir.validation.unknown_kind": {
+      "message": "artifact kind '{$kind}' is not a known kind"
+    },
+    "ir.validation.unsupported_version": {
+      "message": "unsupported IR version '{$irVersion}'"
+    },
+    "labels.admission.conflicting_label": {
+      "message": "two candidate labels artifacts label the same target in the same locale"
+    },
+    "labels.admission.unknown_target": {
+      "message": "a label names a definition that neither the artifact set nor the installed base declares"
+    },
+    "labels.validation.bidi_control": {
+      "message": "a label or description contains a bidi embedding, override or isolate control"
+    },
+    "labels.validation.blank_text": {
+      "message": "a label or description is blank, or an entry has no label"
+    },
+    "labels.validation.duplicate_locale": {
+      "message": "a label locale appears twice, ignoring case"
+    },
+    "labels.validation.duplicate_target": {
+      "message": "a labels artifact labels one target more than once"
+    },
+    "labels.validation.invalid_locale": {
+      "message": "a label locale is not a BCP 47 language tag"
+    },
+    "labels.validation.invalid_payload": {
+      "message": "labels payload does not match its strict root"
+    },
+    "labels.validation.unlabelled_locale": {
+      "message": "a description or review state names a locale that has no label"
+    },
+    "law.exception.cycle": {
+      "message": "law exception overrides chain never reaches its law"
+    },
+    "law.exception.dangling_override": {
+      "message": "law exception overrides neither its law nor an exception of the same tree"
+    },
+    "law.exception.invalid_declaration": {
+      "message": "law exception declaration is malformed: {$detail}"
+    },
+    "law.exception.limit": {
+      "message": "law exception tree exceeds its declaration limit"
+    },
+    "law.exception.two_homes": {
+      "message": "a rule declares exceptions on itself and on its embedded law; declare them in one place"
+    },
+    "law.exception.unsupported_response": {
+      "message": "law response cannot be lifted by an exception"
+    },
+    "law.model.closure_refused": {
+      "message": "whole-set law dependency closure refused: {$detail}"
+    },
+    "law.model.predicate_type": {
+      "message": "law predicate does not type-check against the effective ZEN environment: {$detail}"
+    },
+    "law.model.unknown_binding": {
+      "message": "law slot requires an admitted ontology binding and exact visible dependency: {$detail}"
+    },
+    "law.model.weakens_inherited": {
+      "message": "existing law identities cannot be replaced; tightening adds a conjunctive identity"
+    },
+    "law.validation.invalid_document": {
+      "message": "law document is invalid: {$detail}"
+    },
+    "law.validation.unsupported_temporal": {
+      "message": "law temporal shape is unsupported: {$detail}"
+    },
+    "law.wording.incomplete_locale": {
+      "message": "a declared requirement locale lacks a slot, label or term its rendering needs: {$detail}"
+    },
+    "layout.validation.invalid_inline_field": {
+      "message": "legacy layout field is invalid: {$detail}"
+    },
+    "layout.validation.merge_conflict": {
+      "message": "retained or explicit layout value at {$path} took precedence over conflicting inline layout"
+    },
+    "layout.validation.orphaned_entry": {
+      "message": "layout {$kind} id {$id} has no matching semantic entry and was pruned"
+    },
+    "ledger.account.duplicate": {
+      "message": "duplicate account id `{$accountId}`"
+    },
+    "ledger.account.duplicate_unit": {
+      "message": "account `{$accountId}` declares unit `{$unitId}` more than once"
+    },
+    "ledger.account.no_units": {
+      "message": "account `{$accountId}` must admit at least one unit"
+    },
+    "ledger.account.unknown_unit": {
+      "message": "account `{$accountId}` references unknown unit `{$unitId}`"
+    },
+    "ledger.amount.bound_overflow": {
+      "message": "runtime coefficient for parameter `{$parameterId}` overflows at a declared bound"
+    },
+    "ledger.amount.constant_scale_exceeds_result": {
+      "message": "constant scale {$scale} exceeds result scale {$resultScale}"
+    },
+    "ledger.amount.duplicate_parameter_term": {
+      "message": "parameter `{$parameterId}` appears more than once; normalize it to one coefficient"
+    },
+    "ledger.amount.normalization_overflow": {
+      "message": "constant cannot be normalized to unit precision without i128 overflow"
+    },
+    "ledger.amount.result_scale_exceeds_unit": {
+      "message": "result scale {$scale} exceeds unit precision {$precision}"
+    },
+    "ledger.amount.result_scale_out_of_range": {
+      "message": "result scale {$scale} exceeds maximum {$max}"
+    },
+    "ledger.amount.term_scale_exceeds_result": {
+      "message": "parameter and coefficient scales overflow their representation"
+    },
+    "ledger.amount.unknown_parameter": {
+      "message": "unknown or invalid parameter `{$parameterId}`"
+    },
+    "ledger.certificate.claim_mismatch": {
+      "message": "certificate claims are not in the deterministic checker result"
+    },
+    "ledger.certificate.hash_mismatch": {
+      "message": "certificate identity does not match its claims"
+    },
+    "ledger.certificate.pack_mismatch": {
+      "message": "certificate is not bound to the exact supplied ledger pack"
+    },
+    "ledger.certificate.version_mismatch": {
+      "message": "certificate, IR, or checker version does not match the active checker"
+    },
+    "ledger.commit.evidence_mismatch": {
+      "message": "commit evidence does not match the prepared posting: {$detail}"
+    },
+    "ledger.commit.idempotency_mismatch": {
+      "message": "idempotency lookup returned a record from another scope or key"
+    },
+    "ledger.commit.owner_version_overflow": {
+      "message": "expected owner version cannot advance without overflow"
+    },
+    "ledger.commit.partial_evidence": {
+      "message": "commit evidence is partial: {$detail}"
+    },
+    "ledger.identifier.empty": {
+      "message": "identifier must be non-empty and contain no surrounding whitespace"
+    },
+    "ledger.layer.duplicate": {
+      "message": "duplicate layer id `{$layer}`"
+    },
+    "ledger.leg.account_unit_mismatch": {
+      "message": "account `{$accountId}` does not admit unit `{$unitId}`"
+    },
+    "ledger.leg.duplicate": {
+      "message": "duplicate leg id `{$legId}`"
+    },
+    "ledger.leg.empty_layer": {
+      "message": "layer must be non-empty"
+    },
+    "ledger.leg.unknown_account": {
+      "message": "unknown account `{$accountId}`"
+    },
+    "ledger.leg.unknown_layer": {
+      "message": "unknown layer `{$layer}`"
+    },
+    "ledger.leg.unknown_unit": {
+      "message": "unknown unit `{$unitId}`"
+    },
+    "ledger.numeric.invalid_integer": {
+      "message": "`{$value}` is not a signed i128 decimal integer"
+    },
+    "ledger.numeric.non_canonical_integer": {
+      "message": "`{$value}` is not the canonical decimal encoding `{$canonical}`"
+    },
+    "ledger.ontology.empty_artifact_id": {
+      "message": "ontology artifactId must be non-empty and canonical"
+    },
+    "ledger.ontology.empty_artifact_version": {
+      "message": "ontology artifactVersion must be non-empty and canonical"
+    },
+    "ledger.ontology.invalid_artifact_sha256": {
+      "message": "ontology artifactSha256 must be exactly 64 lowercase hexadecimal characters"
+    },
+    "ledger.ontology.non_exact_artifact_id": {
+      "message": "ontology artifactId must be one exact identity without whitespace or wildcards"
+    },
+    "ledger.ontology.non_exact_artifact_version": {
+      "message": "ontology artifactVersion must be one exact version, not a range or wildcard"
+    },
+    "ledger.pack.empty_id": {
+      "message": "packId must be non-empty"
+    },
+    "ledger.pack.no_accounts": {
+      "message": "at least one posting account is required"
+    },
+    "ledger.pack.no_layers": {
+      "message": "at least one declared balance layer is required"
+    },
+    "ledger.pack.no_templates": {
+      "message": "at least one transaction template is required"
+    },
+    "ledger.pack.no_units": {
+      "message": "at least one conserved unit is required"
+    },
+    "ledger.pack.unsupported_ir_version": {
+      "message": "unsupported ledger pack IR version `{$irVersion}`; expected `{$expected}`"
+    },
+    "ledger.parameter.duplicate": {
+      "message": "duplicate parameter id `{$parameterId}`"
+    },
+    "ledger.parameter.invalid_bounds": {
+      "message": "minUnscaled must be less than or equal to maxUnscaled"
+    },
+    "ledger.parameter.scale_out_of_range": {
+      "message": "parameter scale {$scale} exceeds maximum {$max}"
+    },
+    "ledger.posting.certificate_coverage_mismatch": {
+      "message": "certificate set does not exactly cover the evaluated unit/layer partitions"
+    },
+    "ledger.posting.contract_version_mismatch": {
+      "message": "unsupported posting contract version `{$version}`; expected `{$expected}`"
+    },
+    "ledger.posting.identity_empty": {
+      "message": "{$path} must be non-empty and contain no surrounding whitespace"
+    },
+    "ledger.posting.reference_mismatch": {
+      "message": "posting references do not match the installed pack seal and checker"
+    },
+    "ledger.runtime.duplicate_parameter": {
+      "message": "duplicate runtime parameter `{$parameterId}`"
+    },
+    "ledger.runtime.evaluation_overflow": {
+      "message": "coefficient multiplication overflowed for parameter `{$parameterId}`"
+    },
+    "ledger.runtime.missing_parameter": {
+      "message": "missing runtime parameter `{$parameterId}`"
+    },
+    "ledger.runtime.parameter_out_of_bounds": {
+      "message": "runtime parameter `{$parameterId}` value {$value} is outside sealed bounds [{$min}, {$max}]"
+    },
+    "ledger.runtime.parameter_scale_mismatch": {
+      "message": "runtime parameter `{$parameterId}` has scale {$scale}; expected {$expected}"
+    },
+    "ledger.runtime.unbalanced": {
+      "message": "runtime residual {$residual} for unit `{$unitId}` layer `{$layer}`"
+    },
+    "ledger.runtime.unknown_parameter": {
+      "message": "unknown runtime parameter `{$parameterId}`"
+    },
+    "ledger.runtime.unknown_template": {
+      "message": "unknown compiled template `{$templateId}`"
+    },
+    "ledger.template.duplicate": {
+      "message": "duplicate template id `{$templateId}`"
+    },
+    "ledger.template.residual_overflow": {
+      "message": "constant residual overflowed i128 while combining legs"
+    },
+    "ledger.template.too_few_legs": {
+      "message": "a conserved transaction template requires at least two legs"
+    },
+    "ledger.template.unbalanced_coefficient": {
+      "message": "template `{$templateId}` has coefficient residual {$coefficient} for parameter `{$parameterId}`, unit `{$unitId}`, layer `{$layer}`"
+    },
+    "ledger.template.unbalanced_constant": {
+      "message": "template `{$templateId}` has constant residual {$residual} for unit `{$unitId}` layer `{$layer}`"
+    },
+    "ledger.unit.duplicate": {
+      "message": "duplicate unit id `{$unitId}`"
+    },
+    "ledger.unit.duplicate_unit_term": {
+      "message": "ontology unit term `{$term}` is bound by more than one pack-local unit"
+    },
+    "ledger.unit.empty_quantity_kind_term": {
+      "message": "quantityKindTermId must be non-empty and canonical"
+    },
+    "ledger.unit.empty_unit_term": {
+      "message": "unitTermId must be non-empty and canonical"
+    },
+    "ledger.unit.inconsistent_dimension_binding": {
+      "message": "a unit term cannot also be its quantity-kind/dimension term"
+    },
+    "ledger.unit.invalid_quantity_kind_term": {
+      "message": "quantityKindTermId must be one exact term identity without whitespace or wildcards"
+    },
+    "ledger.unit.invalid_unit_term": {
+      "message": "unitTermId must be one exact term identity without whitespace or wildcards"
+    },
+    "ledger.unit.scale_out_of_range": {
+      "message": "unit precision {$precision} exceeds maximum {$max}"
+    },
+    "ledger.validation.too_many_diagnostics": {
+      "message": "ledger validation stopped at its diagnostic count or byte limit"
+    },
+    "lifecycle.validation.dead_end_state": {
+      "message": "state {$state} has no outgoing transition; declare one or list it as terminal"
+    },
+    "lifecycle.validation.default_not_initial": {
+      "message": "the default {$state} of {$property} is not an initial state"
+    },
+    "lifecycle.validation.drops_guard": {
+      "message": "transition {$id} drops the inherited guard {$guard}; a subtype restates every inherited guard and may only append its own"
+    },
+    "lifecycle.validation.duplicate_lifecycle": {
+      "message": "property {$property} already has a lifecycle on this type"
+    },
+    "lifecycle.validation.duplicate_state": {
+      "message": "state {$state} is listed twice in {$member}"
+    },
+    "lifecycle.validation.duplicate_transition": {
+      "message": "{$from} -> {$to} is already declared by another transition"
+    },
+    "lifecycle.validation.duplicate_transition_id": {
+      "message": "transition id {$id} is declared twice in this lifecycle"
+    },
+    "lifecycle.validation.empty_guard": {
+      "message": "a guard of transition {$id} is blank"
+    },
+    "lifecycle.validation.empty_initial": {
+      "message": "a lifecycle declares at least one initial state"
+    },
+    "lifecycle.validation.empty_transition_source": {
+      "message": "transition {$id} has no source state"
+    },
+    "lifecycle.validation.invalid_guard": {
+      "message": "guard {$index} of transition {$id} is not a ZEN Expression: {$error}"
+    },
+    "lifecycle.validation.invalid_guard_diagnostic": {
+      "message": "guardRefusalCode must retain an inherited registered runtime error"
+    },
+    "lifecycle.validation.invalid_transition_id": {
+      "message": "transition id {$id} must match [a-z][a-z0-9_]*"
+    },
+    "lifecycle.validation.path_property_violated": {
+      "message": "a declared path to {$target} avoids {$via}; structural trace [transition, state]: {$trace}"
+    },
+    "lifecycle.validation.property_computed": {
+      "message": "lifecycle property {$property} is computed; a lifecycle governs a stored property that rules write"
+    },
+    "lifecycle.validation.property_not_enum": {
+      "message": "lifecycle property {$property} must be a local enum; its values are the states"
+    },
+    "lifecycle.validation.property_nullable": {
+      "message": "lifecycle property {$property} is nullable; every object is in a state"
+    },
+    "lifecycle.validation.self_transition": {
+      "message": "transition {$id} leaves and enters {$state}; a transition changes the state"
+    },
+    "lifecycle.validation.terminal_has_transition": {
+      "message": "transition {$id} leaves the terminal state {$state}"
+    },
+    "lifecycle.validation.undeclared_write": {
+      "message": "{$writer} writes {$property} from {$from} to {$to}, which is not a declared transition of its lifecycle"
+    },
+    "lifecycle.validation.unknown_property": {
+      "message": "lifecycle property {$property} is not a property of the type"
+    },
+    "lifecycle.validation.unknown_state": {
+      "message": "{$state} is not a value of the lifecycle property's enum"
+    },
+    "lifecycle.validation.unreachable_state": {
+      "message": "state {$state} is not reachable from an initial state"
+    },
+    "lifecycle.validation.widens_initial": {
+      "message": "initial state {$state} is not an initial state of the inherited lifecycle"
+    },
+    "lifecycle.validation.widens_transition": {
+      "message": "transition {$id} is not a transition of the inherited lifecycle; a subtype may only drop transitions"
+    },
+    "mapping.interpretation.invalid_endpoint": {
+      "message": "interpretation endpoint {$artifactId} requires one retained business pack, an exact required dependency and matching version/content identity"
+    },
+    "mapping.interpretation.unsupported": {
+      "message": "law interpretations require member conformance and preservation obligations"
+    },
+    "mapping.model.expression_type": {
+      "message": "{$expression}: {$detail} ({$code})"
+    },
+    "mapping.model.interface_not_implemented": {
+      "message": "{$objectType} does not implement the interface artifact {$interface}"
+    },
+    "mapping.model.invalid_entitlement_condition": {
+      "message": "condition link {$link} must target {$expectedTarget}, got {$actualTarget}"
+    },
+    "mapping.model.invalid_entitlement_grantee": {
+      "message": "entitlement grantee kind and object type must match a canonical identity type"
+    },
+    "mapping.model.invalid_entitlement_join": {
+      "message": "entitlement join {$join} has an invalid alias, key, provenance, or field type"
+    },
+    "mapping.model.invalid_nesting": {
+      "message": "dataset {$dataset} is not a declared child table of {$parent} held in its field {$field}"
+    },
+    "mapping.model.invalid_on_delete": {
+      "message": "onDelete {$state} of {$property} is not a terminal state of {$objectType}'s lifecycle"
+    },
+    "mapping.model.lifecycle_member": {
+      "message": "{$property} of {$objectType}: a lifecycle property changes only through a lifecycle rule"
+    },
+    "mapping.model.link_target_mismatch": {
+      "message": "link {$link} of {$objectType} targets {$target}, which does not admit {$produced}"
+    },
+    "mapping.model.read_only_member": {
+      "message": "{$property} of {$objectType} is computed and read-only"
+    },
+    "mapping.model.source_hash_mismatch": {
+      "message": "source schema {$schemaId} version {$version} hashes to {$actual}, not the bound {$sha256}"
+    },
+    "mapping.model.undeclared_dependency": {
+      "message": "artifact reference {$artifactId} is not a required, exact-version dependency"
+    },
+    "mapping.model.unencodable_member": {
+      "message": "property {$property} of {$objectType} has no action-input encoding"
+    },
+    "mapping.model.unknown_dataset": {
+      "message": "dataset {$dataset} is not declared by the source schema"
+    },
+    "mapping.model.unknown_entitlement_field": {
+      "message": "entitlement mapping references an undeclared or unbound source field"
+    },
+    "mapping.model.unknown_field": {
+      "message": "dataset {$dataset} has no field {$field}"
+    },
+    "mapping.model.unknown_interface": {
+      "message": "{$artifactId} is not an entity artifact defining an interface"
+    },
+    "mapping.model.unknown_member": {
+      "message": "{$objectType} has no {$what} {$member}"
+    },
+    "mapping.model.unknown_object_type": {
+      "message": "{$entity} is not an entity artifact defining an available object type"
+    },
+    "mapping.model.unresolved_source": {
+      "message": "source schema {$schemaId} version {$version} is not a source_schema artifact of the set or the base"
+    },
+    "mapping.runtime.evaluation_failed": {
+      "message": "map {$map}: {$detail}"
+    },
+    "mapping.runtime.invalid_key": {
+      "message": "map {$map}: {$expression} yielded {$value}, not a non-empty string"
+    },
+    "mapping.runtime.invalid_record": {
+      "message": "map {$map}: field {$field} {$reason}"
+    },
+    "mapping.runtime.observed_out_of_band": {
+      "message": "the observed lifecycle snapshot from {$source} for {$objectType}/{$key}.{$property} ({$from} -> {$to}) has no unique shortest declared path; mappingVersion={$mappingVersion}, observedAt={$observedAt}, reason={$reason}"
+    },
+    "mapping.validation.duplicate_map": {
+      "message": "map id {$id} is declared twice"
+    },
+    "mapping.validation.duplicate_member": {
+      "message": "map {$id} has two rules for member {$member}"
+    },
+    "mapping.validation.empty_scope": {
+      "message": "{$member} must not be empty"
+    },
+    "mapping.validation.incomplete_entitlement_snapshot": {
+      "message": "entitlement mappings require every source and join dataset in the complete snapshot"
+    },
+    "mapping.validation.interface_out_of_scope": {
+      "message": "map {$id} targets interface artifact {$interface}, which is not in the mapping's interfaces"
+    },
+    "mapping.validation.invalid_document": {
+      "message": "the document is not a MappingIR document: {$detail}"
+    },
+    "mapping.validation.invalid_entitlement_map": {
+      "message": "entitlement map {$map} has an invalid declaration"
+    },
+    "mapping.validation.invalid_expression": {
+      "message": "{$expression} does not compile: {$detail}"
+    },
+    "mapping.validation.invalid_id": {
+      "message": "map id {$id} is not a member id"
+    },
+    "mapping.validation.invalid_identity_binding": {
+      "message": "identity binding needs a unique source key, party.Person reference, and review evidence"
+    },
+    "mapping.validation.invalid_key": {
+      "message": "mapping id {$artifactId} contains '@' or version {$version} is not SemVer, so the key {$key} is ambiguous"
+    },
+    "mapping.validation.invalid_required_link": {
+      "message": "required relationship {$link} has no exact target key"
+    },
+    "mapping.validation.lifecycle_rule_shape": {
+      "message": "map {$id} lifecycle {$property} must specify exactly one of state or transition"
+    },
+    "mapping.validation.unknown_target_map": {
+      "message": "link {$link} joins to map {$map}, which the mapping does not declare"
+    },
+    "mapping.vendor.invalid_contract": {
+      "message": "vendor-qualified mapping has an invalid sparse source contract: {$detail}"
+    },
+    "metric.validation.complexity_limit": {
+      "message": "Metric dependencies and link paths are bounded to 64 levels."
+    },
+    "metric.validation.currency_source_mismatch": {
+      "message": "Metric currency must match the amount type's authoritative currency source."
+    },
+    "metric.validation.cycle": {
+      "message": "Ratio dependencies must be acyclic."
+    },
+    "metric.validation.duplicate_metric": {
+      "message": "Metric names must be unique."
+    },
+    "metric.validation.fan_out": {
+      "message": "To-many dimensions require a symmetric aggregation strategy."
+    },
+    "metric.validation.grain_mismatch": {
+      "message": "Ratio operands must share their object and time grain."
+    },
+    "metric.validation.import_gap": {
+      "message": "Interchange import requires explicit ontology or calculation semantics."
+    },
+    "metric.validation.invalid_additivity": {
+      "message": "Additivity must match the measure algebra."
+    },
+    "metric.validation.invalid_conversion": {
+      "message": "Conversion requires a target currency and a dimensionless decimal rate."
+    },
+    "metric.validation.invalid_currency": {
+      "message": "Currency must bind a single-valued currency property."
+    },
+    "metric.validation.invalid_dimension": {
+      "message": "Dimensions require a scalar property and compatible grain."
+    },
+    "metric.validation.invalid_filter": {
+      "message": "The filter literal and operator must match the property contract."
+    },
+    "metric.validation.invalid_measure": {
+      "message": "The aggregate requires a compatible property."
+    },
+    "metric.validation.invalid_name": {
+      "message": "Metric names must be lower-case identifiers, optionally namespaced."
+    },
+    "metric.validation.invalid_owner": {
+      "message": "Metrics require an explicit non-blank owner."
+    },
+    "metric.validation.invalid_policy": {
+      "message": "Norn authorization or freshness policy is invalid."
+    },
+    "metric.validation.invalid_time": {
+      "message": "The time axis must be a single-valued date or timestamp."
+    },
+    "metric.validation.mixed_currency": {
+      "message": "Summing multiple currencies requires an explicit conversion."
+    },
+    "metric.validation.ontology_projection": {
+      "message": "Generated semantic datasets or relationships differ from the ontology."
+    },
+    "metric.validation.partial_path": {
+      "message": "Mandatory time, currency and rate inputs require total paths."
+    },
+    "metric.validation.ratio_aggregation": {
+      "message": "METRIC-ADDITIVITY-1: aggregate the declared numerator and denominator separately, then divide their sums; averaging stored ratios is refused."
+    },
+    "metric.validation.undeclared_additivity": {
+      "message": "METRIC-ADDITIVITY-1: declare additivity on the numeric property type before aggregating; units do not establish additivity."
+    },
+    "metric.validation.unit_mismatch": {
+      "message": "Ratio operand units and currencies must agree."
+    },
+    "metric.validation.unknown_metric": {
+      "message": "The referenced metric does not exist."
+    },
+    "metric.validation.unknown_object": {
+      "message": "The measure object type is unavailable."
+    },
+    "metric.validation.unknown_path": {
+      "message": "Every path role and terminal property must resolve."
+    },
+    "metric.validation.unsupported_semantics": {
+      "message": "Calculation requires semantics outside the admitted checker profile."
+    },
+    "object_type.validation.computed_key_component": {
+      "message": "key component {$property} is computed; identity is stored, not derived"
+    },
+    "object_type.validation.computed_with_default": {
+      "message": "computed property {$property} is read-only and cannot declare a default"
+    },
+    "object_type.validation.default_out_of_range": {
+      "message": "default {$value} is outside the {$range} range"
+    },
+    "object_type.validation.default_type_mismatch": {
+      "message": "default for a {$kind} property must be {$expected}"
+    },
+    "object_type.validation.default_unchecked": {
+      "message": "default cannot be type-checked: {$reason}; omit it"
+    },
+    "object_type.validation.default_violates_constraint": {
+      "message": "default {$value} violates {$constraint}"
+    },
+    "object_type.validation.duplicate_interface": {
+      "message": "interface {$interface} is listed twice"
+    },
+    "object_type.validation.duplicate_invariant_id": {
+      "message": "invariant id {$invariant} is already declared on the type or a supertype; an invariant is never replaced"
+    },
+    "object_type.validation.duplicate_key_component": {
+      "message": "key component {$property} is listed twice"
+    },
+    "object_type.validation.duplicate_key_name": {
+      "message": "key {$key} is declared twice"
+    },
+    "object_type.validation.duplicate_link_id": {
+      "message": "link id {$link} is declared twice, as a link or a property, in one declaration"
+    },
+    "object_type.validation.duplicate_name": {
+      "message": "object type {$name} is already defined at index {$index}"
+    },
+    "object_type.validation.duplicate_normalization": {
+      "message": "component {$property} is normalized twice"
+    },
+    "object_type.validation.duplicate_property_id": {
+      "message": "property id {$property} is declared twice"
+    },
+    "object_type.validation.empty_computed": {
+      "message": "computed expression is blank"
+    },
+    "object_type.validation.empty_identity_rule": {
+      "message": "identity rule of key {$key} declares neither normalize nor matchPolicy; omit it"
+    },
+    "object_type.validation.empty_invariant_expression": {
+      "message": "the expression of invariant {$invariant} is blank"
+    },
+    "object_type.validation.empty_invariant_message": {
+      "message": "the message of invariant {$invariant} is blank"
+    },
+    "object_type.validation.empty_key": {
+      "message": "key {$key} declares no properties"
+    },
+    "object_type.validation.empty_normalization": {
+      "message": "normalization of {$property} declares no steps"
+    },
+    "object_type.validation.extension_namespace_mismatch": {
+      "message": "extension namespace {$namespace} is not the tenant namespace {$tenant}"
+    },
+    "object_type.validation.extension_of_local_type": {
+      "message": "extension target {$type} is defined in the same layer; declare its properties on the type itself"
+    },
+    "object_type.validation.extension_shadows_member": {
+      "message": "extension {$member} {$id} shadows the member of the same id that {$owner} declares on {$type}"
+    },
+    "object_type.validation.foreign_inverse": {
+      "message": "inverse role {$id} would add a member to {$target}, which another layer owns; declare the link in an extension so its inverse role is namespaced, or omit the inverse"
+    },
+    "object_type.validation.inadmissible_key_kind": {
+      "message": "key component {$property} is {$kind}, which has no canonical equality"
+    },
+    "object_type.validation.inheritance_budget_exhausted": {
+      "message": "inheritance classification exhausted its {$dimension} budget (limit {$limit}); catalog validation stopped before ancestry resolution"
+    },
+    "object_type.validation.inheritance_cycle": {
+      "message": "the extends chain of {$type} returns to it"
+    },
+    "object_type.validation.interface_link_target_mismatch": {
+      "message": "link {$link} does not target {$target}, which interface {$interface} requires, or a narrowing of it"
+    },
+    "object_type.validation.interface_link_widens_cardinality": {
+      "message": "link {$link} has a wider cardinality than interface {$interface} requires"
+    },
+    "object_type.validation.interface_property_type_mismatch": {
+      "message": "property {$property} does not have the type interface {$interface} requires, or a narrowing of it"
+    },
+    "object_type.validation.interface_property_widens_nullability": {
+      "message": "property {$property} is nullable, but interface {$interface} requires a value"
+    },
+    "object_type.validation.interface_requirement_conflict": {
+      "message": "interfaces {$interfaces} all require member {$id}, but no single member can meet them together: {$reason}"
+    },
+    "object_type.validation.invalid_accounting_leg_declaration": {
+      "message": "accounting leg declaration on {$type} is invalid: {$reason}"
+    },
+    "object_type.validation.invalid_computed": {
+      "message": "computed expression of {$property} is not a ZEN Expression: {$error}"
+    },
+    "object_type.validation.invalid_extension_namespace": {
+      "message": "extension namespace {$namespace} must be one lower-case alphanumeric segment ([a-z][a-z0-9]*)"
+    },
+    "object_type.validation.invalid_invariant_expression": {
+      "message": "the expression of invariant {$invariant} is not a ZEN Expression: {$error}"
+    },
+    "object_type.validation.invalid_invariant_id": {
+      "message": "invariant id {$invariant} must match [a-z][a-z0-9_]*"
+    },
+    "object_type.validation.invalid_key_name": {
+      "message": "key name {$key} must match [a-z][a-z0-9_]*"
+    },
+    "object_type.validation.invalid_link_id": {
+      "message": "{$role} {$id} must match [a-z][a-z0-9_]*"
+    },
+    "object_type.validation.invalid_match_policy": {
+      "message": "match policy {$policy} must be dot-separated segments of [a-z][a-z0-9_]*"
+    },
+    "object_type.validation.invalid_name": {
+      "message": "object type name {$name} must be dotted lower-case namespace segments and a PascalCase name, such as \"retail.Sku\""
+    },
+    "object_type.validation.invalid_naming_series": {
+      "message": "naming series is invalid: {$detail}"
+    },
+    "object_type.validation.invalid_owned_collection": {
+      "message": "owned collection {$collection} is invalid: {$reason}"
+    },
+    "object_type.validation.invalid_property_id": {
+      "message": "property id {$property} must match [a-z][a-z0-9_]*"
+    },
+    "object_type.validation.invalid_status_date": {
+      "message": "deprecated since {$date}, which is not a calendar date \"YYYY-MM-DD\""
+    },
+    "object_type.validation.link_override_changes_acyclic": {
+      "message": "link {$link} overrides the one {$owner} declares and changes its acyclic constraint; an override must preserve the inherited value"
+    },
+    "object_type.validation.link_override_redeclares": {
+      "message": "link {$link} overrides the one {$owner} declares and redeclares its {$member}, which the override inherits; omit it"
+    },
+    "object_type.validation.link_override_target_mismatch": {
+      "message": "link {$link} overrides the one {$owner} declares with a target that is not {$target} or a narrowing of it; an override may only narrow"
+    },
+    "object_type.validation.link_override_widens_cardinality": {
+      "message": "link {$link} overrides the one {$owner} declares with a wider cardinality; an override may only narrow (many to one, optional to required)"
+    },
+    "object_type.validation.link_property_markings_unsupported": {
+      "message": "marked link properties require edge classification, which is not supported"
+    },
+    "object_type.validation.link_property_protection_unsupported": {
+      "message": "protected link properties require sealed link authority, which is not supported"
+    },
+    "object_type.validation.member_id_conflict": {
+      "message": "{$member} {$id} takes the id of the {$other} on {$type}; properties, links, and inverse roles share one member name space"
+    },
+    "object_type.validation.missing_interface_link": {
+      "message": "interface {$interface} requires link {$link}, which the type neither declares nor inherits"
+    },
+    "object_type.validation.missing_interface_property": {
+      "message": "interface {$interface} requires property {$property}, which the type neither declares nor inherits"
+    },
+    "object_type.validation.normalization_not_applicable": {
+      "message": "normalization applies to text, but component {$property} is {$kind}"
+    },
+    "object_type.validation.normalization_not_in_key": {
+      "message": "normalization names {$property}, which is not a component of key {$key}"
+    },
+    "object_type.validation.nullable_key_component": {
+      "message": "key component {$property} is nullable"
+    },
+    "object_type.validation.override_computed": {
+      "message": "property {$property} overrides the one {$owner} declares; a computed property is never overridden, and an override is never computed"
+    },
+    "object_type.validation.override_type_mismatch": {
+      "message": "property {$property} overrides the one {$owner} declares with a type that is not the same or narrower; an override may only narrow"
+    },
+    "object_type.validation.override_widens_nullability": {
+      "message": "property {$property} is nullable, but the property {$owner} declares is not; an override may only narrow"
+    },
+    "object_type.validation.redundant_key": {
+      "message": "key {$key} has the same components, normalization, and match policy as key {$other}; component order does not change uniqueness"
+    },
+    "object_type.validation.reserved_member_separator": {
+      "message": "{$member} id {$id} contains \"__\", which is reserved for extension members (\"<namespace>__<name>\")"
+    },
+    "object_type.validation.shadows_base": {
+      "message": "{$name} is an installed base definition, which is read-only; extend it or add a subtype instead"
+    },
+    "object_type.validation.tenant_type_not_subtype": {
+      "message": "tenant object type {$type} must extend a type: a tenant adds subtypes of installed types, never new base types"
+    },
+    "object_type.validation.tenant_type_outside_namespace": {
+      "message": "tenant object type {$type} must be named in the tenant namespace, such as {$example}"
+    },
+    "object_type.validation.unknown_extension_target": {
+      "message": "extension target {$type} names no object type"
+    },
+    "object_type.validation.unknown_interface": {
+      "message": "implements {$interface}, which names no interface"
+    },
+    "object_type.validation.unknown_key_property": {
+      "message": "key component {$property} names no property of the object type"
+    },
+    "object_type.validation.unknown_link_target": {
+      "message": "link target {$target} names no object type or interface"
+    },
+    "object_type.validation.unknown_replacement": {
+      "message": "replacedBy {$name} must name another definition of the same kind"
+    },
+    "object_type.validation.unknown_supertype": {
+      "message": "extends {$type}, which names no object type"
+    },
+    "object_type.validation.unnamespaced_member": {
+      "message": "added {$member} {$id} must be named \"{$namespace}__<name>\" in its layer's extension namespace, so it cannot shadow a base member"
+    },
+    "object_type.validation.unsatisfiable_constraints": {
+      "message": "the constraints that apply to property {$property} together admit no value: {$reason}"
+    },
+    "ontology.lint.deep_hierarchy": {
+      "message": "object type {$name} has {$depth} supertypes ({$chain}), more than {$max}; prefer interfaces or composition"
+    },
+    "ontology.lint.duplicate_definition": {
+      "message": "{$kind} {$name} has exactly the structure of {$kind} {$other} (artifact {$artifactId}); reuse or extend it instead of redefining it"
+    },
+    "ontology.lint.incomplete_provenance": {
+      "message": "the provenance of this {$source} artifact is missing {$members}"
+    },
+    "ontology.lint.mega_object": {
+      "message": "object type {$name} declares {$count} properties and links, more than {$max}; split it into the concepts it combines"
+    },
+    "ontology.lint.plural_type_name": {
+      "message": "{$kind} {$name} has a plural local name; name the concept for one instance"
+    },
+    "ontology.lint.redundant_member_prefix": {
+      "message": "member {$id} of {$name} repeats the type name as a prefix; the type already qualifies it"
+    },
+    "ontology.lint.source_mirroring": {
+      "message": "object type {$name} mirrors source entity {$entity} of {$schemaId}: {$shared} of its {$members} members match the {$fields} fields of {$entity} by name; model the business concept and map the source onto it"
+    },
+    "ontology.lint.unknown_mapping_target": {
+      "message": "the mapping targets {$target}, which the artifact set and the installed base do not declare"
+    },
+    "ontology.lint.unmapped_required_member": {
+      "message": "required {$memberKind} {$id} of {$target} is neither mapped nor declared as a gap"
+    },
+    "ontology.lint.unmapped_source_field": {
+      "message": "source fields of {$entity} in {$schemaId} are neither mapped nor explicitly ignored: {$fields}"
+    },
+    "ontology.lint.untraceable_provenance": {
+      "message": "this {$source} artifact names no provenance {$member}, so its origin cannot be traced"
+    },
+    "ontology.lint.versioned_name": {
+      "message": "{$kind} {$name} carries the version or copy marker {$marker}; version the artifact, not the name"
+    },
+    "ontology.lint.weak_relationship": {
+      "message": "property {$id} of {$name} refers to {$target} by a scalar value, and no link to {$target} exists; model the relationship as a link"
+    },
+    "ontology_instance.validation.invalid_payload": {
+      "message": "ontology instance does not conform to its term at {$path}: {$detail}"
+    },
+    "ontology_link.validation.invalid_payload": {
+      "message": "ontology link is invalid at {$path}: {$detail}"
+    },
+    "ontology_pack.validation.invalid_payload": {
+      "message": "ontology pack is invalid at {$path}: {$detail}"
+    },
+    "ontology_registry.validation.invalid_payload": {
+      "message": "ontology registry is inconsistent at {$path}: {$detail}"
+    },
+    "policy.validation.invalid_payload": {
+      "message": "PolicyIR payload is invalid at {$path}: {$detail}"
+    },
+    "property_type.validation.bound_exceeds_scale": {
+      "message": "{$member} {$bound} has more fraction digits than the declared scale {$scale}"
+    },
+    "property_type.validation.bound_not_integer": {
+      "message": "{$member} {$bound} must be a signed 64-bit integer without a fraction"
+    },
+    "property_type.validation.bound_out_of_range": {
+      "message": "{$member} {$bound} is outside the ZEN Expression decimal range: {$error}"
+    },
+    "property_type.validation.constraint_not_applicable": {
+      "message": "constraint {$member} does not apply to a {$kind} property"
+    },
+    "property_type.validation.duplicate_enum_value": {
+      "message": "enum value {$value} is declared twice"
+    },
+    "property_type.validation.duplicate_member": {
+      "message": "record member {$member} is declared twice"
+    },
+    "property_type.validation.duplicate_name": {
+      "message": "property type {$name} is already defined at index {$index}"
+    },
+    "property_type.validation.empty_enum": {
+      "message": "enum declares no values"
+    },
+    "property_type.validation.empty_record": {
+      "message": "record must declare members"
+    },
+    "property_type.validation.invalid_bound": {
+      "message": "{$member} {$bound} must be an exact decimal literal such as \"-12.50\""
+    },
+    "property_type.validation.invalid_enum_value": {
+      "message": "enum value must be non-blank"
+    },
+    "property_type.validation.invalid_member": {
+      "message": "record member must match [a-z][a-z0-9_]*"
+    },
+    "property_type.validation.invalid_name": {
+      "message": "property type name {$name} must be dot-separated segments of [a-z][a-z0-9_]*"
+    },
+    "property_type.validation.invalid_pattern": {
+      "message": "pattern {$pattern} does not compile: {$error}"
+    },
+    "property_type.validation.invalid_unit": {
+      "message": "unit code {$unit} must be non-blank without whitespace"
+    },
+    "property_type.validation.inverted_range": {
+      "message": "{$lower} is greater than {$upper}"
+    },
+    "property_type.validation.ref_cycle": {
+      "message": "ref chain from {$name} returns to itself"
+    },
+    "property_type.validation.scale_out_of_range": {
+      "message": "decimal scale {$scale} exceeds the maximum of {$max}"
+    },
+    "property_type.validation.unknown_ref": {
+      "message": "ref {$name} names no property type in the catalog or registry"
+    },
+    "question.validation.comparison_cycle": {
+      "message": "Question comparisons must be acyclic."
+    },
+    "question.validation.duplicate_question": {
+      "message": "Question names must be unique."
+    },
+    "question.validation.duplicate_selection": {
+      "message": "Metric and dimension selections must be unique."
+    },
+    "question.validation.empty_metrics": {
+      "message": "Questions require at least one metric."
+    },
+    "question.validation.fan_out_rollup": {
+      "message": "Overlapping fan-out buckets cannot be rolled up as scalars."
+    },
+    "question.validation.invalid_freshness": {
+      "message": "Freshness requires a positive age or a valid UTC instant."
+    },
+    "question.validation.invalid_name": {
+      "message": "Question names must be lower-case identifiers, optionally namespaced."
+    },
+    "question.validation.invalid_rollup": {
+      "message": "Roll-ups must name selected axes and use an admitted reduction."
+    },
+    "question.validation.invalid_window": {
+      "message": "The time window must be an ordered half-open UTC interval."
+    },
+    "question.validation.mixed_axis_rollup": {
+      "message": "Simultaneous time and non-time reductions require an ordered reduction contract."
+    },
+    "question.validation.non_additive_rollup": {
+      "message": "Non-additive metrics cannot be re-aggregated."
+    },
+    "question.validation.semi_additive_time": {
+      "message": "Semi-additive metrics require their declared time reduction."
+    },
+    "question.validation.snapshot_aggregation": {
+      "message": "Snapshot aggregation requires a series grain and ordered reductions; this contract refuses it."
+    },
+    "question.validation.unknown_comparison": {
+      "message": "Comparison questions must exist and have compatible selections."
+    },
+    "relation.validation.invalid_payload": {
+      "message": "RelationIR payload is invalid at {$path}: {$detail}"
+    },
+    "relation.validation.v2_relation_is_link": {
+      "message": "RelationIR has no v2 form: declare an EntityIR v2 relation as a link in the source entity's payload.objectType.links"
+    },
+    "rule.validation.invalid_binding": {
+      "message": "a decide rule's triggers or slice are invalid: {$detail}"
+    },
+    "rule.validation.invalid_decision_contract": {
+      "message": "a decide graph's {$schema} declares exactly {$members}: {$detail}"
+    },
+    "rule.validation.invalid_fact_change": {
+      "message": "a decide graph's facts item schema is not the canonical fact change: {$detail}"
+    },
+    "rule.validation.invalid_payload": {
+      "message": "RuleIR payload is invalid at {$path}: {$detail}"
+    },
+    "rule.validation.invalid_schema": {
+      "message": "RuleIR {$schema} is not a closed schema: {$detail}"
+    },
+    "rule.validation.invalid_source_command": {
+      "message": "a declared source command or activation contract is invalid: {$detail}"
+    },
+    "rule.validation.jdm_custom_node_rejected": {
+      "message": "customNode is not admitted by the Norn profile: inline custom nodes are rejected (D33); use a pool Function"
+    },
+    "rule.validation.jdm_cycle": {
+      "message": "nodes {$nodeIds} form a cycle; a decision graph is acyclic"
+    },
+    "rule.validation.jdm_dangling_edge": {
+      "message": "edge {$edgeId} names node {$nodeId}, which the graph does not have"
+    },
+    "rule.validation.jdm_duplicate_id": {
+      "message": "{$what} id {$id} is not unique"
+    },
+    "rule.validation.jdm_function_node_rejected": {
+      "message": "functionNode is not admitted by the Norn profile: JavaScript is forbidden in the deterministic core"
+    },
+    "rule.validation.jdm_hit_policy_rejected": {
+      "message": "hit policy {$policy} is not admitted by the Norn profile: JDM admits first and collect; other DMN hit policies are translated or rejected at DMN ingress (T3-DEC-4)"
+    },
+    "rule.validation.jdm_invalid_edge": {
+      "message": "edge {$edgeId} {$problem}"
+    },
+    "rule.validation.jdm_invalid_expression": {
+      "message": "{$source} is not a ZEN {$form}: {$detail}"
+    },
+    "rule.validation.jdm_io_node_count": {
+      "message": "the graph has {$count} {$inputOrOutput} nodes; a decision graph has exactly one"
+    },
+    "rule.validation.jdm_recursive_sub_decision": {
+      "message": "sub-decision {$key} names this rule; a decision graph cannot call itself"
+    },
+    "rule.validation.jdm_switch_default": {
+      "message": "switch {$nodeId} {$problem}"
+    },
+    "rule.validation.jdm_switch_unconnected_branch": {
+      "message": "branch {$statementId} of switch {$nodeId} has no outgoing edge, so an event that takes it reaches no node"
+    },
+    "rule.validation.jdm_unknown_column": {
+      "message": "row {$rowId} has a cell for {$columnId}, which is not a column of the table"
+    },
+    "rule.validation.jdm_unknown_node_type": {
+      "message": "node type {$type} is not a JDM node type; the Norn profile admits inputNode, outputNode, expressionNode, decisionTableNode, switchNode, and decisionNode"
+    },
+    "rule.validation.jdm_unreachable_node": {
+      "message": "node {$nodeId} {$problem}; every node of a decision graph lies on a path from input to output"
+    },
+    "rule.validation.jdm_unresolved_import": {
+      "message": "import {$import} does not resolve: the Norn profile has no importable policy documents; declare value types in EntityIR v2"
+    },
+    "rule.validation.jdm_unresolved_sub_decision": {
+      "message": "sub-decision {$key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies"
+    },
+    "rule.validation.ordered_fold_invalid": {
+      "message": "ordered-fold declaration violates the typed, ordered, bounded structural contract"
+    },
+    "rule.validation.ordered_fold_unsupported": {
+      "message": "ordered-fold execution is unavailable in this semantics profile"
+    },
+    "sealing.extension_point.capability_missing": {
+      "message": "operation lacks the capabilities its extension point grants: {$capabilities}"
+    },
+    "sealing.extension_point.contract_violation": {
+      "message": "overlay payload violates the extension-point contract: {$reason}"
+    },
+    "sealing.extension_point.kind_mismatch": {
+      "message": "extension-point contribution kind does not match the operation"
+    },
+    "sealing.extension_point.unresolved": {
+      "message": "{$operation} references an extension point not exposed by its seal"
+    },
+    "sealing.input.duplicate_extension_point": {
+      "message": "extension-point definitions must contain at most one entry per ID"
+    },
+    "sealing.input.duplicate_seal": {
+      "message": "seal annotations must contain at most one entry per node"
+    },
+    "sealing.monotonic.unseal_forbidden": {
+      "message": "downstream overlays cannot unseal an upstream seal"
+    },
+    "sealing.overlay.base_mutation_denied": {
+      "message": "base node '{$nodeId}' is immutable: {$reason}"
+    },
+    "sealing.overlay.sealed_mutation": {
+      "message": "sealed base nodes cannot be mutated without an exposed extension point"
+    },
+    "sealing.overlay.tenant_namespace_mismatch": {
+      "message": "additive customization node and scope must belong to the declared tenant namespace"
+    },
+    "sealing.overlay.tenant_namespace_required": {
+      "message": "additive tenant customization requires a tenant namespace"
+    },
+    "sealing.runtime.capability_denied": {
+      "message": "custom code receives no handle to sealed nodes unless an extension point grants capabilities"
+    },
+    "sealing.upgrade.monotonic_violation": {
+      "message": "base upgrades cannot weaken or remove an existing seal without kernel migration authority"
+    },
+    "setting.validation.invalid_payload": {
+      "message": "SettingIR payload is invalid at {$path}: {$detail}"
+    },
+    "source_schema.validation.blank_value": {
+      "message": "the value must not be blank"
+    },
+    "source_schema.validation.constraint_shape": {
+      "message": "constraint {$id}: {$detail}"
+    },
+    "source_schema.validation.duplicate_code": {
+      "message": "code set {$id} is empty or lists {$value} twice"
+    },
+    "source_schema.validation.duplicate_field": {
+      "message": "dataset {$dataset} declares field {$field} (or ordinal {$ordinal}) twice"
+    },
+    "source_schema.validation.duplicate_id": {
+      "message": "{$list} declares id {$id} twice"
+    },
+    "source_schema.validation.invalid_document": {
+      "message": "the document is not a SourceSchemaIR document: {$detail}"
+    },
+    "source_schema.validation.invalid_evidence": {
+      "message": "evidence {$uri} needs a non-blank uri and a lower-case hex SHA-256"
+    },
+    "source_schema.validation.invalid_source_identity": {
+      "message": "source identity components must not contain control characters"
+    },
+    "source_schema.validation.invalid_timestamp": {
+      "message": "{$value} is not an RFC 3339 timestamp with an explicit offset"
+    },
+    "source_schema.validation.profile_counts": {
+      "message": "profile measures are inconsistent: {$detail}"
+    },
+    "source_schema.validation.promoted_inference": {
+      "message": "{$entry} has origin {$origin}, which its list does not admit; an inference is never a declaration"
+    },
+    "source_schema.validation.sample_bound": {
+      "message": "sample set exceeds its bound: {$detail}"
+    },
+    "source_schema.validation.unknown_dataset": {
+      "message": "dataset {$dataset} is not declared"
+    },
+    "source_schema.validation.unknown_field": {
+      "message": "dataset {$dataset} has no field {$field}"
+    },
+    "widget.interaction.control_missing_for_transition": {
+      "message": "a declared navigation item or action binding has no control that offers it: {$detail}"
+    },
+    "widget.interaction.control_without_legal_transition": {
+      "message": "a navigation control leads to a page the app does not declare: {$detail}"
+    },
+    "widget.interaction.dialog_depth_exceeds_verified_bound": {
+      "message": "dialog nesting exceeds the stacked dialogs the renderer interaction statechart is verified for: {$detail}"
+    },
+    "widget.interaction.dialog_no_keyboard_close": {
+      "message": "a dialog can only be dismissed by pointer; it needs a visible close or Escape: {$detail}"
+    },
+    "widget.interaction.dialog_no_restore_target": {
+      "message": "a dialog has no focus restore target (action control inside it, named enclosing region or page): {$detail}"
+    },
+    "widget.interaction.keyboard_unreachable_control": {
+      "message": "an interactive control is not keyboard reachable: {$detail}"
+    },
+    "widget.interaction.nullable_without_clear": {
+      "message": "a field bound to a nullable input cannot be cleared to null (no clear affordance, or always required): {$detail}"
+    },
+    "widget.interaction.unnamed_control": {
+      "message": "an interactive control has no accessible name: {$detail}"
+    },
+    "widget.interaction.unreachable_page": {
+      "message": "an app page has no control that reaches it from the entry page: {$detail}"
+    },
+    "widget.validation.invalid_payload": {
+      "message": "WidgetIR payload is invalid at {$path}: {$detail}"
+    },
+    "widget.validation.missing_dependency": {
+      "message": "widget references '{$artifactId}' without declaring it as a dependency"
+    },
+    "widget.validation.unsafe_action_binding": {
+      "message": "action binding must target a Norn action or process command, not a raw mutation"
+    }
+  }
+}
