@@ -53,8 +53,12 @@ def run_probe(probe: dict, root: Path) -> bool:
     timeout = probe.get("timeout_s", 1800)
     shell = ["bash", "-o", "pipefail", "-ec"]
     if probe.get("prepare"):
-        prepared = subprocess.run([*shell, probe["prepare"]], cwd=root, timeout=timeout, stdout=sys.stderr,
-                                  stderr=sys.stderr)
+        try:
+            prepared = subprocess.run([*shell, probe["prepare"]], cwd=root, timeout=timeout, stdout=sys.stderr,
+                                      stderr=sys.stderr)
+        except subprocess.TimeoutExpired:
+            emit("FAIL", f"{name} prepare exceeded {timeout} s")
+            return False
         if prepared.returncode != 0:
             emit("FAIL", f"{name} prepare exited {prepared.returncode}")
             return False
