@@ -4,7 +4,14 @@
   "leanCompositeGates": {
     "verification/kernel-l1/Reference.lean": "scripts/verify-kernel-l1-lean.sh",
     "verification/kernel-l1/Audit.lean": "scripts/verify-kernel-l1-lean.sh",
-    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh"
+    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh",
+    "verification/semantics-v1/NornSem/Norm.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/NornSem/Meta/Precedence.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/Loops.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/Admits.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/AdmitsSound.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/Resolution.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/DecisionProof.lean": "scripts/verify-norm-precedence-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [

@@ -37,7 +37,7 @@
     }
   },
   "proof": {
-    "status": "missing",
+    "status": "partial",
     "artifacts": {
       "$entries": "proof.artifacts"
     },
@@ -49,7 +49,8 @@
     },
     "resultArtifacts": {
       "$entries": "proof.resultArtifacts"
-    }
+    },
+    "bound": "norm precedence's decision core only (crates/norn-checker/src/norm_precedence/decision.rs, #718 U3/U4); grounding, the closure and resolution search, explanations and every other checker family remain unproved"
   },
   "limitations": {
     "$entries": "limitations"
