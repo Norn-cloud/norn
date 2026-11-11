@@ -115,6 +115,12 @@ pub struct LabelCatalogRoot {
     pub labels_version: crate::IrVersion01,
     /// One entry per target, each target at most once.
     pub entries: Vec<LabelEntry>,
+    /// The locales this layer serves (a tenant's or a locale pack's): every
+    /// definition the artifact set and the installed base declare should
+    /// have a label in each. Missing ones are listed by a warning
+    /// (`labels.lint.missing_label`), never refused. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_locales: Vec<String>,
     /// Reserved versioned extension slots, as on other artifact roots.
     #[serde(
         default,
@@ -228,6 +234,7 @@ mod tests {
         prop::collection::vec(entry, 0..6).prop_map(|entries| LabelCatalogRoot {
             labels_version: crate::IrVersion01::V0_1,
             entries,
+            required_locales: Vec::new(),
             extensions: None,
         })
     }

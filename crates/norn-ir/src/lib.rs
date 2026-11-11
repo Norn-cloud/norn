@@ -1488,7 +1488,9 @@ define_payload_root!(
             labels_version => "labelsVersion" as IrVersion01,
             entries => "entries" as Vec<LabelEntry>
         }
-        optional {}
+        optional {
+            required_locales => "requiredLocales" as Vec<String>
+        }
     }
 );
 

@@ -233,3 +233,143 @@ proptest! {
         prop_assert_eq!(set_codes(&[invoice(), catalog], &[]), BTreeSet::new());
     }
 }
+
+fn invoice_targets() -> Vec<Value> {
+    vec![
+        json!({ "kind": "objectType", "objectType": "sales.Invoice" }),
+        json!({ "kind": "property", "objectType": "sales.Invoice", "property": "number" }),
+        json!({ "kind": "property", "objectType": "sales.Invoice", "property": "status" }),
+        json!({ "kind": "enumValue", "objectType": "sales.Invoice", "property": "status", "value": "draft" }),
+        json!({ "kind": "enumValue", "objectType": "sales.Invoice", "property": "status", "value": "posted" }),
+    ]
+}
+
+fn target_key(target: &Value) -> String {
+    serde_json::from_value::<norn_ir::LabelTarget>(target.clone())
+        .expect("label target")
+        .key()
+}
+
+fn missing_label_findings(
+    candidates: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<norn_checker::Diagnostic> {
+    check_artifact_set(
+        candidates,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base,
+            tenant: None,
+        },
+    )
+    .into_iter()
+    .filter(|finding| finding.code.as_str() == "labels.lint.missing_label")
+    .collect()
+}
+
+#[test]
+fn a_required_locale_lists_every_unlabelled_definition_as_a_warning() {
+    let catalog = envelope(
+        "tenant.labels",
+        "labels",
+        &json!({ "labelsVersion": "0.1", "requiredLocales": ["ar"], "entries": [
+            { "target": invoice_targets()[0], "label": { "ar": "فاتورة" } }
+        ] }),
+    );
+    let findings = missing_label_findings(&[invoice(), catalog], &[]);
+    assert_eq!(findings.len(), 1);
+    assert!(!findings[0].is_error());
+    assert_eq!(findings[0].artifact_id.as_deref(), Some("tenant.labels"));
+    assert!(
+        findings[0]
+            .message
+            .starts_with("4 definitions have no ar label: ")
+    );
+    let filled = envelope(
+        "tenant.more_labels",
+        "labels",
+        &json!({ "labelsVersion": "0.1", "entries": invoice_targets()[1..].iter()
+            .map(|target| json!({ "target": target, "label": { "AR": "تسمية" } })).collect::<Vec<_>>() }),
+    );
+    let catalog = envelope(
+        "tenant.labels",
+        "labels",
+        &json!({ "labelsVersion": "0.1", "requiredLocales": ["ar"], "entries": [
+            { "target": invoice_targets()[0], "label": { "ar": "فاتورة" } }
+        ] }),
+    );
+    assert!(missing_label_findings(&[filled, catalog], &[invoice()]).is_empty());
+}
+
+#[test]
+fn an_installed_requirement_still_lists_new_definitions() {
+    let requirement = envelope(
+        "tenant.labels",
+        "labels",
+        &json!({ "labelsVersion": "0.1", "requiredLocales": ["ar"], "entries": [] }),
+    );
+    let findings = missing_label_findings(&[invoice()], &[requirement]);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].artifact_id, None);
+    assert!(
+        findings[0]
+            .message
+            .starts_with("5 definitions have no ar label: ")
+    );
+}
+
+#[test]
+fn a_malformed_required_locale_refuses() {
+    let catalog = labels_with_required(&["ar", "en_US"]);
+    assert_eq!(
+        codes(&check_artifact(&catalog)),
+        BTreeSet::from(["labels.validation.invalid_locale".to_owned()])
+    );
+}
+
+fn labels_with_required(locales: &[&str]) -> ArtifactEnvelope {
+    envelope(
+        "tenant.labels",
+        "labels",
+        &json!({ "labelsVersion": "0.1", "requiredLocales": locales, "entries": [] }),
+    )
+}
+
+proptest! {
+    /// LABEL-COVERAGE-1: the warning lists exactly the declared definitions
+    /// with no label in the required locale in either layer.
+    #[test]
+    fn the_missing_list_is_exactly_the_unlabelled_complement(
+        upstream in prop::collection::vec(any::<bool>(), 5),
+        overlay in prop::collection::vec(any::<bool>(), 5),
+        overlay_tag in prop::sample::select(vec!["ar", "AR", "ar-EG"]),
+    ) {
+        let entries = |chosen: &[bool], tag: &str| -> Vec<Value> {
+            invoice_targets().into_iter().zip(chosen).filter(|(_, keep)| **keep)
+                .map(|(target, _)| json!({
+                    "target": target,
+                    "label": Value::Object([(tag.to_owned(), json!("تسمية"))].into_iter().collect()),
+                })).collect()
+        };
+        let installed = envelope("core.labels", "labels",
+            &json!({ "labelsVersion": "0.1", "entries": entries(&upstream, "ar") }));
+        let candidate = envelope("tenant.labels", "labels",
+            &json!({ "labelsVersion": "0.1", "requiredLocales": ["ar"], "entries": entries(&overlay, overlay_tag) }));
+        // A regional tag never satisfies its base language: no fallback.
+        let covers = overlay_tag.eq_ignore_ascii_case("ar");
+        let findings = missing_label_findings(&[candidate], &[invoice(), installed]);
+        let expected: Vec<String> = invoice_targets().iter().zip(upstream.iter().zip(&overlay))
+            .filter(|(_, (up, over))| !**up && !(covers && **over)).map(|(target, _)| target_key(target)).collect();
+        let mut expected_sorted = expected.clone();
+        expected_sorted.sort();
+        if expected.is_empty() {
+            prop_assert!(findings.is_empty());
+        } else {
+            prop_assert_eq!(findings.len(), 1);
+            prop_assert_eq!(
+                &findings[0].message,
+                &format!("{} definitions have no ar label: {}", expected.len(), expected_sorted.join(", "))
+            );
+        }
+    }
+}

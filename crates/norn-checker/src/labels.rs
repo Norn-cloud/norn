@@ -32,6 +32,7 @@ const UNLABELLED_LOCALE: &str = "labels.validation.unlabelled_locale";
 const DUPLICATE_TARGET: &str = "labels.validation.duplicate_target";
 const UNKNOWN_TARGET: &str = "labels.admission.unknown_target";
 const CONFLICTING_LABEL: &str = "labels.admission.conflicting_label";
+const MISSING_LABEL: &str = "labels.lint.missing_label";
 
 /// Decode a labels payload into its strict root, refusing non-canonical forms.
 pub(crate) fn decode(payload: &ArtifactPayload) -> Result<LabelCatalogRoot, String> {
@@ -71,6 +72,11 @@ pub(crate) fn check_local(
     let mut push = |code: &str, message: String, path: String| {
         diagnostics.push(invalid_diagnostic(code, message, path, artifact_id));
     };
+    check_tags(
+        root.required_locales.iter(),
+        "payload.requiredLocales",
+        &mut push,
+    );
     let mut targets = BTreeSet::new();
     for (index, entry) in root.entries.iter().enumerate() {
         let at = format!("payload.entries.{index}");
@@ -361,20 +367,32 @@ impl JsonPayload {
 
 /// Check the candidate label catalogs against the candidate definitions and
 /// the installed base (see the module docs).
-pub(crate) fn check_label_set(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+pub(crate) fn check_label_set<'a>(
+    artifacts: &'a [ArtifactEnvelope],
+    base: &'a [ArtifactEnvelope],
 ) -> Vec<Diagnostic> {
-    let catalogs: Vec<(&ArtifactEnvelope, LabelCatalogRoot)> = artifacts
+    let decoded = |set: &'a [ArtifactEnvelope]| -> Vec<(&'a ArtifactEnvelope, LabelCatalogRoot)> {
+        let mut catalogs: Vec<_> = set
+            .iter()
+            .filter(|artifact| artifact.kind() == ArtifactKind::Labels)
+            .filter_map(|artifact| decode(&artifact.payload).ok().map(|root| (artifact, root)))
+            .collect();
+        catalogs.sort_by(|a, b| {
+            (&a.0.artifact_id, &a.0.version).cmp(&(&b.0.artifact_id, &b.0.version))
+        });
+        catalogs
+    };
+    let catalogs = decoded(artifacts);
+    let installed = decoded(base);
+    let required = installed
         .iter()
-        .filter(|artifact| artifact.kind() == ArtifactKind::Labels)
-        .filter_map(|artifact| decode(&artifact.payload).ok().map(|root| (artifact, root)))
-        .collect();
-    if catalogs.is_empty() {
+        .chain(&catalogs)
+        .any(|(_, root)| !root.required_locales.is_empty());
+    if catalogs.is_empty() && !required {
         return Vec::new();
     }
     let declared = declared_targets(artifacts.iter().chain(base));
-    let mut findings = Vec::new();
+    let mut findings = missing_labels(&declared, &installed, &catalogs);
     let mut owners: BTreeMap<(String, String), &str> = BTreeMap::new();
     let mut sorted: Vec<_> = catalogs.iter().collect();
     sorted.sort_by(|a, b| (&a.0.artifact_id, &a.0.version).cmp(&(&b.0.artifact_id, &b.0.version)));
@@ -409,6 +427,67 @@ pub(crate) fn check_label_set(
         }
     }
     findings
+}
+
+/// LABEL-COVERAGE-1: for every locale an installed or candidate catalog
+/// requires, list the declared definitions that have no label in it after
+/// layering (installed catalogs first, then candidates). One warning per
+/// locale, on the candidate catalog that requires it (or the first candidate
+/// catalog, or no artifact when the set has none), naming every target.
+fn missing_labels(
+    declared: &BTreeSet<LabelTarget>,
+    installed: &[(&ArtifactEnvelope, LabelCatalogRoot)],
+    candidates: &[(&ArtifactEnvelope, LabelCatalogRoot)],
+) -> Vec<Diagnostic> {
+    let mut required: BTreeMap<String, Option<&ArtifactEnvelope>> = BTreeMap::new();
+    for (artifact, root, candidate) in installed
+        .iter()
+        .map(|(a, r)| (*a, r, false))
+        .chain(candidates.iter().map(|(a, r)| (*a, r, true)))
+    {
+        for tag in root
+            .required_locales
+            .iter()
+            .filter(|tag| is_valid_locale_tag(tag))
+        {
+            let owner = required.entry(tag.to_ascii_lowercase()).or_insert(None);
+            if candidate && owner.is_none() {
+                *owner = Some(artifact);
+            }
+        }
+    }
+    let resolved =
+        norn_ir::labels::resolve(installed.iter().chain(candidates).map(|(_, root)| root));
+    required
+        .into_iter()
+        .filter_map(|(tag, owner)| {
+            let missing: BTreeSet<String> = declared
+                .iter()
+                .filter(|target| {
+                    !resolved.get(target).is_some_and(|locales| {
+                        locales.keys().any(|key| key.eq_ignore_ascii_case(&tag))
+                    })
+                })
+                .map(LabelTarget::key)
+                .collect();
+            if missing.is_empty() {
+                return None;
+            }
+            let owner = owner.or_else(|| candidates.first().map(|(artifact, _)| *artifact));
+            Some(Diagnostic {
+                code: DiagnosticCode::new(MISSING_LABEL),
+                severity: DiagnosticSeverity::Warning,
+                message: format!(
+                    "{} definitions have no {tag} label: {}",
+                    missing.len(),
+                    missing.into_iter().collect::<Vec<_>>().join(", ")
+                ),
+                span: owner.map(|_| Span::pointer("/payload/requiredLocales")),
+                artifact_id: owner.map(|artifact| artifact.artifact_id.clone()),
+                remediation: Some(norn_ir::DiagnosticRemediation::FixDefinition),
+            })
+        })
+        .collect()
 }
 
 fn escape_pointer(segment: &str) -> String {

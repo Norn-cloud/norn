@@ -228,6 +228,7 @@ fn layers() -> impl Strategy<Value = (LabelCatalogRoot, LabelCatalogRoot)> {
             .prop_map(|entries| LabelCatalogRoot {
                 labels_version: norn_ir::IrVersion01::V0_1,
                 entries,
+                required_locales: Vec::new(),
                 extensions: None,
             })
     };
