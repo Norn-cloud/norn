@@ -121,7 +121,7 @@ fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsR
 /// Verify the retained set against its receipt. A receipt's base must be
 /// retained in the same set: it is verified there, never resolved from a
 /// release pin. Returns the base artifact ids.
-fn verify_retained(
+pub(crate) fn verify_retained(
     installed: &InstalledDefinitionSet,
     scope: &CellScope,
 ) -> Result<Vec<String>, Refusal> {
