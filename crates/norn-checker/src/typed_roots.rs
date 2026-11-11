@@ -3717,192 +3717,173 @@ mod tests {
         }
     }
 
-    #[test]
-    fn action_commands_check_required_names_without_an_input_environment() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["inputSchema"] = json!({ "type": "string" });
-        action["payload"]["commands"] = json!([
-            { "connector": "erpnext", "operation": "submit", "doctype": "Sales Order" },
-            { "connector": "erpnext", "operation": "update", "doctype": "Sales Order" },
-            { "connector": "erpnext", "operation": "cancel", "doctype": "Sales Order" }
-        ]);
-        let found = findings(action);
-        assert!(has(
-            &found,
-            codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
-            "payload.inputSchema"
-        ));
-        for path in [
-            "payload.commands[0].name",
-            "payload.commands[1].name",
-            "payload.commands[2].name",
-        ] {
-            assert!(
-                has(&found, "action.validation.invalid_payload", path),
-                "{found:?}"
-            );
-        }
-    }
+    /// `(label, commands, input-schema patch, expected (code, path) findings)`.
+    type ActionCommandCase = (
+        &'static str,
+        Value,
+        fn(&mut Value),
+        &'static [(&'static str, &'static str)],
+    );
 
+    /// Every malformed command list is refused at each listed path; the patch
+    /// sets the input environment the commands are checked against.
     #[test]
-    fn action_commands_reject_invalid_expressions_and_missing_input_members() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "erpnext",
-                "operation": "submit",
-                "doctype": "Sales Order",
-                "name": "input.quantity"
-            },
-            {
-                "connector": "erpnext",
-                "operation": "create",
-                "doctype": "Sales Order",
-                "fields": { "customer": "input.unknown" }
-            },
-            {
-                "connector": "erpnext",
-                "operation": "create",
-                "doctype": "Sales Order",
-                "fields": { "customer": "input.skuId +" }
-            }
-        ]);
-
-        let found = findings(action);
-        for path in [
-            "payload.commands[0].name",
-            "payload.commands[1].fields.customer",
-            "payload.commands[2].fields.customer",
-        ] {
-            assert!(
-                has(&found, "action.validation.invalid_payload", path),
-                "{path}: {found:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn action_commands_reject_expected_modified_for_submit_and_cancel() {
-        for operation in ["submit", "cancel"] {
+    fn action_commands_refuse_at_their_paths() {
+        const INVALID: &str = "action.validation.invalid_payload";
+        const UNDERIVABLE: &str = codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE;
+        let cases: [ActionCommandCase; 9] = [
+            (
+                "required names are checked without an input environment",
+                json!([
+                    { "connector": "erpnext", "operation": "submit", "doctype": "Sales Order" },
+                    { "connector": "erpnext", "operation": "update", "doctype": "Sales Order" },
+                    { "connector": "erpnext", "operation": "cancel", "doctype": "Sales Order" }
+                ]),
+                |schema: &mut Value| *schema = json!({ "type": "string" }),
+                &[
+                    (UNDERIVABLE, "payload.inputSchema"),
+                    (INVALID, "payload.commands[0].name"),
+                    (INVALID, "payload.commands[1].name"),
+                    (INVALID, "payload.commands[2].name"),
+                ],
+            ),
+            (
+                "invalid expressions and missing input members",
+                json!([
+                    {
+                        "connector": "erpnext",
+                        "operation": "submit",
+                        "doctype": "Sales Order",
+                        "name": "input.quantity"
+                    },
+                    {
+                        "connector": "erpnext",
+                        "operation": "create",
+                        "doctype": "Sales Order",
+                        "fields": { "customer": "input.unknown" }
+                    },
+                    {
+                        "connector": "erpnext",
+                        "operation": "create",
+                        "doctype": "Sales Order",
+                        "fields": { "customer": "input.skuId +" }
+                    }
+                ]),
+                |_: &mut Value| {},
+                &[
+                    (INVALID, "payload.commands[0].name"),
+                    (INVALID, "payload.commands[1].fields.customer"),
+                    (INVALID, "payload.commands[2].fields.customer"),
+                ],
+            ),
+            (
+                "expectedModified on submit",
+                json!([{
+                    "connector": "erpnext", "operation": "submit",
+                    "doctype": "Sales Order", "name": "\"SO-1\"",
+                    "expectedModified": "\"2026-10-02 12:00:00\""
+                }]),
+                |_: &mut Value| {},
+                &[(INVALID, "payload.commands[0].expectedModified")],
+            ),
+            (
+                "expectedModified on cancel",
+                json!([{
+                    "connector": "erpnext", "operation": "cancel",
+                    "doctype": "Sales Order", "name": "\"SO-1\"",
+                    "expectedModified": "\"2026-10-02 12:00:00\""
+                }]),
+                |_: &mut Value| {},
+                &[(INVALID, "payload.commands[0].expectedModified")],
+            ),
+            (
+                "submit, update and cancel require names",
+                json!([
+                    { "connector": "erpnext", "operation": "submit", "doctype": "Sales Order" },
+                    { "connector": "erpnext", "operation": "update", "doctype": "Sales Order" },
+                    { "connector": "erpnext", "operation": "cancel", "doctype": "Sales Order" }
+                ]),
+                |_: &mut Value| {},
+                &[
+                    (INVALID, "payload.commands[0].name"),
+                    (INVALID, "payload.commands[1].name"),
+                    (INVALID, "payload.commands[2].name"),
+                ],
+            ),
+            (
+                "blank connector, doctype and field names",
+                json!([
+                    {
+                        "connector": "  ",
+                        "operation": "create",
+                        "doctype": "",
+                        "fields": { " ": "input.skuId" }
+                    }
+                ]),
+                |_: &mut Value| {},
+                &[
+                    (INVALID, "payload.commands[0].connector"),
+                    (INVALID, "payload.commands[0].doctype"),
+                    (INVALID, "payload.commands[0].fields"),
+                ],
+            ),
+            (
+                "unknown operation",
+                json!([
+                    {
+                        "connector": "erpnext",
+                        "operation": "delete",
+                        "doctype": "Sales Order"
+                    }
+                ]),
+                |_: &mut Value| {},
+                &[(INVALID, "payload.commands[0]")],
+            ),
+            (
+                "unknown member",
+                json!([
+                    {
+                        "connector": "erpnext",
+                        "operation": "create",
+                        "doctype": "Sales Order",
+                        "unexpected": "member"
+                    }
+                ]),
+                |_: &mut Value| {},
+                &[(INVALID, "payload.commands[0]")],
+            ),
+            (
+                "expressions do not read nested opaque input objects",
+                json!([
+                    {
+                        "connector": "erpnext",
+                        "operation": "create",
+                        "doctype": "Sales Order",
+                        "fields": { "customer_name": "input.customer.name" }
+                    }
+                ]),
+                |schema: &mut Value| {
+                    schema["properties"]["customer"] = json!({
+                        "type": "object",
+                        "properties": { "name": { "type": "string" } },
+                        "additionalProperties": false
+                    });
+                },
+                &[(INVALID, "payload.commands[0].fields.customer_name")],
+            ),
+        ];
+        for (label, commands, input_schema_patch, expected_paths) in cases {
             let mut action = fixture(ACTION_FIXTURE);
-            action["payload"]["commands"] = json!([{
-                "connector": "erpnext", "operation": operation,
-                "doctype": "Sales Order", "name": "\"SO-1\"",
-                "expectedModified": "\"2026-10-02 12:00:00\""
-            }]);
+            input_schema_patch(&mut action["payload"]["inputSchema"]);
+            action["payload"]["commands"] = commands;
             let found = findings(action);
-            assert!(
-                has(
-                    &found,
-                    "action.validation.invalid_payload",
-                    "payload.commands[0].expectedModified"
-                ),
-                "{operation}: {found:?}"
-            );
+            for &(code, path) in expected_paths {
+                assert!(
+                    has(&found, code, path),
+                    "{label}: expected {code} at {path}, got {found:?}"
+                );
+            }
         }
-    }
-
-    #[test]
-    fn action_commands_require_names_for_submit_update_and_cancel() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            { "connector": "erpnext", "operation": "submit", "doctype": "Sales Order" },
-            { "connector": "erpnext", "operation": "update", "doctype": "Sales Order" },
-            { "connector": "erpnext", "operation": "cancel", "doctype": "Sales Order" }
-        ]);
-
-        let found = findings(action);
-        for path in [
-            "payload.commands[0].name",
-            "payload.commands[1].name",
-            "payload.commands[2].name",
-        ] {
-            assert!(
-                has(&found, "action.validation.invalid_payload", path),
-                "{path}: {found:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn action_commands_require_non_empty_connector_doctype_and_field_names() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "  ",
-                "operation": "create",
-                "doctype": "",
-                "fields": { " ": "input.skuId" }
-            }
-        ]);
-
-        let found = findings(action);
-        for path in [
-            "payload.commands[0].connector",
-            "payload.commands[0].doctype",
-            "payload.commands[0].fields",
-        ] {
-            assert!(
-                has(&found, "action.validation.invalid_payload", path),
-                "{path}: {found:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn action_commands_reject_unknown_operation_and_members() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "erpnext",
-                "operation": "delete",
-                "doctype": "Sales Order"
-            }
-        ]);
-        assert!(has(
-            &findings(action),
-            "action.validation.invalid_payload",
-            "payload.commands[0]"
-        ));
-
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "erpnext",
-                "operation": "create",
-                "doctype": "Sales Order",
-                "unexpected": "member"
-            }
-        ]);
-        assert!(has(
-            &findings(action),
-            "action.validation.invalid_payload",
-            "payload.commands[0]"
-        ));
-    }
-
-    #[test]
-    fn action_command_expressions_do_not_read_nested_opaque_input_objects() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["inputSchema"]["properties"]["customer"] = json!({
-            "type": "object",
-            "properties": { "name": { "type": "string" } },
-            "additionalProperties": false
-        });
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "erpnext",
-                "operation": "create",
-                "doctype": "Sales Order",
-                "fields": { "customer_name": "input.customer.name" }
-            }
-        ]);
-
-        assert!(has(
-            &findings(action),
-            "action.validation.invalid_payload",
-            "payload.commands[0].fields.customer_name"
-        ));
     }
 
     #[test]

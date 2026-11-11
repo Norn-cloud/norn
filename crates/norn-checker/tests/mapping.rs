@@ -559,17 +559,25 @@ fn layers_edge_complete_chain_refuses_changed_units_and_inherited_conditions() {
     );
 }
 
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
-    #[test]
-    fn edge_generated_required_member_omissions_refuse_planning(index in 0usize..12) {
+#[test]
+fn edge_every_required_member_omission_refuses_planning() {
+    for index in 0..12 {
         let (approved, retained, mut candidate) = edge_fixture();
-        let (mut document, _) = complete_member_interpretation(); document.members.remove(index);
+        let (mut document, _) = complete_member_interpretation();
+        document.members.remove(index);
         let (mut edge, _) = pinned_interpretation();
-        edge.payload = norn_ir::ArtifactPayload::from_kind_json(&norn_ir::ArtifactKind::Mapping,
-            serde_json::from_value(serde_json::to_value(document).expect("edge")).expect("tree")).expect("payload");
+        edge.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Mapping,
+            serde_json::from_value(serde_json::to_value(document).expect("edge")).expect("tree"),
+        )
+        .expect("payload");
         candidate.push(edge);
-        proptest::prop_assert!(approved.interpretation_challenge(&edge_source(&candidate, &retained), &retained).is_err());
+        assert!(
+            approved
+                .interpretation_challenge(&edge_source(&candidate, &retained), &retained)
+                .is_err(),
+            "omitting member {index} must refuse planning"
+        );
     }
 }
 
@@ -721,26 +729,43 @@ fn compiled_with_two_event_roles() -> CompiledMapping {
     compile_mapping_artifact(&mapping, &artifacts, &[]).expect("two ordinary event roles compile")
 }
 
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
-    #[test]
-    fn map_units_generated_scales_require_exact_preservation(scale in 0u64..=28) {
+#[test]
+fn map_units_every_decimal_scale_requires_exact_preservation() {
+    for scale in 0u64..=28 {
         let (mut document, mut base) = complete_member_interpretation();
         let index = distinct_target_contract(&mut document, &mut base);
         let target = base.get_mut(index).expect("target");
         let mut root: norn_ir::EntityRootV2 = serde_json::from_value(
             serde_json::to_value(target.payload.to_json_value()).expect("wire"),
-        ).expect("root");
-        let p = root.object_type.properties.iter_mut().find(|p| p.id.as_str() == "total_amount").expect("amount");
-        let norn_ir::PropertyType::Decimal { scale: declared, .. } = &mut p.property_type else { panic!("decimal"); };
+        )
+        .expect("root");
+        let p = root
+            .object_type
+            .properties
+            .iter_mut()
+            .find(|p| p.id.as_str() == "total_amount")
+            .expect("amount");
+        let norn_ir::PropertyType::Decimal {
+            scale: declared, ..
+        } = &mut p.property_type
+        else {
+            panic!("decimal");
+        };
         *declared = norn_ir::members::WholeNumber(scale);
-        target.payload = norn_ir::ArtifactPayload::from_kind_json(&norn_ir::ArtifactKind::Entity,
+        target.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Entity,
             serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
-        ).expect("entity");
-        let gap = member_findings(&document, &base).iter().any(|f| f.code == "core.composition.mapping_gap");
-        proptest::prop_assert_eq!(gap, scale != 6);
+        )
+        .expect("entity");
+        let gap = member_findings(&document, &base)
+            .iter()
+            .any(|f| f.code == "core.composition.mapping_gap");
+        assert_eq!(gap, scale != 6, "scale {scale}");
     }
+}
 
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
     #[test]
     fn event_multi_generated_object_keys_keep_event_identity_and_both_roles(suffix in "[A-Z0-9]{1,10}") {
         let event = format!("EVENT-{suffix}");

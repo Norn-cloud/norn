@@ -790,52 +790,42 @@ fn lifecycle_transition_fails_closed_without_an_explicit_record_binding() {
     );
 }
 
+/// A lifecycle target maps its id only from `input.recordKey`, the runtime
+/// ObjectRecord id, which WidgetIR's record properties do not include: never
+/// from a business id that differs from it, another single-property identity
+/// key, or an unrelated constant.
 #[test]
-fn lifecycle_target_uses_runtime_key_when_business_id_differs() {
-    // WidgetIR's record properties do not include the runtime ObjectRecord id.
-    let runtime_record = json!({
-        "objectType": "test.Record",
-        "id": "runtime-A",
-        "scope": "org_demo",
-        "version": 1,
-        "values": { "id": "business-B", "business_key": "external-B", "status": "draft" }
-    });
-    assert_ne!(runtime_record["id"], runtime_record["values"]["id"]);
-
-    let mut widget = transition_widget();
-    widget["payload"]["ux"]["dataBindings"][0]["query"]["key"][0]["value"]["value"] =
-        runtime_record["values"]["id"].clone();
-    assert_eq!(
-        widget["payload"]["ux"]["actionBindings"][0]["inputMapping"]["id"],
-        "input.recordKey"
-    );
-    clean(&findings_with(
-        widget.clone(),
-        vec![transition_action(), transition_entity()],
-        &[],
-    ));
-    widget["payload"]["ux"]["actionBindings"][0]["inputMapping"]["id"] = json!("input.record.id");
-    exact(
-        &findings_with(widget, vec![transition_action(), transition_entity()], &[]),
-        ACTION_PATH,
-        "UI law: lifecycle transition objectIdField must map directly from input.recordKey",
-    );
-}
-
-#[test]
-fn lifecycle_target_rejects_other_single_property_identity_keys_too() {
-    let mut widget = transition_widget();
-    widget["payload"]["ux"]["dataBindings"][0]["query"]["key"][0]["propertyId"] =
-        json!("business_key");
-    widget["payload"]["ux"]["dataBindings"][0]["query"]["key"][0]["value"]["value"] =
-        json!("external-B");
-    widget["payload"]["ux"]["actionBindings"][0]["inputMapping"]["id"] =
-        json!("input.record.business_key");
-    exact(
-        &findings_with(widget, vec![transition_action(), transition_entity()], &[]),
-        ACTION_PATH,
-        "UI law: lifecycle transition objectIdField must map directly from input.recordKey",
-    );
+fn lifecycle_target_identity_maps_only_from_the_runtime_key() {
+    const NOT_RUNTIME_KEY: &str =
+        "UI law: lifecycle transition objectIdField must map directly from input.recordKey";
+    // `(detail query key property and value, inputMapping.id, expected message)`.
+    for (key, mapping, expected) in [
+        (Some(("id", "business-B")), "input.recordKey", None),
+        (
+            Some(("id", "business-B")),
+            "input.record.id",
+            Some(NOT_RUNTIME_KEY),
+        ),
+        (
+            Some(("business_key", "external-B")),
+            "input.record.business_key",
+            Some(NOT_RUNTIME_KEY),
+        ),
+        (None, "\"another-record\"", Some(NOT_RUNTIME_KEY)),
+    ] {
+        let mut widget = transition_widget();
+        if let Some((property, value)) = key {
+            let query_key = &mut widget["payload"]["ux"]["dataBindings"][0]["query"]["key"][0];
+            query_key["propertyId"] = json!(property);
+            query_key["value"]["value"] = json!(value);
+        }
+        widget["payload"]["ux"]["actionBindings"][0]["inputMapping"]["id"] = json!(mapping);
+        let found = findings_with(widget, vec![transition_action(), transition_entity()], &[]);
+        match expected {
+            None => clean(&found),
+            Some(message) => exact(&found, ACTION_PATH, message),
+        }
+    }
 }
 
 #[test]
@@ -859,18 +849,6 @@ fn composed_dialog_cannot_bind_a_host_override_by_coincident_binding_id() {
         &findings_with(host, vec![external_action()], &[baseline]),
         ACTION_PATH,
         "UI law: blocking dialog must bind its actual external descendant invocation; all external descendants must use that binding",
-    );
-}
-
-#[test]
-fn lifecycle_target_identity_cannot_come_from_an_unrelated_constant() {
-    let mut widget = transition_widget();
-    widget["payload"]["ux"]["actionBindings"][0]["inputMapping"]["id"] =
-        json!("\"another-record\"");
-    exact(
-        &findings_with(widget, vec![transition_action(), transition_entity()], &[]),
-        ACTION_PATH,
-        "UI law: lifecycle transition objectIdField must map directly from input.recordKey",
     );
 }
 
