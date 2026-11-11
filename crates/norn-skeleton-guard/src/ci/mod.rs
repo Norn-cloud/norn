@@ -882,7 +882,7 @@ mod tests {
             missing_pinned_cases(&deleted),
             vec![last["name"].as_str().unwrap_or_default().to_owned()]
         );
-        let mut flipped = cases.clone();
+        let mut flipped = cases;
         if let Some(first) = flipped.first_mut() {
             first["expect"] = Value::from(if first["expect"] == "accept" { "reject" } else { "accept" });
         }
