@@ -1774,6 +1774,42 @@ enum CommitOrigin<'a> {
     Retained(&'a crate::export::ExportRecord),
 }
 
+/// A retained revision rides the governed install without changing the
+/// kernel unless it is a flow: its set, receipt and model are the active ones.
+fn preflight_retained(
+    previous: Option<&InstalledDefinitionSet>,
+    previous_model: &Model,
+    install: &DefinitionInstallContext<'_>,
+    change: &crate::retained::RetainedDefinitionChange,
+) -> Result<(), CellError> {
+    // A retained revision rides the governed install but, unless it is a
+    // flow (an automation that installs into the kernel set), never
+    // changes the kernel: its set and receipt are the active ones, so the
+    // new definitions version has the kernel identity of the one before it
+    // (question pins and historical cutoffs compare that identity).
+    let unchanged = previous.is_some_and(|previous| {
+        previous.canonical_set == install.input.canonical_set
+            && previous.receipt_sha256 == install.input.receipt_sha256
+    });
+    if !unchanged && change.definition.kind != "flow" {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "a retained revision installs over the active kernel set and receipt, unchanged"
+                .to_owned(),
+        ));
+    }
+    // Nor does it change the model (Fable S6): only a flow installs a new
+    // kernel set, and with it a new projected model.
+    let same_model = install.candidate_model.model_hash() == previous_model.model_hash()
+        && install.candidate_model.ddl_hash() == previous_model.ddl_hash();
+    if !same_model && change.definition.kind != "flow" {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "a retained revision that is not a flow installs over the active model, unchanged"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn preflight_definition_install<E: SqlEngine>(
     engine: &E,
     previous_model: &Model,
@@ -1799,31 +1835,7 @@ fn preflight_definition_install<E: SqlEngine>(
         })
         .transpose()?;
     if let Some(change) = install.retained {
-        // A retained revision rides the governed install but, unless it is a
-        // flow (an automation that installs into the kernel set), never
-        // changes the kernel: its set and receipt are the active ones, so the
-        // new definitions version has the kernel identity of the one before it
-        // (question pins and historical cutoffs compare that identity).
-        let unchanged = previous.as_ref().is_some_and(|previous| {
-            previous.canonical_set == install.input.canonical_set
-                && previous.receipt_sha256 == install.input.receipt_sha256
-        });
-        if !unchanged && change.definition.kind != "flow" {
-            return Err(CellError::DefinitionReceiptInvalid(
-                "a retained revision installs over the active kernel set and receipt, unchanged"
-                    .to_owned(),
-            ));
-        }
-        // Nor does it change the model (Fable S6): only a flow installs a new
-        // kernel set, and with it a new projected model.
-        let same_model = install.candidate_model.model_hash() == previous_model.model_hash()
-            && install.candidate_model.ddl_hash() == previous_model.ddl_hash();
-        if !same_model && change.definition.kind != "flow" {
-            return Err(CellError::DefinitionReceiptInvalid(
-                "a retained revision that is not a flow installs over the active model, unchanged"
-                    .to_owned(),
-            ));
-        }
+        preflight_retained(previous.as_ref(), previous_model, install, change)?;
         crate::retained::preflight(engine, change)?;
     }
     let (layout, layout_revision) =
