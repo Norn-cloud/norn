@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,913 records across 137 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,914 records across 138 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -113,6 +113,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `proof.gate.kernel_decider.s` | 214 | s (single) | boat | 1 | 214 / 214 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_ka.s` | 170 | s (single) | boat | 1 | 170 / 170 | ▁ | `c920cf7c87` | [link](https://github.com/Norn-cloud/norn/pull/1228) |
 | `proof.gate.kernel_l1.s` | 9 | s (single) | boat | 1 | 9 / 9 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
+| `proof.gate.law-exceptions-correspondence.s` | 153 | s (single) | boat | 1 | 153 / 153 | ▁ | `12bf2239d4` | [link](https://github.com/Norn-cloud/norn/pull/1232) |
 | `proof.gate.norm-precedence-decision-correspondence.s` | 189 | s (single) | boat | 1 | 189 / 189 | ▁ | `12bf2239d4` | [link](https://github.com/Norn-cloud/norn/pull/1232) |
 | `proof.gate.norm_precedence.s` | 202 | s (single) | boat | 1 | 202 / 202 | ▁ | `b5d3afdd03` | [link](https://github.com/Norn-cloud/norn/pull/1235) |
 | `proof.gate.semantics-v1-lean.s` | 38 | s (single) | boat | 1 | 38 / 38 | ▁ | `12bf2239d4` | [link](https://github.com/Norn-cloud/norn/pull/1232) |
@@ -270,6 +271,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.gate.kernel_decider.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_ka.s`: K-A gate on the tree of this head. measured_at is the head's commit time; the run time was not stated. No durations were stated for the K-B and K-C gates. Cold or warm tool caches not stated. One run.
 - `proof.gate.kernel_l1.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
+- `proof.gate.law-exceptions-correspondence.s`: one run, wall clock incl. Mathlib/Aeneas olean import and every mutant re-extraction; same VM ran the four gates sequentially; Lean import is IO-bound on 8 GB (about 40-100 s per process)
 - `proof.gate.norm-precedence-decision-correspondence.s`: one run, wall clock incl. Mathlib/Aeneas olean import and every mutant re-extraction; same VM ran the four gates sequentially; Lean import is IO-bound on 8 GB (about 40-100 s per process)
 - `proof.gate.norm_precedence.s`: The source states 3m22s. measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
 - `proof.gate.semantics-v1-lean.s`: one run, wall clock incl. Mathlib/Aeneas olean import and every mutant re-extraction; same VM ran the four gates sequentially; Lean import is IO-bound on 8 GB (about 40-100 s per process)
