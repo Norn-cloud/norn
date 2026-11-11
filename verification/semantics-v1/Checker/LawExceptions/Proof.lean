@@ -967,6 +967,135 @@ theorem check_shape_correct (hl : Lawful inst) (law : T) (ids parents : Slice T)
             by_contra hno
             exact hfc c (by omega) (fun _ => hno)
 
+theorem firstWith_unique {n : ℕ} {P : ℕ → Prop} {a b : Option Usize}
+    (ha : FirstWith n P a) (hb : FirstWith n P b) : a = b := by
+  cases a with
+  | none =>
+    cases b with
+    | none => rfl
+    | some j => exact absurd hb.2.1 (ha j.val hb.1)
+  | some i =>
+    cases b with
+    | none => exact absurd ha.2.1 (hb i.val ha.1)
+    | some j =>
+      obtain ⟨hi, hpi, hmi⟩ := ha
+      obtain ⟨hj, hpj, hmj⟩ := hb
+      rcases Nat.lt_trichotomy i.val j.val with h | h | h
+      · exact absurd hpi (hmj _ h)
+      · exact congrArg some (UScalar.eq_of_val_eq h)
+      · exact absurd hpj (hmi _ h)
+
+/-- **Refusal correspondence.** The production `check_shape` refuses with the
+    first failing check in the written order (the bound, then declarations,
+    then targets, then cycles), naming that check's first offending
+    declaration. -/
+theorem check_shape_refusal (hl : Lawful inst) (law : T) (ids parents : Slice T)
+    (declared : Slice Bool) (hp : parents.val.length = ids.val.length)
+    (hd : declared.val.length = ids.val.length) {σ : Type} (cond : ℕ → σ → Bool) :
+    ∃ r, check_shape inst law ids parents declared = ok r ∧
+      (r = .Err .Limit ↔ 64 < ids.val.length) ∧
+      (∀ i : Usize, r = .Err (.InvalidDeclaration i) ↔ ids.val.length ≤ 64 ∧
+        FirstWith ids.val.length (Invalid law ids.val declared.val) (some i)) ∧
+      (∀ i : Usize, r = .Err (.DanglingOverride i) ↔ ids.val.length ≤ 64 ∧
+        FirstWith ids.val.length (Invalid law ids.val declared.val) none ∧
+        FirstWith parents.val.length (Dangling law ids.val parents.val) (some i)) ∧
+      (∀ i : Usize, r = .Err (.Cycle i) ↔ ids.val.length ≤ 64 ∧
+        FirstWith ids.val.length (Invalid law ids.val declared.val) none ∧
+        FirstWith parents.val.length (Dangling law ids.val parents.val) none ∧
+        FirstWith parents.val.length (Cyclic law ids.val parents.val cond) (some i)) := by
+  have hmax : MAX_LAW_EXCEPTIONS.val = 64 := by
+    unfold MAX_LAW_EXCEPTIONS
+    simp
+  obtain ⟨ri, hri, hfi⟩ := first_invalid_spec hl law ids declared
+  by_cases hbig : 64 < ids.val.length
+  · have hgt : Slice.len ids > MAX_LAW_EXCEPTIONS := by
+      show MAX_LAW_EXCEPTIONS.val < (Slice.len ids).val
+      simp [hmax]
+      omega
+    refine ⟨.Err .Limit, by unfold check_shape; simp [hgt], by simp [hbig], fun i => ?_,
+      fun i => ?_, fun i => ?_⟩
+    · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+      intro h
+      exact absurd h (by omega)
+    · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+      intro h
+      exact absurd h (by omega)
+    · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+      intro h
+      exact absurd h (by omega)
+  · have hsmall : ¬ Slice.len ids > MAX_LAW_EXCEPTIONS := fun h => by
+      have h' : MAX_LAW_EXCEPTIONS.val < (Slice.len ids).val := h
+      simp [hmax] at h'
+      omega
+    have hle : ids.val.length ≤ 64 := by omega
+    cases ri with
+    | some i0 =>
+      refine ⟨.Err (.InvalidDeclaration i0), by unfold check_shape; simp [hsmall, hri],
+        by simp [hbig], fun i => ?_, fun i => ?_, fun i => ?_⟩
+      · constructor
+        · intro h
+          cases h
+          exact ⟨hle, hfi⟩
+        · rintro ⟨-, hf⟩
+          rw [Option.some.inj (firstWith_unique hfi hf)]
+      · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+        intro _ hn
+        exact absurd (firstWith_unique hfi hn) (by simp)
+      · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+        intro _ hn
+        exact absurd (firstWith_unique hfi hn) (by simp)
+    | none =>
+      obtain ⟨-, hnd, hlaw⟩ := (no_invalid_iff law ids.val declared.val hd).mp hfi
+      obtain ⟨rd, hrd, hfd⟩ := first_dangling_spec hl law ids parents
+      cases rd with
+      | some i0 =>
+        refine ⟨.Err (.DanglingOverride i0),
+          by unfold check_shape; simp [hsmall, hri, hrd], by simp [hbig], fun i => ?_,
+          fun i => ?_, fun i => ?_⟩
+        · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+          intro _ hn
+          exact absurd (firstWith_unique hfi hn) (by simp)
+        · constructor
+          · intro h
+            cases h
+            exact ⟨hle, hfi, hfd⟩
+          · rintro ⟨-, -, hf⟩
+            rw [Option.some.inj (firstWith_unique hfd hf)]
+        · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+          intro _ _ hn
+          exact absurd (firstWith_unique hfd hn) (by simp)
+      | none =>
+        obtain ⟨rc, hrc, hfc⟩ :=
+          first_cycle_spec hl law ids parents cond hp hnd hlaw hfd hle
+        cases rc with
+        | some i0 =>
+          refine ⟨.Err (.Cycle i0), by unfold check_shape; simp [hsmall, hri, hrd, hrc],
+            by simp [hbig], fun i => ?_, fun i => ?_, fun i => ?_⟩
+          · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+            intro _ hn
+            exact absurd (firstWith_unique hfi hn) (by simp)
+          · simp only [core.result.Result.Err.injEq, reduceCtorEq, false_iff, not_and]
+            intro _ _ hn
+            exact absurd (firstWith_unique hfd hn) (by simp)
+          · constructor
+            · intro h
+              cases h
+              exact ⟨hle, hfi, hfd, hfc⟩
+            · rintro ⟨-, -, -, hf⟩
+              rw [Option.some.inj (firstWith_unique hfc hf)]
+        | none =>
+          refine ⟨.Ok (), by unfold check_shape; simp [hsmall, hri, hrd, hrc], by simp [hbig],
+            fun i => ?_, fun i => ?_, fun i => ?_⟩
+          · simp only [reduceCtorEq, false_iff, not_and]
+            intro _ hn
+            exact absurd (firstWith_unique hfi hn) (by simp)
+          · simp only [reduceCtorEq, false_iff, not_and]
+            intro _ _ hn
+            exact absurd (firstWith_unique hfd hn) (by simp)
+          · simp only [reduceCtorEq, false_iff, not_and]
+            intro _ _ _ hn
+            exact absurd (firstWith_unique hfc hn) (by simp)
+
 /-- **Soundness of the exception-tree admission check.** A tree the production
     `check_shape` admits has one meaning at every point, for any conditions:
     exactly one stable labelling, and the bounded fold decides lifting under it. -/

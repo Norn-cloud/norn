@@ -118,6 +118,7 @@ proof_output="$(lean_check "$baseline" "$semantics" Checker/LawExceptions/Audit)
 printf '%s\n' "$proof_output"
 expected_axioms="$(printf '%s\n' \
   "'Norn.Checker.LawExceptions.check_shape_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.Checker.LawExceptions.check_shape_refusal' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Checker.LawExceptions.check_shape_sound' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Checker.LawExceptions.lifted_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Checker.LawExceptions.lifted_sound' depends on axioms: [propext, Classical.choice, Quot.sound]")"
@@ -172,6 +173,8 @@ mutants = [
     ("cycle-walk-too-short", reaches + "    while steps <= ids.len() {",
      reaches + "    while steps + 1 < ids.len() {"),
     ("limit-off-by-one", "if ids.len() > MAX_LAW_EXCEPTIONS {", "if ids.len() >= MAX_LAW_EXCEPTIONS {"),
+    ("dangling-reported-as-cycle", "return Err(ExceptionTreeRefusal::DanglingOverride(index));",
+     "return Err(ExceptionTreeRefusal::Cycle(index));"),
     ("fold-negation-dropped", "let (Some(true), Some(false)) = (matched.get(index), level.get(index))",
      "let (Some(true), Some(true)) = (matched.get(index), level.get(index))"),
     ("fold-ignores-condition", "let (Some(true), Some(false)) = (matched.get(index), level.get(index))",

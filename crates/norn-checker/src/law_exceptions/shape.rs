@@ -71,7 +71,7 @@ fn position<T: PartialEq>(ids: &[T], id: &T) -> Option<usize> {
             return Some(index);
         }
         let Some(next) = index.checked_add(1) else {
-            return None;
+            break;
         };
         index = next;
     }
@@ -118,7 +118,7 @@ fn first_invalid<T: PartialEq>(law: &T, ids: &[T], declared: &[bool]) -> Option<
             return Some(index);
         }
         let Some(next) = index.checked_add(1) else {
-            return None;
+            break;
         };
         index = next;
     }
@@ -133,7 +133,7 @@ fn first_dangling<T: PartialEq>(law: &T, ids: &[T], parents: &[T]) -> Option<usi
             return Some(index);
         }
         let Some(next) = index.checked_add(1) else {
-            return None;
+            break;
         };
         index = next;
     }
@@ -148,7 +148,7 @@ fn first_cycle<T: PartialEq>(law: &T, ids: &[T], parents: &[T]) -> Option<usize>
             return Some(index);
         }
         let Some(next) = index.checked_add(1) else {
-            return None;
+            break;
         };
         index = next;
     }
@@ -163,7 +163,7 @@ fn first_cycle<T: PartialEq>(law: &T, ids: &[T], parents: &[T]) -> Option<usize>
 ///
 /// # Errors
 /// The first refusal in declaration order.
-pub fn check_shape<T: PartialEq>(
+pub(crate) fn check_shape<T: PartialEq>(
     law: &T,
     ids: &[T],
     parents: &[T],
@@ -258,7 +258,7 @@ fn clear_level(target: &mut [bool]) {
 /// slices `level` and `next` (one entry per exception); afterwards `level[k]`
 /// is whether exception `k` is lifted. Siblings never short-circuit each
 /// other, and no recursion is used.
-pub fn lifted<T: PartialEq>(
+pub(crate) fn lifted<T: PartialEq>(
     law: &T,
     ids: &[T],
     parents: &[T],
@@ -316,7 +316,7 @@ fn ancestors_hold<T: PartialEq>(
 /// After [`lifted`], `applied[k]` becomes whether exception `k` applies and
 /// every exception above it holds: its condition holds, it is not lifted in
 /// `level`, and its ancestors' conditions hold.
-pub fn applied_exceptions<T: PartialEq>(
+pub(crate) fn applied_exceptions<T: PartialEq>(
     law: &T,
     ids: &[T],
     parents: &[T],

@@ -1,7 +1,8 @@
 //! Concrete witnesses for the seeded `law_exceptions/shape.rs` mutants (#718 U1).
 //!
 //! Each witness's expected result is the one the Lean theorems fix
-//! (`check_shape_correct`: `Ok` exactly on a well-formed tree; `lifted_correct`:
+//! (`check_shape_correct`: `Ok` exactly on a well-formed tree; `check_shape_refusal`:
+//! the first failing check names its first offending declaration; `lifted_correct`:
 //! the semantic fold at fuel `|ids| + 1`). `scripts/verify-law-exceptions-aeneas.sh`
 //! compiles this file beside a copy of `shape.rs` and requires the production
 //! file to agree on every witness and each mutant to disagree on its own.
@@ -12,6 +13,11 @@ mod shape;
 fn check(ids: &[&str], parents: &[&str]) -> bool {
     let declared = vec![true; ids.len()];
     shape::check_shape(&"law", ids, parents, &declared).is_ok()
+}
+
+fn refusal(ids: &[&str], parents: &[&str]) -> Result<(), shape::ExceptionTreeRefusal> {
+    let declared = vec![true; ids.len()];
+    shape::check_shape(&"law", ids, parents, &declared)
 }
 
 fn lifted(ids: &[&str], parents: &[&str], matched: &[bool]) -> bool {
@@ -36,6 +42,10 @@ fn agrees(name: &str) -> Option<bool> {
             let ids: Vec<&str> = names.iter().map(String::as_str).collect();
             check(&ids, &vec!["law"; 64])
         }
+        // A missing target is reported as dangling, at its own index.
+        "dangling-reported-as-cycle" => {
+            refusal(&["a"], &["b"]) == Err(shape::ExceptionTreeRefusal::DanglingOverride(0))
+        }
         // One matched exception under the law lifts it.
         "fold-negation-dropped" => lifted(&["a"], &["law"], &[true]),
         // An unmatched exception does not.
@@ -46,11 +56,12 @@ fn agrees(name: &str) -> Option<bool> {
     })
 }
 
-const ALL: [&str; 7] = [
+const ALL: [&str; 8] = [
     "invalid-allows-law-id",
     "invalid-allows-duplicates",
     "cycle-walk-too-short",
     "limit-off-by-one",
+    "dangling-reported-as-cycle",
     "fold-negation-dropped",
     "fold-ignores-condition",
     "fold-one-round-short",
