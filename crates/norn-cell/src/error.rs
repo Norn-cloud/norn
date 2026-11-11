@@ -110,6 +110,12 @@ pub enum CellError {
     /// The object types do not project to DDL.
     #[error("ddl projection: {0}")]
     Projection(#[from] SqliteDdlError),
+    /// The effective view of the object types could not be derived: the
+    /// bounded inheritance classification was exhausted (more than 4,096
+    /// object types, or another budget). The model is refused; no query ever
+    /// sees an empty view.
+    #[error(transparent)]
+    EffectiveViewRefused(#[from] norn_checker::EffectiveViewRefused),
     /// A payload does not (de)serialize.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
@@ -139,6 +145,16 @@ pub enum CellError {
         /// Version the request was planned against.
         expected: Option<u64>,
         /// Version currently installed in the cell.
+        actual: Option<u64>,
+    },
+    /// A retained definition's current revision changed since the caller read it.
+    #[error("retained definition {id} revision conflict: expected {expected:?}, found {actual:?}")]
+    RetainedDefinitionConflict {
+        /// The retained definition id.
+        id: String,
+        /// Revision the request was planned against.
+        expected: Option<u64>,
+        /// Revision currently installed.
         actual: Option<u64>,
     },
     /// A declassification's exact current fact version no longer matches.

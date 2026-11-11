@@ -1,0 +1,7 @@
+{
+  "code": "law.exception.dangling_override",
+  "message": "law exception overrides neither its law nor an exception of the same tree",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -65,6 +65,7 @@ pub mod function;
 mod graph;
 /// Closure-keyed structural admission evidence reuse.
 pub mod incremental;
+mod inheritance;
 pub mod interfaces;
 pub mod jdm_profile;
 pub mod layout;
@@ -96,6 +97,7 @@ mod unit_admission;
 mod unit_codes;
 pub use metric::check_metrics_and_questions;
 pub mod law_enrollment;
+pub mod law_exceptions;
 pub mod naming_series;
 pub mod norm_precedence;
 pub mod object_types;
@@ -171,7 +173,7 @@ pub use definitions_diff::{
 };
 pub use diagnostic::{
     DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
-    SourceSpan, Span, diagnostics_to_json,
+    SourceSpan, Span, StructuralEvidence, diagnostics_to_json,
 };
 pub use entity_artifacts::{
     EntityArtifactSetContext, TenantLayer, check_artifact_set_entity_model, check_entity_artifacts,
@@ -187,7 +189,7 @@ pub use entity_lowering::{
     lower_cardinality_v1, lower_entity_v1, lower_relation_v1, relation_link,
 };
 pub use entity_model::{
-    EntityContext, EntityModel, check_entity_model, check_interface_local,
+    EffectiveViewRefused, EntityContext, EntityModel, check_entity_model, check_interface_local,
     check_object_type_extension_local, check_object_type_local, effective_object_types,
 };
 pub use envelope::{ArtifactValidation, plan_graph_load, validate_artifact};

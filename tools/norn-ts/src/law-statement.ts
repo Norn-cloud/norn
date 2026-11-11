@@ -18,6 +18,7 @@ export interface LawStatement {
 export class StatementError extends Error {}
 
 export function toStatement(law: LawIR): LawStatement {
+  if (law.exceptions?.length) throw new StatementError("a law statement cannot carry exceptions; keep the LawIR form")
   const { lawVersion, id, owner, severity, rationale, provenance, scope, subject, condition, modality, timing, response } = law
   return { scope, ...(condition === undefined ? {} : { condition }), component: subject, shall: "shall", modality, ...(timing === undefined ? {} : { timing }), response, metadata: { lawVersion, id, owner, severity, rationale, provenance } }
 }

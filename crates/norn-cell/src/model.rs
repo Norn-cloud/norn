@@ -281,7 +281,11 @@ impl Model {
     ///
     /// # Errors
     ///
-    /// [`CellError::Projection`] when the types do not project.
+    /// [`CellError::Projection`] when the types do not project, and
+    /// [`CellError::EffectiveViewRefused`] when the effective view of the
+    /// types cannot be derived (more than 4,096 object types, or another
+    /// inheritance classification budget): the model is refused rather than
+    /// admitted with an empty view.
     pub fn new(input: &SqliteDdlInput<'_>) -> Result<Self, CellError> {
         Self::new_with_interfaces(input, &[])
     }
@@ -383,7 +387,7 @@ impl Model {
             tenant: None,
         };
         let (effective_objects, effective_links) =
-            effective_object_types(&entity_model, &entity_context)
+            effective_object_types(&entity_model, &entity_context)?
                 .into_values()
                 .fold(
                     (BTreeMap::new(), BTreeMap::new()),
