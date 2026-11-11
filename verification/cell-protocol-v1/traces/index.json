@@ -1,0 +1,182 @@
+{
+  "schemaVersion": "norn.verification.cell-protocol-v1.traces/1",
+  "format": "ITF",
+  "traces": [
+    {
+      "file": "cell-lifecycle-step-1.json",
+      "model": "cell-lifecycle",
+      "kind": "sample",
+      "step": "step",
+      "seed": 1,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "dbf255c5e2ac93cb4c988597d07c5d895632b0b46c2675c88ea876471069ce1b",
+      "traceSha256": "ca5eb0babdc4d08ca8d9c63775f64c8f629caf0c9cf6118de0105b1f81edd982"
+    },
+    {
+      "file": "cell-lifecycle-step-2.json",
+      "model": "cell-lifecycle",
+      "kind": "sample",
+      "step": "step",
+      "seed": 2,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "dbf255c5e2ac93cb4c988597d07c5d895632b0b46c2675c88ea876471069ce1b",
+      "traceSha256": "fa4e3c764fc1956b42abe65a97eb79d68395ceb3a2e3db93b603f8112a0bbf64"
+    },
+    {
+      "file": "cell-lifecycle-step-3.json",
+      "model": "cell-lifecycle",
+      "kind": "sample",
+      "step": "step",
+      "seed": 3,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "dbf255c5e2ac93cb4c988597d07c5d895632b0b46c2675c88ea876471069ce1b",
+      "traceSha256": "df85d362abaefa55a2b3b7b68fec4fe4933000354ae8f5d8e382775824811695"
+    },
+    {
+      "file": "cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json",
+      "model": "cell-lifecycle",
+      "kind": "counterexample",
+      "step": "stepUnfenced",
+      "seed": null,
+      "violates": "refusedNeverExecutes",
+      "states": 16,
+      "modelSha256": "dbf255c5e2ac93cb4c988597d07c5d895632b0b46c2675c88ea876471069ce1b",
+      "traceSha256": "4bc4eec61f8e396db5be26296ccb38750e0ebbc5b3b82db9e1c697264ea86cad"
+    },
+    {
+      "file": "fork-merge-gc-step-1.json",
+      "model": "fork-merge-gc",
+      "kind": "sample",
+      "step": "step",
+      "seed": 1,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "8f8e7481143b48e808028866e078fe3697a99ad950357b4401c81cf8543a5979",
+      "traceSha256": "7109b42ce91221f7724be45b7ad471acf90f1f3202ab13eb5ba1f99fcfbc68cf"
+    },
+    {
+      "file": "fork-merge-gc-step-2.json",
+      "model": "fork-merge-gc",
+      "kind": "sample",
+      "step": "step",
+      "seed": 2,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "8f8e7481143b48e808028866e078fe3697a99ad950357b4401c81cf8543a5979",
+      "traceSha256": "a89fc7631e3f92789930e34802ab87bbfd1fe7f5f013f6a06caccaeea93d1078"
+    },
+    {
+      "file": "fork-merge-gc-step-3.json",
+      "model": "fork-merge-gc",
+      "kind": "sample",
+      "step": "step",
+      "seed": 3,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "8f8e7481143b48e808028866e078fe3697a99ad950357b4401c81cf8543a5979",
+      "traceSha256": "f931a48f58d872bc8cec1e095216ba145da8fdf62075a1315b48743649eeca9e"
+    },
+    {
+      "file": "fork-merge-gc-stepByLabel-noEscape.cex.json",
+      "model": "fork-merge-gc",
+      "kind": "counterexample",
+      "step": "stepByLabel",
+      "seed": null,
+      "violates": "noEscape",
+      "states": 14,
+      "modelSha256": "8f8e7481143b48e808028866e078fe3697a99ad950357b4401c81cf8543a5979",
+      "traceSha256": "d80cbe52d4d49940900d2488f8cb2e1d81f100e69b03c666839a3f83038d2b9a"
+    },
+    {
+      "file": "fork-merge-gc-stepNoDedupeBarrier-gcSafe.cex.json",
+      "model": "fork-merge-gc",
+      "kind": "counterexample",
+      "step": "stepNoDedupeBarrier",
+      "seed": null,
+      "violates": "gcSafe",
+      "states": 14,
+      "modelSha256": "8f8e7481143b48e808028866e078fe3697a99ad950357b4401c81cf8543a5979",
+      "traceSha256": "0f05413247541b070fe0eb547609e0ec9653146628e81f05545ee24e9e85d449"
+    },
+    {
+      "file": "fork-merge-gc-stepOwnBaseFence-evidenceIsMain.cex.json",
+      "model": "fork-merge-gc",
+      "kind": "counterexample",
+      "step": "stepOwnBaseFence",
+      "seed": null,
+      "violates": "evidenceIsMain",
+      "states": 5,
+      "modelSha256": "8f8e7481143b48e808028866e078fe3697a99ad950357b4401c81cf8543a5979",
+      "traceSha256": "fe90193f85082d1397191b76b0ff940ecc5faa90a568114e3170de818e03fe01"
+    },
+    {
+      "file": "offline-leases-step-1.json",
+      "model": "offline-leases",
+      "kind": "sample",
+      "step": "step",
+      "seed": 1,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "81746903c8a72f95215b7462c0d189cb0c8924e324f665f00f1d62e82e0419c3",
+      "traceSha256": "30899688bb3df8bed9a13bcd59852bcdb2332e4f142cf66292473cb26103eb33"
+    },
+    {
+      "file": "offline-leases-step-2.json",
+      "model": "offline-leases",
+      "kind": "sample",
+      "step": "step",
+      "seed": 2,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "81746903c8a72f95215b7462c0d189cb0c8924e324f665f00f1d62e82e0419c3",
+      "traceSha256": "f7d5c5e763710f70baf7518f284828eaa4504aeba2a1b763423d180e321382eb"
+    },
+    {
+      "file": "offline-leases-step-3.json",
+      "model": "offline-leases",
+      "kind": "sample",
+      "step": "step",
+      "seed": 3,
+      "violates": null,
+      "states": 21,
+      "modelSha256": "81746903c8a72f95215b7462c0d189cb0c8924e324f665f00f1d62e82e0419c3",
+      "traceSha256": "118c589699f510241a1428a34c421b4b9979dafa549f7008822a59e1774119e1"
+    },
+    {
+      "file": "offline-leases-stepClampDeficit-withinLeaseNeverShort.cex.json",
+      "model": "offline-leases",
+      "kind": "counterexample",
+      "step": "stepClampDeficit",
+      "seed": null,
+      "violates": "withinLeaseNeverShort",
+      "states": 25,
+      "modelSha256": "81746903c8a72f95215b7462c0d189cb0c8924e324f665f00f1d62e82e0419c3",
+      "traceSha256": "ccaf0f1415e060bc3b9c1228bd5b89e720fcec56f37aefe0595baaf3785fc80e"
+    },
+    {
+      "file": "offline-leases-stepReclaimOffline-withinLeaseNeverShort.cex.json",
+      "model": "offline-leases",
+      "kind": "counterexample",
+      "step": "stepReclaimOffline",
+      "seed": null,
+      "violates": "withinLeaseNeverShort",
+      "states": 20,
+      "modelSha256": "81746903c8a72f95215b7462c0d189cb0c8924e324f665f00f1d62e82e0419c3",
+      "traceSha256": "35b3cedc6a8f510c26b976b49652d4772079ac0d5ec26934f9617564af2ee0a2"
+    },
+    {
+      "file": "offline-leases-stepUnsequencedReturn-onHandNonNegative.cex.json",
+      "model": "offline-leases",
+      "kind": "counterexample",
+      "step": "stepUnsequencedReturn",
+      "seed": null,
+      "violates": "onHandNonNegative",
+      "states": 24,
+      "modelSha256": "81746903c8a72f95215b7462c0d189cb0c8924e324f665f00f1d62e82e0419c3",
+      "traceSha256": "ac2110360db11393deb55bdc946f1f46908ff47ac6d7d351f7ba4436bba65506"
+    }
+  ]
+}

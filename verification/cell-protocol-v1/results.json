@@ -1,0 +1,204 @@
+{
+  "schemaVersion": "norn.verification.cell-protocol-v1.results/1",
+  "date": "2026-11-11",
+  "host": "Boat default VM (4 vCPU, 8 GB), deleted afterwards",
+  "quint": "0.32.0",
+  "apalache": "0.56.1",
+  "jdk": "17",
+  "models": {
+    "cell-lifecycle": {
+      "modelSha256": "dbf255c5e2ac93cb4c988597d07c5d895632b0b46c2675c88ea876471069ce1b",
+      "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariantWithProgress",
+          "maxSteps": 6,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 18
+        },
+        {
+          "step": "step",
+          "invariant": "invariantWithProgress",
+          "maxSteps": 8,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 254
+        },
+        {
+          "step": "step",
+          "invariant": "invariantWithProgress",
+          "maxSteps": 10,
+          "verdict": "unknown",
+          "note": "timed out at 700 s"
+        }
+      ],
+      "simulation": {
+        "step": "step",
+        "invariant": "invariantWithProgress",
+        "samples": 200000,
+        "maxSteps": 30,
+        "seed": 42,
+        "verdict": "sampled, no violation"
+      },
+      "witnesses": {
+        "witnessReissuedConsumed": 102,
+        "witnessRefused": 84876,
+        "witnessStaleRefused": 18344,
+        "witnessRescheduledFired": 23948,
+        "witnessRecordedAfterReopen": 1072
+      },
+      "variants": [
+        {
+          "step": "stepUnfenced",
+          "invariant": "refusedNeverExecutes",
+          "verdict": "refuted"
+        }
+      ],
+      "liveness": {
+        "property": "claimedResolves",
+        "verdict": "unknown",
+        "note": "not model-checked; progressEnabled (the WF1 enabledness premise) is checked as a state invariant"
+      },
+      "inductive": {
+        "verdict": "not attempted",
+        "note": "the ledger is a set of records with unbounded sequence numbers; an Apalache inductive check needs a finite universe for it"
+      }
+    },
+    "fork-merge-gc": {
+      "modelSha256": "8f8e7481143b48e808028866e078fe3697a99ad950357b4401c81cf8543a5979",
+      "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariant",
+          "maxSteps": 6,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 414
+        }
+      ],
+      "simulation": {
+        "step": "step",
+        "invariant": "invariant",
+        "samples": 200000,
+        "maxSteps": 30,
+        "seed": 42,
+        "verdict": "sampled, no violation"
+      },
+      "witnesses": {
+        "witnessPromoted": 5310,
+        "witnessMergeRefused": 517,
+        "witnessGcFreed": 42295,
+        "witnessForkExport": 22913,
+        "witnessForkOfForkCommit": 1783,
+        "witnessRefusedPerform": 20636
+      },
+      "variants": [
+        {
+          "step": "stepByLabel",
+          "invariant": "noEscape",
+          "verdict": "refuted"
+        },
+        {
+          "step": "stepNoDedupeBarrier",
+          "invariant": "gcSafe",
+          "verdict": "refuted"
+        },
+        {
+          "step": "stepOwnBaseFence",
+          "invariant": "evidenceIsMain",
+          "verdict": "refuted",
+          "engine": "apalache",
+          "maxSteps": 5,
+          "counterexampleSteps": 4
+        }
+      ],
+      "inductive": {
+        "verdict": "not attempted",
+        "note": "main and fork logs are lists folded by mergeReachable"
+      }
+    },
+    "offline-leases": {
+      "modelSha256": "81746903c8a72f95215b7462c0d189cb0c8924e324f665f00f1d62e82e0419c3",
+      "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariant",
+          "maxSteps": 4,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 27
+        },
+        {
+          "step": "step",
+          "invariant": "invariant",
+          "maxSteps": 6,
+          "verdict": "unknown",
+          "note": "timed out at 1500 s (earlier 4-obligation bound)"
+        }
+      ],
+      "simulation": {
+        "step": "step",
+        "invariant": "invariant",
+        "samples": 200000,
+        "maxSteps": 30,
+        "seed": 42,
+        "verdict": "sampled, no violation"
+      },
+      "witnesses": {
+        "witnessResolved": 14481,
+        "witnessEscalated": 36549,
+        "witnessDuplicate": 68382,
+        "witnessGap": 190250,
+        "witnessWithinLeaseApplied": 5886,
+        "witnessSequencedReturn": 8617
+      },
+      "variants": [
+        {
+          "step": "stepClampDeficit",
+          "invariant": "withinLeaseNeverShort",
+          "verdict": "refuted"
+        },
+        {
+          "step": "stepReclaimOffline",
+          "invariant": "withinLeaseNeverShort",
+          "verdict": "refuted"
+        },
+        {
+          "step": "stepUnsequencedReturn",
+          "invariant": "onHandNonNegative",
+          "verdict": "refuted"
+        }
+      ],
+      "liveness": {
+        "property": "shortfallResolves",
+        "verdict": "unknown",
+        "note": "obligationProgress (the WF1 enabledness premise) is checked as a state invariant"
+      },
+      "inductive": {
+        "verdict": "not attempted",
+        "note": "replayEqualsLive folds the ordered cell log"
+      }
+    }
+  },
+  "findings": [
+    {
+      "model": "fork-merge-gc",
+      "kind": "code",
+      "target": "#1226 export_record fence",
+      "trace": "traces/fork-merge-gc-stepOwnBaseFence-evidenceIsMain.cex.json"
+    },
+    {
+      "model": "offline-leases",
+      "kind": "design",
+      "target": "#1225",
+      "traces": [
+        "traces/offline-leases-stepUnsequencedReturn-onHandNonNegative.cex.json",
+        "traces/offline-leases-stepClampDeficit-withinLeaseNeverShort.cex.json",
+        "traces/offline-leases-stepReclaimOffline-withinLeaseNeverShort.cex.json"
+      ]
+    },
+    {
+      "model": "cell-lifecycle",
+      "kind": "assumption",
+      "target": "#621 EFFECT-IDENTITY-1",
+      "trace": "traces/cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json"
+    }
+  ]
+}

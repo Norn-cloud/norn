@@ -1,0 +1,226 @@
+{
+  "schemaVersion": "norn.verification.cell-protocol-v1/1",
+  "decision": "D83: model stateful protocols in Quint before the Lean proofs (#718)",
+  "quint": "0.32.0",
+  "apalache": "0.56.1",
+  "evidenceVocabulary": "#718: bounded-no-counterexample (Apalache BMC to maxSteps), sampled (random simulation), witnessed (non-vacuity witnesses), refuted (variant counterexamples)",
+  "models": [
+    {
+      "path": "models/cell-lifecycle.qnt",
+      "module": "cell_lifecycle",
+      "scope": "command/perform lifecycle, timers, crash and DO eviction, reconciliation (norn-kernel cell_host.rs; norn-cell host.rs, store.rs)",
+      "proofLane": "K-C binding (idempotency and replay decisions); P9 cell host",
+      "invariant": "invariantWithProgress",
+      "invariants": [
+        "exactlyOnce",
+        "dispatchOnce",
+        "dispatchNeedsClaim",
+        "noStaleGeneration",
+        "noStaleTimer",
+        "atomicity",
+        "replayEqualsLive",
+        "resultFidelity",
+        "refusedNeverExecutes",
+        "progressEnabled"
+      ],
+      "temporal": [
+        "claimedResolves"
+      ],
+      "implicitStates": [
+        "I1 enqueued",
+        "I2 claimed (volatile Fresh licence)",
+        "I3 in flight",
+        "I4 request on the wire to the provider",
+        "I5 executed at the provider",
+        "I6 result recorded",
+        "I7 peeked (between peek and commit)",
+        "I8 outcome unknown",
+        "I9 fenced generation",
+        "I10 timer due / fired, incarnation",
+        "I11 evicted or crashed"
+      ],
+      "bounds": {
+        "commands": 2,
+        "generations": 2,
+        "timers": 1,
+        "time": [
+          0,
+          3
+        ],
+        "resultValues": [
+          1,
+          2
+        ]
+      },
+      "assumptions": [
+        "A1 the provider deduplicates on the operation key (EFFECT-IDENTITY-1)",
+        "A2 a refusal of an unknown outcome is preceded by a provider lookup-and-fence on that key",
+        "A3 a store transaction is atomic, so a crash mid-commit equals a crash before it",
+        "A4 DO eviction happens only when idle"
+      ],
+      "variants": [
+        {
+          "step": "stepUnfenced",
+          "invariant": "refusedNeverExecutes",
+          "expect": "refuted",
+          "meaning": "without A2 a request still on the wire executes after the cell refused it"
+        }
+      ],
+      "witnesses": [
+        "witnessReissuedConsumed",
+        "witnessRefused",
+        "witnessStaleRefused",
+        "witnessRescheduledFired",
+        "witnessRecordedAfterReopen"
+      ]
+    },
+    {
+      "path": "models/fork-merge-gc.qnt",
+      "module": "fork_merge_gc",
+      "scope": "fork pin, copy-on-write roots over a content-addressed page store, merge by replay, two-phase reachability GC, export fence (Core 08 Fork lifecycle; #1226 U1/U2, units 3 and 6)",
+      "proofLane": "FORK-ISOLATE (#1226 unit 10): Lean world-indexed non-interference; L1-L6",
+      "invariant": "invariant",
+      "invariants": [
+        "nonInterference",
+        "noEscape",
+        "mergeReachable",
+        "mergeOnce",
+        "snapshotRoot",
+        "gcSafe",
+        "readsMatchCopy",
+        "evidenceIsMain",
+        "pinWellFormed"
+      ],
+      "implicitStates": [
+        "J1 fork pin with its main horizon",
+        "J2 page shared through content-address dedupe",
+        "J3 GC between mark and sweep, with its write barrier",
+        "J4 promoting, with a durable merge cursor",
+        "J5 inherited main label on fork-written rows (pre-U2b)",
+        "J6 fork-of-fork receipts minted by a fork below the child's base"
+      ],
+      "bounds": {
+        "worlds": 3,
+        "keys": 2,
+        "values": [
+          0,
+          2
+        ],
+        "mainLawLimit": 3,
+        "commandsPerFork": 2
+      },
+      "variants": [
+        {
+          "step": "stepByLabel",
+          "invariant": "noEscape",
+          "expect": "refuted",
+          "meaning": "L5: a boundary decision read from the row label lets a fork perform"
+        },
+        {
+          "step": "stepNoDedupeBarrier",
+          "invariant": "gcSafe",
+          "expect": "refuted",
+          "meaning": "L3: a dedupe hit during mark/sweep that is not greyed is freed while reachable"
+        },
+        {
+          "step": "stepOwnBaseFence",
+          "invariant": "evidenceIsMain",
+          "expect": "refuted",
+          "meaning": "L6: the #1226 fence (commit_seq > pin.base.commits) exports a parent fork's records from a fork of a fork"
+        }
+      ],
+      "witnesses": [
+        "witnessPromoted",
+        "witnessMergeRefused",
+        "witnessGcFreed",
+        "witnessForkExport",
+        "witnessForkOfForkCommit",
+        "witnessRefusedPerform"
+      ]
+    },
+    {
+      "path": "models/offline-leases.qnt",
+      "module": "offline_leases",
+      "scope": "per-device stock leases, offline sales, deterministic sync, shortfall and resolution obligations (#1225)",
+      "proofLane": "linear conservation meta-theorem (P6 U5); #1225 design requirements",
+      "invariant": "invariant",
+      "invariants": [
+        "conservation",
+        "onHandNonNegative",
+        "shortfallObligated",
+        "factNeverRefused",
+        "prefixApplied",
+        "replayEqualsLive",
+        "shortfallOnlyFromFacts",
+        "withinLeaseNeverShort",
+        "localTracksLease",
+        "obligationProgress"
+      ],
+      "temporal": [
+        "shortfallResolves"
+      ],
+      "implicitStates": [
+        "K1 unsynced fact",
+        "K2 fact or ack on the wire",
+        "K3 gap awaiting its predecessor",
+        "K4 grant in flight",
+        "K5 return in flight (sequenced in the device stream)",
+        "K6 local deficit after a beyond-lease sale",
+        "K7 obligation open, resolved or escalated"
+      ],
+      "bounds": {
+        "devices": 2,
+        "initialStock": 2,
+        "quantities": [
+          1,
+          2
+        ],
+        "streamRecordsPerDevice": 3,
+        "received": 2,
+        "time": [
+          0,
+          4
+        ],
+        "deadline": 2,
+        "riskLimit": 2
+      },
+      "variants": [
+        {
+          "step": "stepClampDeficit",
+          "invariant": "withinLeaseNeverShort",
+          "expect": "refuted",
+          "meaning": "a device that clamps its local balance at zero sells within lease yet creates shortfall"
+        },
+        {
+          "step": "stepReclaimOffline",
+          "invariant": "withinLeaseNeverShort",
+          "expect": "refuted",
+          "meaning": "a cell-side reclaim of an offline device's lease turns its within-lease sales into shortfall"
+        },
+        {
+          "step": "stepUnsequencedReturn",
+          "invariant": "onHandNonNegative",
+          "expect": "refuted",
+          "meaning": "a return outside the device's ordered stream races a later sale and drives the lease negative"
+        }
+      ],
+      "witnesses": [
+        "witnessResolved",
+        "witnessEscalated",
+        "witnessDuplicate",
+        "witnessGap",
+        "witnessWithinLeaseApplied",
+        "witnessSequencedReturn"
+      ]
+    }
+  ],
+  "commands": {
+    "typecheck": "quint typecheck models/<model>.qnt",
+    "bmc": "quint verify models/<model>.qnt --step step --invariant <invariant> --max-steps <n>",
+    "simulate": "quint run models/<model>.qnt --backend rust --max-samples 200000 --max-steps 30 --seed 42 --invariant <invariant> --witnesses <witness...>",
+    "sampleTrace": "quint run models/<model>.qnt --backend rust --max-samples 1 --max-steps 20 --seed <1|2|3> --invariant <invariant> --out-itf traces/<model>-step-<seed>.json",
+    "counterexample": "quint run models/<model>.qnt --backend rust --max-samples 50000 --max-steps 25 --seed 7 --step <variant> --invariant <violated> --out-itf traces/<model>-<variant>-<violated>.cex.json",
+    "apalacheCounterexample": "quint verify models/fork-merge-gc.qnt --step stepOwnBaseFence --invariant evidenceIsMain --max-steps 5 --out-itf traces/fork-merge-gc-stepOwnBaseFence-evidenceIsMain.cex.json",
+    "note": "Run on Boat, not the shared host. Traces drop Quint's timestamp/description metadata and record source, step, seed and engine instead."
+  }
+}
