@@ -567,12 +567,20 @@ for index, (name, path, old, new) in enumerate(mutants):
     staged.write_text(source.replace(old, new), encoding="utf-8")
     print(index, name, path)
 PYMUTANTS
-# A mutant edits one source file, which feeds exactly one fragment. Only that
-# fragment is re-extracted and re-elaborated, and only the proofs that import
-# it (transitively, read from the proof sources) are re-checked; the other
-# fragments are the baseline's, from the same sources. Running the mutants in
-# parallel on a 4-vCPU, 7.8 GiB VM was 2.1 times slower than this serial loop:
-# concurrent Mathlib elaboration exhausts memory, not cores.
+# Mutant mode (NORN_EXACT_ARITH_MUTANTS):
+# - `affected` (the default, and what CI runs): a mutant edits one source file,
+#   which feeds exactly one fragment. Only that fragment is re-extracted and
+#   re-elaborated, and only the proofs in its transitive import closure (read
+#   from the proof sources) are re-checked. The other fragments are the
+#   baseline's, built from the same sources. A mutant whose file feeds no known
+#   fragment, or whose fragment no proof imports, counts as unrefuted.
+# - `full`: every mutant re-extracts every fragment and re-checks every proof.
+#   It is kept to audit `affected`; both gave the same verdict for every mutant
+#   on Boat (#717).
+# Running the mutants in parallel on a 4-vCPU, 7.8 GiB VM was 2.1 times slower
+# than this serial loop: concurrent Mathlib elaboration exhausts memory, not cores.
+mutant_mode="${NORN_EXACT_ARITH_MUTANTS:-affected}"
+[[ "$mutant_mode" == affected || "$mutant_mode" == full ]]
 declare -A fragment_of=(
   ["$decimal_source"]=Decimal
   ["vendor/zen/core/expression/src/scaled.rs"]=Scaled
@@ -610,34 +618,46 @@ for module in modules:  # dependency order, as the proof loop above
             print(fragment, module)
 PYIMPORTS
 )
-for fragment in "${fragments[@]}"; do
-  test -n "${proofs_of[$fragment]:-}"
-done
-
 mutant_started=$SECONDS
 survivors=0
 while read -r _ name path; do
   dir="$result/mutants/$name"
   started=$SECONDS
-  fragment="${fragment_of[$path]}"
+  fragment="${fragment_of[$path]:-}"
+  if [[ -z "$fragment" || -z "${proofs_of[$fragment]:-}" ]]; then
+    echo "mutant $name: $path feeds no proved fragment; it cannot be refuted" >&2
+    survivors=$((survivors + 1))
+    continue
+  fi
+  if [[ "$mutant_mode" == full ]]; then
+    rebuilt=("${fragments[@]}")
+    checked="${proof_modules[*]}"
+  else
+    rebuilt=("$fragment")
+    checked="${proofs_of[$fragment]}"
+  fi
   pristine="$result/mutants/$name.pristine"
   cp "$tree/$path" "$pristine"
   rm "$tree/$path"
   cp "$dir/$(basename "$path")" "$tree/$path"
   out="$dir/out"
   mkdir -p "$out"
+  : > "$dir/extract.log"
   for other in "${fragments[@]}"; do
-    if [[ "$other" != "$fragment" ]]; then cp -a "$baseline/$other" "$out/$other"; fi
+    if [[ " ${rebuilt[*]} " == *" $other "* ]]; then
+      # A mutant must extract and its code must elaborate: only the proof may fail.
+      if ! extract_fragment "$tree" "$out" "$other" >> "$dir/extract.log" 2>&1 ||
+        ! generated "$out" "$other" >> "$dir/extract.log" 2>&1; then
+        tail -n 40 "$dir/extract.log" >&2
+        echo "mutant $name: did not extract and elaborate; it cannot test the proof" >&2
+        exit 1
+      fi
+    else
+      cp -a "$baseline/$other" "$out/$other"
+    fi
   done
-  # A mutant must extract and its code must elaborate: only the proof may fail.
-  if ! extract_fragment "$tree" "$out" "$fragment" > "$dir/extract.log" 2>&1 ||
-    ! generated "$out" "$fragment" >> "$dir/extract.log" 2>&1; then
-    tail -n 40 "$dir/extract.log" >&2
-    echo "mutant $name: did not extract and elaborate; it cannot test the proof" >&2
-    exit 1
-  fi
   unproved=false
-  for module in ${proofs_of[$fragment]}; do
+  for module in $checked; do
     if ! lean_check "$out" "$proof_root" "$module" > "$dir/$module.log" 2>&1; then
       unproved=true
     fi
@@ -659,5 +679,5 @@ while read -r _ name path; do
   fi
 done < "$result/mutants/list"
 test "$survivors" -eq 0
-echo "exact-arith: $(wc -l < "$result/mutants/list") mutants in $((SECONDS - mutant_started))s"
+echo "exact-arith: $(wc -l < "$result/mutants/list") mutants in $((SECONDS - mutant_started))s ($mutant_mode mode)"
 echo "exact-arith: every seeded rounding and overflow mutant is refuted"
