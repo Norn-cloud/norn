@@ -65,6 +65,9 @@ test("the Studio language switch mirrors the app and is kept for the next visit"
   // The recorded model carries the Arabic locale pack (registry/packs/locale-ar): titles read in Arabic.
   await expect(page.getByText("رصيد مخزون").first()).toBeVisible()
   await expect(page.getByText("Holding", { exact: true })).toHaveCount(0)
+  // The Business summary is the type's Arabic description from the pack, not its English one-line name.
+  await expect(page.getByText("رصيد مقسَّم حسب المالك والموقع").first()).toBeVisible()
+  await expect(page.getByText("Owner and location partitioned holding")).toHaveCount(0)
   // Shortcut hints stay one left-to-right isolate: ⌘K, never K⌘.
   const hint = page.locator("kbd", { hasText: "⌘K" }).first()
   await expect(hint).toHaveAttribute("dir", "ltr")

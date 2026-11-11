@@ -224,9 +224,10 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       titleNeedsReview: own?.needsReview ?? false,
       kind: fed.length > 0 ? "concept" : "core idea",
       definition: "objectType" in payload ? "object type" : "interface",
-      // The summary is the definition's own one-line name when it says more than its title in any language.
-      summary: [def.name, conceptTitle(def.name), title].includes(artifact.name) ? undefined : artifact.name,
-      description: own?.description ?? def.description,
+      // The Business summary: the type's description in the reader's language when its label has one,
+      // else the definition's own one-line name when it says more than its title in any language.
+      summary: own?.description ?? ([def.name, conceptTitle(def.name), title].includes(artifact.name) ? undefined : artifact.name),
+      description: def.description,
       parents,
       fields: (def.properties ?? []).map(({ id, type, constraints }) => {
         const label = pick(labels, `property:${def.name}.${id}`, locale)
