@@ -415,3 +415,189 @@ pub(crate) fn capture_quality(host: &mut QualityHost, recovered: i64, delivery: 
     )
     .expect("capture");
 }
+
+/// QUERY-FANOUT: a Holding with many-to-many Tag links, for holding-grain sums.
+pub(crate) mod fanout {
+    use super::*;
+    use norn_cell::LinkChange;
+    use norn_ir::metric::QuestionMetric;
+    use norn_ir::{
+        ArtifactKind, ArtifactPayload, EntityIrVersion, EntityRootV2, Link, LinkCardinality,
+        LinkId, Multiplicity, ObjectTypeName, PropertyId, PropertyType, WholeNumber,
+    };
+    pub(crate) const HOLDING: &str = "example.Holding";
+    pub(crate) const TAG: &str = "example.Tag";
+    pub(crate) struct Fixture {
+        pub(crate) store: CellStore,
+        pub(crate) plan: QuestionPlan,
+        pub(crate) context: QueryContext,
+        pub(crate) definitions: Vec<MetricDefinition>,
+        pub(crate) catalog: EffectiveCatalog,
+    }
+    fn fanout_catalog(objects: &[ObjectTypeDef]) -> EffectiveCatalog {
+        let template: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../../../fixtures/ir/metrics/ontology.json"
+        ))
+        .expect("artifacts");
+        let artifacts: Vec<_> = objects
+            .iter()
+            .map(|object| {
+                let mut artifact = template[0].clone();
+                artifact.artifact_id = format!("{}.entity.v2", object.name.as_str());
+                artifact.namespace = "example".into();
+                artifact.name = object.name.as_str().into();
+                artifact.provenance.source_path = Some("synthetic:query-fanout".into());
+                let root = EntityRootV2 {
+                    entity_version: EntityIrVersion::V2_0,
+                    object_type: object.clone(),
+                    mutation_authority: None,
+                    extensions: None,
+                };
+                artifact.payload = ArtifactPayload::from_kind_json(
+                    &ArtifactKind::Entity,
+                    norn_ir::json_tree_from_value(serde_json::to_value(root).expect("typed root"))
+                        .expect("IR tree"),
+                )
+                .expect("payload");
+                artifact
+            })
+            .collect();
+        EffectiveCatalog::from_artifacts(&artifacts)
+    }
+    pub(crate) fn fanout_fixture() -> Fixture {
+        let (seed, seed_plan, mut context) = fixture();
+        let original = seed.model().object_types().next().expect("seed").clone();
+        let mut holding = original.clone();
+        holding.name = ObjectTypeName(HOLDING.into());
+        holding
+            .properties
+            .retain(|p| ["input", "occurred_at"].contains(&p.id.as_str()));
+        let value = holding
+            .properties
+            .iter_mut()
+            .find(|p| p.id.as_str() == "input")
+            .expect("value");
+        value.id = PropertyId("value".into());
+        value.property_type = PropertyType::Decimal {
+            additivity: value.property_type.additivity().clone(),
+            scale: WholeNumber(3),
+            unit: None,
+            currency_source: None,
+            per_unit: None,
+            rounding: None,
+        };
+        holding.links = vec![Link {
+            id: LinkId("tags".into()),
+            description: None,
+            target: ObjectTypeName(TAG.into()),
+            cardinality: LinkCardinality {
+                to: Multiplicity::Many,
+                from: Multiplicity::Many,
+                required: false,
+            },
+            acyclic: false,
+            inverse: None,
+            properties: vec![],
+        }];
+        let mut tag = original;
+        tag.name = ObjectTypeName(TAG.into());
+        tag.properties.retain(|p| p.id.as_str() == "metal");
+        tag.properties[0].id = PropertyId("label".into());
+        let objects = [holding, tag];
+        let catalog = fanout_catalog(&objects);
+        let model = Model::new(&norn_projections::SqliteDdlInput {
+            object_types: &objects,
+            property_types: &[],
+        })
+        .expect("model");
+        let mut measure = seed_plan
+            .definitions()
+            .iter()
+            .find(|d| d.name == "demo.input")
+            .expect("measure")
+            .clone();
+        measure.name = "example.value".into();
+        measure.type_params.expr = Some("value".into());
+        measure
+            .type_params
+            .metric_aggregation_params
+            .as_mut()
+            .expect("aggregate")
+            .semantic_model = ObjectTypeName(HOLDING.into());
+        let definitions = vec![measure];
+        let mut question = seed_plan.question().clone();
+        question.name = "example.holding_value".into();
+        question.object_set = ObjectTypeName(HOLDING.into());
+        question.metrics = vec![QuestionMetric {
+            metric: "example.value".into(),
+            inline: None,
+            reaggregate: None,
+        }];
+        question.dimensions.clear();
+        question.filters.clear();
+        let plan = admit(&definitions, &question, &catalog, 100).expect("holding grain");
+        context.mapping_pin = "synthetic:holding-values/1".into();
+        context.population_pin = "all-example-holdings".into();
+        context.source_cursors = BTreeMap::from([(
+            "fixture".into(),
+            BTreeMap::from([("holdings".into(), "seed/1".into())]),
+        )]);
+        context.watermarks = BTreeMap::from([(
+            "fixture".into(),
+            BTreeMap::from([(
+                "holdings".into(),
+                Watermark {
+                    observed: "seed/1".into(),
+                    heartbeat_ms: Some(CLOCK),
+                    complete: true,
+                },
+            )]),
+        )]);
+        Fixture {
+            store: CellStore::open_in_memory(model).expect("store"),
+            plan,
+            context,
+            definitions,
+            catalog,
+        }
+    }
+    pub(crate) fn holding(id: &str, value: i64) -> FactWriteRow {
+        FactWriteRow::Put {
+            object_type: HOLDING.into(),
+            key: id.into(),
+            values: BTreeMap::from([
+                (
+                    "value".into(),
+                    V::from(Decimal::parse(&value.to_string()).expect("exact")),
+                ),
+                ("occurred_at".into(), V::from("2026-10-23T00:00:00Z")),
+            ]),
+        }
+    }
+    pub(crate) fn tags(batch: &mut CommitBatch, id: &str, count: u8) {
+        for n in 0..count {
+            let tag = format!("{id}-tag-{n}");
+            batch.writes.push(FactWriteRow::Put {
+                object_type: TAG.into(),
+                key: tag.clone(),
+                values: BTreeMap::from([("label".into(), V::from(tag.clone()))]),
+            });
+            batch.links.push(LinkChange::Add {
+                object_type: HOLDING.into(),
+                link: "tags".into(),
+                source: id.into(),
+                target: tag,
+                target_type: Some(TAG.into()),
+                values: BTreeMap::new(),
+            });
+        }
+    }
+    pub(crate) fn fanout_batch() -> CommitBatch {
+        CommitBatch {
+            world: WORLD.into(),
+            scope: "synthetic".into(),
+            logical_time: CLOCK,
+            ..CommitBatch::default()
+        }
+    }
+}
