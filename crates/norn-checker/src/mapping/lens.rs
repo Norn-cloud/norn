@@ -8,6 +8,9 @@ use norn_expr::{EvaluationBudget, Expression, Type, Value};
 use norn_ir::mapping::{FiniteWriteBackLens, MappingIr};
 use norn_ir::source_schema::SourceSchemaIr;
 
+/// The extracted, proved lookups and lens-law decision (#718 U5).
+pub mod decision;
+
 /// Reserved mapping extension for finite Boolean write-back projections.
 pub const LENS_SLOT: &str = "norn.write-back/0.1.0";
 
@@ -37,18 +40,7 @@ impl AdmittedLens {
         source: &BTreeMap<String, bool>,
         view: bool,
     ) -> Result<&BTreeMap<String, bool>, String> {
-        let row = self
-            .sources
-            .iter()
-            .position(|s| s == source)
-            .ok_or("unknown source state")?;
-        let destination = self
-            .put
-            .get(row)
-            .and_then(|r| r.get(usize::from(view)))
-            .and_then(|index| self.sources.get(*index))
-            .ok_or("unknown put-back")?;
-        Ok(destination)
+        decision::put(&self.sources, &self.put, source, view).map_err(refusal)
     }
 
     /// Read the checked view, refusing source states outside the domain.
@@ -56,11 +48,22 @@ impl AdmittedLens {
     /// # Errors
     /// Returns unknown for a source outside the admitted domain.
     pub fn get(&self, source: &BTreeMap<String, bool>) -> Result<bool, String> {
-        self.sources
-            .iter()
-            .position(|s| s == source)
-            .and_then(|row| self.get.get(row).copied())
-            .ok_or_else(|| "unknown source state".into())
+        decision::get(&self.sources, &self.get, source).map_err(refusal)
+    }
+}
+
+/// The same refusal text the lens has always reported.
+fn refusal(refusal: decision::Refusal) -> String {
+    match refusal {
+        decision::Refusal::UnknownSource => "unknown source state".into(),
+        decision::Refusal::UnknownPutBack => "unknown put-back".into(),
+        decision::Refusal::GetPut(row) => format!("refuted GetPut at source {row}"),
+        decision::Refusal::PutGet(row, view) => {
+            format!("refuted PutGet at source {row}, view {view}")
+        }
+        decision::Refusal::PutPut(row, view, last) => {
+            format!("refuted PutPut at source {row}, views {view}, {last}")
+        }
     }
 }
 
@@ -224,24 +227,5 @@ fn check_source_schema(
 }
 
 fn check_laws(lens: &AdmittedLens) -> Result<(), String> {
-    for (row, source) in lens.sources.iter().enumerate() {
-        let current = lens.get(source)?;
-        if lens.put(source, current)? != source {
-            return Err(format!("refuted GetPut at source {row}"));
-        }
-        for view in [false, true] {
-            let updated = lens.put(source, view)?;
-            if lens.get(updated)? != view {
-                return Err(format!("refuted PutGet at source {row}, view {view}"));
-            }
-            for last in [false, true] {
-                if lens.put(updated, last)? != lens.put(source, last)? {
-                    return Err(format!(
-                        "refuted PutPut at source {row}, views {view}, {last}"
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
+    decision::check_laws(&lens.sources, &lens.get, &lens.put).map_err(refusal)
 }

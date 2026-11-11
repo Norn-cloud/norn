@@ -44,9 +44,9 @@
     {
       "id": "TRUST-CHARON-AENEAS-AND-CORE-MODELS",
       "owner": "Norn verification maintainers",
-      "boundary": "Pinned Charon (a1d98905, nightly-2026-08-18 rustc front end) and Aeneas (74a460a2) translation of Rust MIR to Lean, and the Aeneas Lean standard-library models of machine integers, slices, vectors, control flow and core traits",
+      "boundary": "Pinned Charon (a1d98905, nightly-2026-08-18 rustc front end) and Aeneas (74a460a2) translation of Rust MIR to Lean, and the Aeneas Lean standard-library models of machine integers, slices, vectors, control flow and core traits (including Result's Try branch and from_residual)",
       "justification": "Aeneas implementation proofs are about the Lean translation of the production MIR, not about compiled code. Translation correctness and the Aeneas core models are trusted; rustc and LLVM codegen below MIR are trusted as for every Rust claim.",
-      "blastRadius": "A translation defect or a wrong core model could make a correspondence theorem hold for code that behaves differently, affecting every claim proved through an Aeneas gate, including scripts/verify-norm-precedence-aeneas.sh.",
+      "blastRadius": "A translation defect or a wrong core model could make a correspondence theorem hold for code that behaves differently, affecting every claim proved through an Aeneas gate, including scripts/verify-kernel-l1-aeneas.sh, scripts/verify-norm-precedence-aeneas.sh and scripts/verify-checker-certificates-aeneas.sh.",
       "falsificationTest": "Run the seeded mutants in each Aeneas gate and require each to extract, elaborate, fail the proof and be refuted by its witness; re-extract with a newer pinned Charon/Aeneas and require the same theorems to check."
     },
     {
@@ -56,6 +56,14 @@
       "justification": "scripts/verify-norm-precedence-aeneas.sh proves, for every input, that admits decides admissibility and an exact closure certificate and that resolution_holds decides that a context's resolution is the unique stable set, and that every admitted order satisfies the precedence meta-theorems. The shell only moves values in and maps the verdict back; a wrong certificate or resolution is refused by the core, not trusted. The core-versus-oracle property tests in norm_precedence.rs compare the core with the former whole-set oracle query on random groundings.",
       "blastRadius": "A mask, layer or protection flag mapped wrongly, or a wrong grounding, would make the core decide about a different catalog than the declared one: an order could be admitted or refused for the wrong norms while every theorem still holds.",
       "falsificationTest": "Run the norn-checker norm_precedence, deontic and diagnosis tests, including core_decides_exactly_as_the_whole_set_query and witnesses_match_the_oracle; run the 14 seeded mutants in scripts/verify-norm-precedence-aeneas.sh and require each to fail the proof and be refuted by its pinned witness."
+    },
+    {
+      "id": "TRUST-CHECKER-CERTIFICATE-GLUE",
+      "owner": "Norn checker maintainers",
+      "boundary": "The glue around the extracted certificate cores (#718 U5/U6): in obligations/conservation.rs the scope/unit partition labelling, the shape and budget refusals and the ExactArithmetic instance for exact_rational::Rational (its exactness is lane C-B's unit U2); in mapping/lens.rs the declaration decoding and the Get table computed by norn_expr (TRUST until P5); in metric/compute/certificate.rs the verdict-to-Algebraic mapping and the operator reconstruction from the plan; in obligations/induction.rs the direct-read analysis (frame_reads, expression_reads) and the reads handed to the frame decision; and that the derived PartialEq of String and BTreeMap<String, bool> is structural equality",
+      "justification": "scripts/verify-checker-certificates-aeneas.sh proves each extracted decision for every input and every lawful instance, so acceptance implies the written certificate property; what the glue feeds in (labels, numbers, tables, reads) and the refusal text it reports are ordinary reviewed code, and every glue path other than the proved decision can only refuse.",
+      "blastRadius": "A wrong partition label, an inexact Rational operation, a Get table that differs from the mapping's expression, or an incomplete read set would make the proved decision accept a certificate whose real-world property fails, while the correspondence theorems still hold.",
+      "falsificationTest": "The norn-checker unit and property tests (conservation, lens, IVM algebra, induction) exercise the glue against independent expectations; U2 replaces the Rational assumption with a proof, and P5 the evaluator assumption."
     }
   ]
 }
