@@ -465,7 +465,7 @@ Every row names an existing IR kind; only the rows marked GAP need engine work.
 | `run: flow` | `rule` (`decide`, `transitioned` trigger) | `builder/rule.ts` | `rule.rs` | PROPOSED generator |
 | `law` | `law` (LawIR) | `builder/law.ts` | `verification.rs` `LawIR` | CURRENT builder |
 | lambdas | ZEN expression text | `builder/expr.ts` (needs closures, `sum`) | `norn-expr` `norn-zen/6` | PROPOSED builder ops |
-| `unless` | `DeonticRule.exceptions` / LawIR exceptions | `builder/deontic.ts` | `deontic.rs` `RuleException` | **GAP §8.1** |
+| `unless` | `LawIR.exceptions` (exception tree) | `builder/law.ts` `LawException` | `verification.rs` `LawException`; checker `law_exceptions.rs` | CURRENT IR and admission; **GAP §8.1** evaluation |
 | `severity: { override }` | `LawSeverity` + violation record | `builder/law.ts` | `verification.rs` `LawSeverity` | **GAP §8.2** |
 | `flow` (either syntax) | Run `entity` + `rule` | `builder/flow.ts`, `lower-flow.ts` | `entity_v2`, `rule.rs` | CURRENT for Effect.gen |
 | `fn` / `failure` | Function handle, tagged error | `builder/flow.ts` | `function.rs` | CURRENT |
@@ -790,7 +790,7 @@ Required semantics:
 2. Only the law's owner may add exceptions to it. A downstream pack adding `unless` to an inherited law is `law.model.weakens_inherited` (CURRENT code) unless the owner marked that law `defeasible: true`, which is part of its published contract.
 3. Each exception is recorded with the decision: a write that passes only through an exception logs which exception applied, so the audit trail shows "allowed because opening_balance".
 4. Conflicts between deontic rules (an obligation and a prohibition both active) resolve by declared `defeated_by` order or are refused at admission; no numeric priorities.
-5. Wire: either add `exceptions` to `LawIR` or lower every law with `unless` to a `DeonticRule`. Open question 3 picks one.
+5. Wire: `LawIR.exceptions`, a tree of `{ id, overrides, condition, rationale, source }` whose `overrides` names the law or another exception of the same tree (answers open question 3). The list is omitted when empty, so existing laws keep their bytes and pins. `RuleException` is the same struct, and a `DeonticRule` declares exceptions on itself or on its law, never both (`law.exception.two_homes`). Admission refuses a malformed tree (`law.exception.invalid_declaration`, `law.exception.dangling_override`, `law.exception.cycle`, `law.exception.limit`) and lets sibling exceptions overlap. Until the commit-path fold lands, the kernel refuses a law with exceptions with `core.laws.unsupported_semantics`.
 
 ### 8.2 Override mode: `severity: { override }`
 
@@ -877,7 +877,7 @@ The generated `registry/*/artifacts/*.json` files must not change in any codemod
 
 1. **Artifact versions.** Proposed: every artifact takes its pack's version. Does an unchanged artifact get a new version on every pack bump (simple, noisy plans) or keep its last version until its content changes (quiet, needs a content-hash rule)?
 2. **Names from strings or bindings.** Proposed: the first argument (`thing("Party", ...)`) is the stable name, and a lint checks it matches the export binding. Inferring from the binding alone saves a word but makes a rename refactor silently change an id.
-3. **Exceptions on the wire** (§8.1): add `exceptions` to `LawIR`, or lower every law with `unless` to `DeonticRule` (which today expects an external authority source)?
+3. **Exceptions on the wire** (§8.1): answered. Exceptions live on `LawIR` as a declared tree (§8.1 rule 5); `DeonticRule` reuses the same struct and never carries a second list.
 4. **Absolute timers** for `after: { at }` and `wait.until`: a decision has no clock and timers are relative. Is an absolute timer a third engine gap, or does the host compute `afterMillis` at commit?
 5. **One CLI.** Does `norn dev|plan|apply` live in the Rust `norn` binary (calling the TS compiler) or in the authoring CLI (calling the checker WASM)?
 6. **Python packaging**: package name, location (`sdks/python/` beside the generated OpenAPI clients?), and minimum Python version.

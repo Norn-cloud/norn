@@ -3902,6 +3902,23 @@ export interface components {
              */
             rule?: components["schemas"]["NornIrIdentityRule"];
         };
+        /**
+         * @description One declared exception. When its condition holds and no exception that
+         *     overrides it applies, the node it overrides does not apply. It has no other
+         *     consequence: lifting is its only effect.
+         */
+        NornIrLawException: {
+            /** @description Boolean ZEN predicate over the law subject's `self` environment. */
+            condition: string;
+            /** @description Stable identity, unique within the tree and distinct from the law id. */
+            id: string;
+            /** @description The law's own id, or the id of another exception in the same tree. */
+            overrides: string;
+            /** @description Reviewed explanation. */
+            rationale: string;
+            /** @description Source location of the declaration. */
+            source: components["schemas"]["NornIrRuleSourceSpan"];
+        };
         /** @description Typed interpretation contract. Admission refuses until conformance exists. */
         NornIrLawInterpretationIr: {
             /**
@@ -3952,6 +3969,12 @@ export interface components {
         NornIrLawPayload: {
             /** @description Optional pointwise activation predicate (not an edge trigger). */
             condition?: string;
+            /**
+             * @description The law owner's declared exception tree. Omitted when empty, and an
+             *     explicit `[]` is refused, so a law without exceptions has exactly one
+             *     encoding and keeps its canonical bytes and pin.
+             */
+            exceptions?: components["schemas"]["NornIrLawException"][];
             /** @description Stable identity, preserved by all authoring faces. */
             id: string;
             /**
@@ -5946,7 +5969,7 @@ export interface components {
             authorityVersion: string;
             /** @description Explicit rule identities preferred to this rule; not numeric authority ranking. */
             defeatedBy?: string[];
-            exceptions?: components["schemas"]["NornIrRequirementRuleException"][];
+            exceptions?: components["schemas"]["NornIrRequirementLawException"][];
             law: components["schemas"]["NornIrRequirementLawIR"];
             modality: components["schemas"]["NornIrRequirementDeonticModality"];
             source: components["schemas"]["NornIrRequirementRuleSourceSpan"];
@@ -5957,10 +5980,33 @@ export interface components {
          * @enum {string}
          */
         NornIrRequirementIrVersion01: "0.1";
+        /**
+         * @description One declared exception. When its condition holds and no exception that
+         *     overrides it applies, the node it overrides does not apply. It has no other
+         *     consequence: lifting is its only effect.
+         */
+        NornIrRequirementLawException: {
+            /** @description Boolean ZEN predicate over the law subject's `self` environment. */
+            condition: string;
+            /** @description Stable identity, unique within the tree and distinct from the law id. */
+            id: string;
+            /** @description The law's own id, or the id of another exception in the same tree. */
+            overrides: string;
+            /** @description Reviewed explanation. */
+            rationale: string;
+            /** @description Source location of the declaration. */
+            source: components["schemas"]["NornIrRequirementRuleSourceSpan"];
+        };
         /** @description One protected law; its predicates use the subject's `self` environment. */
         NornIrRequirementLawIR: {
             /** @description Optional pointwise activation predicate (not an edge trigger). */
             condition?: string;
+            /**
+             * @description The law owner's declared exception tree. Omitted when empty, and an
+             *     explicit `[]` is refused, so a law without exceptions has exactly one
+             *     encoding and keeps its canonical bytes and pin.
+             */
+            exceptions?: components["schemas"]["NornIrRequirementLawException"][];
             /** @description Stable identity, preserved by all authoring faces. */
             id: string;
             /**
@@ -6171,12 +6217,6 @@ export interface components {
             /** Format: uint32 */
             start: number;
         };
-        /** @description A reviewed conditional exception. No implicit necessity or legal judgement. */
-        NornIrRequirementRuleException: {
-            condition: components["schemas"]["NornIrRequirementZenExpression"];
-            id: string;
-            source: components["schemas"]["NornIrRequirementRuleSourceSpan"];
-        };
         /** @description Source JSON pointer plus an optional half-open UTF-8 byte range. */
         NornIrRequirementRuleSourceSpan: {
             artifactId: string;
@@ -6356,6 +6396,12 @@ export interface components {
          * @enum {string}
          */
         NornIrRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
+        NornIrRuleByteRange: {
+            /** Format: uint32 */
+            end: number;
+            /** Format: uint32 */
+            start: number;
+        };
         /**
          * @description RuleIR v1 closed-operator condition, mirroring the conditions the
          *     `norn-engine` closed evaluator runs (`RuleCondition`).
@@ -6527,6 +6573,12 @@ export interface components {
         /** @description Source fields whose values are derived from the decide input. */
         NornIrRuleSourceCommandPropertyFields: {
             [key: string]: components["schemas"]["NornIrZenExpression"];
+        };
+        /** @description Source JSON pointer plus an optional half-open UTF-8 byte range. */
+        NornIrRuleSourceSpan: {
+            artifactId: string;
+            bytes?: components["schemas"]["NornIrRuleByteRange"] | null;
+            pointer: string;
         };
         /** @description A committed ledger event that triggers a `decide` rule (T3-DEC-3, #2671). */
         NornIrRuleTrigger: components["schemas"]["NornIrRuleTriggerOneOf0"] | components["schemas"]["NornIrRuleTriggerOneOf1"] | components["schemas"]["NornIrRuleTriggerOneOf2"] | components["schemas"]["NornIrRuleTriggerOneOf3"] | components["schemas"]["NornIrRuleTriggerOneOf4"];
