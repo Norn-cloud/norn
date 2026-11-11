@@ -1,0 +1,23 @@
+{
+  "objectType": "canon.Item",
+  "id": "demo/item/gold",
+  "items": [
+    {
+      "sourceType": "canon.Holding",
+      "link": "item",
+      "source": "demo/holding/owner/north/gold",
+      "targetType": "canon.Item",
+      "target": "demo/item/gold",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.Holding",
+      "link": "item",
+      "source": "demo/holding/owner/south/gold",
+      "targetType": "canon.Item",
+      "target": "demo/item/gold",
+      "version": 1
+    }
+  ],
+  "hasMore": false
+}

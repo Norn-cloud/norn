@@ -1,0 +1,24 @@
+import Stratification
+
+#print axioms Norn.DatalogStratification.foldMax_bounds
+#print axioms Norn.DatalogStratification.foldMax_least
+#print axioms Norn.DatalogStratification.foldMax_machine_bound
+#print axioms Norn.DatalogStratification.fresh_tail
+#print axioms Norn.DatalogStratification.assign_preserves
+#print axioms Norn.DatalogStratification.assign_covers
+#print axioms Norn.DatalogStratification.assign_cross_bounds
+#print axioms Norn.DatalogStratification.internalOK_positive
+#print axioms Norn.DatalogStratification.construct_covers
+#print axioms Norn.DatalogStratification.construct_sound
+#print axioms Norn.DatalogStratification.stratify_sound
+#print axioms Norn.DatalogStratification.positive_edge
+#print axioms Norn.DatalogStratification.negative_edge
+#print axioms Norn.DatalogStratification.path_weight_monotone
+#print axioms Norn.DatalogStratification.closed_path_weight_zero
+#print axioms Norn.DatalogStratification.negative_edge_no_return
+#print axioms Norn.DatalogStratification.successful_no_negative_cycle
+#print axioms Norn.DatalogStratification.budget_abort
+#print axioms Norn.DatalogStratification.negative_self_refused
+#print axioms Norn.DatalogStratification.missing_predecessor_refused
+#print axioms Norn.DatalogStratification.overflowing_increment_refused
+#print axioms Norn.DatalogStratification.positive_cycle_admitted

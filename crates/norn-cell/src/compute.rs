@@ -4,6 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
+/// Exact result membership and native fact evidence.
+pub mod lineage;
+#[cfg(feature = "duckdb")]
+mod olap;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
@@ -55,8 +59,34 @@ pub struct QueryContext {
     pub source_cursors: Frontier,
     /// Watermarks for required dependencies.
     pub watermarks: BTreeMap<String, BTreeMap<String, Watermark>>,
-    /// Core 07 disposition: excluded identity → finding/evidence pin.
-    pub exclusions: BTreeMap<String, String>,
+}
+impl QueryContext {
+    // DATA-QUARANTINE: shared cell/IVM population selection pins retained evidence.
+    fn include_record<E: SqlEngine>(
+        &self,
+        reader: &crate::StoreReader<'_, E>,
+        record: &ObjectRecord,
+        frontier: Option<u64>,
+        exclusions: &mut BTreeMap<String, String>,
+        finding_members: &mut BTreeSet<String>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<bool, CellError> {
+        if record.scope != self.scope {
+            return Err(refused("core.compute.stale_input"));
+        }
+        if !visible(record)? {
+            return Ok(false);
+        }
+        finding_members.insert(record.id.clone());
+        if let Some(finding) = reader
+            .question_findings(&self.world, record, frontier)?
+            .first()
+        {
+            exclusions.insert(record.id.clone(), finding.id.clone());
+            return Ok(false);
+        }
+        Ok(true)
+    }
 }
 /// Declared execution strategy; qualification belongs to the producing evaluator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +96,8 @@ pub enum Engine {
     Ivm,
     /// Exact cell snapshot.
     Cell,
+    /// Embedded SQL over the exact authorized contribution snapshot.
+    Duckdb,
 }
 /// Snapshot freshness, independent of source cursor ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,8 +118,50 @@ pub enum Freshness {
 pub struct Member {
     /// Original cell object version.
     pub version: u64,
-    /// Operand contributions; none means its predicate excluded this identity.
-    pub amounts: Vec<Option<Decimal>>,
+    /// Operand contributions; a null operand means its predicate excluded this
+    /// identity. `None` (wire `null`) when the reader may not see every member
+    /// of the bucket's values (DATA-VALUES-1): amounts are row values, and
+    /// one withheld member among visible ones would follow from the totals.
+    pub amounts: Option<Vec<Option<Decimal>>>,
+    /// The reader holds no Values grant on this member.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restricted: bool,
+}
+
+impl Member {
+    /// A member whose amounts the evaluation discloses.
+    const fn visible(version: u64, amounts: Vec<Option<Decimal>>) -> Self {
+        Self {
+            version,
+            amounts: Some(amounts),
+            restricted: false,
+        }
+    }
+}
+
+impl QueryRow {
+    /// DATA-VALUES-1 (D52/D53): mark `restricted` members and, if any, withhold
+    /// every member's amounts in this bucket, so no hidden amount follows from
+    /// the totals. For such a reader the bucket aggregate is disclosed only
+    /// when the bucket has at least `min_disclosed` members; a smaller bucket
+    /// keeps its membership but is `suppressed`: no totals and a null value.
+    pub fn withhold(&mut self, restricted: impl Fn(&str) -> bool, min_disclosed: usize) {
+        let mut any = false;
+        for (id, member) in &mut self.members {
+            member.restricted = restricted(id);
+            any |= member.restricted;
+        }
+        if any {
+            for member in self.members.values_mut() {
+                member.amounts = None;
+            }
+            if self.members.len() < min_disclosed {
+                self.totals.clear();
+                self.value = None;
+                self.suppressed = true;
+            }
+        }
+    }
 }
 /// One output bucket, retaining exact sums beside its ratio.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,10 +171,15 @@ pub struct QueryRow {
     pub bucket: RuntimeValue,
     /// One sum, or numerator then denominator.
     pub totals: Vec<Decimal>,
-    /// Null means a zero-denominator ratio is unavailable.
+    /// Null means a zero-denominator ratio is unavailable, or the bucket is `suppressed`.
     pub value: Option<Decimal>,
     /// Exact aggregate-membership lineage.
     pub members: BTreeMap<String, Member>,
+    /// DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket
+    /// has fewer members than the declared minimum, so `totals` is empty and
+    /// `value` null. Never set on an unredacted result.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
 }
 /// Result envelope for QUERY-ENGINE-1; construction alone grants no authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,9 +210,45 @@ pub struct QueryResult {
     /// Server-resolved scope, mappings, frontier and watermarks.
     #[serde(flatten)]
     pub context: QueryContext,
+    /// DATA-QUARANTINE: engine-resolved identity → durable finding ID.
+    pub exclusions: BTreeMap<String, String>,
 }
 
+#[derive(Serialize)]
+struct FindingEvidence<'a> {
+    #[serde(flatten)]
+    context: &'a QueryContext,
+    exclusions: &'a BTreeMap<String, String>,
+}
+
+pub(crate) type QuestionPopulation = (QueryContext, BTreeMap<String, String>);
+
+type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
+
 pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
+/// ASOF-KNOWLEDGE-1: an `AsOf` plan admits only a cutoff recorded exactly at its declared
+/// instant; sub-millisecond declarations never match a millisecond clock.
+fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
+    plan.as_of_instant()
+        .is_some_and(|instant| millis_coordinates(millis) == Some(instant))
+}
+fn check_question_cutoff(
+    plan: &QuestionPlan,
+    cutoff: Option<crate::KnowledgeCutoff>,
+) -> Result<(), CellError> {
+    if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
+        let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+        if !asof_matches(plan, point.recorded_at.as_millis()) {
+            return Err(refused("core.compute.stale_input"));
+        }
+    }
+    Ok(())
+}
+fn millis_coordinates(millis: u64) -> Option<(i64, u32)> {
+    let seconds = i64::try_from(millis.div_euclid(1000)).ok()?;
+    let nanos = millis.rem_euclid(1000).checked_mul(1_000_000)?;
+    Some((seconds, u32::try_from(nanos).ok()?))
+}
 fn refused(code: &'static str) -> CellError {
     CellError::ComputeRefused(code)
 }
@@ -186,26 +301,40 @@ impl<E: SqlEngine> CellStore<E> {
         cutoff: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
+        self.question_snapshot_at_with(plan, context, cutoff, visible, |snapshot, _| Ok(snapshot))
+    }
+    fn question_snapshot_with<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.question_snapshot_at_with(plan, context, None, visible, consume)
+    }
+    fn question_snapshot_at_with<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: Option<crate::KnowledgeCutoff>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
         self.conn.transaction(|| {
+            let mut exclusions = BTreeMap::new();
             self.check_question_scope(&context.scope)?;
-            if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
-                return Err(refused(UNSUPPORTED_ENGINE));
-            }
-            self.check_question_model(plan)?;
+            check_question_cutoff(plan, cutoff)?;
+            let max = self.check_question_plan(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
             let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
             let mut budget = DecodeBudget::new(&limits);
-            let max = usize::try_from(plan.max_items())
-                .map_err(|_bound| refused("core.compute.bound_exceeded"))?;
             let mut historical_receipt = None;
             let mut frontier_receipt = None;
             let (ids, complete) = if let Some(cutoff) = cutoff {
-                let (head, receipt) =
+                (revision, frontier_receipt) =
                     historical::frame(&reader, cutoff, context.now_ms, &mut budget)?;
-                revision = head;
-                historical_receipt = receipt.as_ref().map(|r| r.hash.clone());
-                frontier_receipt = receipt;
+                historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
                 historical::history_ids(
                     &reader,
                     &context.world,
@@ -229,6 +358,7 @@ impl<E: SqlEngine> CellStore<E> {
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
+            let mut finding_members = BTreeSet::new();
             for id in ids {
                 let selected = if let Some(cutoff) = cutoff {
                     historical::historical_record(
@@ -255,11 +385,15 @@ impl<E: SqlEngine> CellStore<E> {
                         return Err(refused("core.compute.bound_exceeded"));
                     }
                 };
-                if record.scope != context.scope {
-                    return Err(refused("core.compute.stale_input"));
-                }
                 members.insert(id.clone());
-                if !visible(&record)? || context.exclusions.contains_key(&id) {
+                if !context.include_record(
+                    &reader,
+                    &record,
+                    cutoff.map(|c| c.frontier),
+                    &mut exclusions,
+                    &mut finding_members,
+                    visible,
+                )? {
                     continue;
                 }
                 if let Some(value) = project(plan, &record.values).map_err(refused)? {
@@ -269,21 +403,25 @@ impl<E: SqlEngine> CellStore<E> {
             let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
             let result = materialize(
                 plan,
-                context,
+                (context, exclusions),
                 revision,
                 query_pin,
                 definition_pin,
                 &contributions,
             )?;
-            Ok(Snapshot {
-                historical_receipt,
-                result,
-                contributions,
-                members,
-            })
+            consume(
+                Snapshot {
+                    historical_receipt,
+                    result,
+                    contributions,
+                    members,
+                    finding_members,
+                },
+                &mut budget,
+            )
         })
     }
-    fn check_question_model(&self, plan: &QuestionPlan) -> Result<(), CellError> {
+    fn check_question_plan(&self, plan: &QuestionPlan) -> Result<usize, CellError> {
         let model = self.model().query_contract(plan.grain().as_str())?;
         if plan.properties().iter().any(|p| {
             model
@@ -292,7 +430,7 @@ impl<E: SqlEngine> CellStore<E> {
         }) {
             return Err(refused(UNSUPPORTED_ENGINE));
         }
-        Ok(())
+        usize::try_from(plan.max_items()).map_err(|_bound| refused("core.compute.bound_exceeded"))
     }
     fn question_pins(
         &self,
@@ -319,6 +457,7 @@ struct Snapshot {
     result: QueryResult,
     contributions: Contributions,
     members: BTreeSet<String>,
+    finding_members: BTreeSet<String>,
 }
 
 #[derive(Clone, Default)]
@@ -353,7 +492,7 @@ fn bucket_key(value: &Contribution) -> Result<String, CellError> {
 
 pub(crate) fn materialize(
     plan: &QuestionPlan,
-    context: QueryContext,
+    population: QuestionPopulation,
     revision: LedgerHead,
     query_pin: String,
     definition_pin: String,
@@ -365,7 +504,7 @@ pub(crate) fn materialize(
     }
     finish(
         plan,
-        context,
+        population,
         revision,
         query_pin,
         definition_pin,
@@ -376,14 +515,14 @@ pub(crate) fn materialize(
 
 pub(crate) fn finish(
     plan: &QuestionPlan,
-    context: QueryContext,
+    population: QuestionPopulation,
     revision: LedgerHead,
     query_pin: String,
     definition_pin: String,
     contributions: &Contributions,
     totals: &Totals,
 ) -> Result<QueryResult, CellError> {
-    type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
+    let (context, exclusions) = population;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
     for (id, (version, contribution)) in contributions {
         let key = bucket_key(contribution)?;
@@ -399,13 +538,9 @@ pub(crate) fn finish(
             .iter()
             .map(|n| n.map(|v| decimal(i128::from(v))).transpose())
             .collect::<Result<_, _>>()?;
-        bucket.2.insert(
-            id.clone(),
-            Member {
-                version: *version,
-                amounts,
-            },
-        );
+        bucket
+            .2
+            .insert(id.clone(), Member::visible(*version, amounts));
     }
     let rows = grouped
         .into_iter()
@@ -425,17 +560,18 @@ pub(crate) fn finish(
                     totals: totals.into_iter().map(decimal).collect::<Result<_, _>>()?,
                     value,
                     members,
+                    suppressed: false,
                 },
             ))
         })
         .collect::<Result<_, CellError>>()?;
-    let mut complete = context.exclusions.is_empty();
+    let mut complete = exclusions.is_empty();
     let (mut stale, mut aged) = (false, false);
     let age = match plan.question().freshness {
         FreshnessPolicy::Live { max_age_ms } | FreshnessPolicy::Delayed { max_age_ms } => {
-            max_age_ms.0
+            Some(max_age_ms.0)
         }
-        FreshnessPolicy::AsOf { .. } => return Err(refused(UNSUPPORTED_ENGINE)),
+        FreshnessPolicy::AsOf { .. } => None,
     };
     for (source, partitions) in &context.source_cursors {
         complete &= !partitions.is_empty();
@@ -448,14 +584,18 @@ pub(crate) fn finish(
                 Some(w) => {
                     complete &= w.complete && &w.observed == consumed && w.heartbeat_ms.is_some();
                     let lag = w.heartbeat_ms.and_then(|at| context.now_ms.checked_sub(at));
-                    stale |= lag.is_none_or(|lag| lag > age);
-                    aged |= lag.is_some_and(|lag| lag > 0);
+                    stale |= lag.is_none_or(|lag| age.is_some_and(|age| lag > age));
+                    aged |= age.is_some() && lag.is_some_and(|lag| lag > 0);
                 }
                 None => complete = false,
             }
         }
     }
-    let lineage_ref = crate::codec::hash_json(&(&query_pin, &revision, &context, &rows))?;
+    let evidence = FindingEvidence {
+        context: &context,
+        exclusions: &exclusions,
+    };
+    let lineage_ref = crate::codec::hash_json(&(&query_pin, &revision, evidence, &rows))?;
     Ok(QueryResult {
         query_pin,
         definition_pin,
@@ -477,6 +617,7 @@ pub(crate) fn finish(
         },
         complete,
         context,
+        exclusions,
     })
 }
 
@@ -484,6 +625,17 @@ pub(crate) fn finish(
 #[allow(clippy::expect_used, reason = "bounded delta property assertions")]
 mod tests {
     use super::*;
+    proptest::proptest! {
+        #[test]
+        fn asof_millisecond_coordinates_are_exact(offset in 0u32..86_400_000) {
+            let millis=1_792_972_800_000u64.checked_add(u64::from(offset)).expect("bounded timestamp");
+            let at=chrono::DateTime::from_timestamp_millis(i64::try_from(millis).expect("bounded")).expect("valid timestamp");
+            let expected=(at.timestamp(),at.timestamp_subsec_nanos());
+            proptest::prop_assert_eq!(millis_coordinates(millis),Some(expected));
+            proptest::prop_assert_ne!(millis_coordinates(millis.checked_add(1).expect("bounded successor")),Some(expected));
+        }
+    }
+
     proptest::proptest! {
         #[test]
         fn delta_retraction_restores_exact_totals(values in proptest::collection::vec(proptest::option::of(proptest::num::i32::ANY), 0..100)) {

@@ -1,0 +1,7 @@
+{
+  "code": "connector.effect.reconcile_not_query",
+  "message": "a command's reconcile must name an existing query binding",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

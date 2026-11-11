@@ -2,7 +2,7 @@
 //! v2 (ruling 2026-09-09 §5: "value types with units, formats, enums, and
 //! constraints").
 //!
-//! A [`PropertyType`] is one of eleven kinds. A [`PropertyTypeDef`] gives a type
+//! A [`PropertyType`] is one of twelve kinds. A [`PropertyTypeDef`] gives a type
 //! and its [`PropertyConstraints`] a [`PropertyTypeName`], so object types
 //! (T1-ONT-1b..d) reuse it by name through the `ref` kind instead of
 //! restating it.
@@ -111,6 +111,42 @@ pub struct PropertyTypeDef {
     pub markings: Vec<MarkingId>,
 }
 
+/// METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.
+/// Missing declarations permit point reads but never authorize aggregation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PropertyAdditivity {
+    /// No aggregation contract has been declared.
+    Undeclared {},
+    /// Summable across entities and time.
+    Additive {},
+    /// Summable across entities at a single instant, never across time.
+    SemiAdditive {},
+    /// Requires a separately declared weighting calculation.
+    NonAdditive {},
+    /// Recompute from the sums of these operands, never average stored ratios.
+    Ratio {
+        /// Numerator property at the same object grain.
+        numerator: super::object::PropertyId,
+        /// Denominator property at the same object grain.
+        denominator: super::object::PropertyId,
+    },
+}
+
+impl Default for PropertyAdditivity {
+    fn default() -> Self {
+        Self::Undeclared {}
+    }
+}
+
+impl PropertyAdditivity {
+    /// Whether canonical serialization omits the undeclared default.
+    #[must_use]
+    pub const fn is_undeclared(&self) -> bool {
+        matches!(self, Self::Undeclared {})
+    }
+}
+
 /// The value kind of a property, tagged by `kind`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
@@ -131,10 +167,17 @@ pub enum PropertyType {
         format: Option<TextFormat>,
     },
     /// A signed 64-bit integer.
-    Integer {},
+    Integer {
+        /// Explicit aggregation contract; a missing declaration fails closed.
+        #[serde(default, skip_serializing_if = "PropertyAdditivity::is_undeclared")]
+        additivity: PropertyAdditivity,
+    },
     /// An exact decimal with a fixed number of fraction digits, optionally a
     /// quantity in a declared unit.
     Decimal {
+        /// Explicit aggregation contract; units do not imply additivity.
+        #[serde(default, skip_serializing_if = "PropertyAdditivity::is_undeclared")]
+        additivity: PropertyAdditivity,
         /// Fraction digits every value is held at (`2` for cents). At most 28,
         /// the exact range of ZEN Expression's decimal (checked by
         /// `norn-checker`).
@@ -172,6 +215,11 @@ pub enum PropertyType {
         )]
         #[schemars(with = "UnitRef")]
         per_unit: Option<UnitRef>,
+    },
+    /// VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.
+    DecimalBinding {
+        /// Same-name members in one interface bind identically.
+        group: String,
     },
     /// `true` or `false`.
     Boolean {},
@@ -212,13 +260,57 @@ pub enum PropertyType {
 }
 
 impl PropertyType {
+    /// METRIC-ADDITIVITY-1: only an explicit numeric contract admits aggregation.
+    #[must_use]
+    pub const fn additivity(&self) -> &PropertyAdditivity {
+        match self {
+            Self::Integer { additivity } | Self::Decimal { additivity, .. } => additivity,
+            Self::Text { .. }
+            | Self::DecimalBinding { .. }
+            | Self::Boolean { .. }
+            | Self::Timestamp { .. }
+            | Self::Date { .. }
+            | Self::Duration { .. }
+            | Self::Enum { .. }
+            | Self::Record { .. }
+            | Self::JsonExt { .. }
+            | Self::Ref { .. } => &PropertyAdditivity::Undeclared {},
+        }
+    }
+
+    /// Whether this type contains an interface-only Decimal binding.
+    #[must_use]
+    pub fn contains_decimal_binding(&self) -> bool {
+        let mut pending = vec![self];
+        while let Some(kind) = pending.pop() {
+            match kind {
+                Self::DecimalBinding { .. } => return true,
+                Self::Record { members } => {
+                    pending.extend(members.iter().map(|m| &m.property_type))
+                }
+                Self::Text { .. }
+                | Self::Integer { .. }
+                | Self::Decimal { .. }
+                | Self::Boolean { .. }
+                | Self::Timestamp { .. }
+                | Self::Date { .. }
+                | Self::Duration { .. }
+                | Self::Enum { .. }
+                | Self::JsonExt { .. }
+                | Self::Ref { .. } => {}
+            }
+        }
+        false
+    }
+
     /// The wire `kind` tag.
     #[must_use]
     pub const fn kind(&self) -> PropertyKind {
         match self {
             Self::Text { .. } => PropertyKind::Text,
-            Self::Integer {} => PropertyKind::Integer,
+            Self::Integer { .. } => PropertyKind::Integer,
             Self::Decimal { .. } => PropertyKind::Decimal,
+            Self::DecimalBinding { .. } => PropertyKind::DecimalBinding,
             Self::Boolean {} => PropertyKind::Boolean,
             Self::Timestamp { .. } => PropertyKind::Timestamp,
             Self::Date {} => PropertyKind::Date,
@@ -238,6 +330,7 @@ pub enum PropertyKind {
     Text,
     Integer,
     Decimal,
+    DecimalBinding,
     Boolean,
     Timestamp,
     Date,
@@ -250,10 +343,11 @@ pub enum PropertyKind {
 
 impl PropertyKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Text,
         Self::Integer,
         Self::Decimal,
+        Self::DecimalBinding,
         Self::Boolean,
         Self::Timestamp,
         Self::Date,
@@ -271,6 +365,7 @@ impl PropertyKind {
             Self::Text => "text",
             Self::Integer => "integer",
             Self::Decimal => "decimal",
+            Self::DecimalBinding => "decimal-binding",
             Self::Boolean => "boolean",
             Self::Timestamp => "timestamp",
             Self::Date => "date",

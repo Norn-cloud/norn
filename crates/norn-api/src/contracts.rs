@@ -17,16 +17,49 @@ use utoipa::{Modify, ToSchema};
 pub(crate) struct ContractSchemas;
 
 impl Modify for ContractSchemas {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass registers every contract schema and install response union"
+    )]
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let components = openapi
             .components
             .get_or_insert_with(utoipa::openapi::Components::new);
-        for (name, schema) in artifact_envelope_schemas()
+        let artifact_schemas = artifact_envelope_schemas();
+        let effective_law_schemas = project_schemars_components(
+            norn_ir::verification::effective_law_instance_schema(),
+            "NornIrEffectiveLawInstance",
+            "NornIr",
+        )
+        .into_iter()
+        .filter(|(name, _)| {
+            !artifact_schemas
+                .iter()
+                .any(|(existing, _)| existing == name)
+        })
+        .collect::<Vec<_>>();
+        for (name, schema) in artifact_schemas
             .into_iter()
+            .chain(effective_law_schemas)
+            .chain(project_schemars_components(
+                action_input_component(),
+                "NornActionInput",
+                "NornAction",
+            ))
+            .chain(project_schemars_components(
+                action_call_record_schema(),
+                "NornActionCallRecord",
+                "NornAction",
+            ))
             .chain(project_schemars_components(
                 norn_ir::requirement_display::requirement_view_schema(),
                 "NornIrRequirementView",
                 "NornIrRequirement",
+            ))
+            .chain(project_schemars_components(
+                norn_ir::verification::guarantees::guarantees_document_schema(),
+                "NornGuaranteesDocument",
+                "NornGuarantees",
             ))
             .chain(project_schemars_components(
                 norn_ir::layout_sidecar_schema(),
@@ -66,6 +99,21 @@ impl Modify for ContractSchemas {
             .chain(project_schemars_components(
                 norn_ir::flow_source_map_schema(),
                 "NornIrFlowSourceMap",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
+                norn_ir::question_ir_schema(),
+                "NornIrQuestion",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
+                norn_ir::metric_definition_schema(),
+                "NornIrMetricDefinition",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
+                norn_ir::data_quality_finding_schema(),
+                "NornIrDataQualityFinding",
                 "NornIr",
             ))
             .chain(project_schemars_components(
@@ -148,6 +196,15 @@ pub enum NornDiagnosticFormat {
 
 fn explain_report_schema() -> Schema {
     nullable_reference_schema(Ref::from_schema_name("NornIrExplainReport"))
+}
+
+#[allow(
+    clippy::expect_used,
+    reason = "receipt schema is generated and checked from kernel types"
+)]
+fn action_call_record_schema() -> Value {
+    serde_json::from_str(norn_kernel::ActionCallRecord::schema_json())
+        .expect("generated kernel receipt schema")
 }
 
 /// The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`).
@@ -485,6 +542,30 @@ fn artifact_envelope_schemas() -> Vec<(String, Schema)> {
         );
     }
     schemas
+}
+
+/// The action input object, with the action boundary's decimal wire rule:
+/// the generic exact value schema alone does not say that decimals are text.
+#[allow(
+    clippy::expect_used,
+    reason = "the runtime object schema is a static schemars schema"
+)]
+fn action_input_component() -> Value {
+    let mut schema = serde_json::to_value(schemars::schema_for!(norn_ir::RuntimeObject))
+        .expect("the runtime object schema is serializable during OpenAPI generation");
+    if let Some(schema) = schema.as_object_mut() {
+        schema.insert(
+            "description".to_owned(),
+            Value::String(
+                "Action business arguments as exact JSON values. A field declared \
+                 `nornType: decimal` travels as its exact decimal text (`\"12.500\"`, \
+                 VAL-EXACT-1); a number token there refuses `action.invalid_input`. \
+                 Other number tokens keep their digits exactly."
+                    .to_owned(),
+            ),
+        );
+    }
+    schema
 }
 
 /// Project a canonical Schemars root and its `$defs` into `OpenAPI` components.
@@ -1192,11 +1273,100 @@ fn normalize_scalar_literal_union(object: &mut serde_json::Map<String, Value>) {
     reason = "unit tests assert schema conversion invariants"
 )]
 mod tests {
+    #[test]
+    fn effective_law_projection_preserves_exported_artifact_components() {
+        let document: serde_json::Value =
+            serde_json::from_str(&crate::openapi::openapi_json().expect("OpenAPI document"))
+                .expect("OpenAPI JSON");
+        for (name, schema) in super::artifact_envelope_schemas() {
+            if matches!(name.as_str(), "NornIrLawRoot" | "NornIrMember") {
+                let expected = serde_json::to_value(schema).expect("artifact schema");
+                assert_eq!(
+                    document.pointer(&format!("/components/schemas/{name}")),
+                    Some(&expected)
+                );
+            }
+        }
+        assert!(
+            document
+                .pointer("/components/schemas/NornIrEffectiveLawInstance")
+                .is_some()
+        );
+    }
+
     use super::{
         adapt_schemars_schema, hoist_inline_objects, parse_openapi_schema,
         project_schemars_components,
     };
     use serde_json::{Value, json};
+
+    #[test]
+    fn guarantee_projection_matches_typed_eligibility_and_exact_scalars() {
+        use norn_ir::verification::guarantees::{GoalGuarantee, GuaranteeScalar};
+        let schemas: serde_json::Map<String, Value> = project_schemars_components(
+            norn_ir::verification::guarantees::guarantees_document_schema(),
+            "NornGuaranteesDocument",
+            "NornGuarantees",
+        )
+        .into_iter()
+        .map(|(name, schema)| (name, serde_json::to_value(schema).expect("component")))
+        .collect();
+        let validator = |name: &str| {
+            jsonschema::validator_for(&json!({
+                "$ref": format!("#/components/schemas/NornGuarantees{name}"),
+                "components": {"schemas": schemas},
+            }))
+            .expect("projected guarantee schema")
+        };
+        let goals = validator("GoalGuarantee");
+        let unknown = json!({"kind":"unknown","reason":"outside qualified fragment"});
+        for eligible in [false, true] {
+            for verdict in [
+                unknown.clone(),
+                json!({"kind":"bounded-pass"}),
+                json!({"kind":"refuted"}),
+            ] {
+                for level in [
+                    unknown.clone(),
+                    json!({"kind":"exhaustive-finite/bounded"}),
+                    json!({"kind":"runtime-enforced"}),
+                    json!({"kind":"parity-tested"}),
+                ] {
+                    let value = json!({"index":0,"goalKind":"preservation","eligible":eligible,"verdict":verdict,"level":level,"evidence":null,"scenario":null});
+                    let valid = eligible || verdict == unknown && level == unknown;
+                    assert_eq!(goals.is_valid(&value), valid, "{value}");
+                    assert_eq!(
+                        serde_json::from_value::<GoalGuarantee>(value).is_ok(),
+                        valid
+                    );
+                }
+            }
+        }
+        let scalars = validator("GuaranteeScalar");
+        for coefficient in [
+            json!("0"),
+            json!("-1"),
+            json!(i64::MIN.to_string()),
+            json!(i64::MAX.to_string()),
+            json!("-0"),
+            json!("01"),
+            json!("+1"),
+            json!("1.5"),
+            json!("9223372036854775808"),
+            json!(1),
+            json!("1\n"),
+            json!("1\r"),
+            json!("1\u{2028}"),
+            json!("1\u{2029}"),
+        ] {
+            let value = json!({"coefficient":coefficient,"scale":0,"unit":null});
+            assert_eq!(
+                scalars.is_valid(&value),
+                serde_json::from_value::<GuaranteeScalar>(value.clone()).is_ok(),
+                "{value}"
+            );
+        }
+    }
 
     #[test]
     fn projection_preserves_owned_row_derivation_map_values_and_key_pattern() {

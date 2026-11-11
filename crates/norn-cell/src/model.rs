@@ -281,7 +281,11 @@ impl Model {
     ///
     /// # Errors
     ///
-    /// [`CellError::Projection`] when the types do not project.
+    /// [`CellError::Projection`] when the types do not project, and
+    /// [`CellError::EffectiveViewRefused`] when the effective view of the
+    /// types cannot be derived (more than 4,096 object types, or another
+    /// inheritance classification budget): the model is refused rather than
+    /// admitted with an empty view.
     pub fn new(input: &SqliteDdlInput<'_>) -> Result<Self, CellError> {
         Self::new_with_interfaces(input, &[])
     }
@@ -294,6 +298,18 @@ impl Model {
     }
 
     fn new_with_binding_indexes(
+        input: &SqliteDdlInput<'_>,
+        interfaces: &[InterfaceDef],
+        binding_indexes: &[BindingIndexSpec],
+        law_artifacts: &[ArtifactEnvelope],
+    ) -> Result<Self, CellError> {
+        let model =
+            Self::project_with_binding_indexes(input, interfaces, binding_indexes, law_artifacts)?;
+        crate::identity::validate_model(&model.effective_objects, input.object_types)?;
+        Ok(model)
+    }
+
+    fn project_with_binding_indexes(
         input: &SqliteDdlInput<'_>,
         interfaces: &[InterfaceDef],
         binding_indexes: &[BindingIndexSpec],
@@ -371,7 +387,7 @@ impl Model {
             tenant: None,
         };
         let (effective_objects, effective_links) =
-            effective_object_types(&entity_model, &entity_context)
+            effective_object_types(&entity_model, &entity_context)?
                 .into_values()
                 .fold(
                     (BTreeMap::new(), BTreeMap::new()),
@@ -568,10 +584,43 @@ impl Model {
         Ok(&self.entry(object_type)?.def)
     }
 
+    pub(crate) fn identity_objects(&self) -> impl Iterator<Item = &EffectiveObjectType> {
+        self.effective_objects.values()
+    }
+
+    pub(crate) fn validate_identity_profile(&self) -> Result<(), CellError> {
+        crate::identity::validate_model(&self.effective_objects, self.object_types())
+    }
+
     pub(crate) fn query_contract(&self, name: &str) -> Result<&EffectiveObjectType, CellError> {
         self.effective_objects
             .get(name)
             .ok_or_else(|| CellError::UnknownObjectType(name.to_owned()))
+    }
+
+    /// The effective properties of `object_type`, inherited ones included,
+    /// in declaration order, each with its resolved local type (`None` for a
+    /// registry or unresolved type, whose definition is not available here).
+    ///
+    /// # Errors
+    /// The type is not in this model.
+    pub fn effective_property_types(
+        &self,
+        object_type: &str,
+    ) -> Result<Vec<(String, Option<norn_ir::PropertyType>)>, CellError> {
+        Ok(self
+            .query_contract(object_type)?
+            .properties
+            .iter()
+            .map(|property| {
+                let resolved = match &property.kind {
+                    norn_checker::entity_instance::EffectiveKind::Base(kind) => Some(kind.clone()),
+                    norn_checker::entity_instance::EffectiveKind::Registry(_)
+                    | norn_checker::entity_instance::EffectiveKind::Unresolved => None,
+                };
+                (property.id.as_str().to_owned(), resolved)
+            })
+            .collect())
     }
 
     /// Every object type of the model (#3018: the kernel's `TypeCatalog`
@@ -829,6 +878,21 @@ impl Model {
     /// [`CellError::Projection`] when the snapshot does not project.
     pub fn from_snapshot(snapshot: &ModelDefinitionSnapshot) -> Result<Self, CellError> {
         Self::new_with_binding_indexes(
+            &SqliteDdlInput {
+                object_types: &snapshot.object_types,
+                property_types: &snapshot.property_types,
+            },
+            &snapshot.interfaces,
+            &snapshot.binding_indexes,
+            &snapshot.law_artifacts,
+        )
+    }
+
+    /// ID-NORMALIZED-RETAINED: reconstruct pinned metadata without new admission.
+    pub(crate) fn from_retained_snapshot(
+        snapshot: &ModelDefinitionSnapshot,
+    ) -> Result<Self, CellError> {
+        Self::project_with_binding_indexes(
             &SqliteDdlInput {
                 object_types: &snapshot.object_types,
                 property_types: &snapshot.property_types,

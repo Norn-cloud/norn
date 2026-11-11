@@ -420,6 +420,29 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(())
     }
 
+    /// ID-STABLE-1 admission for canonical Creates, before any batch writes.
+    pub(crate) fn admit_created_identities(&self) -> Result<(), CellError> {
+        self.verify_mutation_scopes()?;
+        for fact in &self.batch.facts {
+            if let FactChange::Create {
+                object_type, key, ..
+            } = fact
+            {
+                let version = self
+                    .reader()
+                    .high_water(self.world, object_type.as_str(), key)?;
+                let live = self
+                    .reader()
+                    .root_row(self.world, object_type.as_str(), key)?
+                    .is_some();
+                if norn_kernel::FactVersion(version).has_committed_deletion(live) {
+                    return Err(CellError::IdentityReuse);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn verify_mutation_scopes(&self) -> Result<(), CellError> {
         if !self.batch.writes.is_empty()
             || !self.batch.facts.is_empty()
@@ -876,7 +899,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         catalog
             .effective_object_values(&ObjectTypeName(object_type.to_owned()), values)
             .map_err(|error| match error {
+                error @ EffectiveValuesError::Unsupported { .. } => {
+                    CellError::EffectiveValues(error)
+                }
                 EffectiveValuesError::Runtime(error) => CellError::Value(error),
+                EffectiveValuesError::ViewRefused(refusal) => {
+                    CellError::EffectiveViewRefused(refusal)
+                }
                 EffectiveValuesError::ValueType { property, expected } => CellError::ValueType {
                     owner: object_type.to_owned(),
                     property,
@@ -3129,6 +3158,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 && head.result.is_none()
         });
         if !is_head {
+            let parked = StoreReader::new(self.conn, self.model)
+                .pending_command(command_id)?
+                .is_some_and(|row| {
+                    crate::read::is_parked(&row.command) && row.command.generation == generation
+                });
+            if parked {
+                return Err(CellError::ParkedClaimUnsupported {
+                    command_id: command_id.to_owned(),
+                    generation,
+                });
+            }
             return Err(CellError::PerformClaimNotPending {
                 command_id: command_id.to_owned(),
                 generation,

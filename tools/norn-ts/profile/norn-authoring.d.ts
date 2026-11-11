@@ -54,6 +54,13 @@ declare module "@norn/authoring" {
       readonly code: string
     }
 
+    type PropertyAdditivity =
+      | { readonly kind: "undeclared" | "additive" | "semi_additive" | "non_additive" }
+      | { readonly kind: "ratio"; readonly numerator: string; readonly denominator: string }
+
+    /** Interface-only Decimal; members sharing a group require identical concrete unit and scale. */
+    function boundDecimal(group: string): Schema.Finite
+
     /**
      * Exact decimal value type (EntityIR `decimal`): every value is held at
      * `scale` fraction digits, optionally a quantity in `unit`, or money whose
@@ -62,7 +69,7 @@ declare module "@norn/authoring" {
      * number for authoring only; on the wire it is an exact number token and
      * never a binary float. `scale` is a non-negative integer literal.
      */
-    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
+    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly additivity?: PropertyAdditivity; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
 
     /** VAL-RATE: a typed currency-per-unit decimal; general compound units are not admitted. */
     function rate(scale: number, options: { readonly currency: string; readonly perUnit: UnitRef; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
@@ -88,6 +95,7 @@ declare module "@norn/authoring" {
       readonly to: V
       /** ZEN Expression guards, conjoined. */
       readonly guards?: ReadonlyArray<Expression<boolean>>
+      readonly guardRefusalCode?: string
     }
 
     /** A lifecycle over one enum property of `T`; its states are that property's values. */
@@ -128,6 +136,22 @@ declare module "@norn/authoring" {
       readonly _tag: "NornType"
       readonly __types?: { readonly type: T }
     }
+
+    /** Candidate QuestionIR; the host must admit it with the selected metric definitions. */
+    interface QuestionDefinition { readonly _tag: "NornQuestion" }
+    interface QuestionMeta {
+      readonly name: string
+      readonly of: string | TypeDefinition<unknown>
+      readonly where: ReadonlyArray<{ readonly property: string; readonly operator: "eq" | "ne"; readonly value: string | number | boolean }>
+      readonly measure: string
+      readonly by: ReadonlyArray<{ readonly property: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" }>
+      readonly asOf:
+        | { readonly basis: "effective"; readonly from: string; readonly to: string; readonly freshness: { readonly kind: "live" | "delayed"; readonly maxAgeMs: number } }
+        | { readonly basis: "knowledge" }
+      readonly population: { readonly kind: "authorized_objects" }
+    }
+    /** Syntax only: authored modules and callbacks never execute. */
+    function question(meta: QuestionMeta): QuestionDefinition
 
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
@@ -207,6 +231,7 @@ declare module "@norn/authoring" {
       /** The one supertype, declared locally or named from the installed registry. */
       readonly extends?: E
       readonly implements?: I
+      readonly pathEquations?: ReadonlyArray<import("../src/builder/entity.ts").PathEquation>
       readonly links?: ReadonlyArray<LinkSpec>
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
@@ -397,6 +422,7 @@ declare module "@norn/authoring" {
         | "triggerObject"
         | { readonly property: { readonly from: string; readonly property: string } }
         | { readonly link: { readonly from: string; readonly link: string } }
+        | { readonly parameter: { readonly from: string; readonly settingKey: string; readonly effectiveAt: string; readonly precedence: ReadonlyArray<Readonly<Partial<Record<`${ScopeDimension}Id`, string>>>>; readonly defaultFrom?: string } }
       readonly optional?: boolean
     }
 
@@ -439,7 +465,7 @@ declare module "@norn/authoring" {
 
     interface Expression<T> { readonly _tag: "NornExpression"; readonly __type?: T }
     /** Syntax-only expression; the callback is never executed. */
-    function expression<S extends Schema.Top, T>(schema: S, body: (input: S["Type"]) => T): Expression<T>
+    function expression<S extends Schema.Top, T>(schema: S, body: (input: S["Type"]) => T, options?: { readonly root: "context" }): Expression<T>
     /** Explicit untyped escape hatch. Reported as a warning; Rust still checks admission. */
     function unsafeZen<T = string>(text: string): T & Expression<T>
     function unsafeZen(graph: JdmGraph): UnsafeJdmGraph

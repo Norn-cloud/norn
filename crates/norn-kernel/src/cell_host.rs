@@ -66,6 +66,9 @@ pub type JsonValue = norn_ir::RuntimeValue;
 
 use crate::effect::{CommandId, Effect, Generation, Timer, TimerId};
 use crate::observations::LogicalTime;
+pub use crate::predicate_read::{
+    PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember,
+};
 use crate::snapshot_observe::{ObservationAuthorization, ObservationEvent};
 
 /// One-use in-process authority for the kernel's atomic owned-row commit.
@@ -74,24 +77,41 @@ use crate::snapshot_observe::{ObservationAuthorization, ObservationEvent};
 /// created only after the kernel has prepared and authorized the complete
 /// parent/child mutation, then consumed by the host admission check.
 pub struct OwnedRowsCommitProof {
+    quantity: Option<(norn_ir::quantity_ledger::QuantityRequest, String)>,
     max_events: u32,
     consumes: Option<Consumed>,
     reads: Vec<FactExpectation>,
     writes: Vec<FactWrite>,
     links: Vec<LinkWrite>,
     link_reads: Vec<LinkReadExpectation>,
+    predicate_reads: Vec<PredicateReadExpectation>,
 }
 
 impl OwnedRowsCommitProof {
-    pub(crate) fn new<E, C, T>(commit: &CellCommit<E, C, T>, max_events: u32) -> Self {
+    pub(crate) fn new<E, C, T>(
+        commit: &CellCommit<E, C, T>,
+        max_events: u32,
+        quantity: Option<(norn_ir::quantity_ledger::QuantityRequest, String)>,
+    ) -> Self {
         Self {
+            quantity,
             max_events,
             consumes: commit.consumes.clone(),
             reads: commit.reads.clone(),
             writes: commit.writes.clone(),
             links: commit.links.clone(),
             link_reads: commit.link_reads.clone(),
+            predicate_reads: commit.predicate_reads.clone(),
         }
+    }
+
+    /// Kernel-prepared quantity intent and action identity, if this transaction
+    /// has one. Hosts must commit it atomically with the owned-row writes.
+    #[must_use]
+    pub fn quantity(&self) -> Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)> {
+        self.quantity
+            .as_ref()
+            .map(|(request, key)| (request, key.as_str()))
     }
 
     pub(crate) const fn max_events(&self) -> u32 {
@@ -117,10 +137,15 @@ impl OwnedRowsCommitProof {
     pub(crate) fn link_reads(&self) -> &[LinkReadExpectation] {
         &self.link_reads
     }
+
+    pub(crate) fn predicate_reads(&self) -> &[PredicateReadExpectation] {
+        &self.predicate_reads
+    }
 }
 
 /// Identity of one ontology object in a cell: its type and identity key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactKey {
     /// The object type.
@@ -160,6 +185,12 @@ pub struct FactVersion(pub u64);
 impl FactVersion {
     /// The version of an object that was never written.
     pub const ABSENT: Self = Self(0);
+
+    /// ID-STABLE-1: distinguish a retained deletion from an unwritten identity.
+    #[must_use]
+    pub const fn has_committed_deletion(self, live: bool) -> bool {
+        crate::version_check::has_committed_deletion(self.0, live)
+    }
 
     /// The next version, or `None` on overflow.
     #[must_use]
@@ -503,6 +534,10 @@ pub struct CellCommit<E, C, T> {
     /// additions/removals at commit. Omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_reads: Vec<LinkReadExpectation>,
+    /// Complete bounded predicate reads by the turn, guarded against phantom
+    /// matches at commit ([`crate::predicate_read`]). Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predicate_reads: Vec<PredicateReadExpectation>,
 }
 
 impl<E, C, T> CellCommit<E, C, T> {
@@ -517,6 +552,7 @@ impl<E, C, T> CellCommit<E, C, T> {
             effects: Vec::new(),
             links: Vec::new(),
             link_reads: Vec::new(),
+            predicate_reads: Vec::new(),
         }
     }
 
@@ -599,6 +635,25 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// ID-STABLE-1: only an authenticated observation can lift this deletion.
+    #[error("{message}", message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
+    /// ID-UNIQUE-1: a normalized business key is occupied in this root/scope/world.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// The declaring root; no object IDs or key values are exposed.
+        owner: String,
+        /// Declared business-key name.
+        key: String,
+        /// Internal lookup subjects for authorized diagnostics; never displayed.
+        conflicts: Box<[FactKey; 2]>,
+    },
+    /// An existing instance of an append-only type was changed or deleted.
+    #[error("{key} is immutable")]
+    ImmutableObject {
+        /// The stored object.
+        key: FactKey,
+    },
     /// Atomic closure includes another cell or unknown ownership.
     #[error("core.txn.atomic_boundary: dependency {key} is outside the supported local profile")]
     AtomicBoundary {
@@ -711,6 +766,27 @@ pub enum CommitError<X> {
         source_key: FactKey,
         /// The declared link.
         link: String,
+    },
+    /// The members of a predicate read changed before commit: an object
+    /// moved into or out of the predicate, or a member changed.
+    #[error("objects matching a predicate read over {object_type:?} changed")]
+    PredicateReadConflict {
+        /// The predicate's type.
+        object_type: ObjectTypeName,
+    },
+    /// A host cannot verify the complete member set of a predicate read.
+    #[error("host cannot verify a predicate read over {object_type:?}")]
+    UnsupportedPredicateRead {
+        /// The predicate's type.
+        object_type: ObjectTypeName,
+    },
+    /// A predicate read is malformed or exceeds its bounds.
+    #[error("predicate read over {object_type:?} is invalid: {reason}")]
+    InvalidPredicateRead {
+        /// The predicate's type.
+        object_type: ObjectTypeName,
+        /// What is wrong.
+        reason: &'static str,
     },
     /// A link would be added to an object that does not exist once the
     /// commit's object writes apply.
@@ -849,6 +925,9 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
+            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
+            Self::ImmutableObject { .. } => "commit.immutable_object",
             Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
                 norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
             }
@@ -863,6 +942,9 @@ impl<X> CommitError<X> {
             Self::DuplicateLinkRead { .. } => "commit.duplicate_link_read",
             Self::LinkReadTooLarge { .. } => "commit.link_read_too_large",
             Self::InvalidLinkRead { .. } => "commit.invalid_link_read",
+            Self::PredicateReadConflict { .. } => "commit.predicate_read_conflict",
+            Self::UnsupportedPredicateRead { .. } => "commit.unsupported_predicate_read",
+            Self::InvalidPredicateRead { .. } => "commit.invalid_predicate_read",
             Self::DanglingLink { .. } => "commit.dangling_link",
             Self::LinkTarget { .. } => "commit.link_target",
             Self::LinkCardinality { .. } => "commit.link_cardinality",
@@ -963,16 +1045,23 @@ pub trait CellHost {
 
     /// Resolve and authenticate an unconsumed receipt within this cell's scope,
     /// world and pinned Function manifest. Action JSON supplies only a reference.
-    /// RECEIPT-EFFECT-1: unsupported hosts return no evidence; acceptance alone
-    /// does not commit effects or consume the receipt.
+    /// RECEIPT-EFFECT-1: `Ok(None)` means the host does not support receipt
+    /// effects and the action refuses. A binding alone neither commits effects
+    /// nor consumes the receipt: the accepting action commit consumes the
+    /// binding's delivery (`Acceptance::consumed`) in the same commit as its
+    /// transition, and the host's pending check refuses a second consumption.
     ///
     /// # Errors
-    /// Host storage, authentication or manifest-binding failure.
+    /// A typed binding refusal (unknown, replayed, mismatched, not accepted,
+    /// result type), or [`crate::receipt_binding::ReceiptBindingError::Store`] for a host failure.
     fn resolve_accepted_receipt(
         &self,
         _reference: &crate::receipt_binding::ReceiptReference,
         _manifest: &norn_ir::function::Digest,
-    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, Self::Error> {
+    ) -> Result<
+        Option<crate::receipt_binding::ReceiptBinding<JsonObject>>,
+        crate::receipt_binding::ReceiptBindingError<Self::Error>,
+    > {
         Ok(None)
     }
 
@@ -1003,6 +1092,28 @@ pub trait CellHost {
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, Self::Error> {
         let _ = (source, link, max_targets, max_key_bytes);
+        Ok(None)
+    }
+
+    /// Reads every live object matching `predicate`, in canonical key order,
+    /// for a turn that folds or lists them ([`crate::predicate_read`]).
+    /// Returns at most `max_members + 1` objects so the caller can refuse an
+    /// over-bound set. `max_bytes` bounds the stored candidate bytes the host
+    /// may read while enumerating, so a large record cannot exhaust memory
+    /// before the caller sees it. `None` means this host cannot provide a
+    /// complete, atomicity-safe enumeration within those bounds; callers must
+    /// fail closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host read failure.
+    fn read_predicate(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+    ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
+        let _ = (predicate, max_members, max_bytes);
         Ok(None)
     }
 
@@ -1085,8 +1196,11 @@ pub trait CellHost {
     fn commit_owned_rows(
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _proof: OwnedRowsCommitProof,
+        proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        if proof.quantity().is_some() {
+            return Err(CommitError::ObservationAuthorization);
+        }
         self.commit(commit)
     }
 

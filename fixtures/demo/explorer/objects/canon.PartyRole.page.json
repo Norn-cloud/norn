@@ -1,0 +1,40 @@
+{
+  "objectType": "canon.PartyRole",
+  "records": [
+    {
+      "objectType": "canon.PartyRole",
+      "id": "demo/party/custodian/role/custodian",
+      "scope": "org_demo/dev",
+      "version": 1,
+      "values": {
+        "role": "custodian",
+        "valid_from": null,
+        "valid_to": null
+      }
+    },
+    {
+      "objectType": "canon.PartyRole",
+      "id": "demo/party/customer/role/customer",
+      "scope": "org_demo/dev",
+      "version": 1,
+      "values": {
+        "role": "customer",
+        "valid_from": null,
+        "valid_to": null
+      }
+    },
+    {
+      "objectType": "canon.PartyRole",
+      "id": "demo/party/owner/role/owner",
+      "scope": "org_demo/dev",
+      "version": 1,
+      "values": {
+        "role": "owner",
+        "valid_from": null,
+        "valid_to": null
+      }
+    }
+  ],
+  "quarantineCount": 0,
+  "scannedThrough": "demo/party/owner/role/owner"
+}

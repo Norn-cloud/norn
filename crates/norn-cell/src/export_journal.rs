@@ -84,12 +84,7 @@ pub(crate) fn consumed_input<E: SqlEngine>(
             generation,
         } => {
             let pending = reader
-                .head_command()?
-                .filter(|row| {
-                    row.command.command_id == *command_id
-                        && row.command.generation == *generation
-                        && row.result.is_some()
-                })
+                .pending_result(command_id, *generation)?
                 .ok_or_else(not_pending)?;
             let runs = reader.runs(command_id)?;
             preimage(&ConsumedInput::Result {

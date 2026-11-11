@@ -108,6 +108,7 @@ pub(super) fn build(
                 "statement":{"rule":"open_boundary","law":law_index,"boundary":boundary_index},"assessment":"unknown"}));
         }
     }
+    super::lifecycle::append(&catalog, pool, &mut result.goals)?;
     Ok(result)
 }
 
@@ -181,6 +182,7 @@ fn writer_statement(
 fn frame_reads(law: &LawIR, catalog: &EffectiveCatalog) -> Option<BTreeSet<String>> {
     if !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
         || law.timing.is_some()
+        || !law.exceptions.is_empty()
         || !law.scope.lifecycle_states.is_empty()
         || !law.scope.commitments.is_empty()
         || law.scope.object_types.len() != 1

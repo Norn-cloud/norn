@@ -16,6 +16,30 @@
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
   {
+    "code": "agent.validation.budget_unbounded",
+    "fix": "Declare the named budget as a positive exact amount no greater than the reported cap."
+  },
+  {
+    "code": "agent.validation.invalid_decision_policy",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "agent.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "agent.validation.unbound_tool",
+    "fix": "List each tool once, using a binding bound for this organization."
+  },
+  {
+    "code": "agent.validation.unknown_law",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "agent.validation.unknown_model",
+    "fix": "Choose a model from the configured model allowlist."
+  },
+  {
     "code": "artifact_set.action.create_link",
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
   },
@@ -26,6 +50,10 @@
   {
     "code": "artifact_set.action.effect_kind_mismatch",
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.action.invalid_aggregate",
+    "fix": "Name a declared type and a property the aggregate fold can read."
   },
   {
     "code": "artifact_set.action.invalid_slice",
@@ -220,6 +248,70 @@
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
   {
+    "code": "cli.format.io",
+    "fix": "Check that the named source paths exist and are readable and writable, then format again."
+  },
+  {
+    "code": "cli.format.usage",
+    "fix": "Run norn fmt [path...] with only --check or --json as options."
+  },
+  {
+    "code": "cli.project.exists",
+    "fix": "Choose a new or empty target directory for norn init."
+  },
+  {
+    "code": "cli.project.install",
+    "fix": "Run bun install in the project directory, or rerun norn init with --no-install and install later."
+  },
+  {
+    "code": "cli.project.invalid_manifest",
+    "fix": "Use norn-project/1 in norn.json with explicit sources, scope, dev and cell, and remove unknown keys."
+  },
+  {
+    "code": "cli.project.invalid_name",
+    "fix": "Use a namespace that starts with a lowercase letter followed by lowercase letters, digits or underscores."
+  },
+  {
+    "code": "cli.project.io",
+    "fix": "Check write permissions for the target directory and run norn init again."
+  },
+  {
+    "code": "cli.project.not_found",
+    "fix": "Run norn init <dir> first, or run the command from a directory containing norn.json."
+  },
+  {
+    "code": "cli.project.usage",
+    "fix": "Run norn init <dir> with only the documented options."
+  },
+  {
+    "code": "cli.setup.unpublished",
+    "fix": "Run norn init from a repository checkout until a published distribution is available."
+  },
+  {
+    "code": "connector.effect.invalid",
+    "fix": "Declare the binding effect as {kind: query} or {kind: command} with only providerKey and reconcile."
+  },
+  {
+    "code": "connector.effect.key_fixed",
+    "fix": "Remove the fixed providerKey value from the binding; the cell supplies it per operation."
+  },
+  {
+    "code": "connector.effect.key_not_input",
+    "fix": "Set providerKey to one of the tool's own string inputs."
+  },
+  {
+    "code": "connector.effect.no_dedup_contract",
+    "fix": "Declare providerKey or reconcile on the command binding."
+  },
+  {
+    "code": "connector.effect.query_contract",
+    "fix": "Remove providerKey and reconcile from the query binding, or declare it as a command."
+  },
+  {
+    "code": "connector.effect.reconcile_not_query",
+    "fix": "Set reconcile to the identity of an existing query binding."
+  },
+  {
     "code": "connector.validation.invalid_payload",
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
@@ -232,12 +324,48 @@
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
   },
   {
+    "code": "consistency.diagnosis.conflict",
+    "no_fix": "The conflicting declarations are reported; choosing which authorized input to change is an authoring decision, and the edit must be resubmitted for admission."
+  },
+  {
+    "code": "consistency.diagnosis.no_editable_repair",
+    "no_fix": "No correction exists within the editable inputs; protected laws are never repair candidates, so the editable set or the authored intent needs review."
+  },
+  {
+    "code": "consistency.diagnosis.unknown",
+    "no_fix": "The diagnosis is incomplete at the disclosed fragment or resource limit; no repair is inferred from an unknown result."
+  },
+  {
     "code": "consistency.instance.violation",
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
   },
   {
     "code": "consistency.mapping.non_total",
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.normative.conflict",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.normative.legacy_resolution",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.path_equation.invalid",
+    "fix": "Declare each path over functional forward links with concrete targets, ending at the same concrete type, with a unique id."
+  },
+  {
+    "code": "consistency.path_mapping.invalid",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "consistency.path_mapping.missing_binding",
+    "fix": "Declare a preservation binding that covers every path equation the mapped target declares or inherits."
+  },
+  {
+    "code": "consistency.path_mapping.preserved",
+    "no_fix": "This records bounded-no-counterexample evidence for the exact inputs; it is not a defect and has no repair."
   },
   {
     "code": "consistency.schema.incompatible",
@@ -266,6 +394,18 @@
   {
     "code": "core.composition.instance_cycle",
     "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "core.composition.mapping_gap",
+    "fix": "Map every retained source member exactly once to a unique compatible target member."
+  },
+  {
+    "code": "core.composition.parameter_ambiguous",
+    "no_fix": "Choosing between equally scoped candidates changes meaning; declare the intended candidate at a more specific scope."
+  },
+  {
+    "code": "core.composition.parameter_missing",
+    "fix": "Declare an effective candidate for the parameter or an explicit default."
   },
   {
     "code": "core.composition.unresolved_pin",
@@ -300,8 +440,24 @@
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
   {
+    "code": "core.identity.collision",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "core.identity.reuse",
+    "fix": "Restore the deleted identity explicitly, or use a new identity."
+  },
+  {
     "code": "core.laws.stale_evidence",
     "fix": "Regenerate the goal from the current definitions and obtain checked evidence whose identity and independently retained result pin match it."
+  },
+  {
+    "code": "core.laws.unresolved_scope",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.projection.publication_guard",
+    "no_fix": "The declared publication policy refused this projection; publishing it requires a policy decision, not an automatic repair."
   },
   {
     "code": "core.txn.atomic_boundary",
@@ -314,6 +470,10 @@
   {
     "code": "core.values.literal_unit",
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.values.unit_binding_required",
+    "fix": "Declare the implementing unit and scale for the interface Decimal."
   },
   {
     "code": "core.values.unit_mismatch",
@@ -398,6 +558,10 @@
   {
     "code": "function.invocation.unbounded_command",
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.authored_host",
+    "fix": "Declare the Function as a typed WASM component or an external worker instead of a host Function."
   },
   {
     "code": "function.manifest.blank_value",
@@ -598,6 +762,30 @@
   {
     "code": "ir.validation.unsupported_version",
     "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "law.exception.cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "law.exception.dangling_override",
+    "fix": "Make the exception override its own law or an exception in the same tree."
+  },
+  {
+    "code": "law.exception.invalid_declaration",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "law.exception.limit",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "law.exception.two_homes",
+    "fix": "Declare the exceptions either on the rule or on its embedded law, not both."
+  },
+  {
+    "code": "law.exception.unsupported_response",
+    "no_fix": "This law response cannot be lifted by an exception; changing the law's response requires author review."
   },
   {
     "code": "law.model.closure_refused",
@@ -976,6 +1164,10 @@
     "fix": "Repair the guard as a typed boolean expression using admitted properties and operators."
   },
   {
+    "code": "lifecycle.validation.invalid_guard_diagnostic",
+    "fix": "Set guardRefusalCode to an inherited registered runtime error code."
+  },
+  {
     "code": "lifecycle.validation.invalid_transition_id",
     "fix": "Use a transition id matching [a-z][a-z0-9_]*."
   },
@@ -1026,6 +1218,14 @@
   {
     "code": "lifecycle.validation.widens_transition",
     "fix": "Retain only inherited transitions; a subtype may drop transitions but cannot introduce new ones."
+  },
+  {
+    "code": "mapping.interpretation.invalid_endpoint",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.interpretation.unsupported",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
   },
   {
     "code": "mapping.model.expression_type",
@@ -1264,6 +1464,14 @@
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
   },
   {
+    "code": "metric.validation.ratio_aggregation",
+    "fix": "Aggregate the declared numerator and denominator separately, then divide their sums."
+  },
+  {
+    "code": "metric.validation.undeclared_additivity",
+    "fix": "Declare additivity on the numeric property type before aggregating it."
+  },
+  {
     "code": "metric.validation.unit_mismatch",
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
@@ -1384,6 +1592,10 @@
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
   {
+    "code": "object_type.validation.inheritance_budget_exhausted",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
     "code": "object_type.validation.inheritance_cycle",
     "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
   },
@@ -1477,6 +1689,10 @@
   },
   {
     "code": "object_type.validation.link_property_markings_unsupported",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "object_type.validation.link_property_protection_unsupported",
     "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
   },
   {

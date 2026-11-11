@@ -2937,6 +2937,7 @@ type BeforeTransaction = Box<dyn FnOnce() -> Result<(), CellError>>;
 #[derive(Clone, Default)]
 struct WriteCounter {
     before_transaction: std::rc::Rc<std::cell::RefCell<Option<BeforeTransaction>>>,
+    after_active_read: std::rc::Rc<std::cell::RefCell<Option<BeforeTransaction>>>,
     attempts: std::rc::Rc<std::cell::Cell<usize>>,
     forbid: std::rc::Rc<std::cell::Cell<bool>>,
     outgoing_reads: std::rc::Rc<std::cell::Cell<usize>>,
@@ -2963,6 +2964,9 @@ impl CountedEngine {
 }
 
 impl SqlEngine for CountedEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         let Some((writes, remote)) = self.inner.read_cache_revision()? else {
             return Ok(None);
@@ -3012,7 +3016,14 @@ impl SqlEngine for CountedEngine {
             );
             return Ok(rows);
         }
-        self.inner.query(sql, params)
+        let rows = self.inner.query(sql, params)?;
+        if sql.contains("\"_norn_definition_active\"") {
+            let hook = self.counter.after_active_read.borrow_mut().take();
+            if let Some(install) = hook {
+                install()?;
+            }
+        }
+        Ok(rows)
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
@@ -3040,6 +3051,9 @@ struct ExplainEngine {
 }
 
 impl SqlEngine for ExplainEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -5175,23 +5189,33 @@ fn obs_evidence_install_refuses_missing_or_substituted_governing_laws() {
 }
 
 #[test]
-fn law_complete_inherited_and_effective_scopes_refuse_until_b2() {
+fn law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2() {
     let (model, _) = governing_law_input("self.name != 'bad'", 1);
     let mut snapshot = model.definitions_snapshot();
     snapshot.object_types.push(
         serde_json::from_value(json!({"name":"defs.Child", "extends":"defs.Item"})).expect("child"),
     );
     let inherited = Model::from_snapshot(&snapshot).expect("snapshot");
-    let refusal = inherited
+    assert_eq!(
+        inherited
+            .governing_laws("defs.Child")
+            .expect("LAW-INTERFACE-1: the supertype law governs its subtype"),
+        inherited.governing_laws("defs.Item").expect("direct scope")
+    );
+    let mut mixed = serde_json::to_value(&snapshot.law_artifacts[0]).expect("law");
+    mixed["payload"]["scope"]["objectTypes"] = json!(["defs.Item", "defs.Child"]);
+    let mut mixed_snapshot = snapshot.clone();
+    mixed_snapshot.law_artifacts[0] = serde_json::from_value(mixed).expect("mixed scope");
+    let refusal = Model::from_snapshot(&mixed_snapshot)
+        .expect("model")
         .governing_laws("defs.Child")
-        .expect_err("inherited scope");
+        .expect_err("mixed scope");
     assert!(matches!(refusal, CellError::UnsupportedLawScope { .. }));
     assert!(
         refusal
             .to_string()
             .contains("core.laws.unsupported_semantics")
     );
-    assert!(refusal.to_string().contains("unsupported until B2"));
     let mut artifact = serde_json::to_value(&snapshot.law_artifacts[0]).expect("law");
     artifact["payload"]["scope"]["root"] = json!({"kind":"app", "id":"defs"});
     snapshot.law_artifacts[0] = serde_json::from_value(artifact).expect("effective scope");
@@ -5226,11 +5250,22 @@ fn purity_quality_host(
     norn_kernel::cell_host::JsonObject,
     norn_kernel::cell_host::JsonObject,
 > {
+    purity_quality_host_with_severity(path, "error")
+}
+
+fn purity_quality_host_with_severity(
+    path: &std::path::Path,
+    severity: &str,
+) -> norn_cell::SqliteCell<
+    norn_kernel::ObservationEvent,
+    norn_kernel::cell_host::JsonObject,
+    norn_kernel::cell_host::JsonObject,
+> {
     let object = json!({"name":"quality.Measurement", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
     let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(json!([
         {"irVersion":"0.1", "artifactId":"quality.Measurement.entity", "kind":"entity", "namespace":"quality", "name":"Measurement", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[], "provenance":{"source":"authoring_sdk"}, "payload":{"entityVersion":"2.0", "objectType":object}},
         {"irVersion":"0.1", "artifactId":"quality.purity.law", "kind":"law", "namespace":"quality", "name":"purity", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[{"artifactId":"quality.Measurement.entity", "kind":"entity", "version":"0.1.0", "required":true}], "provenance":{"source":"authoring_sdk"}, "payload":{
-            "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":"error", "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
+            "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":severity, "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
         }}
     ])).expect("typed synthetic declarations");
     assert!(
@@ -5456,6 +5491,72 @@ fn obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses() {
         .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
         .expect("persisted findings");
     assert_eq!(findings.len(), 1);
+    assert!(
+        matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range")
+    );
+}
+
+#[test]
+fn warning_severity_governing_law_quarantines_observed_fact() {
+    use norn_kernel::{CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite};
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell =
+        purity_quality_host_with_severity(&directory.path().join("quality.sqlite"), "warning");
+    let mut native = CellCommit::empty();
+    native.writes.push(FactWrite {
+        key: FactKey::new("quality.Measurement", "MEAS-1"),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: BTreeMap::from([(
+                "purity".into(),
+                Value::from_json_text("1.20").expect("decimal"),
+            )]),
+        },
+    });
+    let refusal = cell.commit(native).expect_err("native invalid purity");
+    assert_eq!(refusal.code(), "core.laws.violated");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("raw")
+            .is_none()
+    );
+    capture_purity(&mut cell, "purity-120", "1.20");
+    let findings = cell
+        .store()
+        .read()
+        .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("persisted findings");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].severity, norn_ir::DataQualitySeverity::Warning);
+    assert!(
+        cell.store()
+            .read()
+            .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("authority")
+            .is_none()
+    );
+    let raw = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("raw record")
+        .expect("captured");
+    assert!(
+        cell.store()
+            .read()
+            .observation_is_quarantined(MAIN_WORLD, &raw)
+            .expect("quarantine")
+    );
+    capture_purity(&mut cell, "corrected-warning", "0.50");
+    assert!(
+        cell.store()
+            .read()
+            .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("corrected")
+            .is_some()
+    );
     assert!(
         matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range")
     );
@@ -5897,6 +5998,195 @@ fn mapping_bundle_processing_refuses_delete_and_diagnostics_without_consumption(
     }
 }
 
+/// MAPPING-PLAN-1: a warm plan equals a cold derivation, and a changed row misses.
+#[test]
+fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("plan.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let input = bundle_input();
+    store
+        .inject_mapping_bundle(&bundle_raw("WARM", "1.250"), &input)
+        .expect("first capture builds the plan");
+    store
+        .inject_mapping_bundle(&bundle_raw("REUSED", "1.500"), &input)
+        .expect("second capture reuses the plan");
+    let pending = store.read().pending_observations().expect("inbox");
+    assert_eq!(pending.len(), 2);
+    let bundles: Vec<norn_cell::mapping_bundle::MappingBundle> = pending
+        .iter()
+        .map(|row| {
+            let observed: norn_kernel::Observed<Value> =
+                norn_ir::runtime::decode(&row.observed).expect("observed");
+            norn_ir::runtime::decode(&observed.input).expect("bundle")
+        })
+        .collect();
+    let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("cold connection");
+    for bundle in &bundles {
+        store
+            .read()
+            .recheck_mapping_bundle(bundle)
+            .expect("warm plan");
+        cold.read()
+            .recheck_mapping_bundle(bundle)
+            .expect("cold plan");
+    }
+    drop(cold);
+    let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
+    tamper
+        .execute(
+            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
+            &[SqlValue::from("[]")],
+        )
+        .expect("tamper retained artifact bytes");
+    drop(tamper);
+    assert!(
+        store.read().recheck_mapping_bundle(&bundles[0]).is_err(),
+        "a changed retained row must not reuse the plan"
+    );
+}
+
+/// Warm a store's mapping plan, apply `tamper` to the database file, and return
+/// the refusal from the warm store and from a cold store (opened before the
+/// tamper, never evaluated a bundle) on the same file. A store opened after the
+/// tamper must also refuse, at open or at recheck.
+fn warm_and_fresh_refusals(
+    tamper: impl FnOnce(&CellStore, &NativeEngine, u64),
+) -> (String, String) {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("plan.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    store
+        .inject_mapping_bundle(&bundle_raw("WARM", "1.250"), &bundle_input())
+        .expect("capture builds the plan");
+    let row = store
+        .read()
+        .pending_observations()
+        .expect("inbox")
+        .pop()
+        .expect("pending");
+    let observed: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&row.observed).expect("observed");
+    let bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&observed.input).expect("bundle");
+    store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect("warm plan before tamper");
+    let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("cold connection");
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
+    tamper(&store, &engine, bundle.definitions_version);
+    drop(engine);
+    let warm = store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect_err("warm store must refuse the tampered evidence");
+    let cold = cold
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect_err("cold store must refuse the tampered evidence");
+    if let Ok(reopened) = CellStore::open(&path, store.model().clone(), StoreOptions::default()) {
+        assert!(
+            reopened.read().recheck_mapping_bundle(&bundle).is_err(),
+            "a store opened after the tamper must refuse"
+        );
+    }
+    (format!("{warm:?}"), format!("{cold:?}"))
+}
+
+/// MAPPING-PLAN-REUSE: every check the full retained proof performs refuses a
+/// warm plan exactly as it refuses a fresh store, for keyed columns, columns
+/// outside the old key, and the journal and receipt rows outside the table.
+#[test]
+fn mapping_plan_hit_refuses_like_a_fresh_store() {
+    const COMMIT: &str =
+        "(SELECT \"commit_seq\" FROM \"_norn_definition_version\" WHERE \"version\" = ?V)";
+    let cases = [
+        (
+            "model_hash",
+            "UPDATE \"_norn_definition_version\" SET \"model_hash\" = 'f' || \"model_hash\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "receipt_sha256",
+            "UPDATE \"_norn_definition_version\" SET \"receipt_sha256\" = 'f' || \"receipt_sha256\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "ddl_hash",
+            "UPDATE \"_norn_definition_version\" SET \"ddl_hash\" = 'f' || \"ddl_hash\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "receipt tamper",
+            format!("UPDATE \"_norn_receipt\" SET \"receipt_hash\" = 'f' || \"receipt_hash\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+        (
+            "receipt delete",
+            format!("DELETE FROM \"_norn_receipt\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+        (
+            "journal delete",
+            format!("DELETE FROM \"_norn_export_journal\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+    ];
+    for (name, tamper) in cases {
+        let (warm, cold) = warm_and_fresh_refusals(|_, engine, version| {
+            engine
+                .execute(&tamper.replace("?V", &version.to_string()), &[])
+                .expect("tamper");
+        });
+        assert_eq!(warm, cold, "{name}: warm and cold refusals differ");
+    }
+    // The only hit-specific guard: the installed row, journal record hash and
+    // receipt all still verify, but the journal's model snapshot differs from
+    // the one the plan was proven on.
+    let (warm, cold) = warm_and_fresh_refusals(|store, engine, version| {
+        let commit = store
+            .read()
+            .installed_definitions(Some(version))
+            .expect("definitions")
+            .expect("installed")
+            .commit_seq;
+        let record = store
+            .export_record(commit)
+            .expect("journal")
+            .expect("install record");
+        let mut value = serde_json::to_value(&record).expect("record JSON");
+        let properties = value["definitionInstall"]["model"]["objectTypes"][0]["properties"]
+            .as_array_mut()
+            .expect("snapshot properties");
+        assert!(
+            properties.pop().is_some(),
+            "snapshot has a property to drop"
+        );
+        let tampered: norn_cell::export::ExportRecord =
+            serde_json::from_value(value).expect("tampered record");
+        assert_ne!(
+            tampered.definition_install.as_ref().map(|i| &i.model),
+            record.definition_install.as_ref().map(|i| &i.model)
+        );
+        engine
+            .execute(
+                "UPDATE \"_norn_export_journal\" SET \"record\" = ?1, \"hash\" = ?2 WHERE \"commit_seq\" = ?3",
+                &[
+                    SqlValue::from(serde_json::to_string(&tampered).expect("record text")),
+                    SqlValue::from(tampered.hash().expect("record hash")),
+                    SqlValue::from(i64::try_from(commit).expect("commit")),
+                ],
+            )
+            .expect("rewrite the journal model snapshot");
+        assert_eq!(
+            store
+                .export_record(commit)
+                .expect("the rewritten journal record still verifies")
+                .expect("install record"),
+            tampered,
+            "only the model snapshot may differ, so the hit-specific guard is what refuses"
+        );
+    });
+    assert_eq!(warm, cold, "model snapshot: warm and cold refusals differ");
+}
+
 #[test]
 fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
     let dir = tempfile::tempdir().expect("directory");
@@ -6000,13 +6290,19 @@ fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version()
         .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
         .expect("checked source lineage")
         .expect("bundle");
-    assert_eq!(id, format!("mapping-bundle:{}", evidence.bundle_digest));
+    assert_eq!(
+        id,
+        format!(
+            "mapping-bundle:{}",
+            evidence.bundle_digest.as_deref().expect("digest")
+        )
+    );
     assert_eq!(evidence.source_record_ref.record, "Rows/MEAS-1");
     assert_eq!(evidence.source_record_ref.system, "synthetic-erpnext");
     assert_eq!(evidence.document_ref.system, "synthetic-erpnext");
     assert_eq!(evidence.document_ref.record, "MEAS-1");
     assert_eq!(
-        evidence.document_digest,
+        evidence.document_digest.as_deref().expect("digest"),
         raw.input
             .get("payload_digest")
             .and_then(Value::as_str)
@@ -6102,7 +6398,7 @@ fn instance_source_provenance_charges_external_payloads_and_omits_non_bundle_fac
             &mut DecodeBudget::new(&limits(100_000)),
             |_| Ok(true)
         ),
-        Err(CellError::MappingBundleMismatch)
+        Err(CellError::ComputeRefused("core.compute.bound_exceeded"))
     ));
     assert!(
         reader
@@ -6284,6 +6580,9 @@ impl ProvisionFault {
 }
 
 impl SqlEngine for ProvisionFault {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)?;
         self.boundary()
@@ -6480,6 +6779,54 @@ fn host_provision_atomic_retry_preserves_later_installs() {
         store.read().active_definitions_version().expect("active"),
         Some(2)
     );
+}
+
+#[test]
+fn normalized_identity_activation_refuses_other_world_collisions_without_mutation() {
+    let original = model(false);
+    let mut definitions: Vec<_> = original.object_types().cloned().collect();
+    definitions[0].identity.push(norn_ir::KeySpec {
+        name: norn_ir::KeyName("by_name".into()),
+        properties: vec![norn_ir::PropertyId("name".into())],
+        naming_series: None,
+        rule: Some(norn_ir::IdentityRule {
+            match_policy: None,
+            normalize: vec![norn_ir::ComponentNormalization {
+                property: norn_ir::PropertyId("name".into()),
+                steps: vec![
+                    norn_ir::Normalization::Trim,
+                    norn_ir::Normalization::Uppercase,
+                ],
+            }],
+        }),
+    });
+    let candidate = Model::from_definitions(&definitions, &[]).expect("normalized candidate");
+    let mut store = CellStore::open_in_memory(original.clone()).expect("store");
+    store
+        .install_definitions(
+            original.clone(),
+            install_input("normalized-v1", 1, &original),
+            Some(0),
+            "org_demo/dev",
+        )
+        .expect("seed");
+    for (id, name, time) in [("a", " abc ", 2), ("b", "ABC", 3)] {
+        let mut write = batch(put_type("defs.Item", id, name, None), time);
+        write.world = "simulation-key".into();
+        store.commit(&write).expect("raw-distinct old keys");
+    }
+    let before = store.read().dump().expect("before");
+    let input = install_input("normalized-v2", 4, &candidate);
+    assert!(matches!(
+        store.check_definitions(&candidate, &input, Some(1)),
+        Err(CellError::IdentityCollision { .. })
+    ));
+    assert_eq!(store.read().dump().expect("after check"), before);
+    assert!(matches!(
+        store.install_definitions(candidate, input, Some(1), "org_demo/dev"),
+        Err(CellError::IdentityCollision { .. })
+    ));
+    assert_eq!(store.read().dump().expect("after install"), before);
 }
 
 norn_testkit::proptest::proptest! {
@@ -6681,6 +7028,21 @@ norn_testkit::proptest::proptest! {
         stale.reads.push(norn_kernel::FactExpectation { key: key.clone(), expected });
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
         let mut written = norn_kernel::CellCommit::empty();
+        let predicate: norn_kernel::PredicateQuery = serde_json::from_value(serde_json::json!({"objectType": "quality.Measurement"})).expect("predicate");
+        // A disputed stored object refuses the governed read; without one there is nothing to match.
+        if first_nfc {
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4, u64::MAX), Err(CellError::SourceIdentityDisputed)));
+        } else {
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_predicate(&cell, &predicate, 4, u64::MAX), Ok(Some(ref objects)) if objects.is_empty()));
+        }
+        let mut pinned = norn_kernel::CellCommit::empty();
+        pinned.predicate_reads.push(norn_kernel::PredicateReadExpectation { predicate, members: vec![norn_kernel::PredicateReadMember { key: key.clone(), version: expected }] });
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, pinned), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
+        if first_nfc {
+            let mut unpinned = norn_kernel::CellCommit::empty();
+            unpinned.predicate_reads.push(norn_kernel::PredicateReadExpectation { predicate: serde_json::from_value(serde_json::json!({"objectType": "quality.Measurement"})).expect("predicate"), members: Vec::new() });
+            norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, unpinned), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
+        }
         written.writes.push(norn_kernel::FactWrite { key, expected, mutation: norn_kernel::FactMutation::Put { values:BTreeMap::from([("purity".into(), Value::from_json_text("0.90").expect("value"))]) } });
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
         drop(cell);
@@ -7215,5 +7577,183 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
             cell.process_mapping_bundle(&correction_id)
                 .expect("capture a correction under a different event")
         );
+    }
+}
+
+fn additivity_migration_model(integer: bool, scale: u64, additive: bool) -> Model {
+    let mut snapshot = model(false).definitions_snapshot();
+    let additivity = if additive {
+        norn_ir::PropertyAdditivity::Additive {}
+    } else {
+        norn_ir::PropertyAdditivity::Undeclared {}
+    };
+    let kind = if integer {
+        norn_ir::PropertyType::Integer { additivity }
+    } else {
+        norn_ir::PropertyType::Decimal {
+            scale: norn_ir::WholeNumber(scale),
+            additivity,
+            rounding: None,
+            unit: None,
+            currency_source: None,
+            per_unit: None,
+        }
+    };
+    snapshot.object_types[0].properties.push(norn_ir::Property {
+        id: norn_ir::PropertyId("amount".into()),
+        property_type: kind,
+        protected: false,
+        description: None,
+        constraints: norn_ir::PropertyConstraints::default(),
+        default: None,
+        markings: vec![],
+        computed: None,
+    });
+    Model::from_snapshot(&snapshot).expect("numeric model")
+}
+
+fn additivity_migration_store(original: &Model) -> CellStore {
+    let mut store = CellStore::open_in_memory(original.clone()).expect("store");
+    store
+        .install_definitions(
+            original.clone(),
+            install_input("additivity-v1", 1, original),
+            Some(0),
+            "org_demo/dev",
+        )
+        .expect("initial definition");
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: "org_demo/dev".into(),
+            logical_time: 2,
+            writes: (0..4_097)
+                .map(|index| FactWriteRow::Put {
+                    object_type: "defs.Item".into(),
+                    key: format!("row-{index}"),
+                    values: BTreeMap::from([
+                        ("name".into(), Value::from("item")),
+                        ("amount".into(), integer_value(1)),
+                    ]),
+                })
+                .collect(),
+            ..CommitBatch::default()
+        })
+        .expect("4,097 valid values");
+    store
+}
+
+#[test]
+fn additivity_only_change_skips_live_scan_over_4096_rows() {
+    for integer in [false, true] {
+        let original = additivity_migration_model(integer, 3, false);
+        let candidate = additivity_migration_model(integer, 3, true);
+        let mut store = additivity_migration_store(&original);
+        let before = store.read().verify_ledger().expect("ledger");
+        let input = install_input("additivity-v2", 3, &candidate);
+        let checked = store
+            .check_definitions(&candidate, &input, Some(1))
+            .expect("aggregation-only change needs no value scan");
+        assert_eq!(
+            store.read().verify_ledger().expect("read-only check"),
+            before
+        );
+        assert_eq!(
+            checked,
+            store
+                .install_definitions(candidate, input, Some(1), "org_demo/dev")
+                .expect("aggregation contract update installs over 4,097 rows")
+        );
+        assert_eq!(checked.version, 2);
+    }
+}
+
+#[test]
+fn additivity_change_with_value_narrowing_still_scans_live_rows() {
+    let original = additivity_migration_model(false, 3, false);
+    let candidate = additivity_migration_model(false, 2, true);
+    let mut store = additivity_migration_store(&original);
+    let before = store.read().verify_ledger().expect("ledger");
+    let input = install_input("additivity-and-scale-v2", 3, &candidate);
+    let checked = store.check_definitions(&candidate, &input, Some(1));
+    assert!(
+        matches!(checked, Err(CellError::DefinitionMigrationRefused(message))
+        if message.contains("4,096-row migration scan limit"))
+    );
+    let installed = store.install_definitions(candidate, input, Some(1), "org_demo/dev");
+    assert!(
+        matches!(installed, Err(CellError::DefinitionMigrationRefused(message))
+        if message.contains("4,096-row migration scan limit"))
+    );
+    assert_eq!(
+        store.read().verify_ledger().expect("atomic refusal"),
+        before
+    );
+}
+
+#[test]
+fn active_definition_pointer_and_latest_version_share_one_snapshot_during_install() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let initial = model(false);
+    let counter = WriteCounter::default();
+    let engine = CountedEngine {
+        inner: NativeEngine::open(&path, StoreOptions::default()).expect("reader engine"),
+        counter: counter.clone(),
+    };
+    let mut reader = CellStore::from_engine(engine, initial.clone()).expect("reader store");
+    reader
+        .install_definitions(
+            initial.clone(),
+            install_input("v1", 1, &initial),
+            Some(0),
+            "org_demo/dev",
+        )
+        .expect("initial install");
+    let mut writer = CellStore::from_engine(
+        NativeEngine::open(&path, StoreOptions::default()).expect("writer engine"),
+        initial.clone(),
+    )
+    .expect("second store");
+    *counter.after_active_read.borrow_mut() = Some(Box::new(move || {
+        writer.install_definitions(
+            initial.clone(),
+            install_input("v2", 2, &initial),
+            Some(1),
+            "org_demo/dev",
+        )?;
+        Ok(())
+    }));
+    let before = reader
+        .read()
+        .installed_definitions(None)
+        .expect("coherent read across install")
+        .expect("v1");
+    assert!(
+        counter.after_active_read.borrow().is_none(),
+        "install was interleaved"
+    );
+    assert_eq!(before.version, 1);
+    assert_eq!(before.receipt_sha256, "receipt-v1");
+    let after = reader
+        .read()
+        .installed_definitions(None)
+        .expect("next snapshot")
+        .expect("v2");
+    assert_eq!(after.version, 2);
+    assert_eq!(after.receipt_sha256, "receipt-v2");
+}
+
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(12))]
+    #[test]
+    fn warning_law_invalid_observations_never_enter_authority(fraction in 1u16..1000) {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut cell = purity_quality_host_with_severity(&directory.path().join("warning.sqlite"), "warning");
+        capture_purity(&mut cell, "warning-generated", &format!("1.{fraction:03}"));
+        norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("authority").is_none());
+        let findings = cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
+        norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+        norn_testkit::proptest::prop_assert_eq!(findings[0].severity, norn_ir::DataQualitySeverity::Warning);
     }
 }

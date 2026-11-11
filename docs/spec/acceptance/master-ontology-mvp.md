@@ -35,7 +35,7 @@ ERPNext/Shopify change feeds are live demo priority under [data engineering](dat
 - **MVP-MAP-GAP:** Given a Shopify price with no cost/book information, when asked for canonical valuation, then report incomplete coverage; do not label sales price as stock cost.
 - **MVP-CONSTITUTION:** Given an invalid core or jewelry law writer, when generated obligations and live commits run, then produce the named counterexample/refusal; no handwritten theorem substitutes.
 
-The bounded constitution driver is `bash scripts/demo/drop-constitution.sh` on
+The bounded constitution driver is `cargo nextest run --profile drop-constitution` on
 clean main. Its typed `core.Conversion` specialisation records input, output and
 loss in pinned UCUM grams at scale zero. The approved LawIR stays unchanged while
 the compiler removes the writer's loss derivation, then restores it.
@@ -69,4 +69,4 @@ At the [core baseline](../core/README.md), `registry/core/src/{physics,commerce}
 
 Done requires every row above admitted with named laws and complete writer closure; every mapping required-member/unit/role case tested; all [core completeness](completeness-gate.md) and [six demo beats](jewelry-demo.md) passing without skips; explicit declared gaps; exact release/parameter/evidence pins; no new app opcode; and the repo's required CI/review gates on the accepted heads. Runtime/model/proof/parity statuses stay independent. Unknown unsupported safety, unresolved mandatory mappings or incomplete authoritative reads block the corresponding capability.
 
-Delivery order: core definitions/readable physics → inventory/accounting folds and transactions → sales exchange/settlement → jewelry → system mappings/observed-data qualification → same-binary acceptance. Data-engineering contracts and ERPNext/Shopify feed fixtures proceed alongside inventory, not after demo polish. Each implementation cut is ≤400 changed lines including conformance/provenance and remains fail-closed until its dependent semantics land.
+Delivery order: core definitions/readable physics → inventory/accounting folds and transactions → sales exchange/settlement → jewelry → system mappings/observed-data qualification → same-binary acceptance. Data-engineering contracts and ERPNext/Shopify feed fixtures proceed alongside inventory, not after demo polish. Each implementation cut is one coherent unit (no line cap) and remains fail-closed until its dependent semantics land.

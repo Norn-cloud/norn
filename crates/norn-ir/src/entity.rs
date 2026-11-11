@@ -483,3 +483,46 @@ pub enum RelationCardinalityV1 {
     ManyToOne,
     ManyToMany,
 }
+
+/// Reserved EntityIR extension containing typed path-equation declarations.
+pub const PATH_EQUATIONS_SLOT: &str = "norn.path-equations/1.0.0";
+
+/// PATH-EQ-1: equality of two functional link paths from the declaring concept.
+/// Empty paths denote identity; neither path asserts existence of optional links.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PathEquation {
+    /// Stable declaration-local identity, retained by generated EGDs.
+    pub id: String,
+    /// Forward link IDs from the declaring concept.
+    pub left: Vec<String>,
+    /// Forward link IDs from the same concept, ending at the same type.
+    pub right: Vec<String>,
+}
+
+/// PATH-MAP-1: a declared mapping `F: target -> source` between two concept
+/// catalogs. Each target concept names its source concept and each mapped
+/// target link a forward source path; source data moves to the target by
+/// pullback along these paths. Unmapped target links are never produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PathMapping {
+    /// Stable declaration identity, retained by generated TGDs.
+    pub id: String,
+    /// Target concept name to source concept name.
+    pub objects: BTreeMap<String, String>,
+    /// Images of target links. Two images of one link make it non-functional.
+    pub links: Vec<LinkImage>,
+}
+
+/// The source path a [`PathMapping`] assigns to one target link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkImage {
+    /// The target concept declaring the link.
+    pub concept: String,
+    /// The target link ID.
+    pub link: String,
+    /// Forward source link IDs from the image of `concept`; empty is identity.
+    pub path: Vec<String>,
+}

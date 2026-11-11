@@ -228,6 +228,9 @@ pub mod codes {
     /// Edge values have no classification snapshot or reveal projection yet.
     pub const LINK_PROPERTY_MARKINGS_UNSUPPORTED: &str =
         "object_type.validation.link_property_markings_unsupported";
+    /// Link values have no sealed rule-authority path yet.
+    pub const LINK_PROPERTY_PROTECTION_UNSUPPORTED: &str =
+        "object_type.validation.link_property_protection_unsupported";
     /// A link override redeclares the inverse role or link properties, which
     /// belong to the inherited link.
     pub const LINK_OVERRIDE_REDECLARES: &str = "object_type.validation.link_override_redeclares";
@@ -411,6 +414,13 @@ pub(crate) fn check_property_shape(
                 property.id.as_str()
             ),
             span_at(pointer, &["id"]),
+        ));
+    }
+    if property.property_type.contains_decimal_binding() {
+        out.push(error(
+            crate::property_types::codes::UNIT_BINDING_REQUIRED,
+            "stored properties require concrete Decimal units and scales".to_owned(),
+            span_at(pointer, &["type"]),
         ));
     }
     check_type_members(pointer, &property.property_type, out);
@@ -1361,7 +1371,7 @@ fn check_default(
             }
             check_text_default(at, text, sets, out);
         }
-        PropertyType::Integer {} | PropertyType::Decimal { .. } => {
+        PropertyType::Integer { .. } | PropertyType::Decimal { .. } => {
             check_numeric_default(at, value, base, sets, out);
         }
         PropertyType::Boolean {} => {
@@ -1417,7 +1427,9 @@ fn check_default(
         // `json-ext` is opaque: its schema is not interpreted, and `null` is
         // rejected at decode. `resolve_type` never ends on a `ref`.
         PropertyType::Record { .. } => check_record_default(at, value, resolved, out),
-        PropertyType::JsonExt { .. } | PropertyType::Ref { .. } => {}
+        PropertyType::JsonExt { .. }
+        | PropertyType::DecimalBinding { .. }
+        | PropertyType::Ref { .. } => {}
     }
 }
 
@@ -1527,7 +1539,7 @@ fn check_numeric_default(
         return;
     };
     match base {
-        PropertyType::Integer {} => {
+        PropertyType::Integer { .. } => {
             if !parsed.fraction().is_empty() {
                 out.push(error(
                     codes::DEFAULT_TYPE_MISMATCH,
@@ -1577,6 +1589,7 @@ fn check_numeric_default(
         | PropertyType::Enum { .. }
         | PropertyType::Record { .. }
         | PropertyType::JsonExt { .. }
+        | PropertyType::DecimalBinding { .. }
         | PropertyType::Ref { .. } => return,
     }
     for constraints in sets {

@@ -68,16 +68,9 @@ fn scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier() 
 fn query_eligibility_and_visibility_do_not_change_the_quarantine_authority() {
     let (mut store, plan, mut context) = fixture();
     load(&mut store);
-    context
-        .exclusions
-        .insert("SYN-MELT-15-1".into(), "core07-finding".into());
-    let result = store
-        .evaluate_question(&plan, context.clone(), |_| Ok(true))
-        .expect("excluded");
-    assert_eq!(result.freshness, Freshness::Incomplete);
-    assert!(!result.complete);
-    assert_eq!(result.rows["\"2026-10-19\""].members.len(), 3);
-    context.exclusions.clear();
+    let mut wire = serde_json::to_value(&context).expect("context wire");
+    wire["exclusions"] = serde_json::json!({"SYN-MELT-15-1":"caller-forged-finding"});
+    assert!(serde_json::from_value::<norn_cell::compute::QueryContext>(wire).is_err());
     context.population_pin = "fixture-without-G2".into();
     context.authorization_epoch = 2;
     let hidden = store
@@ -129,4 +122,110 @@ proptest::proptest! {
         proptest::prop_assert_eq!(result.freshness,
             if lag == 0 { Freshness::Exact } else if lag <= 5_000 { Freshness::Fresh } else { Freshness::Stale });
     }
+}
+
+#[test]
+fn typed_question_lowering_matches_the_native_scrap_yield_question() {
+    let source =
+        include_str!("../../../tools/norn-ts/fixtures/questions/scrap-yield.question.json");
+    let questions: Vec<norn_ir::QuestionIR> =
+        serde_json::from_str(source).expect("strict native QuestionIR");
+    let [question] = questions.as_slice() else {
+        panic!("one typed question")
+    };
+    let (mut store, plan, context) = fixture();
+    assert_eq!(
+        question,
+        plan.question(),
+        "all admitted semantics survive lowering"
+    );
+    load(&mut store);
+    let result = store
+        .evaluate_question(&plan, context, |_| Ok(true))
+        .expect("the existing exact cell path");
+    assert_eq!(result.rows.len(), 16);
+    let week = result.rows.get("\"2026-10-19\"").expect("showcase week");
+    assert_eq!(week.value.expect("ratio").canonical(), "0.98");
+    assert_eq!(week.members.len(), 4);
+}
+
+#[test]
+fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
+    use norn_cell::{
+        KnowledgeCutoff,
+        compute::{Engine, ivm::IncrementalQuestion},
+    };
+    let (mut host, plan, context) = quality_fixture();
+    let mut view = IncrementalQuestion::rebuild(host.store(), &plan, context.clone(), |_| Ok(true))
+        .expect("rebuild");
+    let before = KnowledgeCutoff {
+        recorded_at: norn_kernel::LogicalTime::from_millis(CLOCK),
+        frontier: view.result().known_as_of,
+    };
+    capture_quality(&mut host, 80_000, "bad-source");
+    let cutoff = KnowledgeCutoff {
+        recorded_at: norn_kernel::LogicalTime::from_millis(CLOCK),
+        frontier: host.store().verified_head().expect("head").commits,
+    };
+    let excluded = host
+        .store()
+        .evaluate_question(&plan, context.clone(), |_| Ok(true))
+        .expect("excluded");
+    let finding = host
+        .store()
+        .read()
+        .observation_findings(&context.world, TYPE, "SYN-MELT-15-1")
+        .expect("finding")
+        .remove(0);
+    assert_eq!(excluded.exclusions["SYN-MELT-15-1"], finding.id);
+    assert_eq!(excluded.freshness, Freshness::Incomplete);
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/demo/answers/scrap-yield.quarantine.finding.json"
+    );
+    let text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&finding).expect("finding document")
+    );
+    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+        std::fs::write(path, &text).expect("bless finding");
+    }
+    assert_eq!(
+        std::fs::read_to_string(path).expect("retained finding"),
+        text
+    );
+    assert!(
+        host.store()
+            .evaluate_question_known_at(&plan, context.clone(), before, |_| Ok(true))
+            .expect("before finding")
+            .result
+            .exclusions
+            .is_empty()
+    );
+    let mut reference = excluded.clone();
+    reference.engine = Engine::Ivm;
+    assert_eq!(
+        view.advance(host.store(), context.clone(), |_| Ok(true))
+            .expect("delta"),
+        &reference
+    );
+    capture_quality(&mut host, 73_500, "corrected-source");
+    let corrected = host
+        .store()
+        .evaluate_question(&plan, context.clone(), |_| Ok(true))
+        .expect("corrected");
+    assert!(corrected.exclusions.is_empty());
+    reference = corrected;
+    reference.engine = Engine::Ivm;
+    assert_eq!(
+        view.advance(host.store(), context.clone(), |_| Ok(true))
+            .expect("recovery delta"),
+        &reference
+    );
+    let historical = host
+        .store()
+        .evaluate_question_known_at(&plan, context, cutoff, |_| Ok(true))
+        .expect("historical");
+    assert_eq!(historical.result.exclusions, excluded.exclusions);
+    assert_eq!(historical.result.rows, excluded.rows);
 }

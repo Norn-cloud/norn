@@ -1,7 +1,7 @@
 {
   "code": "law.wording.incomplete_locale",
-  "tier": "T2",
+  "message": "a declared requirement locale lacks a slot, label or term its rendering needs: {detail}",
   "severity": "error",
-  "message": "Reviewed wording locale map was refused: incomplete_locale",
-  "since": "0.2.0"
+  "since": "0.2.0",
+  "tier": "T2"
 }

@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Run the compiled adapter on pinned runtimes, including a daemon restart."""
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+ROOT = Path(os.environ["NORN_WORKERS_SQL_PROJECT"]).resolve()
+URL = "http://127.0.0.1:9876"
+RUNTIME = sys.argv[1] if len(sys.argv) > 1 else "celld"
+COMMAND = {"celld": ["celld", "dev", "--port", "9876"],
+           "wrangler": ["wrangler", "dev", "--local", "--port", "9876"]}[RUNTIME]
+
+
+def request(path):
+    try:
+        with urllib.request.urlopen(URL + path, timeout=3) as response:
+            return response.status, response.read().decode()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read().decode()
+
+
+def start():
+    child = subprocess.Popen(COMMAND, cwd=ROOT,
+                             start_new_session=True)
+    try:
+        for _ in range(100):
+            if child.poll() is not None:
+                raise RuntimeError("runtime exited during startup")
+            try:
+                request("/state")  # May be 500 before the first schema creation.
+                return child
+            except OSError:
+                time.sleep(0.2)
+        raise RuntimeError("runtime startup deadline exceeded")
+    except BaseException:
+        stop(child)
+        raise
+
+
+def stop(child):
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if child.poll() is None:
+            if Path(os.readlink(f"/proc/{child.pid}/cwd")) != ROOT:
+                raise RuntimeError("daemon working directory changed")
+            os.killpg(child.pid, sig)
+        try:
+            child.wait(timeout=15)
+            return
+        except subprocess.TimeoutExpired:
+            if sig == signal.SIGKILL:
+                raise
+
+
+def state():
+    status, body = request("/state")
+    assert status == 200, (status, body)
+    return json.loads(body)
+
+
+version = subprocess.check_output([RUNTIME, "--version"], text=True).strip()
+assert version == {"celld": "celld 0.6.3", "wrangler": "4.157.0"}[RUNTIME], version
+print("Runtime:", version)
+child = start()
+try:
+    status, body = request("/")
+    assert status == 200 and body.endswith(":pass"), (status, body)
+    before = state()
+    assert before["rows"] == [[1, "9007199254740993.0001", [0, 255]]], before
+    assert request("/alarm-refusal")[0] == 422
+    assert state() == before, "SQL or alarm escaped rollback"
+    stop(child)
+    child = start()
+    assert state() == before, "semantic SQLite/alarm state changed on restart"
+    assert request("/")[0] == 200, "adapter unusable after restart"
+    print("PASS: adapter checks, alarm rollback, semantic restart equality, retry")
+finally:
+    stop(child)

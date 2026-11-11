@@ -11,13 +11,13 @@ Reuse `LawIR`, `LawScope`, `LawRoot`, `LawModality` (temporal), `LawTiming`, `La
 | Structured law | stable law ID/version, `scope`, `condition?: Expr<bool>` (absent means unconditional), `subject`, `grade: obligation/permission/prohibition`, temporal requirement, typed response, normative source/precedence, severity; existing structured safety fragment is authoritative. |
 | Effective instance | original law artifact/digest/ID, concrete subject member identity, attachment origin, all inheritance/containment/mapping paths, explicit typed bindings; original LawIR unchanged. |
 | Cross-module binding | `organisation`, `book`, `currency`, `valuation_basis`, `account_roles`, transaction revision, opening balance scope; required references resolve unambiguously. |
-| Activation (timed extension) | `id`, triggering event ID, law instance, start time, deadline/calendar pin, cancellation/retrigger policy, accountable subject; unsupported timing refuses admission. |
+| Activation (timed extension) | `Activation`: canonical `ActivationKey` (law ID, effective-instance digest, attachment origin, subject, opening ledger position), trigger transition, start and exclusive deadline (cell clock ms), retrigger policy, accountable subject. Declared by `RequirementTiming::Within` (LAW-WITHIN-1); a calendar pin and every other unsupported timing refuses admission. |
 | Evidence | generated goal/statement digest, full writer/mapping closure, semantics/compiler/tool pins, parameter assumptions, bounds/fairness, result and proof digests, assurance level. |
 | Delegation | authenticated principal, acting agent/session, accountable delegator, parent grant, scope/resources/actions/expiry/budget, revocation generation; every child is an attenuation. |
 
 Display wording is an ordered BCP 47 locale map, separate from executable semantics. Each locale declares direction, templates and the full renderer vocabulary; all declared locales must be complete. See [the wording contract](../../platform/structured-requirements.md#locale-wording-law-wording-locale-1).
 
-B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR without changing semantic IDs. Event occurrence, arbitrary temporal logic and progress are not implied by these PRs.
+B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR without changing semantic IDs. LAW-WITHIN-1 adds one transition-triggered deadline form; a `within` requirement's wording must declare `terms.within` in every locale. Arbitrary temporal logic and unbounded progress are not implied.
 
 ## Semantics and obligations
 
@@ -25,9 +25,45 @@ Admission validates structured slots and grounded normative precedence, then res
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
 
+**AUTH-SYNC-WRITER-1:** the Cedar schema for a synchronous transition action
+includes its primary target and the declared writer types, including effective
+subtypes. Catalog invocation entry points remain primary targets. Schema
+projection grants no permission: the actual policy, scope and capability grant
+still authorize every current/proposed resource, and the kernel still checks
+the closed writer footprint. Unbound or non-transition actions retain their
+existing target projection. The finite four-type writer domain is checked over
+all subsets with and without a synchronous binding; real PDP cases retain
+wrong-scope, wrong-role, absent-policy and absent-grant refusals.
+
 Generate initialization, non-vacuity, each-writer preservation, mapping totality/identity/unit/transition simulation/law preservation and open-boundary obligations from retained contracts. An empty implementor/domain is not non-vacuity evidence. Every writer introduced by rule, migration, connector or mapping changes the challenge. Missing/unsupported semantics remains unknown; runtime admission refuses safety predicates it cannot actually enforce.
 
 At governed commit evaluate supported safety requirements on the whole proposed state/effect closure. Deontic permission is checked separately from action authorization. Recheck revocation and delegated limits at commit and dispatch; distinct-agent sessions of one accountable person do not satisfy independent-person approval. Timed liveness needs an activation model and scheduler/environment assumptions; no single commit proves eventuality.
+
+**LAW-INTERFACE-1:** a retained law whose subject, entity root and sole scoped object type name one object type or interface T governs T and every type that extends or implements T, directly or transitively, as one instance per governed type; a diamond adds no second instance. An `Invariant` response binds only when T's effective contract and the governed type's effective contract each hold exactly one invariant with that id and both name the same owner. Findings keep the law's own pin and the invariant's original owner. Every other inherited, mixed or effective-instance scope still refuses with `core.laws.unsupported_semantics`.
+
+**ACTION-ACTOR-1:** Evidence/approval actions derive principal identity only from authenticated `actor.subjectId` and retain it in kernel call receipts, so independent-person checks compare retained receipt principals rather than caller-supplied actors, approval flags or session counts.
+
+**LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
+
+**LAW-WITHIN-1 (deadline obligation):** a structured requirement with `timing = within {trigger, retrigger, cancel?, accountable, calendar?}` is admitted only as an `obligation` whose law is `eventually` with `law.timing = within {millis}` (positive canonical u64 decimal text, the ordinary LawIR rule, and at most `MAX_WITHIN_MILLIS` = 2^63) and a `predicate` response, with no `condition`, lifecycle-state or commitment filter, exception or `defeatedBy` entry, no calendar pin, nonblank `trigger` and `accountable`, and Boolean response and cancel predicates. Any other pairing refuses with `law.validation.unsupported_temporal` (calendar, gated or defeasible activations included), `law.validation.invalid_document` (grade mismatch, invalid or over-cap duration, or non-predicate response), `law.model.unknown_binding` or `law.model.predicate_type`. Monitor semantics, per law instance and subject, over commits in ledger order, using only each commit's ledger position `seq` and the cell's committed clock `t` (never a wall clock):
+
+1. *Expire.* An open activation with `t ≥ deadline` closes as `violated`, recorded at this commit (see *Violation placement*), before this commit is otherwise considered. A commit at exactly the deadline does not discharge.
+2. *Settle.* An open activation closes as `discharged` if the response holds on the committed state, else as `cancelled` if the cancel predicate holds. Discharge takes precedence.
+3. *Trigger.* If the commit applies `trigger` to the subject: with no open activation, open one with `start = t`, `deadline = t + millis`, then settle it against the same commit, so a trigger commit that already satisfies the response discharges at once. With one still open, `keep_first` records `retrigger_ignored` and keeps the first deadline; `restart` records `restarted` and replaces it with a new activation from this commit, which is then settled.
+
+The cell's committed clock is a nonnegative SQLite INTEGER, so `t ≤ 2^63 − 1`; with the admission cap, `t + millis ≤ u64::MAX`. Opening an activation can therefore never overflow, and a deadline law never refuses or vetoes a business commit: monitor outcomes are recorded events, not commit refusals. A commit presented out of ledger order, or for another subject, is a host invariant failure reported as corruption, never a business refusal.
+
+*Trigger resolution.* Catalog admission resolves `trigger` to exactly one transition of the subject's effective lifecycle, or refuses with `law.model.unknown_binding`. A misspelled trigger never admits. TARGET: `check_requirement` has no lifecycle catalog and checks only that `trigger` is nonblank. Until the lifecycle-graph binding lands, no `within` requirement reaches runtime, because runtime law evaluation refuses timed laws.
+
+*Identity.* An activation's identity is `ActivationKey {lawId, lawDigest, origin, subjectId, triggerSeq}`: the effective law instance (law ID, SHA-256 of its canonical `LawIR`, attachment origin), the subject and the ledger position of the opening commit. Its `id` is `sha256("norn.activation.v1\0" ‖ canonical_json(key))` in lowercase hex (`domain_hash_hex`). It is never a string concatenation. A `restart` opens a new key.
+
+*Violation placement.* `violated` is recorded in exactly one ledger commit: the first commit in ledger order with `t ≥ deadline` that is either this activation's deadline timer or a commit touching its subject. It carries that commit's `atSeq` and `atMillis`, and the activation still states the deadline. Replaying the ledger therefore reproduces the same event at the same position.
+
+*Retired or revised law, deleted or archived subject.* An open activation stays pinned to its `lawDigest` (D08/D10). Retiring or revising the law, archiving the subject, leaving a class or deleting the subject never discharges or cancels it. It runs to its outcome under the pinned instance. Only a satisfying response commit or the declared cancel predicate on a committed subject state closes it before the deadline. Otherwise it is `violated` at the deadline timer. A checked migration plan is the only way to move an open activation to another instance.
+
+Replaying the same commits yields the same events. The accountable subject is carried on every activation and violation and grants no authority. A violation is evidence, never a silent pass or a refusal of the later commit. Status: IR (data only), `check_requirement`, `render_requirement` and `lower_requirement` are CURRENT. All LAW-WITHIN-1 validation (`within_shape`, `MAX_WITHIN_MILLIS`, `check_wording`) lives in norn-checker. `render_requirement` is the checked render entry; norn-ir's `RequirementView::slots` is a render-only projection that refuses only what it cannot render. `lower_requirement` refuses `within` (`ActivationTiming`) rather than drop the trigger, retrigger and cancel policy in plain `LawIR`. The kernel monitor, cell deadline timer and lifecycle-graph obligations (non-vacuity: a discharging trace exists; bounded discharge/violation checking, reported bounded or unknown) are TARGET, so runtime law evaluation and theorem lowering still refuse timed laws.
+
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures name `norn.values.property_validity` and a conservative retained property-domain declaration digest, including inherited, referenced-type and interface constraints. It also covers every catalog interface, shared property type and extension, so changing any of them makes an existing pin Unverified; stale or forged pins are Unverified and never attributed to an unrelated conservation law.
 
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
@@ -38,6 +74,7 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 | LAW-COMPLETE-1: complete effective subject/writer/mapping closure; admission | `core.laws.unresolved_scope` |
 | LAW-SUPPORTED-1: exact predicate/timing supported, never omitted; admission | `core.laws.unsupported_semantics` |
 | LAW-COMMIT-1: whole proposed state satisfies immediate safety; commit | `core.laws.violated` |
+| LAW-WITHIN-1: exact `within` obligation shape; structural admission | `law.validation.unsupported_temporal` / `law.validation.invalid_document` / `law.model.unknown_binding` / `law.model.predicate_type` |
 | AUTH-ATTENUATE-1: current scoped authority, no escalation; admission/commit/dispatch | `core.authority.denied` / `core.authority.revoked` |
 | PROOF-BIND-1: exact generated statement and checked result; evidence admission | `core.laws.stale_evidence` |
 
@@ -88,7 +125,7 @@ These scenarios do not simulate a solver or claim a completed constitution drop.
 
 Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-checker/src/{deontic,verification,law_enrollment}.rs`, `obligations/`, `crates/norn-authz/src/grants.rs`, `crates/norn-kernel/src/decision_commit.rs`. #316 merged; #322 open. Narrow induction generation exists; general aggregate laws, retained interface/containment closure, generated solver dispatch and full delegation chains are not established. Core physics declarations in `registry/core/src/physics.ts` are not complete runtime law enforcement.
 
-## Work breakdown (each PR ≤400 lines)
+## Work breakdown (one coherent unit per PR)
 
 1. Complete B0b #322 deterministic EN/AR slot rendering; retain #316 safety refusals.
 2. B2 effective law instance contract, then interface resolution, then containment/diamond/weakening tests as separate cuts; coordinate 06 B1.
@@ -156,14 +193,138 @@ missing locale refuses; reordering inputs preserves the explanation; historical
 receipt verification remains unchanged; oversized writer identities refuse
 before goal generation through the existing goal-byte preflight.
 
+### Conditional linear certificate kernel (#711)
+
+**CONS-LINEAR-1:** the mathematical coefficient checker verifies every affine
+writer column against the declared rational functional, independently per exact
+scope and unit. Altered weights, malformed matrices and duplicate coordinates or
+writers refuse. Nonzero residuals identify writer, partition and symbolic column;
+unsupported writers and arithmetic/resource limits remain unknown. A residual is
+an algebraic witness, not a reachable runtime counterexample.
+
+This kernel alone establishes no application evidence. Declaration lowering must
+bind the complete writer closure and functional to a generated Challenge before
+its result can discharge a preservation goal. Initialization, non-vacuity and
+open boundaries remain separate obligations. Named kernel scenarios: valid affine
+balance, omitted loss, unit mismatch, cross-book cancellation, substituted/zero
+weights, unsupported writer, malformed shape and exact fractional balance.
+
+**CONS-LINEAR-DISCOVERY-1:** candidate weight discovery solves exact rational
+equalities per scope/unit partition, plus explicit coordinate anchors (the
+equality-only LP feasibility fragment). Require a nonzero anchor, choose zero
+for unanchored free variables, and return unknown on infeasibility or limits.
+Discovery is untrusted and never refutes a law. Every candidate must separately
+pass CONS-LINEAR-1 against the declared functional. Named scenarios: fractional
+exchange, conflicting/zero anchors, free coordinates, unit/book separation,
+opaque writer, duplicate identity and generated scaled exchanges.
+
+### Constraint diagnosis (DIAG-CORE-1 / DIAG-REPAIR-1 / DIAG-UNKNOWN-1)
+
+The chase-backed diagnosis profile enumerates irreducible declaration conflicts
+and correction proposals relative to fixed open-world facts. Every core is
+unsatisfiable and each one-member deletion is satisfiable. Every correction
+relaxes only explicitly editable declarations and is independently checked on
+the complete remaining input; restoring any member makes it unsatisfiable.
+These proposals grant no authority: concrete edits require ordinary admission.
+Protected laws are never repair candidates. Whole-search and per-chase ceilings
+are disclosed; an exhausted or refused subset query makes the diagnosis unknown.
+
+The `norn.finite-conjunction/1` diagnostic fragment uses the shared closed finite
+schema enumerator and expression evaluator. The universe and roster snapshot
+are explicit closed-world assumptions, never inferred from the open-world chase.
+Ceilings are 256 contexts, 65536 encoded domain bytes, 8192 predicate evaluations
+and 1000 expression fuel. A diagnosis discloses these plus its query ceiling.
+Unsupported/unbounded domains or exhausted enumeration return unknown, not a
+conflict. This fragment grants no admission or proof authority.
+
+DIAG-PIN-1: refused candidates receive diagnostics only: exact attempted-source/base digests,
+member identities/pointers, checker/expression/fragment profiles, enumeration and
+query budgets, explicit closed-world assumptions and retained editability
+policy are pinned together. The report type has no Challenge/EvidencePins or
+PROOF-BIND-1 conversion. Ordinary admission is unchanged; corrected candidates
+must be resubmitted. Editable/protected overlap refuses diagnosis. Duplicate or
+incomplete source identities are unknown rather than an unbound explanation.
+Generated profiles use sorted-key exact-text canonical serialization. If encoding
+fails, diagnosis is unknown with a reason and its profile digest is absent (the
+last native digest slot is empty); exact source/base digests remain available.
+Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown`.
+
+### Path equations (PATH-EQ-1, #712)
+
+Authors declare `pathEquations: [{ id: "provider", left: ["fulfils", "provider"],
+right: ["provider"] }]` on `Norn.type`. EntityIR retains these declarations in
+`extensions["norn.path-equations/1.0.0"]`. Each path begins at the declaring
+concept, traverses functional forward links with concrete targets, and ends at the same concrete type;
+empty paths denote identity. Missing links, interface targets (including those with one implementor),
+non-functional steps, duplicate IDs and different endpoint types refuse.
+
+PATH-EQ-1 lowers each equation to an existing chase EGD, with one shared root
+variable and equality between the two endpoints. Optional links give conditional
+equality when both paths exist; equations do not assert existence. Inherited
+link contracts resolve through the effective catalog. Admission limits are 128
+equations per concept and 64 links per path: at most 128 path-link atoms plus
+one shared-root concept atom (129 body atoms) per generated EGD. This declaration/lowering
+unit establishes structural evidence only: mapping preservation requires the
+exchange admission bridge and its separately qualified source/mapping lowering.
+No successful declaration is a preservation proof. The existing exchange search
+is bounded; absence of a witness is bounded-no-counterexample, never exhaustive.
+
+Named scenarios: PATH-EQ-VALID/IDENTITY; PATH-EQ-UNKNOWN-LINK/MANY/ENDPOINT/ID.
+
+PATH-MAP-1: a `PathMapping` `F: target -> source` names a source concept per
+target concept and a functional source path per mapped target link; data moves
+by pullback. `admit_path_mapping` lowers both catalogs' PATH-EQ-1 equations,
+functional EGDs for every reachable to-one link, source totality TGDs for
+required links, and one TGD per object and link image into an `Exchange`, then
+runs the existing schema-compatibility search. Ill-typed images and overlapping
+catalogs refuse (`consistency.path_mapping.invalid`); every verified witness
+refuses as `consistency.schema.unpreserved_constraint`. `compose_path_mappings`
+substitutes images and refuses components with two images of one link.
+Admission is bounded-no-counterexample, never exhaustive. A witness is
+attributed to the first EGD its mapped image breaks, so equations sharing a
+witness are named once; the mapping still refuses. Target totality and
+source endpoint typing are not lowered: the first leaves existence unchecked,
+the second can only add spurious witnesses. Named scenarios reproduce #574:
+swapped roles, dropped join, non-functional image and bad composite refuse;
+identity, equivalent path and identity composites admit.
+
+### Declared-only normative resolution (D1, #767)
+
+LAW-RETAIN-1 / OVERLAY-MONOTONE-1: `check_norm_precedence` requires exact source,
+layer, priority-edge and protection bindings over trusted exhaustive masks for
+one action/subject. Protection and cross-layer checks precede precedence. Any
+conflict core refuses the entire resolution with its exact rule indices; no
+partial survivors are returned. Same-layer opposing rules require explicit
+comparability, including the transitive closure of declared edges. Cycles refuse.
+Cross-layer clashes refuse even with an explicit higher-layer win. Lower-to-higher
+or protected-law defeat declarations refuse even when inactive or excepted.
+
+D1 applies everywhere: authority level, enactment and applicability specificity
+never break an undeclared tie. No within-layer opt-in exists. Missing optional
+legacy ranks do not prevent explicitly declared resolution. The old implicit
+comparison is private and used only for Info `consistency.normative.legacy_resolution`
+notes; it cannot select effective survivors or suppress conflict cores.
+
+Select effective versions before grounding; latest recorded is not lex posterior.
+Exceptions belong to their own rule and cannot narrow a higher law. A future
+specialis policy would need proven strict containment; equal specificity has no
+winner. CD diagnosis supplies exact protected cores and source locations;
+malformed bindings and exhausted budgets remain unknown. This is conditional
+finite-model consistency, not fulfilment, CTD/Datalog lowering or proof authority.
+
+Named scenarios: undeclared superior/posterior/specialis ties refuse; explicit
+transitive edges resolve; removing an edge refuses; cross-layer wins and protected
+defeats refuse; numeric-rank removal leaves declared results unchanged; exhaustive
+three-rule groundings and generated catalog permutations preserve exact survivors.
 ## Generated bounded creation profile (#565)
 
 **PROOF-QUINT-1:** the checker reconstructs the admitted Challenge before lowering
 a selected create-only writer, ordered derivations, preconditions, stored defaults
 and a pointwise predicate law. One empty store, singleton object identity and
 explicit finite decimal input intervals bound the claim. Unsupported constructs
-leave each affected goal unknown with a reason. Exact scales and units come from
-effective declarations; unlike interpretations and inexact literals refuse.
+leave each affected goal unknown with a reason. Supported numeric fields share one effective fixed scale/unit interpretation.
+Currency sources, rates, rounding, mixed interpretations and inexact literals
+remain unsupported.
 
 Initialization is vacuous over the empty store. Writer preservation checks the
 proposal before law enforcement; non-vacuity needs a reachable law-satisfying
@@ -171,3 +332,223 @@ witness. Neither a generated module nor structural correspondence discharges a
 goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
+
+**PROOF-TRANSITION-1:** declaration lowering first constructs the native
+`norn-ir::verification::finite::CreateRelation`. This shared relation carries
+source law/writer/object/property identities, effective scale/unit contracts,
+finite input intervals, substituted native guards, simultaneous updates and
+the guarded law predicate. Its empty-to-singleton semantics and stuttering frame
+are independent of backend syntax. Expressions remain in the same closed Norn
+Boolean/additive fragment; unsupported constructs keep their existing reasons.
+Quint emission consumes this relation without reading declarations again.
+
+Named scenario: `finite_relation_is_backend_neutral` compares the complete
+neutral and Quint goal inventory, bounds and Challenge identities, then checks
+the original/omitted-derivation update correspondence. Original/mutant model
+bytes must also match the pre-refactor generator's check-time golden outputs.
+Constructing or inspecting the relation supplies no solver verdict or authority.
+
+Each generated obligation selects its governing
+LawIR by the retained Challenge law identity; a subject may have multiple laws.
+All generated goals remain in Challenge order. An opaque law remains Unknown
+without suppressing independent supported laws. Native correspondence scenarios:
+`multiple_governing_laws_keep_distinct_goals_and_mutant_semantics` and
+`an_unsupported_governing_law_does_not_suppress_supported_laws`. This lowering
+unit adds no solver discharge authority.
+
+`norn_checker::obligations::transition` retains ordered derivations, assignment
+origins and omitted caller fields, and projects exact integer affine creation
+deltas/equality residuals. Unsupported arithmetic, overflow and non-equalities
+remain Unknown; guards and law conditions are never erased. Input bounds,
+absence, singleton identity and empty-state coverage remain explicit assumptions:
+this view grants no unbounded writer-closure proof or evidence authority.
+Named cases check native affine evaluation, ordered substitutions/input requirements,
+mutant default origins, explicit refusals and unchanged Quint golden bytes.
+
+**PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
+producer/binder reconstructs every Challenge, checks controller-retained model
+and result digests, and binds exact result bytes through EvidencePins. Current
+identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
+pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
+
+Qualification is restricted to integer/Boolean states and one worker. Raw
+successful universal searches require nonempty initialization, a drained queue
+and declared state cardinality. Counterexamples and non-vacuity witnesses stop
+early and require agreeing backend verdicts and traces. A
+conservative arithmetic bound must fit signed 32-bit integers; this is not a
+claim about unbounded TLA+ arithmetic. Exact Apalache/Variants module sources
+come from the pinned compiler JAR. The constitution profile excludes caller loss
+and zero output. Named acceptance: original pass, omitted derivation refutation,
+restored model/Challenge/pass, stale evidence Unknown; the seven other generated
+obligations remain individually unknown. Source inspection and parity qualify
+this bounded fragment only, not general translator or model-checker soundness.
+
+**LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
+
+**PROOF-GUARANTEE-1:** the native binder emits one typed document per law, with
+all generated obligations, exact bound records and typed trace quantities. A
+recording is written only after the complete original/mutant/restored acceptance
+passes; failed runs retain Unknown in their output and produce no recording.
+Runtime and parity links remain explicitly not-yet unless separately supplied.
+Violation results require a non-empty reconstructed counterexample or witness;
+missing/null/empty traces remain Unknown. Named refusal scenario:
+`qualifying_violations_require_a_nonempty_reconstructed_scenario`.
+Named scenarios: `counterexample_reconstruction_uses_declared_exact_units_and_empty_state`
+and `recorded_guarantees_match_bound_results`. Captured original/mutant documents
+are bless-gated fixtures from actual backend output, not fresh solver verdicts.
+Tool assets use logical name/version identities and exact content digests, without
+installation paths. Compiler stages retain exit codes; oracle records retain verdicts and exact scalar
+trace values in state order. Run-specific diagnostics and ITF creation metadata
+stay outside recorded evidence. Structured primary results remain bound.
+The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
+Law-level bounds use sorted-key exact-text canonical JSON and retain the complete
+shared profile, toolchain, expected state count, worker count and exclusions. Model digests, invariant selectors and step
+selectors stay in each goal's unchanged evidence pins, never in law-level bounds.
+
+**PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
+law artifact/version, bounded verdict and evidence level as closed enums,
+Challenge identity, exact bounds JSON, actual tool/result pins and the complete
+generated goal inventory. Unsupported goals keep explicit Unknown reasons.
+An ineligible goal must have Unknown verdict and level; encoding, decoding and
+the emitted schema reject every other combination. Named refusal scenario:
+`ineligible_goals_require_unknown_on_both_wire_boundaries`.
+Rust also enforces document count relations at both wire boundaries:
+`total == goals.len()`, `eligible == count(goals where eligible)`, and
+`discharged <= eligible`. JSON Schema cannot express these cross-field relations.
+Rust also rejects duplicate goal indices at both boundaries. Indices refer to
+the retained Challenge, so a per-law document may contain non-contiguous indices.
+Named scenarios: `document_total_matches_complete_goal_inventory_at_both_wire_boundaries`,
+`document_eligible_matches_goal_flags_at_both_wire_boundaries`, and
+`document_discharged_cannot_exceed_eligible_at_both_wire_boundaries`.
+Named index scenario: `document_goal_indices_are_distinct_challenge_indices_at_both_wire_boundaries`.
+Exact trace quantities serialize as canonical integer text with declared scale
+and units; counterexamples and non-vacuity witnesses have distinct kinds.
+Runtime enforcement and application parity links are either independently
+supplied references or explicit `not-yet` values. A typed document is a
+presentation of the checked driver's result, never proof or activation authority.
+Its OpenAPI projection adds new components without modifying existing schemas.
+Named scenarios: exact coefficient roundtrip; unknown requires a reason;
+unknown enum/field, fractional coefficient and invented `proved` level refuse;
+`guarantee_projection_matches_typed_eligibility_and_exact_scalars` checks wire/schema
+correspondence, including integer endpoints and trailing line terminators.
+
+### HOST-AUTH-1: explicit server policy before host access
+
+The host authorizer denies every operation unless a trusted server policy admits it. Supplying an actor or granting a definition read does not grant action mutation, object disclosure or collection disclosure; those kernel authorization callbacks deny independently by default. The server supplies scope and authenticated actor; the client never grants authority. Named scenarios: `absent_host_policy_denies_authenticated_and_anonymous_operations` and `host_read_grant_does_not_supply_kernel_action_or_disclosure_grants`. This is the shared authorization boundary; host admission and route callers follow in separate units.
+
+### DIAG-DISCLOSE-1: explicit diagnostic permission
+
+Complete refusal detail (law/invariant pin, reason, subject and operands) requires the server's independent scoped `norn.disclose_refusal_detail` decision through the existing AccessIR → Cedar PDP and capability conjunction. Its resource is `norn.RefusalDetail`, identified by the admitted action id; trusted context binds `governedAction`. A grant covers that action's complete diagnostic in that physical scope, not general business reads. Action permission, `norn.read`, and marking grants never imply it. Missing policy, principal, role, capability, exact scope or a changed mapper binding denies. Visibility and internal refusals remain opaque even with the grant. Fixture claims enter through the same trusted mapper that later resolves production principals; no client claims establish authority.
+
+Named cases: `explicit_grant_preserves_the_complete_shared_reason`, `absent_capability_policy_role_principal_or_scope_stays_redacted`, and `trusted_mapper_cannot_change_the_bound_identity_action_resource_or_scope`. The fixture policy is typed TypeScript and its generated policy bytes are checked against recompilation; decisions use the real scoped PDP. Evidence is runtime correspondence and sampled scope mutation, not universal proof. Deeper engine proof reruns are deferred under the demo deadline; this adapter changes no evaluator or stored receipt semantics.
+
+
+### Conditional lifecycle goals (PROOF-LIFECYCLE-1)
+
+The challenge appends lifecycle goals after every existing law obligation. For
+an effective chart it emits one reachability goal per terminal, one no-stuck
+non-terminal goal, and one non-vacuity goal per transition. Each statement binds
+the concrete object type, lifecycle property, complete effective chart digest,
+one-object bound and chart-state-count depth bound. The existing constitution
+has no lifecycle: its ten obligations and complete challenge use one sorted-key
+exact-text canonical golden across package, insertion-order, arbitrary-precision
+and workspace builds. PROOF-BIND-1 generated commitments sort keys recursively
+without normalizing Unicode spelling or number tokens. Raw source and solver
+result bytes remain exact; Norn1 artifact identities retain their own profile.
+
+This is conditional transition-only reachability from an admitted initialized
+object. Scalar context and external references stay frozen. All supported
+applicable pointwise laws filter initialization and post-states. Unsupported
+guards, laws, timing, cross-lifecycle reads and extra effects yield Unknown with
+a reason. Inventory reasons name an applicable unsupported governing-law root
+and its law identity (the native `UnsupportedUntilB2` boundary); otherwise they
+state that qualification or checked results are missing. A generated goal alone
+is Unknown; it never authorizes discharge.
+The full action/writer closure is a separate qualification profile (#951).
+
+Named scenarios: `generated_lifecycle_reachability` retains a disabled transition
+in the inventory and binds exact guard changes; `constitution_ten_goal_inventory_golden`
+pins the old inventory and challenge; `jewelry_app_law_keeps_all_lifecycle_goals_unknown`
+uses the actual authored source golden without rewriting its App-scoped law;
+`lifecycle_goal_cap_is_checked_before_append` refuses an overflowing denominator.
+
+
+**PROOF-LIFECYCLE-2:** the finite input layer reconstructs admission and the
+Challenge before selecting one effective lifecycle. Its enum stays complete;
+every other stored scalar has explicit finite choices, parsed as exact runtime
+JSON literals and validated against its effective contract. Fields retain their
+scale and unit. Context products exceeding node, byte or document budgets are
+refused as a whole; no clipping, inferred defaults or sampling is permitted.
+A lifecycle-dependent identity, computed/nullable context, owned effects or
+unqualified invariant is outside this profile. Applicable unsupported law roots
+remain Unknown with the law identity. Retained snapshots include law-refused
+valuations: relation consumers must separately filter initialization and
+post-states through every supported governing law. Input snapshots alone never
+discharge a goal.
+
+Named scenarios: `lifecycle_inputs_are_exact_complete_and_source_bound`,
+`lifecycle_input_refusals_never_clip_the_domain`, and the generated
+`every_frozen_choice_keeps_the_complete_chart` property. Native commit
+correspondence and checked backend evidence are subsequent qualification units.
+
+**PROOF-LIFECYCLE-3:** the conditional graph retains every bounded row and every
+enabled declared transition whose post-state satisfies all supported governing
+laws. Initialization requires a declared initial state satisfying their
+conjunction. Context stays frozen; unreachable input rows remain available for
+local correspondence and never become initial states. Always/Never predicate
+laws are supported; temporal/state scopes, advisory laws and invariant responses
+remain Unknown. A work budget of 2,000,000 (expression source bytes, compilation
+and evaluation units), 128 laws and 16,384 edges are pinned. Each guard evaluation
+gets the native decide budget of 1,000,000 units and evaluation stops at the first
+false guard; each row's law conjunction shares one such budget, with one extra
+unit per expression, as a native write does. Those units also charge the work
+budget, and both limits are pinned. Exhausting any budget, duplicate valuations,
+inexact expression values and any step leaving the profile refuse the complete
+graph. No partial relation or solver discharge is returned.
+
+`every_bounded_initialization_and_transition_matches_native_commit` compares
+all initializations and every pre-state/transition pair with the checked native
+cell, including exact post-values and atomic refusal. The declaration variants
+cover a second governing law and a disabled guard; they never rewrite the actual
+App-root pack's recorded Unknown result. Checked backend evidence follows.
+
+### Observed conservation suggestions (MINE-CONS-1, #736)
+
+The runtime `norn_cell::mining::suggest_conservation` question discovers one
+anchored exact rational functional from an explicit training prefix, then checks
+all supplied observed deltas with CONS-LINEAR-1. Its source-window identity,
+scope/unit coordinates, training count, supporting record/version identities and
+exact residual counterexamples remain visible. The adapter owns authorization,
+immutable window retention and faithful lowering; the function fetches no data.
+
+Results are always `SuggestedNotAdmitted`, including an entirely balanced
+window. Finite observed arithmetic supports validation but never certifies
+business truth, future behavior or writer coverage. No admission, law edit or
+commit follows from a result. Saving or accepting a proposal requires ordinary
+data actions and definition admission, outside this first cut. Empty/all-zero
+training, infeasible anchors, malformed input and exhausted exact/resource bounds
+yield no proposal. Scope/unit partitions cannot cancel each other. Limits: 256
+records, 64 coordinates, 64 scope bindings per coordinate, 4096 identity bytes,
+and the existing discovery coefficient/work ceilings. Named scenarios: true
+fractional candidate with full evidence, holdout near-miss with exact residual,
+no-signal control, duplicate record, unit separation, oversize window and measured
+256-record fixture. Law drift, misfit rules and statistical guards remain open.
+
+**CONTROL-REFS-1:** finite control-model projection requires exactly one
+ActionRoot for every referenced policy action. Missing or duplicate roots yield
+unknown (`None`), never safety proof evidence. This closure check grants no
+runtime access or availability witness. Named scenarios cover complete grants,
+an undeclared policy action, duplicate roots and sampled undeclared identities.
+
+### Warning-severity governing laws (LAW-COMMIT-1 / OBS-EVIDENCE-1)
+
+Severity controls display, never governing authority. Every verified governing-law
+failure is integrity-classified: observed facts retain warning evidence and are
+quarantined, while native writes refuse atomically. Non-law quality warnings
+retain their separate quality classification. The named cell scenario
+`warning_severity_governing_law_quarantines_observed_fact` checks native refusal,
+persisted warning/pin, quarantine and recovery after a valid correction.
+
+## Shared reviewed locale selection
+
+**REVIEWED-LOCALE-1:** laws and question-view consumers use the same reviewed locale-map decoding, completeness validation, BCP 47 syntax and case-insensitive exact selection. Duplicate wire keys or case variants refuse before collection; an incomplete unselected translation refuses too. No fallback is introduced. Existing law wire types, schemas, wording error codes and EN/AR display bytes remain unchanged. Named scenarios: `reviewed_locale_rejects_duplicate_wire_keys_and_incomplete_unselected_entries`, generated `reviewed_locale_selection_is_exact_without_fallback`, and the existing law locale scenarios. This refactoring changes no law or execution semantics.

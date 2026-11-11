@@ -1,11 +1,47 @@
 //! Scoped temporal declarations over the existing ZEN profile. No evaluator or proof engine.
 /// Exact identity records consumed by checker-owned Challenge binding.
 pub mod evidence;
+/// Backend-neutral finite relations produced from admitted declarations.
+pub mod finite;
+/// Typed presentation of actual law guarantees and explicit missing evidence.
+pub mod guarantees;
 
 use crate::members::present_non_null;
 use crate::{IrVersion01, ProvenanceSource, ZenExpression};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// LAW-INSTANCE-CONTRACT-1: an application of a law retains its original
+/// identity, concrete subject, attachment and complete origin paths.
+/// This projection is not a new law or evidence of preservation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EffectiveLawInstance {
+    /// Original law artifact/version and stable law member ID.
+    pub law: crate::definition_catalog::MemberRef,
+    /// Norn1 identity of the unchanged law artifact.
+    pub law_digest: String,
+    /// Concrete implementing type, independently pinned.
+    pub subject: crate::definition_catalog::MemberRef,
+    /// Norn1 identity of that concrete type artifact.
+    pub subject_digest: String,
+    /// Declared governing boundary, including retained pack/app attachments.
+    pub attachment: LawRoot,
+    /// Original governed concept/interface/container identity.
+    pub origin: crate::definition_catalog::MemberRef,
+    /// Every inheritance, containment or mapping path; a diamond retains all.
+    pub paths: Vec<Vec<crate::definition_catalog::MemberRef>>,
+    /// LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope.
+    pub instance_paths: Vec<Vec<crate::PackInstanceRef>>,
+    /// Explicit typed member substitutions; no rewritten child LawIR.
+    pub bindings: std::collections::BTreeMap<String, crate::definition_catalog::MemberRef>,
+}
+
+/// Published contract for separately projected effective law instances.
+#[must_use]
+pub fn effective_law_instance_schema() -> schemars::Schema {
+    schemars::schema_for!(EffectiveLawInstance)
+}
 
 /// One protected law; its predicates use the subject's `self` environment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -47,6 +83,47 @@ pub struct LawIR {
     pub timing: Option<LawTiming>,
     /// Predicate or exact ontology-bound behavior/invariant identity.
     pub response: LawResponse,
+    /// The law owner's declared exception tree. Omitted when empty, and an
+    /// explicit `[]` is refused, so a law without exceptions has exactly one
+    /// encoding and keeps its canonical bytes and pin.
+    #[serde(
+        default,
+        deserialize_with = "nonempty_exceptions",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(length(min = 1))]
+    pub exceptions: Vec<LawException>,
+}
+
+/// One declared exception. When its condition holds and no exception that
+/// overrides it applies, the node it overrides does not apply. It has no other
+/// consequence: lifting is its only effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LawException {
+    /// Stable identity, unique within the tree and distinct from the law id.
+    pub id: String,
+    /// The law's own id, or the id of another exception in the same tree.
+    pub overrides: String,
+    /// Boolean ZEN predicate over the law subject's `self` environment.
+    pub condition: ZenExpression,
+    /// Reviewed explanation.
+    pub rationale: String,
+    /// Source location of the declaration.
+    pub source: crate::deontic::RuleSourceSpan,
+}
+
+fn nonempty_exceptions<'de, D>(deserializer: D) -> Result<Vec<LawException>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let exceptions = Vec::<LawException>::deserialize(deserializer)?;
+    if exceptions.is_empty() {
+        return Err(serde::de::Error::custom(
+            "omit `exceptions` rather than declaring an empty list",
+        ));
+    }
+    Ok(exceptions)
 }
 
 /// Applicability of a law. All filters are conjunctive; type lists denote a union.
@@ -82,6 +159,8 @@ pub enum LawRoot {
     Cell(String),
     /// Exact entity type boundary.
     Entity(String),
+    /// Exact retained composition-pack boundary.
+    Pack(String),
 }
 
 /// One lifecycle-state selector.

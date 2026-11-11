@@ -6,7 +6,8 @@
 //! `norn-ir`, or `zen-*` type crosses the boundary. The functions here are
 //! plain Rust; on `wasm32` the `wasm` module exports each one to
 //! JavaScript under its camel-case name (`checkArtifactSet`,
-//! `lifecycleDiagrams`, `checkExpression`, `version`). A native C ABI over the
+//! `lifecycleDiagrams`, `checkExpression`, `checkAgent`, `version`, and so
+//! on). A native C ABI over the
 //! same functions is follow-up work (see the crate README).
 //!
 //! Output is byte-identical natively and on `wasm32`: diagnostics are
@@ -22,6 +23,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use norn_checker::agent::{AgentContext, ToolBinding, agent_payload_syntax, check_agent};
 use norn_checker::function::{
     admit_function_manifest, check_function_invocation, check_function_receipt,
     decode_function_invocation, decode_function_manifest, decode_function_receipt,
@@ -66,6 +68,13 @@ pub const EVALUATION_FORMAT: &str = "norn-checker-abi/evaluation@1";
 
 /// Format tag of the [`function_contract_json`] document.
 pub const FUNCTION_FORMAT: &str = "norn-checker-abi/function@1";
+
+/// Format tag of the [`check_agent_json`] document.
+pub const AGENT_FORMAT: &str = "norn-checker-abi/agent@1";
+
+/// Format tag of the [`restate_question_json`] and [`restate_dashboard_json`]
+/// documents.
+pub const RESTATEMENT_FORMAT: &str = "norn-checker-abi/restatement@1";
 
 /// How deeply `list<…>` and `?` may nest in an expected type.
 const MAX_TYPE_DEPTH: u32 = 16;
@@ -954,6 +963,198 @@ pub fn function_contract_json(
     .to_string())
 }
 
+/// The `context` argument of [`check_agent_json`].
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentContextInput {
+    /// The model allowlist.
+    models: BTreeSet<String>,
+    /// The org's tool bindings, resolved by the host to installed connectors.
+    bindings: Vec<BindingInput>,
+    /// The admitted law ids.
+    laws: BTreeSet<String>,
+    /// The resource-limit profile; `norn.limits/1` when absent.
+    #[serde(default)]
+    limits: Option<ResourceLimitProfile>,
+}
+
+/// One `bindings` entry of [`check_agent_json`]'s context.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BindingInput {
+    id: String,
+    connector: String,
+    manifest_digest: Digest,
+}
+
+/// Admit an agent definition payload (decision D58,
+/// `norn_checker::agent::check_agent`).
+///
+/// `agent_json` is the payload's JSON text, read with exact numbers.
+/// `context_json` is host-supplied only: `{"models", "bindings", "laws",
+/// "limits"?}` — the model allowlist, the org's tool bindings as
+/// `{"id", "connector", "manifestDigest"}` resolved to installed connectors
+/// and their manifests by digest, the admitted law ids, and a resource-limit
+/// profile (default `norn.limits/1`). Registry-ready: the same function backs
+/// the `agent` validator of `/v1/definitions:admit`.
+///
+/// Returns `{"format", "admitted", "diagnostics"}`: `diagnostics` is the
+/// `norn-checker/diagnostics@1` document with `agent.validation.*` codes and
+/// pointers into the payload; `admitted` is true when no finding is an error.
+///
+/// # Errors
+///
+/// [`AbiError::InvalidInput`] when `agent_json` is not JSON or `context_json`
+/// is not a well-formed context (unknown members, a blank binding id or
+/// connector, a malformed `manifestDigest`, or an id bound twice). An invalid
+/// agent is a finding, never an error.
+pub fn check_agent_json(agent_json: &str, context_json: &str) -> Result<String, AbiError> {
+    // Not `serde_json::Value`: its depth limit would refuse valid, deeply
+    // nested payloads that are findings.
+    agent_payload_syntax(agent_json).map_err(|detail| invalid("agent", detail))?;
+    let context: AgentContextInput = serde_json::from_value(parse_json("context", context_json)?)
+        .map_err(|error| invalid("context", error.to_string()))?;
+    let bindings = context
+        .bindings
+        .into_iter()
+        .map(|binding| ToolBinding {
+            id: binding.id,
+            connector: binding.connector,
+            manifest_digest: binding.manifest_digest,
+        })
+        .collect();
+    let context = AgentContext::new(
+        context.models,
+        bindings,
+        context.laws,
+        context
+            .limits
+            .unwrap_or_else(ResourceLimitProfile::norn_limits_v1),
+    )
+    .map_err(|detail| invalid("context", detail))?;
+    let findings = check_agent(agent_json, &context);
+    Ok(json!({
+        "format": AGENT_FORMAT,
+        "admitted": !has_errors(&findings),
+        "diagnostics": diagnostics_to_json(&findings),
+    })
+    .to_string())
+}
+
+fn unsupported_json(unsupported: &norn_checker::tool_ports::Unsupported) -> Value {
+    json!({
+        "code": unsupported.reason.code(),
+        "path": unsupported.path,
+        "message": unsupported.reason.to_string(),
+    })
+}
+
+/// A gateway tool schema as a Norn port type:
+/// `{format: "norn-checker-abi/tool-port@1", ok: true, port}` or
+/// `{…, ok: false, refusal: {code, path, message}}`. See
+/// [`norn_checker::tool_ports::ports_from_schema`].
+///
+/// # Errors
+///
+/// [`AbiError::InvalidInput`] when `schemaJson` is not JSON.
+pub fn tool_port_json(schema_json: &str) -> Result<String, AbiError> {
+    let schema = parse_json("schemaJson", schema_json)?;
+    let body = match norn_checker::tool_ports::ports_from_schema(&schema) {
+        Ok(port) => json!({"format": TOOL_PORT_FORMAT, "ok": true, "port": port.to_json()}),
+        Err(unsupported) => {
+            json!({"format": TOOL_PORT_FORMAT, "ok": false, "refusal": unsupported_json(&unsupported)})
+        }
+    };
+    Ok(body.to_string())
+}
+
+/// Whether an edge from a port of `sourceSchemaJson` into a port of
+/// `targetSchemaJson` checks: `{format: "norn-checker-abi/tool-edge@1", ok}`
+/// with `refusal: {code, path, expected, found}` on a mismatch, or
+/// `refusal: {code, path, message, side}` when either schema has no port type.
+///
+/// # Errors
+///
+/// [`AbiError::InvalidInput`] when either argument is not JSON.
+pub fn tool_edge_json(
+    source_schema_json: &str,
+    target_schema_json: &str,
+) -> Result<String, AbiError> {
+    use norn_checker::tool_ports::{edge_refusal, ports_from_schema};
+    let source = parse_json("sourceSchemaJson", source_schema_json)?;
+    let target = parse_json("targetSchemaJson", target_schema_json)?;
+    let lowered = |schema: &Value, side: &str| {
+        ports_from_schema(schema).map_err(|unsupported| {
+            json!({
+                "code": unsupported.reason.code(),
+                "path": unsupported.path,
+                "message": unsupported.reason.to_string(),
+                "side": side,
+            })
+        })
+    };
+    let body = match (lowered(&source, "source"), lowered(&target, "target")) {
+        (Err(refusal), _) | (_, Err(refusal)) => {
+            json!({"format": TOOL_EDGE_FORMAT, "ok": false, "refusal": refusal})
+        }
+        (Ok(source), Ok(target)) => match edge_refusal(&source, &target) {
+            None => json!({"format": TOOL_EDGE_FORMAT, "ok": true}),
+            Some(refusal) => json!({"format": TOOL_EDGE_FORMAT, "ok": false, "refusal": {
+                "code": refusal.code, "path": refusal.path,
+                "expected": refusal.expected, "found": refusal.found,
+            }}),
+        },
+    };
+    Ok(body.to_string())
+}
+
+const TOOL_PORT_FORMAT: &str = "norn-checker-abi/tool-port@1";
+const TOOL_EDGE_FORMAT: &str = "norn-checker-abi/tool-edge@1";
+
+/// The sub-decision closure of the rule `artifact_id` in `artifacts_json`
+/// (`norn_checker::rule_closure`, the closure admission bounds), for an
+/// offline evaluator that holds the same envelopes.
+///
+/// Returns `{"resolved": true, "closureDigest", "subDecisions": {key:
+/// {"artifactId", "version"}}}`, or `{"resolved": false, "refusal"}` when
+/// the closure is absent, ambiguous, skewed, cyclic or over its bounds.
+///
+/// # Errors
+///
+/// [`AbiError`] when `artifacts_json` is not a JSON array of decodable
+/// artifact envelopes.
+pub fn rule_closure_json(artifacts_json: &str, artifact_id: &str) -> Result<String, AbiError> {
+    let artifacts = parse_array("artifacts", artifacts_json)?;
+    let envelopes = decode_envelopes(&artifacts).map_err(|findings| {
+        invalid(
+            "artifacts",
+            findings
+                .iter()
+                .map(|finding| finding.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
+    })?;
+    Ok(match norn_checker::rule_closure(&envelopes, &[], artifact_id) {
+        Ok(closure) => json!({
+            "resolved": true,
+            "closureDigest": closure.digest,
+            "subDecisions": closure
+                .sub_decisions
+                .iter()
+                .map(|(key, artifact)| {
+                    (
+                        (*key).to_owned(),
+                        json!({ "artifactId": artifact.artifact_id, "version": artifact.version }),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>(),
+        }),
+        Err(refusal) => json!({ "resolved": false, "refusal": refusal.to_string() }),
+    }
+    .to_string())
+}
+
 /// The ABI and the formats and profiles it speaks, as JSON:
 /// `{"abi", "crateVersion", "checkerVersion", "diagnosticsFormat",
 /// "receiptFormat", "exprProfile"}`.
@@ -1071,4 +1272,119 @@ fn explain_sources(
                 .map(|prepared| prepared.artifact)
         })
         .collect()
+}
+
+/// Format tag of [`admit_question_json`] output.
+pub const QUESTION_FORMAT: &str = "norn-checker-abi/question@1";
+
+/// Admit a proposed question against a world: `artifacts_json` is the world's
+/// entity envelopes (the catalog), `metrics_json` its metric definitions and
+/// `question_json` one `QuestionIR`. Runs `check_metrics_and_questions` and
+/// `metric::compute::admit` (the same admission the cell uses) and returns
+/// `{"format", "admitted", "diagnostics", "plan"}`. The artifact set is
+/// checked first (`check_artifact_set`, as one installed layer); its error
+/// findings refuse the question. `plan` is the checked question with its
+/// grain, the sums it reduces to and the full metric declarations used; it is
+/// `null` when refused. Nothing is evaluated: admission is not a result.
+///
+/// # Errors
+///
+/// [`AbiError`] when an argument is not JSON of the expected shape.
+pub fn admit_question_json(
+    artifacts_json: &str,
+    metrics_json: &str,
+    question_json: &str,
+) -> Result<String, AbiError> {
+    let artifacts = parse_array("artifacts", artifacts_json)?;
+    let refused = |findings: &[Diagnostic]| {
+        json!({ "format": QUESTION_FORMAT, "admitted": false, "diagnostics": diagnostics_to_json(findings), "plan": null }).to_string()
+    };
+    let envelopes = match decode_envelopes(&artifacts) {
+        Ok(envelopes) => envelopes,
+        Err(findings) => return Ok(refused(&findings)),
+    };
+    let metrics: Vec<norn_ir::MetricDefinition> = serde_json::from_str(metrics_json)
+        .map_err(|error| invalid("metrics", error.to_string()))?;
+    let question: norn_ir::QuestionIR = serde_json::from_str(question_json)
+        .map_err(|error| invalid("question", error.to_string()))?;
+    // The world is one installed layer: no base, no tenant, no registry refs.
+    // A malformed catalog is refused before any question is admitted over it.
+    let registry = BTreeSet::new();
+    let set_findings = check_artifact_set(
+        &envelopes,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    if has_errors(&set_findings) {
+        return Ok(refused(&set_findings));
+    }
+    let catalog = norn_checker::EffectiveCatalog::from_artifacts(&envelopes);
+    // The cell's bound for one question's population (norn-cell-do analytics).
+    match norn_checker::metric::compute::admit(&metrics, &question, &catalog, 100) {
+        Err(findings) => Ok(refused(&findings)),
+        Ok(plan) => {
+            let output = json!({
+                "format": QUESTION_FORMAT,
+                "admitted": true,
+                "diagnostics": diagnostics_to_json(&[]),
+                "plan": {
+                    "grain": plan.grain(),
+                    "question": plan.question(),
+                    "sums": plan.sums().iter().map(|sum| json!({ "metric": sum.name, "property": sum.property.id })).collect::<Vec<_>>(),
+                    "metrics": plan.definitions(),
+                },
+            });
+            Ok(output.to_string())
+        }
+    }
+}
+
+fn metric_declarations(metrics_json: &str) -> Result<Vec<norn_ir::MetricDefinition>, AbiError> {
+    serde_json::from_str(metrics_json).map_err(|error| invalid("metrics", error.to_string()))
+}
+
+fn restatement_document(text: &str) -> String {
+    let sha256 = norn_checker::metric::restate::restatement_sha256(text);
+    json!({ "format": RESTATEMENT_FORMAT, "text": text, "sha256": sha256 }).to_string()
+}
+
+/// A question in plain words, for sign-off
+/// (`norn_checker::metric::restate::restate_question`).
+///
+/// `question_json` is a `QuestionIR`; `metrics_json` is the array of metric
+/// declarations it is read with. Returns `{"format", "text", "sha256"}`,
+/// `sha256` being lower-case hex SHA-256 of the text's UTF-8 bytes.
+///
+/// # Errors
+///
+/// Invalid JSON, or a question that cannot be restated (an undeclared or
+/// inline metric, a malformed timestamp).
+pub fn restate_question_json(question_json: &str, metrics_json: &str) -> Result<String, AbiError> {
+    let question: norn_ir::QuestionIR = serde_json::from_str(question_json)
+        .map_err(|error| invalid("question", error.to_string()))?;
+    let metrics = metric_declarations(metrics_json)?;
+    let text = norn_checker::metric::restate::restate_question(&question, &metrics)
+        .map_err(|error| invalid("question", error.to_string()))?;
+    Ok(restatement_document(&text))
+}
+
+/// A dashboard in plain words, for sign-off
+/// (`norn_checker::metric::restate::restate_dashboard`): its title, then one
+/// numbered line per tile.
+///
+/// `payload_json` is the dashboard definition's payload; `metrics_json` as
+/// for [`restate_question_json`]. Returns `{"format", "text", "sha256"}`.
+///
+/// # Errors
+///
+/// Invalid JSON, a payload of another shape, or an undeclared metric.
+pub fn restate_dashboard_json(payload_json: &str, metrics_json: &str) -> Result<String, AbiError> {
+    let payload = parse_json("payload", payload_json)?;
+    let metrics = metric_declarations(metrics_json)?;
+    let text = norn_checker::metric::restate::restate_dashboard(&payload, &metrics)
+        .map_err(|error| invalid("payload", error.to_string()))?;
+    Ok(restatement_document(&text))
 }

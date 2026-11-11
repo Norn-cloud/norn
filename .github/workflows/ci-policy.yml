@@ -27,16 +27,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   core:
+    # Boat: merge groups, and same-repository pull requests whose author, actor and
+    # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
+    # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
-        if: ${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}
+        if: ${{ runner.environment == 'github-hosted' }}
         run: |
           set -euo pipefail
           minimum=$((12 * 1024 * 1024))
@@ -117,7 +120,7 @@ jobs:
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
       PLAN: ${{ needs.plan.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false
@@ -167,7 +170,7 @@ jobs:
         with:
           path: ~/.cache/norn-interop
           key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
-      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
           tool: nextest@0.9.150
       - run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
@@ -212,6 +215,10 @@ jobs:
           ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   trusted-policy:
+    # Comment runs attach their job checks to the default branch. Keep the
+    # PR-target job check distinct from the head-bound commit status below,
+    # so cancelling it cannot leave a second required check cancelled (#127).
+    name: trusted-policy evaluation
     # Write access serves only the last step, which removes a failing pull
     # request from the merge queue. No step runs candidate code.
     permissions:
@@ -267,8 +274,8 @@ jobs:
           path: candidate
           persist-credentials: false
       # Workflow and gate changes need a same-repository head and an unedited
-      # `/approve-gates <head sha>` comment from an admin; re-run this job after
-      # commenting. Without this evidence such changes fail closed; data-only PRs
+      # `/approve-gates <head sha>` comment from an admin; comment events re-evaluate it.
+      # Without this evidence such changes fail closed; data-only PRs
       # never need it.
       - name: Record admin approvals of the exact PR head
         continue-on-error: true

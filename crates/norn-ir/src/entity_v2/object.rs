@@ -52,7 +52,7 @@ use super::invariant::Invariant;
 use super::lifecycle::Lifecycle;
 use super::link::{Link, LinkId};
 use super::naming_series::NamingSeriesIR;
-use super::property::{PROPERTY_TYPE_NAME_PATTERN, PropertyConstraints, PropertyType};
+use super::property::{PROPERTY_TYPE_NAME_PATTERN, PropertyConstraints, PropertyType, is_false};
 use super::status::ResourceStatus;
 use crate::members::{WholeNumber, present_non_null};
 use crate::posting::AccountingLegDeclaration;
@@ -144,6 +144,9 @@ impl KeyName {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ObjectTypeDef {
+    /// FA-IMM-1: existing instances are append-only; subtypes inherit this flag.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub immutable: bool,
     /// Unique name, across object types and interfaces, within the artifact
     /// set and against every installed base type.
     pub name: ObjectTypeName,
@@ -239,6 +242,9 @@ pub struct OwnedChildCollection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Property {
+    /// FA-PROTECT-1: only sealed rule outputs may write this inherited field.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub protected: bool,
     /// Unique id within the object type.
     pub id: PropertyId,
     #[serde(

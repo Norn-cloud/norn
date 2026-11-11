@@ -1,0 +1,30 @@
+---
+surface: studio/canvas
+---
+
+# Canvas
+
+The builder canvas: one editing frame shared by every graph kind (lifecycles today, automations next),
+so each verb (add, edit, delete, duplicate, reconnect, undo, save a draft, reopen, see errors) exists
+once and everywhere. This sheet shows every state of the canvas components, rendered by Studio's own
+build from the real components (`apps/studio/sheet.html?state=<id>`), so tokens and spacing are the app's.
+
+Open: server save is disabled until the admission route is live; its specimen is the disabled
+"Save to server" button with its reason, in `frame/default`.
+
+import { DesignGraph } from "@atlas/design-graph";
+import { SHEET } from "./src/sheet-states.ts";
+
+export const graph = [...new Set(SHEET.map(({ component }) => component))].map((component) => ({
+  component,
+  flow: "builder",
+  surface: "studio/canvas",
+  states: SHEET.filter((state) => state.component === component).map(({ id, note }) => ({
+    id,
+    note,
+    src: `${import.meta.env?.ATLAS_STUDIO_URL ?? "http://localhost:4173"}/sheet.html?state=${encodeURIComponent(id)}`,
+    frame: component === "StateBox" ? "inline" : "desktop",
+  })),
+}));
+
+<DesignGraph graph={graph} title="Canvas: state matrix" />
