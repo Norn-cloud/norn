@@ -476,18 +476,13 @@ vector_pattern='ExactArithVectors.lean:[0-9]*:[0-9]*: error: Tactic `native_deci
 lean_check "$baseline" "$result/vectors" ExactArithVectors
 echo "exact-arith: production fragments proved against the written semantics"
 
-# Mutants are applied to a hard-linked copy of the workspace; the edited file is
-# replaced, never written through, so the checkout is untouched.
-tree="$result/mutants/tree"
-mkdir -p "$tree"
-cp "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$tree/"
-cp -al "$repo_root/crates" "$repo_root/vendor" "$repo_root/third_party" "$tree/"
-if [[ -d "$repo_root/.cargo" ]]; then cp -al "$repo_root/.cargo" "$tree/"; fi
-python3 - "$tree" "$result/mutants" <<'PYMUTANTS' > "$result/mutants/list"
+# Each mutant is staged from the checkout's sources; the checkout is untouched.
+mkdir -p "$result/mutants"
+python3 - "$repo_root" "$result/mutants" <<'PYMUTANTS' > "$result/mutants/list"
 import sys
 from pathlib import Path
 
-tree, root = Path(sys.argv[1]), Path(sys.argv[2])
+source_root, root = Path(sys.argv[1]), Path(sys.argv[2])
 scaled = "vendor/zen/core/expression/src/scaled.rs"
 decimal = "crates/norn-checker/src/quantity_ledger/decimal.rs"
 rational = "crates/norn-checker/src/exact_rational.rs"
@@ -547,51 +542,108 @@ mutants = [
      "let exponent = i64::from(profile.scale) + i64::from(b.scale()) - i64::from(a.scale());",
      "let exponent = i64::from(profile.scale) + i64::from(a.scale()) - i64::from(b.scale());"),
 ]
-for name, path, old, new in mutants:
-    source = (tree / path).read_text(encoding="utf-8")
+for index, (name, path, old, new) in enumerate(mutants):
+    source = (source_root / path).read_text(encoding="utf-8")
     if source.count(old) != 1:
         raise SystemExit(f"{name}: mutation site not found exactly once")
     staged = root / name / Path(path).name
     staged.parent.mkdir(parents=True)
     staged.write_text(source.replace(old, new), encoding="utf-8")
-    print(name, path)
+    print(index, name, path)
 PYMUTANTS
-survivors=0
-while read -r name path; do
-  pristine="$result/mutants/$name.pristine"
-  cp "$tree/$path" "$pristine"
+# Mutants are independent, so they run in parallel on this machine's cores. Each
+# worker has its own hard-linked copy of the workspace (the edited file is
+# replaced, never written through) and its own cargo target directory, seeded
+# from the baseline's. Elaborating the proofs dominates a mutant's time and
+# needs about 2 GiB, so the default is min(cores, available GiB / 2).
+jobs="${NORN_EXACT_ARITH_JOBS:-$(python3 -c '
+import os
+mem = next(int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith("MemAvailable:"))
+print(max(1, min(len(os.sched_getaffinity(0)), mem // (2 * 1024 * 1024))))')}"
+
+# run_mutant <tree> <name> <path>: extract, prove and run the vectors on one
+# mutant; the verdict file records the outcome for the report below.
+run_mutant() {
+  local tree="$1" name="$2" path="$3" dir="$result/mutants/$2" module unproved=false
+  local started=$SECONDS
+  cp "$tree/$path" "$dir.pristine"
   rm "$tree/$path"
-  cp "$result/mutants/$name/$(basename "$path")" "$tree/$path"
-  out="$result/mutants/$name/out"
+  cp "$dir/$(basename "$path")" "$tree/$path"
   # A mutant must extract and its code must elaborate: only the proof may fail.
-  if ! extract "$tree" "$out" > "$result/mutants/$name/extract.log" 2>&1 ||
-    ! generated "$out" >> "$result/mutants/$name/extract.log" 2>&1; then
-    tail -n 40 "$result/mutants/$name/extract.log" >&2
-    echo "mutant $name: did not extract and elaborate; it cannot test the proof" >&2
-    exit 1
-  fi
-  unproved=false
-  for module in DecimalProof LedgerProof QuotientProof RationalProof ScaledProof; do
-    if ! lean_check "$out" "$proof_root" "$module" > "$result/mutants/$name/$module.log" 2>&1; then
-      unproved=true
-    fi
-  done
-  # Detected means refuted, not merely unproved: a vector must evaluate false.
-  # Expected to fail on a mutant; the log is inspected below.
-  lean_check "$out" "$result/vectors" ExactArithVectors > "$result/mutants/$name/vectors.log" 2>&1 ||
-    true
-  rm "$tree/$path"
-  cp "$pristine" "$tree/$path"
-  if ! $unproved; then
-    echo "mutant $name: proof still holds (survived)" >&2
-    survivors=$((survivors + 1))
-  elif grep -q "$vector_pattern" "$result/mutants/$name/vectors.log"; then
-    echo "mutant $name: refuted by $(grep -o "$vector_pattern" "$result/mutants/$name/vectors.log" | wc -l) vector(s)"
+  if ! extract "$tree" "$dir/out" > "$dir/extract.log" 2>&1 ||
+    ! generated "$dir/out" >> "$dir/extract.log" 2>&1; then
+    echo unextracted > "$dir/verdict"
   else
-    tail -n 20 "$result/mutants/$name/vectors.log" >&2
-    echo "mutant $name: unproved but not refuted by any vector" >&2
-    survivors=$((survivors + 1))
+    for module in DecimalProof LedgerProof QuotientProof RationalProof ScaledProof; do
+      if ! lean_check "$dir/out" "$proof_root" "$module" > "$dir/$module.log" 2>&1; then
+        unproved=true
+      fi
+    done
+    # Detected means refuted, not merely unproved: a vector must evaluate false.
+    # Expected to fail on a mutant; the log is inspected below.
+    lean_check "$dir/out" "$result/vectors" ExactArithVectors > "$dir/vectors.log" 2>&1 || true
+    if ! $unproved; then
+      echo survived > "$dir/verdict"
+    elif grep -q "$vector_pattern" "$dir/vectors.log"; then
+      echo "refuted $(grep -o "$vector_pattern" "$dir/vectors.log" | wc -l)" > "$dir/verdict"
+    else
+      echo unrefuted > "$dir/verdict"
+    fi
   fi
+  rm "$tree/$path"
+  cp "$dir.pristine" "$tree/$path"
+  echo $((SECONDS - started)) > "$dir/seconds"
+}
+
+# mutant_worker <k>: run every mutant whose index is k modulo $jobs.
+mutant_worker() {
+  local worker="$1" tree="$result/mutants/worker$1/tree" index name path
+  mkdir -p "$tree"
+  cp "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$tree/"
+  cp -al "$repo_root/crates" "$repo_root/vendor" "$repo_root/third_party" "$tree/"
+  if [[ -d "$repo_root/.cargo" ]]; then cp -al "$repo_root/.cargo" "$tree/"; fi
+  # A copy, not hard links: rustc rewrites its outputs in place.
+  cp -a "$result/target" "$result/mutants/worker$worker/target"
+  export CARGO_TARGET_DIR="$result/mutants/worker$worker/target"
+  while read -r index name path; do
+    if (( index % jobs == worker )); then
+      run_mutant "$tree" "$name" "$path" < /dev/null
+    fi
+  done < "$result/mutants/list"
+}
+
+mutant_started=$SECONDS
+workers=()
+for ((worker = 0; worker < jobs; worker++)); do
+  mutant_worker "$worker" > "$result/mutants/worker$worker.log" 2>&1 &
+  workers+=("$!")
+done
+for pid in "${workers[@]}"; do
+  wait "$pid" || true
+done
+survivors=0
+while read -r index name path; do
+  dir="$result/mutants/$name"
+  verdict="$(cat "$dir/verdict" 2> /dev/null || echo missing)"
+  case "$verdict" in
+    refuted*) echo "mutant $name: refuted by ${verdict#refuted } vector(s) in $(cat "$dir/seconds")s" ;;
+    unextracted)
+      tail -n 40 "$dir/extract.log" >&2
+      echo "mutant $name: did not extract and elaborate; it cannot test the proof" >&2
+      exit 1 ;;
+    survived)
+      echo "mutant $name: proof still holds (survived)" >&2
+      survivors=$((survivors + 1)) ;;
+    unrefuted)
+      tail -n 20 "$dir/vectors.log" >&2
+      echo "mutant $name: unproved but not refuted by any vector" >&2
+      survivors=$((survivors + 1)) ;;
+    *)
+      tail -n 40 "$result/mutants/worker$((index % jobs)).log" >&2
+      echo "mutant $name: its worker stopped before a verdict" >&2
+      exit 1 ;;
+  esac
 done < "$result/mutants/list"
 test "$survivors" -eq 0
+echo "exact-arith: $(wc -l < "$result/mutants/list") mutants in $((SECONDS - mutant_started))s on $jobs worker(s)"
 echo "exact-arith: every seeded rounding and overflow mutant is refuted"
