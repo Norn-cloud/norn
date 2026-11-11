@@ -1,0 +1,7 @@
+{
+  "code": "law.exception.two_homes",
+  "message": "a rule declares exceptions on itself and on its embedded law; declare them in one place",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

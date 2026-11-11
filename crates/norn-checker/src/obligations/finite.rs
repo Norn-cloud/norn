@@ -413,11 +413,12 @@ fn lower(
     )?;
     demand(
         law.timing.is_none()
+            && law.exceptions.is_empty()
             && law.scope.object_types == [subject]
             && law.scope.lifecycle_states.is_empty()
             && law.scope.commitments.is_empty()
             && matches!(&law.scope.root, norn_ir::LawRoot::Entity(s) if s == subject),
-        "unsupported law scope or timing",
+        "unsupported law scope, timing or exceptions",
     )?;
     let norn_ir::LawResponse::Predicate {
         expression: predicate,

@@ -10,6 +10,147 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/actions/{actionId}": {
+      "post": {
+        "tags": [
+          "crate::actions"
+        ],
+        "summary": "Call one admitted action as the verified caller: it commits, or an\nidentical earlier call replays with its original receipt.\n# Errors\nOne opaque 403, decided before any storage read, for a missing or\nunverified caller, a denied policy, a foreign scope or an unknown action;\nthe same opaque 403 for every visibility or permission refusal the kernel\ndecides (an invisible or absent target, a denied policy decision);\n409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed\nrefusal, its detail disclosed only under an explicit diagnostic grant. A\nrefusal commits nothing.",
+        "operationId": "call_action",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "The definitions version the caller read the action from. A different\nactive version refuses `defs.stale` (409); absent calls the active one.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "description": "The admitted action identity.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The call committed, or replayed an identical earlier call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: a stale pin or a conflicting retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: the body exceeds the host bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused: a law or precondition does not hold.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request was refused: a declared limit was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/definitions/{id}": {
       "get": {
         "tags": [
@@ -993,6 +1134,94 @@
   },
   "components": {
     "schemas": {
+      "ActionCallOutcome": {
+        "type": "string",
+        "description": "Whether this call committed now or replayed an earlier identical call.",
+        "enum": [
+          "committed",
+          "replayed"
+        ]
+      },
+      "ActionCommit": {
+        "type": "object",
+        "description": "The commit that carried the call.",
+        "required": [
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit's ledger position.",
+            "minimum": 0
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt hash for a reader with Values over the whole cell, else\nits keyed handle (D53): the raw hash chains every earlier event."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit's logical time (Unix milliseconds).",
+            "minimum": 0
+          }
+        }
+      },
+      "ActionReceipt": {
+        "type": "object",
+        "description": "A committed or replayed call: the target and the commit that wrote it.",
+        "required": [
+          "outcome",
+          "objectType",
+          "objectId",
+          "version",
+          "receipt"
+        ],
+        "properties": {
+          "objectId": {
+            "type": "string",
+            "description": "The target's id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The target's concrete object type."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ActionCallOutcome",
+            "description": "Committed now, or replayed."
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/ActionCommit",
+            "description": "The original commit, the same on every replay."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The target's version as the original commit wrote it.",
+            "minimum": 0
+          }
+        }
+      },
+      "ActionRequest": {
+        "type": "object",
+        "description": "`POST /v1/actions/{actionId}`: one call. The actor never travels in the body.",
+        "required": [
+          "input",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes."
+          },
+          "input": {
+            "$ref": "#/components/schemas/NornActionInput"
+          }
+        },
+        "additionalProperties": false
+      },
       "AdHocTraceRequest": {
         "type": "object",
         "description": "`POST /v1/questions:trace`: one bucket of an ad-hoc question's answer.",
@@ -1527,6 +1756,7 @@
       "NornActionInput": {
         "type": "object",
         "title": "Map_of_RuntimeValue",
+        "description": "Action business arguments as exact JSON values. A field declared `nornType: decimal` travels as its exact decimal text (`\"12.500\"`, VAL-EXACT-1); a number token there refuses `action.invalid_input`. Other number tokens keep their digits exactly.",
         "additionalProperties": {
           "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
         }
@@ -10447,6 +10677,40 @@
         },
         "additionalProperties": false
       },
+      "NornIrLawException": {
+        "type": "object",
+        "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+        "required": [
+          "id",
+          "overrides",
+          "condition",
+          "rationale",
+          "source"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Boolean ZEN predicate over the law subject's `self` environment."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, unique within the tree and distinct from the law id."
+          },
+          "overrides": {
+            "type": "string",
+            "description": "The law's own id, or the id of another exception in the same tree."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan",
+            "description": "Source location of the declaration."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLawInterpretationIr": {
         "type": "object",
         "description": "Typed interpretation contract. Admission refuses until conformance exists.",
@@ -10601,6 +10865,14 @@
           "condition": {
             "type": "string",
             "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLawException"
+            },
+            "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+            "minItems": 1
           },
           "id": {
             "type": "string",
@@ -15301,7 +15573,7 @@
           "exceptions": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/NornIrRequirementRuleException"
+              "$ref": "#/components/schemas/NornIrRequirementLawException"
             }
           },
           "law": {
@@ -15323,6 +15595,40 @@
           "0.1"
         ]
       },
+      "NornIrRequirementLawException": {
+        "type": "object",
+        "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+        "required": [
+          "id",
+          "overrides",
+          "condition",
+          "rationale",
+          "source"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Boolean ZEN predicate over the law subject's `self` environment."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, unique within the tree and distinct from the law id."
+          },
+          "overrides": {
+            "type": "string",
+            "description": "The law's own id, or the id of another exception in the same tree."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRequirementRuleSourceSpan",
+            "description": "Source location of the declaration."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementLawIR": {
         "type": "object",
         "description": "One protected law; its predicates use the subject's `self` environment.",
@@ -15342,6 +15648,14 @@
           "condition": {
             "type": "string",
             "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrRequirementLawException"
+            },
+            "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+            "minItems": 1
           },
           "id": {
             "type": "string",
@@ -16095,27 +16409,6 @@
         },
         "additionalProperties": false
       },
-      "NornIrRequirementRuleException": {
-        "type": "object",
-        "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
-        "required": [
-          "id",
-          "condition",
-          "source"
-        ],
-        "properties": {
-          "condition": {
-            "$ref": "#/components/schemas/NornIrRequirementZenExpression"
-          },
-          "id": {
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/NornIrRequirementRuleSourceSpan"
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrRequirementRuleSourceSpan": {
         "type": "object",
         "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
@@ -16580,6 +16873,26 @@
           "half_even",
           "half_away_from_zero"
         ]
+      },
+      "NornIrRuleByteRange": {
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "start": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRuleConditionV1": {
         "oneOf": [
@@ -17146,6 +17459,33 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
+      },
+      "NornIrRuleSourceSpan": {
+        "type": "object",
+        "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+        "required": [
+          "artifactId",
+          "pointer"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "bytes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRuleByteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRuleTrigger": {
         "oneOf": [

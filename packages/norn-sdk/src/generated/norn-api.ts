@@ -4,6 +4,34 @@
  */
 
 export interface paths {
+    "/v1/actions/{actionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Call one admitted action as the verified caller: it commits, or an
+         *     identical earlier call replays with its original receipt.
+         *     # Errors
+         *     One opaque 403, decided before any storage read, for a missing or
+         *     unverified caller, a denied policy, a foreign scope or an unknown action;
+         *     the same opaque 403 for every visibility or permission refusal the kernel
+         *     decides (an invisible or absent target, a denied policy decision);
+         *     409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
+         *     refusal, its detail disclosed only under an explicit diagnostic grant. A
+         *     refusal commits nothing.
+         */
+        post: operations["call_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/definitions/{id}": {
         parameters: {
             query?: never;
@@ -213,6 +241,51 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Whether this call committed now or replayed an earlier identical call.
+         * @enum {string}
+         */
+        ActionCallOutcome: "committed" | "replayed";
+        /** @description The commit that carried the call. */
+        ActionCommit: {
+            /**
+             * Format: int64
+             * @description The commit's ledger position.
+             */
+            commitSeq: number;
+            /**
+             * @description The receipt hash for a reader with Values over the whole cell, else
+             *     its keyed handle (D53): the raw hash chains every earlier event.
+             */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description The commit's logical time (Unix milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /** @description A committed or replayed call: the target and the commit that wrote it. */
+        ActionReceipt: {
+            /** @description The target's id. */
+            objectId: string;
+            /** @description The target's concrete object type. */
+            objectType: string;
+            /** @description Committed now, or replayed. */
+            outcome: components["schemas"]["ActionCallOutcome"];
+            /** @description The original commit, the same on every replay. */
+            receipt: components["schemas"]["ActionCommit"];
+            /**
+             * Format: int64
+             * @description The target's version as the original commit wrote it.
+             */
+            version: number;
+        };
+        /** @description `POST /v1/actions/{actionId}`: one call. The actor never travels in the body. */
+        ActionRequest: {
+            /** @description The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes. */
+            idempotencyKey: string;
+            input: components["schemas"]["NornActionInput"];
+        };
         /** @description `POST /v1/questions:trace`: one bucket of an ad-hoc question's answer. */
         AdHocTraceRequest: {
             /** @description Canonical bucket key from that answer. */
@@ -455,7 +528,10 @@ export interface components {
             /** @description The object type. */
             objectType: string;
         };
-        /** Map_of_RuntimeValue */
+        /**
+         * Map_of_RuntimeValue
+         * @description Action business arguments as exact JSON values. A field declared `nornType: decimal` travels as its exact decimal text (`"12.500"`, VAL-EXACT-1); a number token there refuses `action.invalid_input`. Other number tokens keep their digits exactly.
+         */
         NornActionInput: {
             [key: string]: unknown;
         };
@@ -3902,6 +3978,23 @@ export interface components {
              */
             rule?: components["schemas"]["NornIrIdentityRule"];
         };
+        /**
+         * @description One declared exception. When its condition holds and no exception that
+         *     overrides it applies, the node it overrides does not apply. It has no other
+         *     consequence: lifting is its only effect.
+         */
+        NornIrLawException: {
+            /** @description Boolean ZEN predicate over the law subject's `self` environment. */
+            condition: string;
+            /** @description Stable identity, unique within the tree and distinct from the law id. */
+            id: string;
+            /** @description The law's own id, or the id of another exception in the same tree. */
+            overrides: string;
+            /** @description Reviewed explanation. */
+            rationale: string;
+            /** @description Source location of the declaration. */
+            source: components["schemas"]["NornIrRuleSourceSpan"];
+        };
         /** @description Typed interpretation contract. Admission refuses until conformance exists. */
         NornIrLawInterpretationIr: {
             /**
@@ -3952,6 +4045,12 @@ export interface components {
         NornIrLawPayload: {
             /** @description Optional pointwise activation predicate (not an edge trigger). */
             condition?: string;
+            /**
+             * @description The law owner's declared exception tree. Omitted when empty, and an
+             *     explicit `[]` is refused, so a law without exceptions has exactly one
+             *     encoding and keeps its canonical bytes and pin.
+             */
+            exceptions?: components["schemas"]["NornIrLawException"][];
             /** @description Stable identity, preserved by all authoring faces. */
             id: string;
             /**
@@ -5946,7 +6045,7 @@ export interface components {
             authorityVersion: string;
             /** @description Explicit rule identities preferred to this rule; not numeric authority ranking. */
             defeatedBy?: string[];
-            exceptions?: components["schemas"]["NornIrRequirementRuleException"][];
+            exceptions?: components["schemas"]["NornIrRequirementLawException"][];
             law: components["schemas"]["NornIrRequirementLawIR"];
             modality: components["schemas"]["NornIrRequirementDeonticModality"];
             source: components["schemas"]["NornIrRequirementRuleSourceSpan"];
@@ -5957,10 +6056,33 @@ export interface components {
          * @enum {string}
          */
         NornIrRequirementIrVersion01: "0.1";
+        /**
+         * @description One declared exception. When its condition holds and no exception that
+         *     overrides it applies, the node it overrides does not apply. It has no other
+         *     consequence: lifting is its only effect.
+         */
+        NornIrRequirementLawException: {
+            /** @description Boolean ZEN predicate over the law subject's `self` environment. */
+            condition: string;
+            /** @description Stable identity, unique within the tree and distinct from the law id. */
+            id: string;
+            /** @description The law's own id, or the id of another exception in the same tree. */
+            overrides: string;
+            /** @description Reviewed explanation. */
+            rationale: string;
+            /** @description Source location of the declaration. */
+            source: components["schemas"]["NornIrRequirementRuleSourceSpan"];
+        };
         /** @description One protected law; its predicates use the subject's `self` environment. */
         NornIrRequirementLawIR: {
             /** @description Optional pointwise activation predicate (not an edge trigger). */
             condition?: string;
+            /**
+             * @description The law owner's declared exception tree. Omitted when empty, and an
+             *     explicit `[]` is refused, so a law without exceptions has exactly one
+             *     encoding and keeps its canonical bytes and pin.
+             */
+            exceptions?: components["schemas"]["NornIrRequirementLawException"][];
             /** @description Stable identity, preserved by all authoring faces. */
             id: string;
             /**
@@ -6171,12 +6293,6 @@ export interface components {
             /** Format: uint32 */
             start: number;
         };
-        /** @description A reviewed conditional exception. No implicit necessity or legal judgement. */
-        NornIrRequirementRuleException: {
-            condition: components["schemas"]["NornIrRequirementZenExpression"];
-            id: string;
-            source: components["schemas"]["NornIrRequirementRuleSourceSpan"];
-        };
         /** @description Source JSON pointer plus an optional half-open UTF-8 byte range. */
         NornIrRequirementRuleSourceSpan: {
             artifactId: string;
@@ -6356,6 +6472,12 @@ export interface components {
          * @enum {string}
          */
         NornIrRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
+        NornIrRuleByteRange: {
+            /** Format: uint32 */
+            end: number;
+            /** Format: uint32 */
+            start: number;
+        };
         /**
          * @description RuleIR v1 closed-operator condition, mirroring the conditions the
          *     `norn-engine` closed evaluator runs (`RuleCondition`).
@@ -6527,6 +6649,12 @@ export interface components {
         /** @description Source fields whose values are derived from the decide input. */
         NornIrRuleSourceCommandPropertyFields: {
             [key: string]: components["schemas"]["NornIrZenExpression"];
+        };
+        /** @description Source JSON pointer plus an optional half-open UTF-8 byte range. */
+        NornIrRuleSourceSpan: {
+            artifactId: string;
+            bytes?: components["schemas"]["NornIrRuleByteRange"] | null;
+            pointer: string;
         };
         /** @description A committed ledger event that triggers a `decide` rule (T3-DEC-3, #2671). */
         NornIrRuleTrigger: components["schemas"]["NornIrRuleTriggerOneOf0"] | components["schemas"]["NornIrRuleTriggerOneOf1"] | components["schemas"]["NornIrRuleTriggerOneOf2"] | components["schemas"]["NornIrRuleTriggerOneOf3"] | components["schemas"]["NornIrRuleTriggerOneOf4"];
@@ -8520,6 +8648,106 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    call_action: {
+        parameters: {
+            query: {
+                /** @description Organization, matched against physical scope. */
+                orgId: string;
+                /** @description Environment, matched against physical scope. */
+                environmentId: string;
+                /**
+                 * @description The definitions version the caller read the action from. A different
+                 *     active version refuses `defs.stale` (409); absent calls the active one.
+                 */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                /** @description The admitted action identity. */
+                actionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActionRequest"];
+            };
+        };
+        responses: {
+            /** @description The call committed, or replayed an identical earlier call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionReceipt"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: a stale pin or a conflicting retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the body exceeds the host bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: a law or precondition does not hold. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: a declared limit was exceeded. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     get_definition: {
         parameters: {
             query: {

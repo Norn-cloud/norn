@@ -1,0 +1,7 @@
+{
+  "code": "law.exception.unsupported_response",
+  "message": "law response cannot be lifted by an exception",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
