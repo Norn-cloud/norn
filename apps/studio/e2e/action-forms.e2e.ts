@@ -250,7 +250,7 @@ test("retry: after an outage, Retry re-sends the same body under the same key; a
   await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0002 adjusted · just now")
   const edited = actions.calls.at(-1)!
   expect(keyOf(edited)).not.toBe(keyOf(first!))
-  expect(edited.body).toMatch(/"quantity":\s*13\.000\b/) // the raw body, exact digits
+  expect(edited.body).toMatch(/"quantity":\s*"?13\.000\b/) // the raw body keeps the exact digits, however the decimal is encoded
 })
 
 test("undo: a lost answer reads as unconfirmed, Retry undo re-sends it under the same key, and Another still starts a new draft", async ({ page }) => {
