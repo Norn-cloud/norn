@@ -359,7 +359,7 @@ proptest! {
         let covers = overlay_tag.eq_ignore_ascii_case("ar");
         let findings = missing_label_findings(&[candidate], &[invoice(), installed]);
         let expected: Vec<String> = invoice_targets().iter().zip(upstream.iter().zip(&overlay))
-            .filter(|(_, (up, over))| !**up && !(covers && **over)).map(|(target, _)| target_key(target)).collect();
+            .filter(|(_, (up, over))| !(**up || (covers && **over))).map(|(target, _)| target_key(target)).collect();
         let mut expected_sorted = expected.clone();
         expected_sorted.sort();
         if expected.is_empty() {
