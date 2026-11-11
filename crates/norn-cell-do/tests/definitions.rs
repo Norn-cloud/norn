@@ -684,6 +684,41 @@ fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_
 }
 
 #[test]
+fn the_checker_restatement_signs_off_saved_questions_and_dashboards() {
+    // The worker's generator: the checker's words, which Studio also shows.
+    let cell = cell(
+        DefinitionKinds::default().with_restater(norn_api::definition_routes::checker_restatement),
+    );
+    let admit = |kind: &str, payload: Value| {
+        let (status, admitted) = post(
+            &cell,
+            "/v1/definitions:admit",
+            ADMIN,
+            &json!({ "kind": kind, "payload": payload }),
+        );
+        assert_eq!(status, 200, "{admitted}");
+        assert_eq!(admitted["admitted"], json!(true), "{admitted}");
+        let words = admitted["restatement"].as_str().unwrap().to_owned();
+        assert_eq!(admitted["restatementSha256"], json!(sha256(&words)));
+        words
+    };
+    let asked = admit("question", question());
+    let shown = admit("dashboard", dashboard("Signed"));
+    assert_eq!(shown, format!("Signed\n1. Yield by week: {asked}"));
+    for (kind, id, payload, words) in [
+        ("question", "studio.question.signed", question(), &asked),
+        ("dashboard", "studio.dashboard.signed", dashboard("Signed"), &shown),
+    ] {
+        let body = json!({
+            "kind": kind, "id": id, "payload": payload,
+            "signoff": { "restatementSha256": sha256(words) },
+        });
+        let (status, installed) = post(&cell, "/v1/definitions:install", ADMIN, &body);
+        assert_eq!(status, 200, "{installed}");
+    }
+}
+
+#[test]
 fn a_saved_question_is_a_bare_question_ir_admitted_as_a_tile_is() {
     let cell = cell(DefinitionKinds::default());
     let saved = |payload: &Value| {

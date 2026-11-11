@@ -200,6 +200,32 @@ pub struct DefinitionKinds {
 /// UTF-8 bytes.
 pub type Restater = fn(&str, &str, &[MetricDefinition]) -> Result<String, String>;
 
+/// The checker's restatement (`norn_checker::metric::restate`), the words
+/// Studio shows a signer: a saved question's `QuestionIR`, or a dashboard
+/// with one line per tile. Other kinds have none.
+///
+/// # Errors
+/// Another kind, or a payload the checker cannot restate.
+pub fn checker_restatement(
+    kind: &str,
+    canonical: &str,
+    metrics: &[MetricDefinition],
+) -> Result<String, String> {
+    use norn_checker::metric::restate::{restate_dashboard, restate_question};
+    match kind {
+        "question" => {
+            let question: QuestionIR =
+                serde_json::from_str(canonical).map_err(|error| error.to_string())?;
+            restate_question(&question, metrics).map_err(|error| error.to_string())
+        }
+        "dashboard" => {
+            let payload: Value = serde_json::from_str(canonical).map_err(|error| error.to_string())?;
+            restate_dashboard(&payload, metrics).map_err(|error| error.to_string())
+        }
+        other => Err(format!("{other} has no restatement")),
+    }
+}
+
 impl DefinitionKinds {
     /// Declare the roles a binding's `runRole` may name: the cell's own role
     /// table, never the request. Without any, every binding is refused.
