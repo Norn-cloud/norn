@@ -1210,7 +1210,7 @@
       "profile": "full",
       "command": "scripts/verify-semantics-lean.sh",
       "evidenceKind": "command",
-      "role": "supporting-check",
+      "role": "claim-evidence",
       "classifications": [
         {
           "subsystem": "assurance-certificates",
