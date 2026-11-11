@@ -18,6 +18,7 @@
 import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
 import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
+import type { Localized, MemberLabels } from "./labels.ts"
 
 // ------------------------------------------------------------ value kinds
 
@@ -156,7 +157,8 @@ export interface InvariantDecl {
   readonly message: string
 }
 
-interface TypeMetaBase {
+/** Labels ride on the definition and lower to a separate `labels` artifact (`./labels.ts`). */
+interface TypeMetaBase extends Localized, MemberLabels {
   readonly role?: "thing" | "happening"
   readonly dependencies?: ReadonlyArray<DependencyPin>
   readonly markings?: ReadonlyArray<string>
