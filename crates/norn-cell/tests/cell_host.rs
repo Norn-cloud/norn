@@ -705,21 +705,27 @@ fn cell_host_laws_hold_across_reopen_for_the_restricted_engine() {
     coverage.assert_covered(CELL_HOST_LABELS);
 }
 
+/// Cases for the reopening fault tests: every write reopens the file, so the
+/// fixed seed runs 16 cases; `PROPTEST_CASES` raises it for a soak.
+const FAULT_REOPEN_CASES: u32 = 16;
+
 /// Law 6 (D79 D step 1): commits and performs stay atomic when a write
 /// transaction crashes or hits an I/O error at any statement, and the file
-/// reopens to the model's state. 64 cases (swarm mode, faults armed).
+/// reopens to the model's state (swarm mode, faults armed).
 #[test]
 fn cell_host_laws_hold_under_injected_crashes() {
-    let coverage =
-        check_cell_host::<LawSqlite<true, FaultEngine<NativeEngine>>>(&Settings::new(file!()));
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<NativeEngine>>>(
+        &Settings::new(file!()).cases(FAULT_REOPEN_CASES),
+    );
     coverage.assert_covered(CELL_FAULT_LABELS);
     coverage.assert_covered(&["cell:fault.crash", "cell:fault.io_error"]);
 }
 
 #[test]
 fn cell_host_laws_hold_under_injected_crashes_for_the_restricted_engine() {
-    let coverage =
-        check_cell_host::<LawSqlite<true, FaultEngine<RestrictedEngine>>>(&Settings::new(file!()));
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<RestrictedEngine>>>(
+        &Settings::new(file!()).cases(FAULT_REOPEN_CASES),
+    );
     coverage.assert_covered(CELL_FAULT_LABELS);
     coverage.assert_covered(&["cell:fault.crash", "cell:fault.io_error"]);
 }
@@ -736,18 +742,21 @@ fn cell_host_laws_hold_under_injected_io_errors_without_reopen() {
 
 /// The crash law can fail: an engine that commits a faulted transaction lets
 /// a partial (or whole) write survive the crash, and the law machine finds a
-/// counterexample that arms a fault.
+/// counterexample that arms a fault. It only needs to be caught, not
+/// minimised, so shrinking is off.
 #[test]
 fn cell_host_mutant_committing_after_a_fault_is_caught() {
     let failure = run_cell_host::<LawSqlite<true, FaultEngine<CommitsAfterFault<NativeEngine>>>>(
-        &Settings::new(file!()).without_persistence(),
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(0),
     )
     .expect_err("an engine that commits a faulted transaction must fail the crash law");
     assert!(
         failure
             .transitions
             .iter()
-            .any(|op| matches!(op, CellOp::ArmFault(_))),
+            .any(|op| matches!(op, CellOp::Faulted(_))),
         "{failure}"
     );
     assert!(failure.reason.contains("swarm:"), "{failure}");

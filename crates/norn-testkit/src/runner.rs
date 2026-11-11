@@ -38,6 +38,7 @@ pub struct Settings {
     seed: u64,
     transitions: Range<usize>,
     persist: bool,
+    shrink_iters: Option<u32>,
 }
 
 impl Settings {
@@ -52,6 +53,7 @@ impl Settings {
             seed: DEFAULT_SEED,
             transitions: 1..32,
             persist: true,
+            shrink_iters: None,
         }
     }
 
@@ -84,6 +86,15 @@ impl Settings {
         self
     }
 
+    /// Caps shrinking at `iters` steps (0 disables it) when
+    /// `PROPTEST_MAX_SHRINK_ITERS` is unset. For mutant self-tests, which need
+    /// a counterexample, not a minimal one.
+    #[must_use]
+    pub const fn max_shrink_iters(mut self, iters: u32) -> Self {
+        self.shrink_iters = Some(iters);
+        self
+    }
+
     /// The configured range of sequence lengths.
     pub(crate) fn transition_range(&self) -> Range<usize> {
         self.transitions.clone()
@@ -98,6 +109,11 @@ impl Settings {
         }
         if std::env::var_os("PROPTEST_RNG_SEED").is_none() {
             config.rng_seed = RngSeed::Fixed(self.seed);
+        }
+        if let Some(iters) = self.shrink_iters
+            && std::env::var_os("PROPTEST_MAX_SHRINK_ITERS").is_none()
+        {
+            config.max_shrink_iters = iters;
         }
         config.source_file = Some(self.source_file);
         config.failure_persistence = if self.persist && config.failure_persistence.is_some() {

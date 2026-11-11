@@ -35,8 +35,8 @@
 //!    pending commands and timers, the next due timer, the next
 //!    observation, and the execution count equal the model's.
 //! 6. **Crash and I/O atomicity.** For a host that lists
-//!    [`SimulatedCell::FAULT_KINDS`], a generated [`CellOp::ArmFault`] fails
-//!    one write transaction of the next commit or perform ([`FaultPlan`]).
+//!    [`SimulatedCell::FAULT_KINDS`], a generated [`CellOp::Faulted`] fails
+//!    one write transaction of a commit or perform ([`FaultPlan`]).
 //!    A commit is one write transaction: faulted, it fails with a host error
 //!    and changes nothing observable (a refused commit may report its refusal
 //!    instead). A fresh perform is two: a faulted claim changes nothing and
@@ -984,14 +984,13 @@ pub enum FaultKind {
     IoError,
 }
 
-/// One storage fault, armed by [`CellOp::ArmFault`] for the next operation.
+/// One storage fault, armed for one operation ([`CellOp::Faulted`]).
 ///
 /// The fault fails statement `at_statement` (counting from 0) of the
 /// operation's write transaction `transaction` (counting from 0). A faulted
 /// transaction never commits: one that would commit with fewer statements
 /// fails at its commit point instead. An operation that runs fewer write
-/// transactions is not faulted. Only commits and performs are armed; the
-/// fault is dropped before any other operation.
+/// transactions is not faulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FaultPlan {
     /// What the fault does.
@@ -1014,7 +1013,7 @@ pub trait SimulatedCell:
     const COMMITS_PERFORM_CLAIMS: bool = false;
 
     /// The storage faults this host survives (none by default). When any are
-    /// listed, the law machine arms them ([`CellOp::ArmFault`]) and runs in
+    /// listed, the law machine arms them ([`CellOp::Faulted`]) and runs in
     /// swarm mode. Such a host must also declare
     /// [`Self::COMMITS_PERFORM_CLAIMS`], and its execution count
     /// ([`Self::sim_executions`]) counts durably recorded results.
@@ -1099,9 +1098,32 @@ pub enum CellOp {
         /// Its payload.
         payload: u8,
     },
-    /// Arm a storage fault for the next operation (hosts that list
+    /// A commit or perform under a storage fault (hosts that list
     /// [`SimulatedCell::FAULT_KINDS`] only).
-    ArmFault(FaultPlan),
+    Faulted(Box<Faulted>),
+}
+
+/// A faulted operation of the law machine ([`CellOp::Faulted`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Faulted {
+    /// The fault armed for `target`.
+    pub plan: FaultPlan,
+    /// An unfaulted commit run first. For a faulted perform it makes a fresh
+    /// command the outbox head (consuming a delivered result, or replacing a
+    /// head whose result was lost), so the fault meets a claim and a result
+    /// record rather than an empty outbox.
+    pub prepare: Option<LawCommit>,
+    /// The faulted operation.
+    pub target: FaultTarget,
+}
+
+/// The operation a [`Faulted`] transition arms its fault for.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FaultTarget {
+    /// The `commit` verb.
+    Commit(LawCommit),
+    /// The `perform` verb.
+    Perform,
 }
 
 /// What the model expects of the last applied operation.
@@ -1729,39 +1751,85 @@ impl CellModel {
         });
     }
 
-    /// The expectation for `op` under the armed `plan`, applying to the
+    /// Whether the outbox head is a command never claimed.
+    fn fresh_head(&self) -> bool {
+        !self.outbox.is_empty() && !self.head_performed && !self.head_unknown
+    }
+
+    /// The expectation for `target` under the armed `plan`, applying to the
     /// model only what survives the fault (law 6).
-    fn faulted(&mut self, op: &CellOp, plan: FaultPlan) -> Option<(Expect, Firing)> {
-        match op {
-            CellOp::Commit(commit) => Some(if plan.transaction == 0 {
+    fn faulted(&mut self, target: &FaultTarget, plan: FaultPlan) -> (Expect, Firing) {
+        match target {
+            FaultTarget::Commit(commit) => {
+                if plan.transaction != 0 {
+                    return (Expect::Commit(self.commit(commit)), Firing::Never);
+                }
                 // A trial copy: a faulted commit applies nothing.
                 match self.clone().commit(commit) {
                     Ok(_) => (Expect::Failed, Firing::Fires),
                     Err(refusal) => (Expect::Commit(Err(refusal)), Firing::Either),
                 }
-            } else {
-                (Expect::Commit(self.commit(commit)), Firing::Never)
-            }),
-            CellOp::Perform => {
-                let fresh = !self.outbox.is_empty() && !self.head_performed && !self.head_unknown;
-                Some(match plan.transaction {
-                    0 if fresh => (Expect::Failed, Firing::Fires),
-                    1 if fresh => {
-                        // The claim is durable and the outside world ran, but
-                        // no result was recorded.
-                        self.claim();
-                        self.head_unknown = true;
-                        (Expect::Failed, Firing::Fires)
-                    }
-                    _ => (self.perform(), Firing::Never),
-                })
             }
-            CellOp::Observe
-            | CellOp::Clock
-            | CellOp::Advance(_)
-            | CellOp::Inject { .. }
-            | CellOp::ArmFault(_) => None,
+            FaultTarget::Perform => match plan.transaction {
+                0 if self.fresh_head() => (Expect::Failed, Firing::Fires),
+                1 if self.fresh_head() => {
+                    // The claim is durable and the outside world ran, but no
+                    // result was recorded.
+                    self.claim();
+                    self.head_unknown = true;
+                    (Expect::Failed, Firing::Fires)
+                }
+                _ => (self.perform(), Firing::Never),
+            },
         }
+    }
+
+    /// A commit that leaves a fresh command at the outbox head, or `None`
+    /// when the head already is one: it replaces a head whose result was
+    /// lost with its next generation, or consumes a delivered head result
+    /// (if any) and enqueues the next generation of a command.
+    fn prepare_perform(&self) -> BoxedStrategy<Option<LawCommit>> {
+        if self.fresh_head() {
+            return Just(None).boxed();
+        }
+        // The generation after the newest one enqueued; 0 for a new command.
+        let next = |id: &CommandId| {
+            self.generations
+                .get(id)
+                .map_or(0, |known| known.0.saturating_add(1))
+        };
+        if let Some(head) = self.outbox.first()
+            && self.head_unknown
+        {
+            let generation = next(&head.id);
+            let command = Command {
+                generation: Generation(generation),
+                idempotency_key: IdempotencyKey(format!("{}/{generation}", head.id.0)),
+                ..head.clone()
+            };
+            return Just(Some(CellCommit {
+                effects: vec![Effect::Perform(command)],
+                ..CellCommit::empty()
+            }))
+            .boxed();
+        }
+        let consumes = self.outbox.first().map(|head| Consumed::Result {
+            command: head.id.clone(),
+            generation: head.generation,
+        });
+        let generations: Vec<u64> = (0..LAW_UNIVERSE)
+            .map(|n| next(&CommandId(format!("c{n}"))))
+            .collect();
+        (0..LAW_UNIVERSE, any::<u8>())
+            .prop_map(move |(n, payload)| {
+                let generation = generations.get(usize::from(n)).copied().unwrap_or_default();
+                Some(CellCommit {
+                    consumes: consumes.clone(),
+                    effects: vec![Effect::Perform(law_command(n, generation, payload))],
+                    ..CellCommit::empty()
+                })
+            })
+            .boxed()
     }
 
     fn next_timer(&self) -> Option<DueTimer<LawInput>> {
@@ -2161,29 +2229,63 @@ impl Swarm {
             (self.crash, FaultKind::Crash),
         ] {
             if weight > 0 {
-                options.push((weight, fault_strategy(kind)));
+                options.push((weight, fault_strategy(model, kind)));
             }
         }
         Union::new_weighted(options).boxed()
     }
 }
 
-/// A fault of `kind`: mostly in the first or second write transaction (the
-/// third is never reached), mostly at an early statement, sometimes past the
-/// last (the commit point).
-fn fault_strategy(kind: FaultKind) -> BoxedStrategy<CellOp> {
-    (
-        prop_oneof![4 => Just(0_u8), 3 => Just(1_u8), 1 => Just(2_u8)],
-        prop_oneof![3 => 0_u8..16, 1 => any::<u8>()],
-    )
-        .prop_map(move |(transaction, at_statement)| {
-            CellOp::ArmFault(FaultPlan {
+/// A fault of `kind`, half on a commit, half on a perform, mostly at an
+/// early statement and sometimes past the last (the commit point). A commit
+/// fault mostly hits its one write transaction and sometimes the second it
+/// must not run; a perform fault hits its claim or its result record equally
+/// often, after a preparing commit when the head is not fresh. With a head
+/// whose result was lost, half the time a plain perform is generated
+/// instead, to check it is never executed again.
+fn fault_strategy(model: &CellModel, kind: FaultKind) -> BoxedStrategy<CellOp> {
+    let statement = || prop_oneof![3 => 0_u8..16, 1 => any::<u8>()];
+    let faulted = move |transaction: u8,
+                        at_statement: u8,
+                        prepare: Option<LawCommit>,
+                        target: FaultTarget| {
+        CellOp::Faulted(Box::new(Faulted {
+            plan: FaultPlan {
                 kind,
                 transaction,
                 at_statement,
-            })
-        })
+            },
+            prepare,
+            target,
+        }))
+    };
+    let commit = (
+        prop_oneof![4 => Just(0_u8), 1 => Just(1_u8)],
+        statement(),
+        prop_oneof![model.admissible_commit_strategy(), model.commit_strategy()],
+    )
+        .prop_map(move |(transaction, at_statement, commit)| {
+            faulted(transaction, at_statement, None, FaultTarget::Commit(commit))
+        });
+    let perform = (
+        prop_oneof![Just(0_u8), Just(1_u8)],
+        statement(),
+        model.prepare_perform(),
+    )
+        .prop_map(move |(transaction, at_statement, prepare)| {
+            faulted(transaction, at_statement, prepare, FaultTarget::Perform)
+        });
+    if model.head_unknown {
+        prop_oneof![
+            commit,
+            perform,
+            Just(CellOp::Perform),
+            Just(CellOp::Perform)
+        ]
         .boxed()
+    } else {
+        prop_oneof![commit, perform].boxed()
+    }
 }
 
 /// Reference-machine state: the model plus the expectation for the most
@@ -2192,8 +2294,9 @@ fn fault_strategy(kind: FaultKind) -> BoxedStrategy<CellOp> {
 pub struct CellReference {
     model: CellModel,
     expected: Option<Expect>,
-    /// The fault armed for the next operation.
-    armed: Option<FaultPlan>,
+    /// The expectation for the preparing commit of the most recently
+    /// applied [`Faulted`] transition.
+    prepared: Option<Expect>,
     /// The fault the most recently applied operation ran under.
     fault: Option<ArmedFault>,
     /// The case's transition mix; `None` keeps the fixed mix.
@@ -2245,15 +2348,8 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
     }
 
     fn apply(mut state: CellReference, op: &CellOp) -> CellReference {
-        let armed = state.armed.take();
         state.fault = None;
-        if let Some(plan) = armed
-            && let Some((expected, firing)) = state.model.faulted(op, plan)
-        {
-            state.fault = Some(ArmedFault { plan, firing });
-            state.expected = Some(expected);
-            return state;
-        }
+        state.prepared = None;
         let model = &mut state.model;
         let expected = match op {
             CellOp::Commit(commit) => Expect::Commit(model.commit(commit)),
@@ -2271,9 +2367,17 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 }
                 Expect::Nothing
             }
-            CellOp::ArmFault(plan) => {
-                state.armed = Some(*plan);
-                Expect::Nothing
+            CellOp::Faulted(faulted) => {
+                state.prepared = faulted
+                    .prepare
+                    .as_ref()
+                    .map(|commit| Expect::Commit(model.commit(commit)));
+                let (expected, firing) = model.faulted(&faulted.target, faulted.plan);
+                state.fault = Some(ArmedFault {
+                    plan: faulted.plan,
+                    firing,
+                });
+                expected
             }
         };
         state.expected = Some(expected);
@@ -2438,47 +2542,9 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
 
     fn apply(mut host: H, reference: &CellReference, op: CellOp) -> H {
         let expected = reference.expected.clone().unwrap_or(Expect::Nothing);
-        let fault = reference.fault;
         match op {
-            CellOp::Commit(commit) => apply_commit(&mut host, &commit, &expected, fault),
-            CellOp::Perform => {
-                let executions = host.sim_executions();
-                if let Some(fault) = fault {
-                    host.sim_arm_fault(fault.plan);
-                }
-                let delivered = host.perform().map_err(|error| error.to_string());
-                let fired = fault.is_some_and(|fault| fault_fired(&mut host, fault));
-                let executed = host.sim_executions() != executions;
-                if expected == Expect::Failed {
-                    let label = match fault {
-                        Some(fault) if fired && fault.plan.transaction == 0 => {
-                            "fault.perform.claim"
-                        }
-                        Some(_) if fired => "fault.perform.result",
-                        Some(_) | None => "perform.outcome_unknown",
-                    };
-                    coverage::hit_prefixed("cell", label);
-                    assert!(
-                        delivered.is_err() && !executed,
-                        "law violated: a perform whose claim or result is lost delivered or executed\noutcome: {delivered:?}, executed: {executed}"
-                    );
-                    return Self::refines(host, reference);
-                }
-                let label = match (&delivered, executed) {
-                    (Ok(None), _) => "perform.empty",
-                    (_, true) => "perform.executed",
-                    (_, false) => "perform.redelivered",
-                };
-                coverage::hit_prefixed("cell", label);
-                assert_eq!(
-                    delivered.map(|delivered| Expect::Perform {
-                        delivered,
-                        executed
-                    }),
-                    Ok(expected),
-                    "law violated: perform is not exactly-once per generation"
-                );
-            }
+            CellOp::Commit(commit) => apply_commit(&mut host, &commit, &expected, None),
+            CellOp::Perform => apply_perform(&mut host, expected, None),
             CellOp::Observe => {
                 let observed = host.observe().map_err(|error| error.to_string());
                 if matches!(observed, Ok(Some(_))) {
@@ -2505,10 +2571,63 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
                 host.sim_advance_to(LogicalTime::from_millis(reference.model.now));
             }
             CellOp::Inject { id, payload } => host.sim_inject(law_observed(id, payload)),
-            CellOp::ArmFault(_) => {}
+            CellOp::Faulted(faulted) => {
+                let Faulted {
+                    prepare, target, ..
+                } = *faulted;
+                if let Some(commit) = prepare {
+                    let prepared = reference.prepared.clone().unwrap_or(Expect::Nothing);
+                    apply_commit(&mut host, &commit, &prepared, None);
+                }
+                match target {
+                    FaultTarget::Commit(commit) => {
+                        apply_commit(&mut host, &commit, &expected, reference.fault);
+                    }
+                    FaultTarget::Perform => apply_perform(&mut host, expected, reference.fault),
+                }
+            }
         }
         Self::refines(host, reference)
     }
+}
+
+/// One `perform`, under `fault` if armed: exactly once per generation, and
+/// never delivered or executed when the model expects it to fail.
+fn apply_perform<H: SimulatedCell>(host: &mut H, expected: Expect, fault: Option<ArmedFault>) {
+    let executions = host.sim_executions();
+    if let Some(fault) = fault {
+        host.sim_arm_fault(fault.plan);
+    }
+    let delivered = host.perform().map_err(|error| error.to_string());
+    let fired = fault.is_some_and(|fault| fault_fired(host, fault));
+    let executed = host.sim_executions() != executions;
+    if expected == Expect::Failed {
+        let label = match fault {
+            Some(fault) if fired && fault.plan.transaction == 0 => "fault.perform.claim",
+            Some(_) if fired => "fault.perform.result",
+            Some(_) | None => "perform.outcome_unknown",
+        };
+        coverage::hit_prefixed("cell", label);
+        assert!(
+            delivered.is_err() && !executed,
+            "law violated: a perform whose claim or result is lost delivered or executed\noutcome: {delivered:?}, executed: {executed}"
+        );
+        return;
+    }
+    let label = match (&delivered, executed) {
+        (Ok(None), _) => "perform.empty",
+        (_, true) => "perform.executed",
+        (_, false) => "perform.redelivered",
+    };
+    coverage::hit_prefixed("cell", label);
+    assert_eq!(
+        delivered.map(|delivered| Expect::Perform {
+            delivered,
+            executed
+        }),
+        Ok(expected),
+        "law violated: perform is not exactly-once per generation"
+    );
 }
 
 impl<H: SimulatedCell> CellHostMachine<H> {
