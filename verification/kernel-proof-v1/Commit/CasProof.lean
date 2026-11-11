@@ -92,8 +92,8 @@ theorem loop_correspondence {K E C : Type} (inst : CurrentVersion C K E)
             have hn : next.val = index.val + 1 := by simpa using hnext
             have := ih next v1 (by omega)
             rw [hn, hrest] at this
-            simp [hc, currentRun, toExceptR, lift, core.result.Result.Insts.CoreOpsTry.branch,
-              core.option.Option.unwrap_or, Except.map]
+            simp [hc, currentRun, toExceptR, core.result.Result.Insts.CoreOpsTry.branch,
+              Except.map]
             exact this
         · have hv : ¬ (c.val = expected.val) := fun hv => heq ((UScalar.eq_equiv c expected).mpr hv)
           simp [hc, hv, currentRun, toExceptR, projectCas, core.result.Result.Insts.CoreOpsTry.branch, Except.map]

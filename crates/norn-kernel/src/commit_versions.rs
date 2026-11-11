@@ -49,8 +49,11 @@ fn first_conflict_in<K: Copy, E, C: CurrentVersion<K, E>>(
         if current != expectation.1 {
             return Ok(Some((expectation.0, expectation.1, current)));
         }
-        // `index < expectations.len()`, so the successor never saturates.
-        index = index.checked_add(1).unwrap_or(usize::MAX);
+        // `index < expectations.len()`, so the successor always exists.
+        let Some(next) = index.checked_add(1) else {
+            break;
+        };
+        index = next;
     }
     Ok(None)
 }
