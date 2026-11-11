@@ -3,7 +3,11 @@
 # checkers (finite lens laws, DBSP algebra, linear conservation) and the
 # induction frame decision, and Lean proves them against the written semantics
 # in verification/semantics-v1/Checker/{Certificates,Obligations}. Every seeded
-# mutant must then extract and elaborate, fail its proof, and be refuted.
+# mutant must then extract and elaborate, fail its proof module, and be refuted.
+# For a `vector` mutant the proof module fails and a generated vector refutes it.
+# For a `decide` mutant the failure is the kernel `decide` witness, which lives
+# in the proof module: the gate does not separately require the correspondence
+# theorem to fail on it.
 #
 # Refutation convention (#718): a mutant counts as detected only when a closed
 # proposition about a concrete run evaluates false. Where the mutated code is

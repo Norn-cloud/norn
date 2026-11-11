@@ -660,13 +660,24 @@ const RETAINED_TEST_BUDGET: Budget = Budget {
     max_steps: 4096,
 };
 
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
-    #[test]
-    fn law_contained_generated_orderings_preserve_effective_instances(reverse in proptest::bool::ANY, rotation in 0usize..12) {
-        let (law, mut base) = membership_case(); let expected = projected(&law, &base);
-        if reverse {base.reverse();} let count = rotation.checked_rem(base.len()).expect("nonempty"); base.rotate_left(count);
-        proptest::prop_assert_eq!(projected(&law, &base), expected);
+#[test]
+fn law_contained_every_ordering_preserves_effective_instances() {
+    let (law, base) = membership_case();
+    let expected = projected(&law, &base);
+    for reverse in [false, true] {
+        for rotation in 0usize..12 {
+            let mut ordered = base.clone();
+            if reverse {
+                ordered.reverse();
+            }
+            let count = rotation.checked_rem(ordered.len()).expect("nonempty");
+            ordered.rotate_left(count);
+            assert_eq!(
+                projected(&law, &ordered),
+                expected,
+                "reverse {reverse} rotation {rotation}"
+            );
+        }
     }
 }
 

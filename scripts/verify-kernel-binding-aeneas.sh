@@ -3,7 +3,10 @@
 # binding cores (crates/norn-kernel/src/replay_decision.rs, receipt_decision.rs)
 # and Lean proves them against the written K6/K7 semantics in
 # verification/kernel-proof-v1/Binding. Every seeded replay, receipt and commit
-# pin mutant must then extract and fail the same proof.
+# pin mutant must then extract and elaborate, and be refuted: a closed `decide`
+# vector theorem in ReplayProof or ReceiptProof must evaluate false on it. The
+# vector theorems live in the proof modules, so this gate does not separately
+# require a correspondence theorem to fail on a mutant.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
