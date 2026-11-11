@@ -20,7 +20,7 @@ use norn_kernel::{
 
 #[path = "../tests/support/action_cell.rs"]
 mod action_cell;
-use action_cell::{MELT, MELT_ACTION, melt_body, melt_store};
+use action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, OMITS_LOSS, melt_body, melt_store};
 
 const OPERATOR: &str = "user:operator";
 const AUDITOR: &str = "user:auditor";
@@ -150,7 +150,11 @@ impl QuestionRuntime<NativeEngine> for Disclosure {
 }
 
 fn host() -> DevHost<NativeEngine> {
-    let store = melt_store(crate::action_admission::prepare_action_model);
+    host_with(DERIVES_LOSS)
+}
+
+fn host_with(writer: &str) -> DevHost<NativeEngine> {
+    let store = melt_store(writer, crate::action_admission::prepare_action_model);
     let scope = CellScope {
         org_id: "org_demo".into(),
         environment_id: "dev".into(),
@@ -319,12 +323,13 @@ fn denials_are_one_opaque_document_and_commit_nothing() {
 
 #[test]
 fn law_precondition_and_stale_pin_refuse_without_effects() {
-    let host = host();
-    let before = dump(&host);
     let operator = Some(OPERATOR);
-    // The caller's own loss breaks the fine-mass law: 10 != 8 + 5.
-    let law = r#"{"input":{"id":"melt-l","input_fine_g":"10","output_fine_g":"8","loss_fine_g":"5"},"idempotencyKey":"law"}"#;
-    let refused = call(&host, &scoped("org_demo"), operator, MELT_ACTION, law).unwrap_err();
+    // A writer that records no loss breaks the fine-mass law: 10 != 8 + 0.
+    let lawless = host_with(OMITS_LOSS);
+    let untouched = dump(&lawless);
+    let law = melt_body("melt-l", "10", "8", "law");
+    let refused = call(&lawless, &scoped("org_demo"), operator, MELT_ACTION, &law).unwrap_err();
+    assert_eq!(dump(&lawless), untouched);
     assert_eq!(
         (refused.status, refused.code.as_str()),
         (422, "core.laws.violated")
@@ -333,6 +338,8 @@ fn law_precondition_and_stale_pin_refuse_without_effects() {
         refused.category,
         crate::refusal::RefusalCategory::Precondition
     );
+    let host = host();
+    let before = dump(&host);
     let output_above_input = melt_body("melt-p", "4", "9", "pre");
     let refused = call(
         &host,

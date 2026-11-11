@@ -18,9 +18,13 @@ use serde_json::{Value, json};
 pub const MELT_ACTION: &str = "constitution.melt.convert";
 /// The object type it writes.
 pub const MELT: &str = "constitution.Melt";
+/// The admitted writer derives the loss, so the fine-mass law always holds.
+pub const DERIVES_LOSS: &str = "withLoss";
+/// The admitted writer keeps the default loss of 0: any real loss breaks the law.
+pub const OMITS_LOSS: &str = "withoutLoss";
 
-/// Base and candidate artifacts of the fixture, in admission order.
-fn documents() -> Vec<Value> {
+/// Base and candidate artifacts of the fixture's `set`, in admission order.
+fn documents(set: &str) -> Vec<Value> {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../norn-cell/tests/fixtures/constitution.json"
     ))
@@ -33,19 +37,19 @@ fn documents() -> Vec<Value> {
     .into_iter()
     .map(|text| serde_json::from_str(text).unwrap())
     .collect();
-    documents.extend(fixture["withLoss"].as_array().unwrap().iter().cloned());
+    documents.extend(fixture[set].as_array().unwrap().iter().cloned());
     documents
 }
 
 /// A provisioned in-memory store for `org_demo/dev` whose installed,
-/// receipt-verified definitions are the fixture. `prepare` registers the
+/// receipt-verified definitions are the fixture's `set`. `prepare` registers the
 /// kernel's own action types in the model (the API's `prepare_action_model`).
-pub fn melt_store<P, X>(prepare: P) -> CellStore<NativeEngine>
+pub fn melt_store<P, X>(set: &str, prepare: P) -> CellStore<NativeEngine>
 where
     P: FnOnce(&Model) -> Result<Model, X>,
     X: std::fmt::Debug,
 {
-    let documents = documents();
+    let documents = documents(set);
     let mut types = Vec::new();
     let mut properties = Vec::new();
     let mut interfaces = Vec::new();

@@ -4,7 +4,7 @@
     "objectType": "constitution.Melt",
     "objectId": "melt-1",
     "version": 1,
-    "receipt": { "receiptHash": "<keyed receipt handle>", "commitSeq": 1, "recordedAtMs": 1700000000000 }
+    "receipt": { "receiptHash": "<keyed receipt handle>", "commitSeq": 2, "recordedAtMs": 1700000000000 }
   },
   "conflict": {
     "format": "norn/refusal@2",

@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 
 #[path = "../../norn-api/tests/support/action_cell.rs"]
 mod action_cell;
-use action_cell::{MELT, MELT_ACTION, melt_body, melt_store};
+use action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, OMITS_LOSS, melt_body, melt_store};
 
 const OPERATOR: &str = "Bearer fixture:operator@demo";
 const VIEWER: &str = "Bearer fixture:viewer@demo";
@@ -226,7 +226,11 @@ struct Cell {
 }
 
 fn cell() -> Cell {
-    let store = melt_store(norn_api::action_admission::prepare_action_model);
+    cell_with(DERIVES_LOSS)
+}
+
+fn cell_with(writer: &str) -> Cell {
+    let store = melt_store(writer, norn_api::action_admission::prepare_action_model);
     let policy = CellPolicy::compile(&store);
     let scope = CellScope {
         org_id: "org_demo".into(),
@@ -339,8 +343,9 @@ fn the_route_refuses_before_any_effect() {
         (status, forbidden["code"].as_str()),
         (403, Some("action.permission_denied"))
     );
-    let law = r#"{"input":{"id":"melt-3","input_fine_g":"10","output_fine_g":"8","loss_fine_g":"5"},"idempotencyKey":"law"}"#;
-    let (status, violated) = post(&cell, Some(OPERATOR), law);
+    // A writer that records no loss breaks the fine-mass law: 10 != 8 + 0.
+    let law = melt_body("melt-3", "10", "8", "law");
+    let (status, violated) = post(&cell_with(OMITS_LOSS), Some(OPERATOR), &law);
     assert_eq!(
         (status, violated["code"].as_str()),
         (422, Some("core.laws.violated"))
