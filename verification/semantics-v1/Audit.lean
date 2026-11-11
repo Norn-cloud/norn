@@ -15,6 +15,8 @@ import NornSem.Obligation
 #print axioms Norn.Sem.Law.Tree.stable_unique
 #print axioms Norn.Sem.Law.Tree.lifted_iff
 #print axioms Norn.Sem.Law.Tree.lifts_needs_top_condition
+#print axioms Norn.Sem.Law.Tree.nested_exception_can_lift
+#print axioms Norn.Sem.Law.Tree.AboveHolds.inv
 #print axioms Norn.Sem.Law.binds_bare
 #print axioms Norn.Sem.Law.holdsOn_of_bare
 #print axioms Norn.Sem.Obligation.Evidence.admits_iff

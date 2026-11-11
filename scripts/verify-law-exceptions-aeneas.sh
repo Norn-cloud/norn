@@ -40,6 +40,7 @@ extract() {
   mkdir -p "$out" || return
   (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
     --start-from crate::check_shape --start-from crate::lifted \
+    --start-from crate::applied_exceptions \
     --dest-file "$out/shape.llbc" -- --crate-name norn_checker_law_exceptions \
     --crate-type lib --edition 2024 "$shape_source") || return
   "$aeneas" -backend lean -dest "$out/Shape" -emit-json -split-files -warnings-as-errors \
@@ -93,6 +94,8 @@ expected = {prefix + name for name in (
     "next_level", "next_level_loop", "next_level_loop.body",
     "copy_level", "copy_level_loop", "copy_level_loop.body",
     "clear_level", "clear_level_loop", "clear_level_loop.body",
+    "applied_exceptions", "applied_exceptions_loop", "applied_exceptions_loop.body",
+    "ancestors_hold", "ancestors_hold_loop", "ancestors_hold_loop.body",
 )}
 functions = manifest.get("functions", [])
 own = {f["lean_name"] for f in functions if f.get("is_local")}
@@ -121,7 +124,8 @@ expected_axioms="$(printf '%s\n' \
   "'Norn.Checker.LawExceptions.check_shape_refusal' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Checker.LawExceptions.check_shape_sound' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Checker.LawExceptions.lifted_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
-  "'Norn.Checker.LawExceptions.lifted_sound' depends on axioms: [propext, Classical.choice, Quot.sound]")"
+  "'Norn.Checker.LawExceptions.lifted_sound' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.Checker.LawExceptions.applied_sound' depends on axioms: [propext, Classical.choice, Quot.sound]")"
 test "$proof_output" = "$expected_axioms"
 # Check the exact propositions, not only the theorem names or an exit code.
 printf '%s\n' \
@@ -142,7 +146,10 @@ printf '%s\n' \
   '    (hnx : next.val.length = ids.val.length) :' \
   '    ∃ b l n, lifted inst law ids parents matched level next = Result.ok (b, l, n) ∧' \
   '      b = (treeWith law ids.val parents.val (fun k _ => matched.val.getD k false)).lifts ()' \
-  '        (ids.val.length + 1) law :=' \
+  '        (ids.val.length + 1) law ∧' \
+  '      l.val = ids.val.map (fun x =>' \
+  '        (treeWith law ids.val parents.val (fun k _ => matched.val.getD k false)).lifts ()' \
+  '          ids.val.length x) :=' \
   '  lifted_correct hl law ids parents matched level next hp hlv hnx' \
   | (cd "$lean_root" && LEAN_PATH="$baseline:$result/common" lake env lean -DwarningAsError=true --stdin)
 echo "law-exceptions: the production core is proved against NornSem.Law"
@@ -175,11 +182,18 @@ mutants = [
     ("limit-off-by-one", "if ids.len() > MAX_LAW_EXCEPTIONS {", "if ids.len() >= MAX_LAW_EXCEPTIONS {"),
     ("dangling-reported-as-cycle", "return Err(ExceptionTreeRefusal::DanglingOverride(index));",
      "return Err(ExceptionTreeRefusal::Cycle(index));"),
-    ("fold-negation-dropped", "let (Some(true), Some(false)) = (matched.get(index), level.get(index))",
-     "let (Some(true), Some(true)) = (matched.get(index), level.get(index))"),
-    ("fold-ignores-condition", "let (Some(true), Some(false)) = (matched.get(index), level.get(index))",
-     "let (Some(_), Some(false)) = (matched.get(index), level.get(index))"),
+    ("fold-negation-dropped", "&& let (Some(true), Some(false)) = (matched.get(index), level.get(index))",
+     "&& let (Some(true), Some(true)) = (matched.get(index), level.get(index))"),
+    ("fold-ignores-condition", "&& let (Some(true), Some(false)) = (matched.get(index), level.get(index))",
+     "&& let (Some(_), Some(false)) = (matched.get(index), level.get(index))"),
     ("fold-one-round-short", "while round < ids.len() {", "while round + 1 < ids.len() {"),
+    ("applied-skips-ancestors", "            ancestors_hold(law, ids, parents, matched, index)\n",
+     "            true\n"),
+    ("ancestors-ignore-condition", "let Some(&true) = matched.get(next) else {",
+     "let Some(_) = matched.get(next) else {"),
+    ("applied-ignores-level",
+     "if let (Some(true), Some(false)) = (matched.get(index), level.get(index)) {",
+     "if let (Some(true), Some(_)) = (matched.get(index), level.get(index)) {"),
 ]
 text = source.read_text(encoding="utf-8")
 for name, old, new in mutants:
