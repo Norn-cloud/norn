@@ -1,0 +1,374 @@
+{
+  "atlasVersion": 1,
+  "domain": "upper-ontology",
+  "entries": [
+    {
+      "id": "bfo-2020-owl",
+      "name": "Basic Formal Ontology 2020 OWL profile",
+      "publisher": "BFO ontology maintainers",
+      "kind": "ontology",
+      "domains": [
+        "upper-ontology"
+      ],
+      "version": "bd1fb61c5fa4e358fc9690f0d214b1ac63fae594",
+      "versionDate": "2026-10-06",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release release-2024-01-29 published 2024-02-07T22:01:47Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0",
+        "status": "verified",
+        "basis": "Pinned ontology declares dc:license CC-BY-4.0. This licenses the ontology artifact, not the paid ISO/IEC 21838-2 document.",
+        "termsUrl": "https://raw.githubusercontent.com/BFO-ontology/BFO-2020/bd1fb61c5fa4e358fc9690f0d214b1ac63fae594/21838-2/owl/bfo-core.ttl",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/BFO-ontology/BFO-2020/bd1fb61c5fa4e358fc9690f0d214b1ac63fae594/21838-2/owl/bfo-core.ttl",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/BFO-ontology/BFO-2020/bd1fb61c5fa4e358fc9690f0d214b1ac63fae594/21838-2/owl/bfo-core.ttl",
+        "https://github.com/BFO-ontology/BFO-2020/commit/bd1fb61c5fa4e358fc9690f0d214b1ac63fae594",
+        "https://github.com/BFO-ontology/BFO-2020/releases/tag/release-2024-01-29"
+      ],
+      "norn": {
+        "overlap": "Industry-pack alignment only; no second Core upper ontology.",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Process"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Alignment backbone; not on the customer path."
+      },
+      "notes": "BFO 2020 identity differs from tag release-2024-01-29, published 2024-02-07. Preserve OWL profile limits/dependencies; ISO prose is not a source payload. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "cco-ontologies",
+      "name": "Common Core Ontologies",
+      "publisher": "Common Core Ontology project",
+      "kind": "ontology",
+      "domains": [
+        "upper-ontology"
+      ],
+      "version": "be13b74cccf85617739c5288f9fdac805437386c",
+      "versionDate": "2026-09-25",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v2.2 published 2026-08-14T01:46:43Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "BSD-3-Clause",
+        "text": "BSD-3-Clause",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/CommonCoreOntology/CommonCoreOntologies/be13b74cccf85617739c5288f9fdac805437386c/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://codeload.github.com/CommonCoreOntology/CommonCoreOntologies/tar.gz/be13b74cccf85617739c5288f9fdac805437386c",
+      "evidenceUrls": [
+        "https://codeload.github.com/CommonCoreOntology/CommonCoreOntologies/tar.gz/be13b74cccf85617739c5288f9fdac805437386c",
+        "https://raw.githubusercontent.com/CommonCoreOntology/CommonCoreOntologies/be13b74cccf85617739c5288f9fdac805437386c/LICENSE",
+        "https://github.com/CommonCoreOntology/CommonCoreOntologies/commit/be13b74cccf85617739c5288f9fdac805437386c",
+        "https://github.com/CommonCoreOntology/CommonCoreOntologies/releases/tag/v2.2"
+      ],
+      "norn": {
+        "overlap": "BFO-based industry packs, not Core authority.",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Process"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Alignment backbone; not on the customer path."
+      },
+      "notes": "BSD-3-Clause for CCO does not relicense imported BFO or other dependencies. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dolcebasic-owl",
+      "name": "DOLCEbasic OWL approximation",
+      "publisher": "ISTC-CNR Laboratory for Applied Ontology",
+      "kind": "ontology",
+      "domains": [
+        "upper-ontology"
+      ],
+      "version": "cca21e82b38fe6956e9619516dad92116782a4a2",
+      "versionDate": "2026-09-18",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/appliedontolab/DOLCE/cca21e82b38fe6956e9619516dad92116782a4a2/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/appliedontolab/DOLCE/cca21e82b38fe6956e9619516dad92116782a4a2/OWL/DOLCEbasic-3.5.owl",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/appliedontolab/DOLCE/cca21e82b38fe6956e9619516dad92116782a4a2/OWL/DOLCEbasic-3.5.owl",
+        "https://raw.githubusercontent.com/appliedontolab/DOLCE/cca21e82b38fe6956e9619516dad92116782a4a2/LICENSE",
+        "https://www.loa.istc.cnr.it/index.php/dolce/",
+        "https://github.com/appliedontolab/DOLCE/commit/cca21e82b38fe6956e9619516dad92116782a4a2"
+      ],
+      "norn": {
+        "overlap": "Alternative foundational comparison only; no Core authority alongside gist.",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Process"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Alignment backbone; not on the customer path."
+      },
+      "notes": "Quoted issue search returned []. Official LOA page links this repo and distinguishes foundational FOL from OWL approximation. Artifact declares /DOLCEbasic/3.5 and CC-BY-4.0. Exact 3.5 release date unverified; date is snapshot commit. Not DUL or paid ISO prose. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gist-alignment",
+      "name": "gist Core ontology",
+      "publisher": "Semantic Arts",
+      "kind": "ontology",
+      "domains": [
+        "upper-ontology"
+      ],
+      "version": "a42a3d065b2d4e75936cd9f8c028980f95a9224d",
+      "versionDate": "2026-10-20",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v14.1.0 published 2026-04-17T22:14:01Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/semanticarts/gist/a42a3d065b2d4e75936cd9f8c028980f95a9224d/LICENSE.txt",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/semanticarts/gist/a42a3d065b2d4e75936cd9f8c028980f95a9224d/ontologies/gistCore.ttl",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/semanticarts/gist/a42a3d065b2d4e75936cd9f8c028980f95a9224d/ontologies/gistCore.ttl",
+        "https://raw.githubusercontent.com/semanticarts/gist/a42a3d065b2d4e75936cd9f8c028980f95a9224d/LICENSE.txt",
+        "https://github.com/semanticarts/gist/commit/a42a3d065b2d4e75936cd9f8c028980f95a9224d",
+        "https://github.com/semanticarts/gist/releases/tag/v14.1.0"
+      ],
+      "norn": {
+        "overlap": "Primary external alignment vocabulary; preserve gist namespace and proposed correspondences.",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Process"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Alignment backbone; not on the customer path."
+      },
+      "notes": "Develop snapshot has gistCoreX.x.x versionIRI placeholder; SHA pins actual bytes. Separately observed v14.1.0 is not assigned to these bytes. Keep assertions/inferences distinct; unsupported axioms explicit; no automatic equivalentClass. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "omg-commons-library",
+      "name": "OMG Commons ontology library",
+      "publisher": "Object Management Group",
+      "kind": "ontology",
+      "domains": [
+        "upper-ontology"
+      ],
+      "version": "1.3",
+      "versionDate": null,
+      "versionBasis": "OMG specification page labels version 1.3 and lists 20250801 machine artifacts; exact release day unverified. Directory date is not treated as release publication date.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT",
+        "status": "verified",
+        "basis": "Artifact dct:license includes full MIT permission/notice/warranty text and contributing copyright notices. Grant established for this RDF artifact; imported modules require their own retained notices.",
+        "termsUrl": "https://www.omg.org/spec/Commons/20250801/AboutCommons.rdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.omg.org/spec/Commons/20250801/AboutCommons.rdf",
+      "evidenceUrls": [
+        "https://www.omg.org/spec/Commons/20250801/AboutCommons.rdf",
+        "https://www.omg.org/spec/Commons/"
+      ],
+      "norn": {
+        "overlap": "Reusable identifiers, parties, roles, organizations and units may overlap; no parallel Core authority.",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Process"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Alignment backbone; not on the customer path."
+      },
+      "notes": "Quoted issue search returned []. AboutCommons is the library descriptor, not a claim all module bytes/dependency closure were fetched. Specification PDF rights are distinct. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "umbel-archived-vocabulary",
+      "name": "UMBEL ontology (obsolete)",
+      "publisher": "Structured Dynamics",
+      "kind": "ontology",
+      "domains": [
+        "upper-ontology"
+      ],
+      "version": "0646002b26fb0ec12426e4ce21be9a30c6219360",
+      "versionDate": "2023-10-26",
+      "versionBasis": "Pinned commit date. Separately observed version-1.50 release published 2016-05-10T18:05:47Z; no current/latest claim.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No licence file or artifact-specific redistribution grant verified; historical reputation is not a current licence grant.",
+        "termsUrl": "https://github.com/structureddynamics/UMBEL/tree/0646002b26fb0ec12426e4ce21be9a30c6219360",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/structureddynamics/UMBEL/0646002b26fb0ec12426e4ce21be9a30c6219360/Ontology/umbel.n3",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/structureddynamics/UMBEL/0646002b26fb0ec12426e4ce21be9a30c6219360/Ontology/umbel.n3",
+        "https://github.com/structureddynamics/UMBEL/tree/0646002b26fb0ec12426e4ce21be9a30c6219360",
+        "https://github.com/structureddynamics/UMBEL/releases/tag/version-1.50"
+      ],
+      "norn": {
+        "overlap": "No role in Core or alignment backbone.",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Process"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "ignore",
+        "reason": "Alignment backbone; not on the customer path."
+      },
+      "notes": "Keep original namespace only as historical evidence; do not infer open redistribution of bundled third-party ontology alignments. GitHub archived=false; ignore is the Norn decision, not an assertion of repository archive status. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "wikidata-structured-entities",
+      "name": "Wikidata structured entity data",
+      "publisher": "Wikimedia / Wikidata community",
+      "kind": "standard",
+      "domains": [
+        "upper-ontology"
+      ],
+      "version": "Q1 revision 2553477937",
+      "versionDate": "2026-10-05",
+      "versionBasis": "Independent review parsed Q1 JSON with lastrevid 2553477937 and modified 2026-10-05T14:24:08Z. This is one entity revision, not a database release.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0-1.0",
+        "status": "verified",
+        "basis": "Official licensing and data-access pages put structured main/Property/Lexeme/EntitySchema data under CC0; other wiki prose, media and linked sources have separate terms.",
+        "termsUrl": "https://www.wikidata.org/wiki/Wikidata:Copyright",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.wikidata.org/wiki/Special:EntityData/Q1.json",
+      "evidenceUrls": [
+        "https://www.wikidata.org/wiki/Special:EntityData/Q1.json",
+        "https://www.wikidata.org/wiki/Wikidata:Copyright",
+        "https://www.wikidata.org/wiki/Wikidata:Licensing",
+        "https://www.wikidata.org/wiki/Wikidata:Data_access",
+        "https://www.wikidata.org/wiki/Wikidata:Database_download"
+      ],
+      "norn": {
+        "overlap": "Enrichment/source identifiers only; never canonical Core truth or identity authority.",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Process"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Alignment backbone; not on the customer path."
+      },
+      "notes": "Q1 is a documented single-entity export shape, not the full corpus. Moving bulk dump links and latest release dates are not invented. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

@@ -1,0 +1,847 @@
+{
+  "atlasVersion": 1,
+  "domain": "products-units",
+  "entries": [
+    {
+      "id": "cpa-2-2",
+      "name": "EU Classification of Products by Activity 2.2",
+      "publisher": "Eurostat / European Commission",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "2.2",
+      "versionDate": null,
+      "versionBasis": "Official overview states adopted 2024, applicable reference year 2025 onwards; also lists 2026/880 correction. Exact export version/date not verified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No inspected artifact-specific license; general EU reuse policy is not assigned to an unidentified export.",
+        "termsUrl": "https://ec.europa.eu/eurostat/web/cpa",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://ec.europa.eu/eurostat/web/cpa",
+      "evidenceUrls": [
+        "https://ec.europa.eu/eurostat/web/cpa",
+        "https://showvoc.op.europa.eu/"
+      ],
+      "norn": {
+        "overlap": "EU statistical classification of goods and services related to NACE activities; external codes only.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "cpc-2-1",
+      "name": "UN Central Product Classification 2.1 structure and explanatory notes",
+      "publisher": "United Nations Statistics Division",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "2.1",
+      "versionDate": "2025-04-03",
+      "versionBasis": "Official source link names Updated_3Apr2025; XLSX HTTP 200 verified. This is a file update, not original adoption/release date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No per-workbook open license established; general UN copyright restrictions remain relevant.",
+        "termsUrl": "https://www.un.org/en/about-us/copyright/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://unstats.un.org/unsd/classifications/Econ/Download/In%20Text/CPC_Ver_2.1_Exp_Notes_Updated_3Apr2025.xlsx",
+      "evidenceUrls": [
+        "https://unstats.un.org/unsd/classifications/Econ/cpc",
+        "https://unstats.un.org/unsd/classifications/Econ/Download/In%20Text/CPC_Ver_2.1_Exp_Notes_Updated_3Apr2025.xlsx",
+        "https://www.un.org/en/about-us/copyright/"
+      ],
+      "norn": {
+        "overlap": "Historical product/service taxonomy; keep source-version and withdrawn-code identity when comparing with 3.0.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "cpc-3",
+      "name": "UN Central Product Classification 3.0 structure",
+      "publisher": "United Nations Statistics Division",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "3.0",
+      "versionDate": "2025-06-30",
+      "versionBasis": "Official link names structure snapshot 30Jun2025; CSV returned 200. Classification registry says adopted 2025/operational, while main page says forthcoming UN publication; date is file snapshot, not publication completion.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "UN copyright page requires permission except as terms allow; access to a statistical classification is not by itself an open redistribution/derivative grant.",
+        "termsUrl": "https://www.un.org/en/about-us/copyright/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "CSV"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://unstats.un.org/unsd/classifications/Econ/Download/In%20Text/CPC_Ver_3.0_Structure_30Jun2025.csv",
+      "evidenceUrls": [
+        "https://unstats.un.org/unsd/classifications/Econ/cpc",
+        "https://unstats.un.org/unsd/classifications/Family/Detail/2100",
+        "https://unstats.un.org/unsd/classifications/Econ/Download/In%20Text/CPC_Ver_3.0_Structure_30Jun2025.csv",
+        "https://www.un.org/en/about-us/copyright/"
+      ],
+      "norn": {
+        "overlap": "External product/service classification for reporting; not a universal service entity model.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "cpv-2008",
+      "name": "EU Common Procurement Vocabulary 2008 (main and supplementary)",
+      "publisher": "European Commission / Publications Office of the European Union",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "2008 (Regulation EC 213/2008)",
+      "versionDate": "2008-09-17",
+      "versionBasis": "Official TED page says in use since 17/09/2008; date denotes applicability, not ZIP publication date. Linked XML download returned 200 application/zip.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "TED legal notice licenses editorial content CC BY 4.0 and system metadata CC0, but CPV XML corpus classification under these categories was not explicitly verified; do not assign either automatically.",
+        "termsUrl": "https://ted.europa.eu/en/legal-notice",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://ted.europa.eu/documents/d/ted/cpv_2008_xml",
+      "evidenceUrls": [
+        "https://ted.europa.eu/en/simap/cpv",
+        "https://ted.europa.eu/documents/d/ted/cpv_2008_xml",
+        "https://ted.europa.eu/en/legal-notice"
+      ],
+      "norn": {
+        "overlap": "External EU public-procurement supplies/works/services classification; not global retail category authority.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "eclass",
+      "name": "ECLASS 16.0 BASIC / ADVANCED product and service classification",
+      "publisher": "ECLASS e.V.",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "16.0",
+      "versionDate": "2025-11-28",
+      "versionBasis": "Official Release 16.0 page explicitly states release date and export formats; payload not acquired.",
+      "licence": {
+        "spdx": "LicenseRef-ECLASS-Terms-of-Use-4",
+        "text": "ECLASS Terms of Use 4.3 (custom)",
+        "status": "verified",
+        "basis": "Terms 4.3 define licensed obtainment and limited work-result exchange; they do not grant public redistribution of the complete standard. Free browsing is separate.",
+        "termsUrl": "https://eclass.eu/fileadmin/Redaktion/pdf-Dateien/Sonstige_Dateien/ECLASS_terms-of-use_4-3.pdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "CSV",
+        "XML"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://eclass.eu/support/content-creation/release-process/information-on-releases/release-160",
+      "evidenceUrls": [
+        "https://eclass.eu/support/content-creation/release-process/information-on-releases/release-160",
+        "https://eclass.eu/en/eclass-standard/terms-of-use",
+        "https://eclass.eu/fileadmin/Redaktion/pdf-Dateien/Sonstige_Dateien/ECLASS_terms-of-use_4-3.pdf"
+      ],
+      "norn": {
+        "overlap": "External IRDI classes/properties; cannot become Core semantics by recurrence.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Terms PDF is rights evidence only, never a source-model payload. BASIC/ADVANCED share the documented license; no assumption that the free Asset offer licenses the full taxonomy. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "goodrelations",
+      "name": "GoodRelations product, offer, price and service ontology",
+      "publisher": "Martin Hepp",
+      "kind": "ontology",
+      "domains": [
+        "products-units"
+      ],
+      "version": "1.0",
+      "versionDate": "2011-10-01",
+      "versionBasis": "Downloaded owl:versionInfo and official language reference both state V 1.0, Release 2011-10-01. Old date retained; no invented recent release.",
+      "licence": {
+        "spdx": "CC-BY-3.0",
+        "text": "CC-BY-3.0",
+        "status": "verified",
+        "basis": "Official reference license section explicitly permits copying/distribution/adaptation with attribution to Martin Hepp and backlink.",
+        "termsUrl": "https://www.heppnetz.de/ontologies/goodrelations/v1.html#license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.heppnetz.de/ontologies/goodrelations/v1.owl",
+      "evidenceUrls": [
+        "https://www.heppnetz.de/ontologies/goodrelations/v1.owl",
+        "https://www.heppnetz.de/ontologies/goodrelations/v1.html"
+      ],
+      "norn": {
+        "overlap": "Offers, quantitative price specifications and business functions; mapping evidence only.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gs1-gpc",
+      "name": "GS1 Global Product Classification (GPC)",
+      "publisher": "GS1 AISBL",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "May 2026 / v20260520 Italian distribution",
+      "versionDate": "2026-05-20",
+      "versionBasis": "Verified archive members IT/Full/GPC as of May 2026 v20260520 IT.json, XML and XLSX. Date is the member's snapshot identity; not proof of current English edition. Mutable latest-Italian URL needs a content pin.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Public access and GS1 membership information do not establish redistribution or derivative rights for the GPC corpus.",
+        "termsUrl": "https://www.gs1.org/standards/gpc/access-gpc-standards",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://gs1it.org/files/sharing/1581503009/1545/gpc-ultima-versione-italiana.zip",
+      "evidenceUrls": [
+        "https://gpc-browser.gs1.org/",
+        "https://www.gs1.org/standards/gpc/access-gpc-standards",
+        "https://www.gs1.org/standards/gpc/get-started",
+        "https://gs1it.org/assistenza/standard-specifiche/gpc/",
+        "https://gs1it.org/files/sharing/1581503009/1545/gpc-ultima-versione-italiana.zip"
+      ],
+      "norn": {
+        "overlap": "External product category/brick references; retain classifications in their namespace.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gs1-identifier-syntax",
+      "name": "GS1 syntax dictionary: GTIN, GLN, SSCC and application identifiers",
+      "publisher": "GS1 AISBL",
+      "kind": "standard",
+      "domains": [
+        "products-units"
+      ],
+      "version": "c63d8a12210dd0cfaceac4aae45ccf57b48eb15b",
+      "versionDate": "2026-08-29",
+      "versionBasis": "GitHub commits/main API supplied this commit and committer date; pinned raw file returned 200. Date is snapshot date, not a standard edition date.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "File header and repository LICENSE checked: retain copyright/license/notices and mark modifications under Apache-2.0.",
+        "termsUrl": "https://raw.githubusercontent.com/gs1/gs1-syntax-dictionary/main/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/gs1/gs1-syntax-dictionary/c63d8a12210dd0cfaceac4aae45ccf57b48eb15b/gs1-syntax-dictionary.txt",
+      "evidenceUrls": [
+        "https://api.github.com/repos/gs1/gs1-syntax-dictionary/commits/main",
+        "https://raw.githubusercontent.com/gs1/gs1-syntax-dictionary/main/LICENSE",
+        "https://ref.gs1.org/standards/genspecs/"
+      ],
+      "norn": {
+        "overlap": "Product barcode and party/location/logistic-unit identifier syntax only; neither a registry of assigned GTINs nor product semantics.",
+        "concepts": [
+          "std.value_types",
+          "canon.Item"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "GTIN/GLN identify items and locations at retail."
+      },
+      "notes": "General Specifications are normative documentation, not this source payload. No right to assign GS1 identifiers is inferred from the dictionary license. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gs1-webvoc",
+      "name": "GS1 Web Vocabulary",
+      "publisher": "GS1 AISBL",
+      "kind": "ontology",
+      "domains": [
+        "products-units"
+      ],
+      "version": "1.18",
+      "versionDate": "2026-06-01",
+      "versionBasis": "Downloaded ontology root declares owl:versionInfo 1.18 and dct:modified 2026-06-01; issued 2017-11-20 is original publication, not this version date.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Embedded schema:license and official repository LICENSE both identify Apache-2.0; preserve notices, attribution and modification notices.",
+        "termsUrl": "https://raw.githubusercontent.com/gs1/WebVoc/master/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "RDF",
+        "JSON-LD",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://ref.gs1.org/voc/data/gs1Voc.jsonld",
+      "evidenceUrls": [
+        "https://ref.gs1.org/voc/data/gs1Voc.jsonld",
+        "https://ref.gs1.org/voc/data/gs1Voc.ttl",
+        "https://raw.githubusercontent.com/gs1/WebVoc/master/LICENSE",
+        "https://github.com/gs1/WebVoc/blob/master/README.md"
+      ],
+      "norn": {
+        "overlap": "Product, offer, party, clothing/shoe attributes; modular alignment vocabulary, preserving GS1 namespaces.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "hs2022-comtrade",
+      "name": "HS 2022 classification reference supplied by UN Comtrade",
+      "publisher": "UN Statistics Division; underlying HS maintained by World Customs Organization",
+      "kind": "code-list",
+      "domains": [
+        "products-units",
+        "logistics",
+        "einvoicing-tax"
+      ],
+      "version": "HS2022 (H6)",
+      "versionDate": null,
+      "versionBasis": "Downloaded JSON declares className HS2022. Exact reference-file publication/update date absent; this is not an Egyptian tariff edition.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "UN Comtrade access is not permission to redistribute WCO classification text; no open artifact-specific grant verified.",
+        "termsUrl": "https://comtradeplus.un.org/LicenseAgreement",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://comtradeapi.un.org/files/v1/app/reference/H6.json",
+      "evidenceUrls": [
+        "https://comtradeapi.un.org/files/v1/app/reference/H6.json",
+        "https://comtradeplus.un.org/LicenseAgreement"
+      ],
+      "norn": {
+        "overlap": "External goods codes for customs/trade; cannot substitute for Egypt tariff subdivisions or duties.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Customs tariff codes on every cross-border item."
+      },
+      "notes": "WCO legal notes/explanatory notes and national tariff extensions are separate artifacts; none claimed acquired or licensed. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "qudt-vocabularies",
+      "name": "QUDT units and quantity vocabularies",
+      "publisher": "QUDT.org",
+      "kind": "code-list",
+      "domains": [
+        "products-units",
+        "upper-ontology"
+      ],
+      "version": "a6e1618be2451f9a133f2cfba60edca14c583ab7",
+      "versionDate": "2026-10-20",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v3.5.3 published 2026-10-20T17:39:24Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/qudt/qudt-public-repo/a6e1618be2451f9a133f2cfba60edca14c583ab7/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://codeload.github.com/qudt/qudt-public-repo/tar.gz/a6e1618be2451f9a133f2cfba60edca14c583ab7",
+      "evidenceUrls": [
+        "https://codeload.github.com/qudt/qudt-public-repo/tar.gz/a6e1618be2451f9a133f2cfba60edca14c583ab7",
+        "https://raw.githubusercontent.com/qudt/qudt-public-repo/a6e1618be2451f9a133f2cfba60edca14c583ab7/LICENSE",
+        "https://github.com/qudt/qudt-public-repo/commit/a6e1618be2451f9a133f2cfba60edca14c583ab7",
+        "https://github.com/qudt/qudt-public-repo/releases/tag/v3.5.3"
+      ],
+      "norn": {
+        "overlap": "Units, quantity kinds, dimensions and conversion metadata for qualified value types; no automatic precision policy.",
+        "concepts": [
+          "core.units",
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Release v3.5.3 published 2026-10-20 observed; snapshot is distinct. Validate affine conversions/precision/dimensions before operational use. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "schema-org-commerce",
+      "name": "schema.org vocabulary (including Product, Offer, Order, Service and retired terms)",
+      "publisher": "Schema.org community and sponsors",
+      "kind": "standard",
+      "domains": [
+        "products-units",
+        "upper-ontology"
+      ],
+      "version": "30.1",
+      "versionDate": "2026-09-16",
+      "versionBasis": "Official release listing names 30.1 and 2026-09-16; versioned JSON-LD returned 200. all includes attic/retired terms, unlike current.",
+      "licence": {
+        "spdx": "CC-BY-SA-3.0",
+        "text": "CC-BY-SA-3.0",
+        "status": "verified",
+        "basis": "Schema.org terms grant CC BY-SA 3.0; retain attribution and comply with ShareAlike for adapted schema. No inference that the repository code license replaces schema terms.",
+        "termsUrl": "https://schema.org/docs/terms.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-LD",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://schema.org/version/30.1/schemaorg-all-https.jsonld",
+      "evidenceUrls": [
+        "https://schema.org/docs/releases.html",
+        "https://schema.org/docs/developers.html",
+        "https://schema.org/docs/terms.html",
+        "https://schema.org/version/30.1/schemaorg-all-https.jsonld"
+      ],
+      "norn": {
+        "overlap": "Product/offer/order/service exchange vocabulary; explicit direction forbids Core semantic authority.",
+        "concepts": [
+          "core.Agent",
+          "canon.Party",
+          "canon.Item"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/packs/canon/artifacts/norn.ontology-pack.canon.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Interop ids (sameAs) for public-facing records."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "ucum-essence",
+      "name": "UCUM unit definitions",
+      "publisher": "Regenstrief Institute / UCUM",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "2.2",
+      "versionDate": "2024-06-17",
+      "versionBasis": "Observed XML root version and revision-date; publisher artifact guide also identifies 2.2. Mutable main needs a pin before acquisition.",
+      "licence": {
+        "spdx": "LicenseRef-UCUM-License-1-1-June",
+        "text": "UCUM License 1.1 (June 2024)",
+        "status": "verified",
+        "basis": "Unchanged copies may be distributed under the UCUM licence with notices and attribution. It prohibits modifying the standard or creating derivative standards; generated derivatives require separate admission review. Software interoperability with unchanged UCUM is distinguished from derivative work.",
+        "termsUrl": "https://ucum.org/license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/ucum-org/ucum/main/ucum-essence.xml",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/ucum-org/ucum/main/ucum-essence.xml",
+        "https://ucum.org/license",
+        "https://ucum.org/docs/artifacts"
+      ],
+      "norn": {
+        "overlap": "Unit identifiers and quantities; unit syntax is not unit conversion or semantic validation.",
+        "concepts": [
+          "core.units",
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "done",
+        "mappingEvidence": [
+          "registry/core/src/units.rs",
+          "crates/norn-checker/src/unit_admission.rs"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Units and precision gate every quantity."
+      },
+      "notes": "Licence page heading identifies version 1.1 (June 2024), while its introductory acceptance text still says version 1.0. Preserve the selected notice rather than silently normalizing that discrepancy. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unece-rec20-units",
+      "name": "UNECE Recommendation 20 units",
+      "publisher": "UNECE / UN/CEFACT",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "Revision 14 Annexes II–III (listed edition)",
+      "versionDate": null,
+      "versionBasis": "Publisher code-list index lists 2020 Revision 14 annexes; exact day and newer current edition unresolved because requests returned 403. This is not a latest-release assertion.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "UN terms URL also returned 403. Public listing alone establishes no redistribution or derivative permission. Do not apply UNECE statistical-database terms to this separate trade artifact.",
+        "termsUrl": "https://www.un.org/en/about-us/terms-of-use",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://unece.org/fileadmin/DAM/cefact/recommendations/rec20/Rec20rev14e-Annex_II-III_2020.xls",
+      "evidenceUrls": [
+        "https://unece.org/code-list-recommendations",
+        "https://unece.org/fileadmin/DAM/cefact/recommendations/rec20/Rec20rev14e-Annex_II-III_2020.xls",
+        "https://www.un.org/en/about-us/terms-of-use"
+      ],
+      "norn": {
+        "overlap": "Trade unit codes for invoice lines and quantities; explicit correspondence to UCUM/QUDT required.",
+        "concepts": [
+          "core.units"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Unit codes on e-invoices and EDI."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unece-rec21-packaging",
+      "name": "UNECE Recommendation 21 package codes",
+      "publisher": "UNECE / UN/CEFACT",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": "Revision 11 Annexes V–VI (listed edition)",
+      "versionDate": null,
+      "versionBasis": "Publisher lists machine-readable packaging annexes; 2020 filename/edition. Exact release day, current edition and bytes unresolved after 403.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No artifact-specific grant verified; UN terms request blocked. Recheck rights and selected edition before fetching/admitting.",
+        "termsUrl": "https://www.un.org/en/about-us/terms-of-use",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://unece.org/fileadmin/DAM/cefact/recommendations/rec21/Rec21rev11e_Annex-V-VI_2020.xls",
+      "evidenceUrls": [
+        "https://unece.org/code-list-recommendations",
+        "https://unece.org/fileadmin/DAM/cefact/recommendations/rec21/Rec21rev11e_Annex-V-VI_2020.xls",
+        "https://www.un.org/en/about-us/terms-of-use"
+      ],
+      "norn": {
+        "overlap": "Package and cargo codes for handling units, cartons and shipments; not a replacement for product quantities.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unspsc",
+      "name": "United Nations Standard Products and Services Code (UNSPSC)",
+      "publisher": "United Nations Development Programme",
+      "kind": "code-list",
+      "domains": [
+        "products-units"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "UNDP current codeset link resolves to this October 2026 path; path month is not a verified edition or release date. Browser reports XLSX content type; terminal fetch returned 403.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "UNDP general terms restrict copying to personal noncommercial use and withhold redistribution/derivatives unless special terms apply; no artifact-specific exception verified.",
+        "termsUrl": "https://www.undp.org/copyright-terms-use",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.undp.org/sites/g/files/zskgke326/files/2026-10/unspsc_english.xlsx",
+      "evidenceUrls": [
+        "https://www.undp.org/unspsc",
+        "https://www.undp.org/copyright-terms-use",
+        "https://www.undp.org/sites/g/files/zskgke326/files/2026-10/unspsc_english.xlsx"
+      ],
+      "norn": {
+        "overlap": "External procurement/spend categories covering products and services; not entity equivalences.",
+        "concepts": [
+          "canon.Item",
+          "canon.Catalog"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProductClassification"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Item identity and classification drive catalog, tax and customs."
+      },
+      "notes": "The publisher's word open is not treated as a redistribution license. No invented codeset version. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

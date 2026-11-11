@@ -1,0 +1,13 @@
+{
+  "name": "norn-formats",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-ir",
+    "norn-decisions",
+    "norn-expr"
+  ],
+  "dev_only_norn": [
+    "norn-checker"
+  ],
+  "third_party": []
+}

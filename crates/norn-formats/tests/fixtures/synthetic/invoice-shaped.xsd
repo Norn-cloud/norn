@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic, independently authored test schema shaped like a business invoice
+     (header, nested parties, totals). It is not UBL and copies no upstream text. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:t="urn:test:invoice" targetNamespace="urn:test:invoice" elementFormDefault="qualified">
+  <xs:simpleType name="Text"><xs:restriction base="xs:normalizedString"/></xs:simpleType>
+  <xs:simpleType name="Money"><xs:restriction base="xs:decimal"><xs:fractionDigits value="2"/><xs:totalDigits value="15"/></xs:restriction></xs:simpleType>
+  <xs:complexType name="IdentifierType"><xs:simpleContent><xs:extension base="t:Text"><xs:attribute name="scheme" type="xs:string"/></xs:extension></xs:simpleContent></xs:complexType>
+  <xs:complexType name="AmountType"><xs:simpleContent><xs:extension base="t:Money"><xs:attribute name="currency" type="xs:string" use="required"/></xs:extension></xs:simpleContent></xs:complexType>
+  <xs:complexType name="PartyType"><xs:sequence><xs:element name="Endpoint" type="t:IdentifierType" minOccurs="0"/><xs:element name="Name" type="t:Text" minOccurs="0"/></xs:sequence></xs:complexType>
+  <xs:complexType name="TotalsType"><xs:sequence><xs:element name="Payable" type="t:AmountType"/></xs:sequence></xs:complexType>
+  <xs:complexType name="LineType"><xs:sequence><xs:element name="ID" type="t:IdentifierType"/><xs:element name="Amount" type="t:AmountType"/></xs:sequence></xs:complexType>
+  <xs:complexType name="InvoiceDocumentType">
+    <xs:sequence>
+      <xs:element name="ID" type="t:IdentifierType"/>
+      <xs:element name="IssueDate" type="xs:date"/>
+      <xs:element name="DueDate" type="xs:date" minOccurs="0"/>
+      <xs:element name="Supplier" type="t:PartyType" minOccurs="0"/>
+      <xs:element name="Totals" type="t:TotalsType"/>
+      <xs:element name="Line" type="t:LineType" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:schema>
