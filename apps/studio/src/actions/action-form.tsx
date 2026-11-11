@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronLeft, Lock, Pencil, Plus, X } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ChevronLeft, Lock, Pencil, Plus, Undo2, X } from "lucide-react"
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
@@ -8,20 +8,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils"
 import {
   ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, itemNoun, newIdempotencyKey, pastTense, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
-  type ActionReceipt, type ActionSummary, type CallResult, type Diagnostic, type Draft, type FormField, type Section, type Spec,
+  type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
-
-type Call = (actionId: string, input: string, key: string) => Promise<CallResult>
-
-type Phase =
-  | { readonly kind: "editing" }
-  | { readonly kind: "confirm" }
-  | { readonly kind: "sending" }
-  | { readonly kind: "refused"; readonly message: string; readonly code: string; readonly diagnostics: readonly Diagnostic[] }
-  | { readonly kind: "failed"; readonly message: string }
-  | { readonly kind: "done"; readonly receipt: ActionReceipt }
+import type { Phase } from "../lib/screen/call.ts"
+import { useCall, type Call } from "../lib/screen/use-call.ts"
 
 const newKey = newIdempotencyKey
+
+/** The words for a call that never reached a deciding cell. */
+const unreachable = (phase: Extract<Phase, { kind: "failed" }>) =>
+  phase.reason === "no-cell" ? "This workspace has no data cell yet." : phase.reason === "unavailable" ? ACTIONS_UNAVAILABLE : phase.message ?? "The cell did not answer; nothing was saved."
 const control = "h-9 w-full rounded-lg border border-node-border bg-background px-3 text-sm aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20"
 
 /**
@@ -29,7 +25,7 @@ const control = "h-9 w-full rounded-lg border border-node-border bg-background p
  * decides; the form shows each refusal at the field its pointer names, and the receipt on success.
  * A draft keeps one idempotency key until it changes, so a retry after an outage never commits twice.
  */
-export function ActionForm({ action, objectTitle, technical = false, prefill = {}, onDirty, onClose, onView, remembered, onDraft, onCommitted, call = callAction }: {
+export function ActionForm({ action, objectTitle, technical = false, prefill = {}, onDirty, onClose, onView, remembered, onDraft, onCommitted, onChanged, call = callAction }: {
   readonly action: ActionSummary
   /** The object type in words ("Holding"), for the business sentence on success. */
   readonly objectTitle: string
@@ -46,6 +42,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   /** Every change to the draft, so the sheet can keep it in memory if the user closes and keeps it. */
   readonly onDraft?: (draft: Draft) => void
   readonly onCommitted?: () => void
+  /** The cell committed something (the call or its undo): read what it shows again. */
+  readonly onChanged?: () => void
   readonly call?: Call
 }) {
   const fields = useMemo(() => fieldsOf(action.inputSchema), [action])
@@ -69,44 +67,39 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
     const target = root?.querySelector<HTMLElement>("section input:not([readonly]), section select, section textarea") ?? root?.querySelector<HTMLElement>('button[type="submit"]')
     target?.focus()
   }, [step, wizard])
-  const [key, setKey] = useState(newKey)
-  const [phase, setPhase] = useState<Phase>({ kind: "editing" })
-  const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && phase.kind !== "done"
-  const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
   const risky = isRisky(action)
+  const [machine, dispatch] = useCall({ actionId: action.actionId, risky }, call, onChanged)
+  const { phase } = machine
+  const committed = phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone"
+  const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && !committed
+  const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
+  // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
+  useEffect(() => { if (phase.kind === "done") { onDirty?.(false); onCommitted?.() } }, [phase.kind])
+  useEffect(() => {
+    if (phase.kind !== "refused" || !wizard) return
+    const first = problemsBySection(sections, phase.diagnostics).findIndex((n) => n > 0)
+    if (first >= 0) setStep(first)
+  }, [phase])
 
   const edit = (pointer: string, value: Draft) => {
     const next = withDraftAt(draft, pointer, value)
     setDraft(next)
     onDraft?.(next)
-    setKey(newKey()) // a different call: a different key
-    if (phase.kind === "failed" || phase.kind === "confirm") setPhase({ kind: "editing" })
+    dispatch({ kind: "edit", key: newKey() }) // a different call: a different key
     onDirty?.(JSON.stringify(next) !== JSON.stringify(initial))
   }
 
-  const send = async () => {
-    setPhase({ kind: "sending" })
-    try {
-      const result = await call(action.actionId, encodeObject(fields, draft as { readonly [name: string]: Draft }), key)
-      if (result.kind === "receipt") { setPhase({ kind: "done", receipt: result.receipt }); onDirty?.(false); onCommitted?.() }
-      else if (result.kind === "refused") {
-        setPhase({ kind: "refused", message: result.message, code: result.code, diagnostics: result.diagnostics })
-        // In a wizard, go to the first step the cell refused something on; a refusal on no field stays on the review.
-        if (wizard) { const first = problemsBySection(sections, result.diagnostics).findIndex((n) => n > 0); if (first >= 0) setStep(first) }
-      }
-      else setPhase({ kind: "failed", message: result.kind === "no-cell" ? "This workspace has no data cell yet." : ACTIONS_UNAVAILABLE })
-    } catch (error) {
-      setPhase({ kind: "failed", message: error instanceof Error ? error.message : "The cell did not answer; nothing was saved." })
-    }
-  }
+  const submit = () => dispatch({ kind: "submit", input: encodeObject(fields, draft as { readonly [name: string]: Draft }) })
 
-  if (phase.kind === "done") {
-    return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} receipt={phase.receipt} onAgain={writesWhole(action) ? () => { setDraft(initial); setKey(newKey()); setStep(0); setReached(0); setPhase({ kind: "editing" }) } : undefined} onClose={onClose} />
+  if (committed) {
+    return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} phase={phase}
+      onUndo={() => dispatch({ kind: "undo", key: newKey() })} onRetryUndo={() => dispatch({ kind: "retry" })}
+      onAgain={writesWhole(action) && phase.kind !== "undoing" ? () => { setDraft(initial); setStep(0); setReached(0); dispatch({ kind: "again", key: newKey() }) } : undefined} onClose={onClose} />
   }
 
   const top = unplaced(diagnostics, fields)
   const counts = problemsBySection(sections, diagnostics)
-  const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); if (phase.kind === "confirm") setPhase({ kind: "editing" }) }
+  const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); dispatch({ kind: "back" }) }
   const shown = wizard ? (step < review ? [sections[step]!] : []) : sections
   return (
     <form ref={formRef} noValidate className="grid gap-5" aria-label={action.title} aria-busy={phase.kind === "sending"}
@@ -114,7 +107,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
         event.preventDefault()
         if (phase.kind === "sending") return
         if (wizard && step < review) { go(step + 1); return } // the cell validates once, on submit; steps never block
-        if (risky && phase.kind !== "confirm") setPhase({ kind: "confirm" }); else void send()
+        submit() // a risky action asks first: the core moves to confirm before it calls
       }}>
       {action.description && <p className="text-sm text-muted-foreground">{action.description}</p>}
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
@@ -127,8 +120,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       )}
       {phase.kind === "failed" && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <span>{phase.message}</span><span className="flex-1" />
-          <Button type="button" variant="outline" size="sm" onClick={() => void send()}>Retry</Button>
+          <span>{unreachable(phase)}</span><span className="flex-1" />
+          <Button type="button" variant="outline" size="sm" onClick={() => dispatch({ kind: "retry" })}>Retry</Button>
         </div>
       )}
       {wizard && <Steps sections={sections} step={step} reached={reached} counts={counts} onGo={go} />}
@@ -159,7 +152,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
         {dirty && phase.kind === "editing" && <span className="text-meta text-muted-foreground">Not sent yet</span>}
         <span className="flex-1" />
         {phase.kind === "confirm"
-          ? <Button type="button" variant="ghost" onClick={() => setPhase({ kind: "editing" })}>Back</Button>
+          ? <Button type="button" variant="ghost" onClick={() => dispatch({ kind: "back" })}>Back</Button>
           : wizard && step > 0 && <Button type="button" variant="ghost" onClick={() => go(step - 1)}><ChevronLeft /> Back</Button>}
         <Button type="submit" variant={phase.kind === "confirm" ? "destructive" : "default"} disabled={blocked !== null || phase.kind === "sending"}>
           {phase.kind === "sending" ? "Sending…" : phase.kind === "confirm" ? `Yes, ${action.title.toLowerCase()}`
@@ -387,10 +380,14 @@ function when(ms: number, now = Date.now()): string {
   return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 }
 
-function Receipt({ action, objectTitle, technical, receipt, onView, onAgain, onClose }: {
-  readonly action: ActionSummary; readonly objectTitle: string; readonly technical: boolean; readonly receipt: ActionReceipt
-  readonly onView: ((objectId: string) => void) | undefined; readonly onAgain: (() => void) | undefined; readonly onClose: (() => void) | undefined
+type Committed = Extract<Phase, { kind: "done" | "undoing" | "undo-failed" | "undone" }>
+
+function Receipt({ action, objectTitle, technical, phase, onView, onAgain, onUndo, onRetryUndo, onClose }: {
+  readonly action: ActionSummary; readonly objectTitle: string; readonly technical: boolean; readonly phase: Committed
+  readonly onView: ((objectId: string) => void) | undefined; readonly onAgain: (() => void) | undefined
+  readonly onUndo: () => void; readonly onRetryUndo: () => void; readonly onClose: (() => void) | undefined
 }) {
+  const { receipt } = phase
   const at = new Date(receipt.receipt.recordedAtMs)
   const verb = pastTense(action.title) ?? "saved"
   const sentence = `${objectTitle} ${receipt.objectId} ${verb} · ${when(receipt.receipt.recordedAtMs)}`
@@ -413,7 +410,23 @@ function Receipt({ action, objectTitle, technical, receipt, onView, onAgain, onC
           </dl>
         </details>
       </div>
+      {phase.kind === "undone" && (
+        <p role="status" className="flex items-start gap-2 rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-sm">
+          <Undo2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span>Undone · {when(phase.reversal.receipt.recordedAtMs)}{technical && <span className="text-muted-foreground"> · commit {phase.reversal.receipt.commitSeq}</span>}</span>
+        </p>
+      )}
+      {phase.kind === "undo-failed" && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <span>{phase.message ?? "The undo did not reach the cell."} Nothing was undone.</span><span className="flex-1" />
+          <Button type="button" variant="outline" size="sm" onClick={onRetryUndo}>Retry undo</Button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
+        {/* Undo only when the cell's receipt names the action's declared compensation; Studio never works one out. */}
+        {(phase.kind === "done" && phase.undo !== null) || phase.kind === "undoing"
+          ? <Button type="button" variant="outline" className="border-node-border" disabled={phase.kind === "undoing"} onClick={onUndo}><Undo2 /> {phase.kind === "undoing" ? "Undoing…" : "Undo"}</Button>
+          : null}
         {onAgain && <Button type="button" variant="outline" className="border-node-border" onClick={onAgain}><Plus /> Another</Button>}
         <span className="flex-1" />
         {onClose && <Button type="button" onClick={onClose}>Done</Button>}
