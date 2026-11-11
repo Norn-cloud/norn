@@ -130,7 +130,68 @@ fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
             "entity root must name the subject",
         ));
     }
+    check_exception_tree(law, artifact, &mut out);
     out
+}
+
+/// Exception-tree admission: shape, bounds and a response that an exception
+/// can lift. Sibling overlap admits: an exception only lifts its parent.
+fn check_exception_tree(law: &LawIR, artifact: &ArtifactEnvelope, out: &mut Vec<Diagnostic>) {
+    use crate::law_exceptions::{ExceptionTreeRefusal, check_tree, codes as exception_codes};
+    if law.exceptions.is_empty() {
+        return;
+    }
+    if matches!(law.response, LawResponse::Invariant { .. }) {
+        out.push(finding(
+            exception_codes::UNSUPPORTED_RESPONSE,
+            artifact,
+            "/payload/exceptions",
+            "an invariant identity is an unconditional always law; an exception would change its meaning",
+        ));
+    }
+    // The translation goal's premise is the law's condition alone; an
+    // exception would make that goal stronger than the law.
+    if matches!(law.response, LawResponse::TranslationPreserves { .. }) {
+        out.push(finding(
+            exception_codes::UNSUPPORTED_RESPONSE,
+            artifact,
+            "/payload/exceptions",
+            "a translation_preserves goal does not model exceptions yet",
+        ));
+    }
+    if let Err(refusal) = check_tree(&law.id, &law.exceptions) {
+        let (pointer, message) = match refusal {
+            ExceptionTreeRefusal::Limit => (
+                "/payload/exceptions".to_owned(),
+                format!(
+                    "a law declares at most {} exceptions",
+                    crate::law_exceptions::MAX_LAW_EXCEPTIONS
+                ),
+            ),
+            ExceptionTreeRefusal::InvalidDeclaration(index) => (
+                format!("/payload/exceptions/{index}"),
+                format!(
+                    "exception {index} needs a nonblank id that is unique and differs from law {}, a nonblank rationale and a valid source",
+                    law.id
+                ),
+            ),
+            ExceptionTreeRefusal::DanglingOverride(index) => (
+                format!("/payload/exceptions/{index}/overrides"),
+                format!(
+                    "exception {index} overrides a target that is neither law {} nor an exception of its tree",
+                    law.id
+                ),
+            ),
+            ExceptionTreeRefusal::Cycle(index) => (
+                format!("/payload/exceptions/{index}/overrides"),
+                format!(
+                    "exception {index} is on an overrides cycle that never reaches law {}",
+                    law.id
+                ),
+            ),
+        };
+        out.push(finding(refusal.code(), artifact, &pointer, message));
+    }
 }
 
 /// Whole-set structural checks, against the same effective entities as invariants/guards.
@@ -202,7 +263,19 @@ pub fn check_law_set(
         for (parent, inherited) in laws.get(&law.id).into_iter().flatten() {
             if inherited != &law || crate::scope_conflict(&artifact.scope, &parent.scope).is_some()
             {
-                out.push(finding(codes::WEAKENS_INHERITED, artifact, "/payload/id", "an existing law identity cannot be replaced; retain it and add a new conjunctive law identity"));
+                // A law is closed: exceptions live only in its owner's
+                // artifact, so a redeclaration that changes them is refused.
+                let message = if inherited.exceptions == law.exceptions {
+                    "an existing law identity cannot be replaced; retain it and add a new conjunctive law identity"
+                } else {
+                    "an installed law is closed: another artifact cannot add or change its exceptions; narrow your own law instead"
+                };
+                out.push(finding(
+                    codes::WEAKENS_INHERITED,
+                    artifact,
+                    "/payload/id",
+                    message,
+                ));
             }
         }
         if closure_refused {
@@ -960,6 +1033,15 @@ impl LawContext<'_> {
                 out,
             );
         }
+        for (index, exception) in law.exceptions.iter().enumerate() {
+            predicate(
+                exception.condition.as_str(),
+                &env,
+                artifact,
+                &format!("/payload/exceptions/{index}/condition"),
+                out,
+            );
+        }
         if let LawModality::Until { predicate: stop } = &law.modality {
             predicate(
                 stop.as_str(),
@@ -1055,6 +1137,15 @@ impl LawContext<'_> {
         if let Some(env) = &bound_env {
             if let Some(condition) = &law.condition {
                 predicate(condition.as_str(), env, artifact, "/payload/condition", out);
+            }
+            for (index, exception) in law.exceptions.iter().enumerate() {
+                predicate(
+                    exception.condition.as_str(),
+                    env,
+                    artifact,
+                    &format!("/payload/exceptions/{index}/condition"),
+                    out,
+                );
             }
             if let LawModality::Until { predicate: stop } = &law.modality {
                 predicate(

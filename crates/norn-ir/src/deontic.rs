@@ -69,14 +69,9 @@ pub struct DeonticRule {
     pub defeated_by: Vec<String>,
 }
 
-/// A reviewed conditional exception. No implicit necessity or legal judgement.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RuleException {
-    pub id: String,
-    pub condition: ZenExpression,
-    pub source: RuleSourceSpan,
-}
+/// A rule's exception is the law exception struct: one shape, one home. A
+/// rule may carry exceptions here or on `law.exceptions`, never both.
+pub type RuleException = crate::LawException;
 
 /// Structured authoring over the existing law and normative source model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

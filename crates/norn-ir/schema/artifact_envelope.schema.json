@@ -5834,6 +5834,40 @@
         "properties"
       ]
     },
+    "LawException": {
+      "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "description": "Boolean ZEN predicate over the law subject's `self` environment.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "description": "Stable identity, unique within the tree and distinct from the law id.",
+          "type": "string"
+        },
+        "overrides": {
+          "description": "The law's own id, or the id of another exception in the same tree.",
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Reviewed explanation.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source location of the declaration.",
+          "$ref": "#/$defs/RuleSourceSpan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "overrides",
+        "condition",
+        "rationale",
+        "source"
+      ]
+    },
     "LawInterpretationIr": {
       "description": "Typed interpretation contract. Admission refuses until conformance exists.",
       "type": "object",
@@ -5944,6 +5978,14 @@
         "condition": {
           "description": "Optional pointwise activation predicate (not an edge trigger).",
           "$ref": "#/$defs/ZenExpression"
+        },
+        "exceptions": {
+          "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LawException"
+          },
+          "minItems": 1
         },
         "id": {
           "description": "Stable identity, preserved by all authoring faces.",
@@ -9590,6 +9632,26 @@
         "half_away_from_zero"
       ]
     },
+    "RuleByteRange": {
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ]
+    },
     "RuleConditionV1": {
       "description": "RuleIR v1 closed-operator condition, mirroring the conditions the\n`norn-engine` closed evaluator runs (`RuleCondition`).",
       "oneOf": [
@@ -10073,6 +10135,33 @@
         "doctype",
         "slice",
         "modifiedProperty"
+      ]
+    },
+    "RuleSourceSpan": {
+      "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleByteRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pointer": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "pointer"
       ]
     },
     "RuleTrigger": {

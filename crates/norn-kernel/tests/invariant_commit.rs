@@ -4057,3 +4057,34 @@ fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
     assert!(native.ledger().is_empty());
     assert!(native.outbox().is_empty());
 }
+
+#[test]
+fn law_with_exceptions_refuses_until_the_fold_lands() {
+    // #1187: a commit governed by a law with an exception tree is refused with
+    // `core.laws.unsupported_semantics`, never evaluated without its exceptions.
+    let mut law = serde_json::to_value(direct_amount_law()).unwrap();
+    law["payload"]["exceptions"] = json!([{
+        "id": "small", "overrides": "amount_bounded", "condition": "self.amount < 10",
+        "rationale": "Small amounts are exempt.",
+        "source": {"artifactId": "invariant.amount.law", "pointer": "/payload"}
+    }]);
+    let mut native = cell()
+        .with_types(vec![quality_item_type()])
+        .with_governing_laws(vec![serde_json::from_value(law).unwrap()]);
+    let key = FactKey::new(ITEM, "excepted");
+    let refusal = native
+        .commit(CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: object(json!({"item_id":"excepted", "amount":500})),
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .expect_err("a law with exceptions has no commit-path semantics yet");
+    assert_eq!(refusal.code(), "core.laws.unsupported_semantics");
+    assert!(native.load(&key).unwrap().values.is_none());
+    assert!(native.ledger().is_empty());
+}
