@@ -1,0 +1,1078 @@
+{
+  "atlasVersion": 1,
+  "domain": "payments",
+  "entries": [
+    {
+      "id": "adyen-openapi",
+      "name": "Adyen OpenAPI specifications",
+      "publisher": "Adyen (official GitHub repository Adyen/adyen-openapi)",
+      "kind": "data-model",
+      "domains": [
+        "payments"
+      ],
+      "version": "main@d449f090b9a4 (per-service versions, e.g. CheckoutService-v72)",
+      "versionDate": "2026-11-09",
+      "versionBasis": "GitHub API: there are no releases or tags. Head commit d449f090b9a4 'spec release' dated 2026-11-09, and the json/ folder lists per-service versioned files such as CheckoutService-v72.json.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT License",
+        "status": "verified",
+        "basis": "GitHub repository licence metadata for Adyen/adyen-openapi reads MIT, and the README says it is available under the MIT license. Checked today.",
+        "termsUrl": "https://github.com/Adyen/adyen-openapi/blob/main/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/Adyen/adyen-openapi",
+      "evidenceUrls": [
+        "https://github.com/Adyen/adyen-openapi"
+      ],
+      "norn": {
+        "overlap": "checkout payments, balance platform accounts, transfers, webhooks/notifications",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "OpenAPI 3.1.0, in both JSON and YAML. There are no tags, so pin by commit.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "berlin-group-openfinance-ais",
+      "name": "Berlin Group openFinance / PSD2 Account Information Service OpenAPI",
+      "publisher": "The Berlin Group",
+      "kind": "protocol",
+      "domains": [
+        "payments"
+      ],
+      "version": "2.4.1",
+      "versionDate": "2026-07-13",
+      "versionBasis": "Publisher-linked repository activeVersions file declares info.version 2.4.1; filename supplies 20260713 snapshot date, not an independently verified standard ratification date. Moving main needs an immutable acquisition pin.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0 (selected OpenAPI header)",
+        "status": "verified",
+        "basis": "Selected YAML info.license expressly grants CC BY 4.0, consistent with the library's OpenAPI-specific exception. Preserve attribution, licence and changes; do not transfer that grant to CC-BY-ND prose, repository-wide notices or scheme rulebooks. Path name licenceRestricted does not replace the selected artifact's explicit header.",
+        "termsUrl": "https://berlin-group.org/library/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://gitlab.com/api/v4/projects/the-berlin-group%2Fopenfinance/repository/files/V2%20Core-PSD2%20Compliance%2FlicenceRestricted%2FAccount%20Information%20Service%2FactiveVersions%2FBG_oFA_AIS_Version_2.4.1_20260713.openapi.yaml/raw?ref=main",
+      "evidenceUrls": [
+        "https://berlin-group.org/library/",
+        "https://gitlab.com/the-berlin-group/openfinance",
+        "https://gitlab.com/api/v4/projects/the-berlin-group%2Fopenfinance/repository/files/V2%20Core-PSD2%20Compliance%2FlicenceRestricted%2FAccount%20Information%20Service%2FactiveVersions%2FBG_oFA_AIS_Version_2.4.1_20260713.openapi.yaml/raw?ref=main"
+      ],
+      "norn": {
+        "overlap": "PSD2 account lists, balances, transaction lists and consent references; external bank representation only.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "emvco-emv",
+      "name": "EMV Specifications (Contact/Contactless Chip) and EMV QR Code Specification for Payment Systems",
+      "publisher": "EMVCo, LLC",
+      "kind": "standard",
+      "domains": [
+        "payments"
+      ],
+      "version": "Contactless Books C-2/C-3 v2.12; EMV QRCPS Merchant-Presented and Consumer-Presented Mode v1.1",
+      "versionDate": "2026-07-06",
+      "versionBasis": "EMVCo EMV Contactless Chip page (Wayback capture 2026-10-01) lists Book C-2 and C-3 Kernel Specification v2.12 published 6 Jul 2026. The QR Codes page (capture 2026-10-19) lists QRCPS MPM and CPM v1.1 published 27 Nov 2020, later amended by SB 254 and SB 270. Live emvco.com returned 503.",
+      "licence": {
+        "spdx": "LicenseRef-EMVCo-Terms-of-Use",
+        "text": "EMVCo Terms of Use: limited licence to reproduce public documents for internal use and to make, sell and use EMV-compliant products; no distribution, public display or derivative works of site materials",
+        "status": "unverified",
+        "basis": "Read emvco.com/terms-of-use (Last Updated 17 April 2020) verbatim in a Wayback capture dated 2026-10-10, sections 4 to 5. The live site returned 503, so not read on the publisher site today.",
+        "termsUrl": "https://www.emvco.com/terms-of-use/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.emvco.com/emv-technologies/emv-contactless-chip/",
+      "evidenceUrls": [
+        "https://www.emvco.com/terms-of-use/",
+        "https://www.emvco.com/emv-technologies/emv-contactless-chip/",
+        "https://www.emvco.com/emv-technologies/qr-codes/"
+      ],
+      "norn": {
+        "overlap": "card-present/contactless payment data, EMV tags, merchant-presented QR payload fields",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Card-present and QR payments at retail."
+      },
+      "notes": "Specs are free 'Public Access' downloads after accepting the terms. Book A and B and the contact Books have their own version numbers, which were not checked here. Implementing products is licensed; redistributing the documents is not.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "epc-sepa-rulebooks",
+      "name": "EPC SEPA Credit Transfer, SEPA Instant Credit Transfer and SEPA Direct Debit Rulebooks and Implementation Guidelines",
+      "publisher": "European Payments Council (EPC) AISBL",
+      "kind": "standard",
+      "domains": [
+        "payments",
+        "finance"
+      ],
+      "version": "2025 SCT Rulebook v1.2 (EPC125-05); 2025 rulebook cycle",
+      "versionDate": "2026-09-30",
+      "versionBasis": "EPC document library page '2025 SEPA Credit Transfer rulebook version 1.2', read live: it takes effect on 30 September 2026 and changes only the address elements. The SCT Inst and SDD Core v1.2 page URLs also resolve (301). The 2025 v1.0 Implementation Guidelines with XSDs are listed in the same library.",
+      "licence": {
+        "spdx": "LicenseRef-EPC-Disclaimer",
+        "text": "EPC website disclaimer: site information may be reproduced for non-commercial purposes with attribution, but reproducing or redistributing the rulebooks and Implementation Guidelines needs the EPC's prior written approval",
+        "status": "verified",
+        "basis": "Read europeanpaymentscouncil.eu/disclaimer live today: 'any reproduction, redistribution or transmission of the SEPA Credit Transfer Rulebook ... as well as the related Implementation Guidelines ... is subject to the prior written approval of the EPC'.",
+        "termsUrl": "https://www.europeanpaymentscouncil.eu/disclaimer",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-PDF",
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.europeanpaymentscouncil.eu/document-library/rulebooks/2025-sepa-credit-transfer-rulebook-version-12",
+      "evidenceUrls": [
+        "https://www.europeanpaymentscouncil.eu/document-library/rulebooks/2025-sepa-credit-transfer-rulebook-version-12",
+        "https://www.europeanpaymentscouncil.eu/disclaimer"
+      ],
+      "norn": {
+        "overlap": "SEPA credit transfer/instant/direct debit rules, mandates, R-transactions, ISO 20022 usage rules",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "The IG XSDs are free downloads restricting ISO 20022 pain/pacs/camt messages. Redistributing them, even vendored, needs EPC approval. The next rulebook cycle (2027) was not found.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "gleif-lei-reference-data",
+      "name": "GLEIF LEI and legal-entity reference data",
+      "publisher": "Global Legal Entity Identifier Foundation",
+      "kind": "code-list",
+      "domains": [
+        "payments"
+      ],
+      "version": null,
+      "versionDate": "2026-10-21",
+      "versionBasis": "Observed response meta.goldenCopy.publishDate is 2026-10-21T00:00:00Z; dynamic dataset observation, not an immutable release or API schema version.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0-1.0 (LEIs and LEI reference data)",
+        "status": "verified",
+        "basis": "GLEIF terms II.3 explicitly provide access-service data under CC0; retain source provenance, respect trademark/no-endorsement terms and do not extend the data grant to unrelated website content.",
+        "termsUrl": "https://www.gleif.org/en/meta/lei-data-terms-of-use",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://api.gleif.org/api/v1/lei-records?page[size]=1",
+      "evidenceUrls": [
+        "https://www.gleif.org/en/meta/lei-data-terms-of-use",
+        "https://api.gleif.org/api/v1/lei-records?page[size]=1"
+      ],
+      "norn": {
+        "overlap": "Legal entity identifier/reference enrichment, distinct from tenant Party identity and entity-resolution decisions.",
+        "concepts": [
+          "std.value_types",
+          "canon.Party"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "CC0 data does not license ISO 17442 prose or prove a complete corpus was fetched. One-record response is availability evidence, not bulk acquisition. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso10383-mic",
+      "name": "ISO 10383 Market Identifier Codes",
+      "publisher": "Swift, ISO 10383 Registration Authority",
+      "kind": "code-list",
+      "domains": [
+        "payments"
+      ],
+      "version": "October 2026 publication",
+      "versionDate": "2026-10-12",
+      "versionBasis": "Official MIC page states publication 12 October 2026, implementation 26 October 2026 and next publication 9 November 2026. CSV retrieved with status/date columns.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-10383-website-Terms-of",
+        "text": "ISO 10383 website Terms of Use (October 2016)",
+        "status": "verified",
+        "basis": "Terms explicitly exclude reproducing all or a substantial part of the website to make reproductions available to third parties. No permission to redistribute the full MIC list established.",
+        "termsUrl": "https://www.iso20022.org/sites/default/files/2020-02/ISO10383_Terms_of_use.pdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "XSD",
+        "CSV",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.iso20022.org/sites/default/files/ISO10383_MIC/ISO10383_MIC.csv",
+      "evidenceUrls": [
+        "https://www.iso20022.org/market-identifier-codes",
+        "https://www.iso20022.org/sites/default/files/ISO10383_MIC/ISO10383_MIC.csv",
+        "https://www.iso20022.org/sites/default/files/2020-02/ISO10383_Terms_of_use.pdf"
+      ],
+      "norn": {
+        "overlap": "Market venue identifiers, not bank identifiers or a universal organization model; preserve inactive/expired records and effective dates.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [
+          "ValueType"
+        ],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "Implementation date is after the research date; do not apply new assignments early or replace the publication date with that future effective date. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso13616-iban",
+      "name": "ISO 13616-1:2020 Financial services — International bank account number (IBAN) — Part 1: Structure of the IBAN",
+      "publisher": "ISO (ISO/TC 68/SC 8); SWIFT is Registration Authority under ISO 13616-2",
+      "kind": "standard",
+      "domains": [
+        "payments",
+        "parties-identity"
+      ],
+      "version": "ISO 13616-1:2020 (Edition 2)",
+      "versionDate": "2020-09",
+      "versionBasis": "iso.org/standard/81090.html (Wayback capture 2026-10-14; live iso.org returns 403) shows Publication date 2020-09, Edition 2, stage 90.93 Confirmed, replacing ISO 13616-1:2007.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-Copyright",
+        "text": "ISO copyright, all rights reserved; paid publication",
+        "status": "unverified",
+        "basis": "Read iso.org/copyright.html verbatim in a Wayback capture (2026-10-20). The live site returned 403.",
+        "termsUrl": "https://www.iso.org/copyright.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.iso.org/standard/81090.html",
+      "evidenceUrls": [
+        "https://www.iso.org/standard/81090.html",
+        "https://www.iso.org/copyright.html"
+      ],
+      "norn": {
+        "overlap": "bank account identifiers, IBAN structure and check digits",
+        "concepts": [
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "The IBAN structure (mod-97 check) is widely implemented. The per-country formats come from the SWIFT IBAN Registry, which is a separate artefact with its own terms (not checked here).",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "iso20022-camt-053",
+      "name": "ISO 20022 BankToCustomerStatement camt.053",
+      "publisher": "ISO 20022 Registration Authority / submitting organizations",
+      "kind": "standard",
+      "domains": [
+        "payments"
+      ],
+      "version": "camt.053.001.14",
+      "versionDate": null,
+      "versionBasis": "Live catalogue identifies BankToCustomerStatementV14, camt.053.001.14; no source-verified release date.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-20022-Financial-Repository-IPR",
+        "text": "ISO 20022 Financial Repository IPR policy (royalty-free use)",
+        "status": "unverified",
+        "basis": "Repository policy establishes royalty-free use, not a reviewed right to redistribute this artifact or all contributor material.",
+        "termsUrl": "https://www.iso20022.org/intellectual-property-rights",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://www.iso20022.org/message/23480/download",
+      "evidenceUrls": [
+        "https://www.iso20022.org/iso-20022-message-definitions",
+        "https://www.iso20022.org/message/23480/download",
+        "https://www.iso20022.org/intellectual-property-rights"
+      ],
+      "norn": {
+        "overlap": "Bank statement representation for reconciliation, separate from source transaction identity and ledger commit order.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [
+          "BankStatement",
+          "Reconciliation"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank statements feed reconciliation."
+      },
+      "notes": "A catalogue V14 entry does not supersede the older camt version a customer's bank actually emits. Keep message versions and bank usage guidelines distinct. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso20022-external-code-sets",
+      "name": "ISO 20022 external code sets, JSON distribution",
+      "publisher": "ISO 20022 Registration Authority / Standards Evaluation Groups",
+      "kind": "code-list",
+      "domains": [
+        "payments"
+      ],
+      "version": "August 2026 v3 (page); 2Q2026 v3 (archive member)",
+      "versionDate": null,
+      "versionBasis": "Official page labels August 2026 (v3); fetched ZIP member is 2Q2026_externalcodesets_v3.json. Preserve this discrepancy rather than silently normalize it.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-20022-Financial-Repository-IPR",
+        "text": "ISO 20022 Financial Repository IPR policy (royalty-free use)",
+        "status": "unverified",
+        "basis": "Royalty-free repository use is stated, but no artifact-specific redistribution grant or complete contributor-policy review established.",
+        "termsUrl": "https://www.iso20022.org/intellectual-property-rights",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.iso20022.org/sites/default/files/media/file/ExternalCodeSets_JSON.zip",
+      "evidenceUrls": [
+        "https://www.iso20022.org/catalogue/additional-content-messages/external-code-sets",
+        "https://www.iso20022.org/sites/default/files/media/file/ExternalCodeSets_JSON.zip",
+        "https://www.iso20022.org/intellectual-property-rights"
+      ],
+      "norn": {
+        "overlap": "External message code sets are value references; preserve inactive/historical values and source validity, not just current enum members.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [
+          "ValueType"
+        ],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "External codes update independently of message XSDs; never assume an XSD import contains the current external code list. Release day is unverified, so version_date is null rather than an invented first of month. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso20022-pacs-008",
+      "name": "ISO 20022 pacs.008 FIToFICustomerCreditTransfer",
+      "publisher": "ISO 20022 Registration Authority (SWIFT) under ISO/TC 68",
+      "kind": "standard",
+      "domains": [
+        "payments",
+        "finance"
+      ],
+      "version": "pacs.008.001.13",
+      "versionDate": null,
+      "versionBasis": "Read on the iso20022.org Payments catalogue (iso-20022-message-definitions?business-domain=1) via a 2025-05-24 Wayback capture, because iso20022.org returns HTTP 403 to automated fetches; a newer 2026 version could not be checked.",
+      "licence": {
+        "spdx": "LicenseRef-ISO20022-IPR-Policy",
+        "text": "ISO 20022 IPR Policy: contributors grant third parties a non-exclusive, royalty-free licence to use published Repository information; site material intended to be used and reproduced freely",
+        "status": "unverified",
+        "basis": "Read the IPR Policy (iso20022.org/intellectual-property-rights, capture 2026-09-04) and Terms of use (iso20022.org/terms-use, capture 2026-10-12) verbatim in Wayback captures; the live site returned 403, so not read on the publisher site today.",
+        "termsUrl": "https://www.iso20022.org/intellectual-property-rights",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "spec-PDF",
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.iso20022.org/iso-20022-message-definitions?business-domain=1",
+      "evidenceUrls": [
+        "https://www.iso20022.org/intellectual-property-rights",
+        "https://www.iso20022.org/terms-use",
+        "https://www.iso20022.org/iso-20022-message-definitions?business-domain=1"
+      ],
+      "norn": {
+        "overlap": "interbank customer credit transfer, debtor/creditor agents and accounts, settlement, remittance info",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "Message XSDs and the e-Repository are free. The ISO 20022 parts themselves (the methodology) are paid ISO publications. Terms say verbatim reproduction is free; adaptation is not addressed. Check that .13 is still the latest before pinning.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "iso20022-pain-001",
+      "name": "ISO 20022 CustomerCreditTransferInitiation pain.001",
+      "publisher": "ISO 20022 Registration Authority / submitting organizations",
+      "kind": "standard",
+      "domains": [
+        "payments"
+      ],
+      "version": "pain.001.001.13",
+      "versionDate": null,
+      "versionBasis": "Live ISO 20022 catalogue identifies pain.001.001.13; no verified release date. Bank-specific accepted versions remain a separate question.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-20022-Financial-Repository-IPR",
+        "text": "ISO 20022 Financial Repository IPR policy (royalty-free use)",
+        "status": "unverified",
+        "basis": "IPR policy grants non-exclusive royalty-free use of published repository information, but is not an explicit blanket redistribution/derivative grant. Contributor policies and artifact rights require review.",
+        "termsUrl": "https://www.iso20022.org/intellectual-property-rights",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://www.iso20022.org/message/23503/download",
+      "evidenceUrls": [
+        "https://www.iso20022.org/iso-20022-message-definitions",
+        "https://www.iso20022.org/message/23503/download",
+        "https://www.iso20022.org/intellectual-property-rights"
+      ],
+      "norn": {
+        "overlap": "Payment instruction representation, not executable payment authority or a ledger effect.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [
+          "PaymentInstruction",
+          "BankAccount"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank payment files are SAP-class table stakes."
+      },
+      "notes": "Use the customer's bank profile/version when known; catalogue version is not a statement of bank support. Do not vendor paid ISO standard prose. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso8583",
+      "name": "ISO 8583:2023 Financial-transaction-card-originated messages — Interchange message specifications",
+      "publisher": "ISO (ISO/TC 68/SC 9); maintenance agency for message, field and value definitions",
+      "kind": "standard",
+      "domains": [
+        "payments",
+        "finance"
+      ],
+      "version": "ISO 8583:2023 (Edition 3)",
+      "versionDate": "2023-07",
+      "versionBasis": "iso.org/standard/79451.html (Wayback capture 2026-10-26; live iso.org returns 403) shows Published, 2023-07, Edition 3, 18 pages, replacing ISO 8583-1:2003, -2:1998 and -3:2003.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-Copyright",
+        "text": "ISO copyright, all rights reserved; paid publication; ISO also bars use of its content for AI/ML",
+        "status": "unverified",
+        "basis": "Read iso.org/copyright.html verbatim in a Wayback capture (2026-10-20): all ISO publications are copyright-protected and any reproduction needs written permission. The live site returned 403, so not read on the publisher site today.",
+        "termsUrl": "https://www.iso.org/copyright.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.iso.org/standard/79451.html",
+      "evidenceUrls": [
+        "https://www.iso.org/standard/79451.html",
+        "https://www.iso.org/copyright.html"
+      ],
+      "norn": {
+        "overlap": "card authorisation/clearing messages, MTI, data elements, response codes",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "The 2023 edition is short (18 pp) and points to the maintenance agency's register for message, field and value definitions. That register was not checked. ISO's copyright page explicitly forbids using ISO content for ML/AI, including prompting.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "iso9362-bic",
+      "name": "ISO 9362:2022 Banking — Banking telecommunication messages — Business identifier code (BIC)",
+      "publisher": "ISO (ISO/TC 68/SC 8); SWIFT is Registration Authority",
+      "kind": "standard",
+      "domains": [
+        "payments",
+        "parties-identity"
+      ],
+      "version": "ISO 9362:2022 (Edition 5)",
+      "versionDate": "2022-04",
+      "versionBasis": "iso.org/standard/84108.html (Wayback capture 2026-10-24; live iso.org returns 403) shows Published 2022-04, Edition 5, replacing ISO 9362:2014.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-Copyright",
+        "text": "ISO copyright, all rights reserved; paid publication",
+        "status": "unverified",
+        "basis": "Read iso.org/copyright.html verbatim in a Wayback capture (2026-10-20). The live site returned 403.",
+        "termsUrl": "https://www.iso.org/copyright.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.iso.org/standard/84108.html",
+      "evidenceUrls": [
+        "https://www.iso.org/standard/84108.html",
+        "https://www.iso.org/copyright.html"
+      ],
+      "norn": {
+        "overlap": "financial/non-financial party identifiers (BIC8/BIC11)",
+        "concepts": [
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "BIC data records come from SWIFT's registry under SWIFT terms, a separate artefact that was not checked.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "nacha-ach-rules",
+      "name": "Nacha Operating Rules & Guidelines",
+      "publisher": "Nacha",
+      "kind": "standard",
+      "domains": [
+        "payments"
+      ],
+      "version": "2026 Nacha Operating Rules & Guidelines",
+      "versionDate": "2026",
+      "versionBasis": "Nacha store (nacha.org/store, Operating Rules filter), read live, lists '2026 Nacha Operating Rules & Guidelines' (product code 406-26) as book and online editions. nacha.org/rules lists amendments effective 2026-09-18 and 2027-09-17.",
+      "licence": {
+        "spdx": "LicenseRef-Nacha-Copyright",
+        "text": "Nacha copyright, all rights reserved; paid publication",
+        "status": "verified",
+        "basis": "Read nacha.org/content/legal-information live today: content is copyrighted by Nacha and may not be reproduced, disseminated or used for derivative works without prior written agreement.",
+        "termsUrl": "https://www.nacha.org/content/legal-information",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF",
+        "other"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.nacha.org/rules",
+      "evidenceUrls": [
+        "https://www.nacha.org/rules",
+        "https://www.nacha.org/content/legal-information",
+        "https://www.nacha.org/store?f%5B0%5D=topics%3A338"
+      ],
+      "norn": {
+        "overlap": "ACH file format (fixed-width 94-char records), SEC codes, returns, Same Day ACH",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "The ACH file and record layouts are defined in the paid Rules book. Field names and codes can be mapped to, but the text cannot be redistributed.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "paypal-rest-api-specifications",
+      "name": "PayPal REST API specifications",
+      "publisher": "PayPal (official GitHub repository paypal/paypal-rest-api-specifications)",
+      "kind": "data-model",
+      "domains": [
+        "payments"
+      ],
+      "version": "main@90e8041ffe02",
+      "versionDate": "2026-04-07",
+      "versionBasis": "GitHub API: there are no releases or tags. Head commit 90e8041ffe02 (payments_payment_v2.json update) dated 2026-04-07; openapi/ lists 13 specs such as checkout_orders_v2 and invoicing_v2.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0",
+        "status": "verified",
+        "basis": "GitHub repository licence metadata for paypal/paypal-rest-api-specifications reads Apache-2.0, checked today via the GitHub API and the repo page.",
+        "termsUrl": "https://github.com/paypal/paypal-rest-api-specifications/blob/main/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/paypal/paypal-rest-api-specifications",
+      "evidenceUrls": [
+        "https://github.com/paypal/paypal-rest-api-specifications"
+      ],
+      "norn": {
+        "overlap": "orders/checkout, payments capture/refund, invoicing, subscriptions, payouts, disputes",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "OpenAPI 3.0.3 JSON. Updated infrequently.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "stripe-openapi",
+      "name": "Stripe OpenAPI specification",
+      "publisher": "Stripe (official GitHub repository stripe/openapi)",
+      "kind": "data-model",
+      "domains": [
+        "payments"
+      ],
+      "version": "v2600 (spec info.version 2026-10-28.endive)",
+      "versionDate": "2026-11-10",
+      "versionBasis": "GitHub API: latest release/tag v2600 published 2026-11-10; latest/openapi.spec3.json info.version is '2026-10-28.endive'. Master head commit 6763e1a3f199.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT License",
+        "status": "verified",
+        "basis": "GitHub repository licence metadata for stripe/openapi (from its LICENSE file) reads MIT, checked today via the GitHub API and the repo page.",
+        "termsUrl": "https://github.com/stripe/openapi/blob/master/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/stripe/openapi",
+      "evidenceUrls": [
+        "https://github.com/stripe/openapi",
+        "https://raw.githubusercontent.com/stripe/openapi/master/latest/openapi.spec3.json"
+      ],
+      "norn": {
+        "overlap": "payment intents, charges, customers, invoices, subscriptions, payouts",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "De-facto payment object model; MIT."
+      },
+      "notes": "/latest holds the GA release with v1 and v2 endpoints, and /openapi holds v1 only. Releases are nearly daily, so pin a tag.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "swift-bic-directory",
+      "name": "ISO 9362 BIC directory / SwiftRef products",
+      "publisher": "Swift, ISO 9362 Registration Authority",
+      "kind": "code-list",
+      "domains": [
+        "payments"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "No data release inspected. Verified product terms are dated 1 October 2022; that is not a BIC data release.",
+      "licence": {
+        "spdx": "LicenseRef-SwiftRef-commercial-product-licence-third",
+        "text": "SwiftRef commercial product licence; third-party distribution licence separate",
+        "status": "verified",
+        "basis": "Clauses 3-4 restrict usage to licensed purposes; third-party data/application/service use requires a separate SwiftRef Data Inside Application licence. None established.",
+        "termsUrl": "https://www.swift.com/resource/swiftref-products-terms-and-conditions",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "API"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.swift.com/products/swiftref",
+      "evidenceUrls": [
+        "https://www.swift.com/products/swiftref",
+        "https://www.swift.com/resource/swiftref-products-terms-and-conditions"
+      ],
+      "norn": {
+        "overlap": "BIC identifier validation can be considered separately from assignment/routing directory data; syntax alone cannot prove assignment or reachability.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "Artifact URL is the verified product/access discovery page, not source data. Terms PDF is rights evidence only. Public ISO 9362 TXT availability is a distinct route, separately catalogued without assuming these commercial terms govern it. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "swift-iban-registry",
+      "name": "ISO 13616 national IBAN format registry (TXT)",
+      "publisher": "Swift, ISO 13616 Registration Authority",
+      "kind": "code-list",
+      "domains": [
+        "payments"
+      ],
+      "version": "Release 103 (publisher resource catalogue)",
+      "versionDate": "2026-09-17",
+      "versionBasis": "Swift standards-resource listing identifies Release 103 and last update 17 September 2026 for TXT; download body could not be inspected.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Publisher offers a free registry download, but no source-specific downstream redistribution/derivative licence was verified. IBAN Plus commercial terms are not assumed to apply to this public format registry.",
+        "termsUrl": "https://www.swift.com/standards/data-standards/iban-international-bank-account-number",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://www.swift.com/swift-resource/11971/download",
+      "evidenceUrls": [
+        "https://www.swift.com/standards/data-standards/iban-international-bank-account-number",
+        "https://www.swift.com/standards/standards-resources?category%5B0%5D=169031",
+        "https://www.swift.com/swift-resource/11971/download"
+      ],
+      "norn": {
+        "overlap": "National account format/length patterns only; no account existence, beneficiary identity or bank routing truth.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "Do not use the PDF registry as a machine-readable source, or equate this public format list with SwiftRef IBAN Plus bank-directory data. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "swift-iso9362-public-directory-txt",
+      "name": "Public ISO 9362 BIC directory TXT download availability",
+      "publisher": "Swift / SwiftRef",
+      "kind": "code-list",
+      "domains": [
+        "payments"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Official BIC Search page offers ISO 9362 TXT and PDF download options but establishes no inspected release/version.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No artifact-specific grant for this TXT distribution verified. Free BIC Search restrictions and commercial SwiftRef licences must not be silently substituted for the uninspected download's terms.",
+        "termsUrl": "https://www.swiftref.com/en/bicsearch",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.swiftref.com/en/bicsearch",
+      "evidenceUrls": [
+        "https://www.swiftref.com/en/bicsearch",
+        "https://www.swift.com/ja/node/11201"
+      ],
+      "norn": {
+        "overlap": "BIC assignment reference only; neither a complete bank model nor proof of payment reachability.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "The download promise is not evidence of an open licence, an accessible static URL, complete current data, or a fetched machine-readable payload. PDF option is excluded. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "uk-open-banking-account-api",
+      "name": "UK Open Banking Account and Transaction API",
+      "publisher": "Open Banking Limited / OpenBankingUK",
+      "kind": "protocol",
+      "domains": [
+        "payments"
+      ],
+      "version": "4.0.1; repository v4.0.1-Update-1",
+      "versionDate": "2026-09-18",
+      "versionBasis": "Selected YAML info.version is 4.0.1; repository latest-release API identifies v4.0.1-Update-1 published 2026-09-18T10:57:25Z and master commit 484a1795680d9852600247878b9fd2bfe584c0aa. Release date and API version are distinct fields.",
+      "licence": {
+        "spdx": "LicenseRef-Open-Banking-open-licence-identifier",
+        "text": "Open Banking open-licence identifier (effective grant unresolved)",
+        "status": "unverified",
+        "basis": "YAML info.license names open-licence, but its linked current web route rendered Cookie Policy content. No operative redistribution/derivative grant established; do not infer Apache/MIT from public GitHub hosting.",
+        "termsUrl": "https://www.openbanking.org.uk/open-licence/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/OpenBankingUK/read-write-api-specs/484a1795680d9852600247878b9fd2bfe584c0aa/dist/openapi/account-info-openapi.yaml",
+      "evidenceUrls": [
+        "https://github.com/OpenBankingUK/read-write-api-specs",
+        "https://api.github.com/repos/OpenBankingUK/read-write-api-specs/releases/latest",
+        "https://api.github.com/repos/OpenBankingUK/read-write-api-specs/commits/master",
+        "https://raw.githubusercontent.com/OpenBankingUK/read-write-api-specs/484a1795680d9852600247878b9fd2bfe584c0aa/dist/openapi/account-info-openapi.yaml",
+        "https://www.openbanking.org.uk/open-licence/"
+      ],
+      "norn": {
+        "overlap": "Account, transaction, balance and consent interchange; never client-side authorization or a new banking runtime.",
+        "concepts": [
+          "canon.Settlement",
+          "canon.SettlementObservation",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BankAccount",
+          "PaymentInstruction"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
+      },
+      "notes": "Publisher repository also lists separate payment-initiation, confirmation-of-funds, VRP and event OpenAPIs. This selected account schema does not establish complete family coverage or production access entitlement. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

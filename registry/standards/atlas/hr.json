@@ -1,0 +1,230 @@
+{
+  "atlasVersion": 1,
+  "domain": "hr",
+  "entries": [
+    {
+      "id": "esco-classification",
+      "name": "ESCO occupations and skills classification",
+      "publisher": "European Commission",
+      "kind": "code-list",
+      "domains": [
+        "hr"
+      ],
+      "version": "1.2.1",
+      "versionDate": "2025-12-10",
+      "versionBasis": "Official versions page says December 2025; official API page footer specifies last update 10/12/2025. This is classification version, not API release v6.0.0.",
+      "licence": {
+        "spdx": "LicenseRef-Commission-Decision-2011-833-EU",
+        "text": "Commission Decision 2011/833/EU reuse policy",
+        "status": "verified",
+        "basis": "Official FAQ permits classification download/use/reproduction/reuse under Decision 2011/833/EU. Preserve attribution and identify modifications; API software EUPL-1.2 is a separate artifact.",
+        "termsUrl": "https://esco.ec.europa.eu/en/about-esco/faq?page=1",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF",
+        "JSON-LD",
+        "CSV",
+        "XML",
+        "JSON"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://esco.ec.europa.eu/en/use-esco/download",
+      "evidenceUrls": [
+        "https://esco.ec.europa.eu/en/use-esco/download",
+        "https://esco.ec.europa.eu/en/about-esco/escopedia/escopedia/esco-versions",
+        "https://esco.ec.europa.eu/es/use-esco/use-esco-services-api",
+        "https://esco.ec.europa.eu/en/about-esco/faq?page=1"
+      ],
+      "norn": {
+        "overlap": "Source occupation/skill URIs and multilingual labels; not proof that tenant job titles or competencies are equivalent.",
+        "concepts": [
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Employment",
+          "Position",
+          "Skill"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "HR and payroll come after the commerce and ledger core."
+      },
+      "notes": "Selector URL is a verified acquisition route, not an immutable payload pin. Package-level notices still need inspection before admission. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "hr-open-standards",
+      "name": "HR Open Standards: recruiting, common employee data, payroll and timecard",
+      "publisher": "HR Open Standards Consortium",
+      "kind": "standard",
+      "domains": [
+        "hr"
+      ],
+      "version": "4.3.0 (TimecardType)",
+      "versionDate": null,
+      "versionBasis": "Actual TimecardType JSON declares version 4.3.0 despite being served under /4.5R/. Official documentation labels suite 4.5 Approved and 4.6 Release Candidate; this does not change the file's version. May 9, 2025 announcement is candidate, not final approval date.",
+      "licence": {
+        "spdx": "LicenseRef-HR-Open-Standards-License-Agreement",
+        "text": "HR Open Standards License Agreement (2014-05-01)",
+        "status": "unverified",
+        "basis": "Agreement sections 2(a,c-e) permit reproduction and derivatives with agreement and notices; 2(f) restricts standards-organization derivatives and section 7 requires commercial indemnity. Applicability to Norn registry derivatives requires review.",
+        "termsUrl": "https://assets.noviams.com/novi-file-uploads/hropen/pdfs-and-documents/LicenseAgreement-1-480eeea4.pdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://hropentech.org/4.5R/schema/hros-timecard-dev/json/TimecardType.json",
+      "evidenceUrls": [
+        "https://www.hropenstandards.org/documentation",
+        "https://www.hropenstandards.org/news/standards-candidate-release---45rci-",
+        "https://hropentech.org/4.5R/specifications/timecard/json/samples/",
+        "https://hropentech.org/4.5R/specifications/payroll/json/samples/",
+        "https://assets.noviams.com/novi-file-uploads/hropen/pdfs-and-documents/LicenseAgreement-1-480eeea4.pdf"
+      ],
+      "norn": {
+        "overlap": "Employee/contact/pay components and time events are source shapes, never a global payroll policy or Core authority.",
+        "concepts": [
+          "core.Agent",
+          "core.AgentRole",
+          "core.Commitment"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Employment",
+          "Position",
+          "Skill"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "HR and payroll come after the commerce and ledger core."
+      },
+      "notes": "Actual JSON schema verified, but path uses hros-timecard-dev: correspondence with approved 4.5 distribution is unverified. Payroll/recruiting/common schema directories and samples are discoverable, not certified as a complete approved corpus. PDF is rights evidence only, not a standards source payload. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "isco-08",
+      "name": "ISCO-08 structure and group definitions",
+      "publisher": "International Labour Organization",
+      "kind": "code-list",
+      "domains": [
+        "hr"
+      ],
+      "version": "ISCO-08",
+      "versionDate": null,
+      "versionBasis": "ILO records adoption December 2007, endorsement March 2008; exact workbook publication date unverified. 2021 path is not a release date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Artifact-specific reuse grant not verified; do not transfer a modern ILO publication licence to this older workbook by assumption.",
+        "termsUrl": "https://www.ilo.org/copyright",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.ilo.org/ilostat-files/ISCO/newdocs-08-2021/ISCO-08/ISCO-08%20EN%20Structure%20and%20definitions.xlsx",
+      "evidenceUrls": [
+        "https://isco.ilo.org/en/isco-08/",
+        "https://ilostat.ilo.org/methods/concepts-and-definitions/classification-occupation/",
+        "https://www.ilo.org/copyright"
+      ],
+      "norn": {
+        "overlap": "Occupation identifiers and classification hierarchy; not employee records or payroll rules.",
+        "concepts": [
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Employment",
+          "Position",
+          "Skill"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "HR and payroll come after the commerce and ledger core."
+      },
+      "notes": "Machine-readable workbook is documented but bytes inaccessible in this check; the PDF volume is not substituted. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "onet-database",
+      "name": "O*NET 31.0 Database",
+      "publisher": "US Department of Labor / National Center for O*NET Development",
+      "kind": "standard",
+      "domains": [
+        "hr"
+      ],
+      "version": "31.0",
+      "versionDate": "2026-08",
+      "versionBasis": "Official database archive lists 31.0 August 2026; verified ZIP header. Do not infer a specific day.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0",
+        "status": "verified",
+        "basis": "Database content licence permits copying/adaptation with USDOL/ETA and version attribution, licence link and change indication; trademark and listed exceptions remain. Does not cover career-exploration tools or all site content.",
+        "termsUrl": "https://www.onetcenter.org/license_db.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.onetcenter.org/dl_files/database/db_31_0_json.zip",
+      "evidenceUrls": [
+        "https://www.onetcenter.org/database.html",
+        "https://www.onetcenter.org/db_releases.html",
+        "https://www.onetcenter.org/license_db.html"
+      ],
+      "norn": {
+        "overlap": "US occupations, work activities and skills; US taxonomy is enrichment, not Egypt employment authority.",
+        "concepts": [
+          "core.Agent",
+          "core.AgentRole",
+          "core.Commitment"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Employment",
+          "Position",
+          "Skill"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "HR and payroll come after the commerce and ledger core."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

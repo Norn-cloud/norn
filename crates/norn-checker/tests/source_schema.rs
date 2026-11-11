@@ -90,3 +90,27 @@ fn invalid_fixtures_report_their_code() {
     }
     assert!(cases >= 20, "every invalid fixture was exercised");
 }
+
+/// D84: the XSD admission hook is additive. Every existing source schema keeps
+/// its admission result; only a document that declares the generic XSD
+/// reader's adapter gains one finding when it omits its admission.
+#[test]
+fn xsd_admission_hook_changes_no_other_adapter_result() {
+    for name in ["sql", "workbook", "frappe"] {
+        let value = read_json(&fixture_dir().join(format!("{name}.json")));
+        assert!(
+            decode_source_schema(&value).is_ok(),
+            "{name} keeps its clean result"
+        );
+        let mut as_xsd = value.clone();
+        *as_xsd
+            .pointer_mut("/adapter/name")
+            .expect("every fixture names its adapter") = serde_json::json!("norn.formats.xsd");
+        let findings = decode_source_schema(&as_xsd).expect_err("XSD output needs its admission");
+        assert_eq!(findings.len(), 1, "{name}: {findings:#?}");
+        assert_eq!(
+            findings.first().map(|finding| finding.code.as_str()),
+            Some("source_schema.validation.invalid_evidence")
+        );
+    }
+}
