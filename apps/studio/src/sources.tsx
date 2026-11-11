@@ -59,7 +59,7 @@ function ConceptCard({ concept }: { readonly concept: Concept }) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   const { view } = useView()
   return (
-    <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+    <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
       <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
         <CardHeader>
           <CardTitle lang={concept.titleLang}>{concept.title}</CardTitle>

@@ -260,7 +260,7 @@ function Frame(props: CanvasFrameProps) {
             {issues.length === 0 && <p className="text-meta text-muted-foreground">No problems in this definition.</p>}
             {issues.map((issue, index) => (
               <button key={index} type="button" data-testid="problem" onClick={() => jump(issue)} disabled={!issue.node && !issue.edge}
-                className="block w-full space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-left text-meta enabled:hover:bg-muted">
+                className="block w-full space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-start text-meta enabled:hover:bg-muted">
                 <span className="flex items-center gap-1 font-mono text-xs text-destructive"><CircleAlert className="size-3" /><Iso>{issue.code}</Iso></span>
                 <span className="block"><CodedMessage code={issue.code} message={issue.message} /></span>
                 <span className="block text-muted-foreground">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span>
