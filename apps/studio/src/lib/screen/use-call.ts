@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useLayoutEffect, useRef, useState } from "react"
 import { newIdempotencyKey, type CallResult } from "../actions.ts"
 import { init, update, type Cmd, type Msg, type State, type Target } from "./call.ts"
 
@@ -12,7 +12,8 @@ export function useCall(target: Target, run: Call, onRefetch?: () => void): read
   const [state, setState] = useState<State>(() => init(target, newIdempotencyKey()))
   const current = useRef(state)
   const effects = useRef({ run, onRefetch })
-  effects.current = { run, onRefetch }
+  // Only callbacks from a committed render: React may replay or discard a render.
+  useLayoutEffect(() => { effects.current = { run, onRefetch } })
   const dispatch = useCallback((msg: Msg) => {
     const [next, cmds] = update(current.current, msg)
     current.current = next

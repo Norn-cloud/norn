@@ -28,8 +28,12 @@ export type Phase =
   | { readonly kind: "failed"; readonly reason: Unreachable; readonly message: string | null }
   | { readonly kind: "done"; readonly receipt: ActionReceipt; readonly undo: UndoOffer | null }
   | { readonly kind: "undoing"; readonly receipt: ActionReceipt; readonly undo: UndoOffer }
-  /** The compensation was refused or did not arrive: the first call still stands, and the reason is shown. */
-  | { readonly kind: "undo-failed"; readonly receipt: ActionReceipt; readonly undo: UndoOffer; readonly message: string | null }
+  /**
+   * The undo did not come back with a receipt. `known`: the cell answered without committing (a refusal,
+   * or no route), so nothing was undone. Otherwise the answer was lost and the undo may have committed:
+   * a retry re-sends it under the same key, so it never applies twice.
+   */
+  | { readonly kind: "undo-failed"; readonly receipt: ActionReceipt; readonly undo: UndoOffer; readonly message: string | null; readonly known: boolean }
   | { readonly kind: "undone"; readonly receipt: ActionReceipt; readonly reversal: ActionReceipt }
 
 export interface State {
@@ -70,9 +74,9 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
   const { phase } = state
   switch (msg.kind) {
     case "edit": {
-      // After a commit the draft is gone; while a call is out, only the key moves on (the call keeps its own).
-      if (phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
-      if (phase.kind === "sending") return [{ ...state, key: msg.key }, []]
+      // The view holds the fields still while a call is out (and the draft is gone after a commit), so an
+      // edit then is not one: the call that is out keeps its body and key, and nothing unsent is lost.
+      if (inFlight(state) || phase.kind === "done" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
       // A refusal stays visible while the user fixes the fields it names; a confirm or an outage clears.
       const next: Phase = phase.kind === "confirm" || phase.kind === "failed" ? { kind: "editing" } : phase
       return [{ ...state, phase: next, key: msg.key }, []]
@@ -97,7 +101,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
       return [{ ...state, phase: { kind: "undoing", receipt: phase.receipt, undo: phase.undo }, key: msg.key }, [call(phase.undo.actionId, phase.undo.input, msg.key)]]
     case "threw":
       if (phase.kind === "sending") return [{ ...state, phase: { kind: "failed", reason: "error", message: msg.message } }, []]
-      if (phase.kind === "undoing") return [{ ...state, phase: { kind: "undo-failed", receipt: phase.receipt, undo: phase.undo, message: msg.message } }, []]
+      if (phase.kind === "undoing") return [{ ...state, phase: { kind: "undo-failed", receipt: phase.receipt, undo: phase.undo, message: msg.message, known: false } }, []]
       return [state, []]
     case "answered":
       if (phase.kind === "sending") return [{ ...state, phase: answered(msg.result) }, msg.result.kind === "receipt" ? [REFETCH] : []]
@@ -105,7 +109,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
         const result = msg.result
         if (result.kind === "receipt") return [{ ...state, phase: { kind: "undone", receipt: phase.receipt, reversal: result.receipt } }, [REFETCH]]
         const message = result.kind === "refused" ? result.message : null
-        return [{ ...state, phase: { kind: "undo-failed", receipt: phase.receipt, undo: phase.undo, message } }, []]
+        return [{ ...state, phase: { kind: "undo-failed", receipt: phase.receipt, undo: phase.undo, message, known: true } }, []]
       }
       // An answer nobody is waiting for (a late reply after the state moved on) changes nothing.
       return [state, []]

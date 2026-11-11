@@ -94,7 +94,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   if (committed) {
     return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} phase={phase}
       onUndo={() => dispatch({ kind: "undo", key: newKey() })} onRetryUndo={() => dispatch({ kind: "retry" })}
-      onAgain={writesWhole(action) && phase.kind !== "undoing" ? () => { setDraft(initial); setStep(0); setReached(0); dispatch({ kind: "again", key: newKey() }) } : undefined} onClose={onClose} />
+      onAgain={writesWhole(action) && (phase.kind === "done" || phase.kind === "undone") ? () => { setDraft(initial); setStep(0); setReached(0); dispatch({ kind: "again", key: newKey() }) } : undefined} onClose={onClose} />
   }
 
   const top = unplaced(diagnostics, fields)
@@ -124,6 +124,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
           <Button type="button" variant="outline" size="sm" onClick={() => dispatch({ kind: "retry" })}>Retry</Button>
         </div>
       )}
+      {/* While a call is out the fields hold still: the call keeps its body and key, and no edit is lost behind it. */}
+      <fieldset disabled={phase.kind === "sending"} className="contents">
       {wizard && <Steps sections={sections} step={step} reached={reached} counts={counts} onGo={go} />}
       {wizard && step === review && <Review sections={sections} fields={fields} draft={draft} counts={counts} prefill={prefill} onEdit={go} />}
       {shown.map((section) => {
@@ -140,6 +142,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
           </section>
         )
       })}
+      </fieldset>
       {phase.kind === "confirm" && (
         <div role="alertdialog" aria-labelledby="confirm-title" className="grid gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
           <p id="confirm-title" className="flex items-center gap-2 font-medium text-destructive"><AlertTriangle className="size-4" aria-hidden />
@@ -418,7 +421,7 @@ function Receipt({ action, objectTitle, technical, phase, onView, onAgain, onUnd
       )}
       {phase.kind === "undo-failed" && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <span>{phase.message ?? "The undo did not reach the cell."} Nothing was undone.</span><span className="flex-1" />
+          <span>{phase.known ? `${phase.message ?? "The cell did not take the undo."} Nothing was undone.` : "The cell didn't confirm the undo, so it may or may not have happened. Retrying sends the same request, so it can't apply twice."}</span><span className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={onRetryUndo}>Retry undo</Button>
         </div>
       )}

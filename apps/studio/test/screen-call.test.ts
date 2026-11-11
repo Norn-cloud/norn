@@ -34,7 +34,8 @@ function session(seed: number, length = 60): { readonly risky: boolean; readonly
       () => ({ kind: "no-cell" }) as const,
     ])()
     const msg: Msg = pick(r, [
-      (): Msg => { draft++; return { kind: "edit", key: `k${keys++}` } },
+      // The view holds the fields still while a call is out, so it sends no edit then.
+      (): Msg => { if (!inFlight(state)) draft++; return { kind: "edit", key: `k${keys++}` } },
       (): Msg => ({ kind: "submit", input: `{"verdict":"v${draft}"}` }),
       (): Msg => ({ kind: "back" }),
       (): Msg => ({ kind: "answered", result: result() }),
@@ -77,7 +78,8 @@ test("keys: one key never carries two bodies, a retry re-sends exactly the last 
     const bodies = new Map<string, string>()
     let last: Extract<Cmd, { kind: "call" }> | null = null
     for (const { before, msg, after, cmds } of session(seed).steps) {
-      if (msg.kind === "edit" && before.phase.kind !== "done" && before.phase.kind !== "undoing" && before.phase.kind !== "undo-failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
+      if (msg.kind === "edit" && !inFlight(before) && before.phase.kind !== "done" && before.phase.kind !== "undo-failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
+      if (msg.kind === "edit" && inFlight(before)) expect(after).toBe(before)
       for (const c of calls(cmds)) {
         if (c.actionId !== "learning.triage_episode") continue
         if (bodies.has(c.key)) expect(c.input).toBe(bodies.get(c.key)!)
@@ -106,6 +108,13 @@ test("the documents are read again exactly when the cell commits something, and 
     const commits = msg.kind === "answered" && msg.result.kind === "receipt" && inFlight(before) ? 1 : 0
     expect(refetches).toBe(commits)
     if ((msg.kind === "answered" || msg.kind === "threw") && !inFlight(before)) { expect(after).toBe(before); expect(cmds).toEqual([]) }
+  }
+})
+
+test("an undo that did not come back says whether it is known not to have happened: only the cell's own answer makes it known", () => {
+  for (const seed of SEEDS) for (const { before, msg, after } of session(seed).steps) {
+    if (before.phase.kind !== "undoing" || after.phase.kind !== "undo-failed") continue
+    expect(after.phase.known).toBe(msg.kind === "answered")
   }
 })
 
