@@ -24,7 +24,17 @@ FAMILIES = {
 
 
 def _key(record: dict) -> tuple:
-    return (record["measured_at"], record["recorded_at"], record["id"])
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import record as store  # noqa: PLC0415
+    return store.series_key(record)
+
+
+def _source_md(url: str) -> str:
+    return f"[link]({url})" if url.startswith(("https://", "http://")) else "thread"
+
+
+def _source_html(url: str) -> str:
+    return f'<a href="{html.escape(url)}">source</a>' if url.startswith(("https://", "http://")) else "thread"
 
 
 def series(records: list[dict]) -> dict[str, list[dict]]:
@@ -66,9 +76,9 @@ def markdown(records: list[dict]) -> str:
         "`scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated",
         "on every append.",
         "",
-        f"{len(records):,} records across {len(groups):,} metrics. Values are in time order; the",
-        "trend shows the last 40. *est.* marks an estimate; runner `boat` series are the only",
-        "ones the nightly ratchet gates.",
+        f"{len(records):,} records across {len(groups):,} metrics. Each series runs in the order of the",
+        "measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an",
+        "estimate; runner `boat` series are the only ones the nightly ratchet gates.",
         "",
     ]
     by_family: dict[str, list[str]] = defaultdict(list)
@@ -89,7 +99,7 @@ def markdown(records: list[dict]) -> str:
             lines.append(
                 f"| `{metric}` | {number(last['value'])}{est} | {last['unit']} ({last['statistic']}) | {runners} | "
                 f"{len(rows)} | {number(min(values))} / {number(max(values))} | {sparkline(values)} | {commit} | "
-                f"[link]({last['source']['url']}) |")
+                f"{_source_md(last['source']['url'])} |")
         lines.append("")
     lines += ["## Latest caveats", "",
               "What limits each metric's latest value, in the measurer's words.", ""]
@@ -137,7 +147,7 @@ def html_page(records: list[dict]) -> str:
                 f"<td class=num>{len(rows)}</td>"
                 f"<td>{_svg(values)}</td>"
                 f"<td><code>{html.escape(sha[:10]) if sha else '—'}</code></td>"
-                f"<td><a href=\"{html.escape(last['source']['url'])}\">source</a></td>"
+                f"<td>{_source_html(last['source']['url'])}</td>"
                 f"<td class=cav>{html.escape(last['caveats'])}</td>"
                 "</tr>")
         sections.append(

@@ -165,6 +165,14 @@ def parse_time(text: str) -> dt.datetime:
     return dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
 
 
+def series_key(record: dict) -> tuple:
+    """A series' order: the measured commit's date (the code's history), then when it was measured.
+    A record with no commit sorts by its measurement time."""
+    measured = parse_time(record["measured_at"])
+    committed = parse_time(record["commit"]["date"]) if record["commit"]["date"] else measured
+    return (committed, measured, record["recorded_at"], record["id"])
+
+
 def now_utc() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

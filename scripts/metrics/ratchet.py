@@ -5,7 +5,8 @@ Runs nightly over the metrics branch, never on a pull request. Only series measu
 Boat count (`env.runner == "boat"`); GitHub-hosted numbers are too noisy to gate on.
 `ratchet.json` lists the tracked metrics, which direction is better and the noise band.
 
-For each tracked metric, its Boat values in measurement order give:
+For each tracked metric, its Boat values in series order (record.series_key: the measured
+commit's date, then measurement time) give:
 
 * baseline: the best rolling median of `window` consecutive values seen before the latest
   `confirm` values. It only moves in the better direction, so a slow drift still trips it;
@@ -50,6 +51,8 @@ def judge(values: list[float], better: str, noise_pct: float, window: int = 3, c
 
 
 def evaluate(records: list[dict], config: dict) -> list[dict]:
+    sys.path.insert(0, str(HERE))
+    import record as store  # noqa: PLC0415
     runner = config.get("runner", "boat")
     by_metric: dict[str, list[dict]] = {}
     for record in records:
@@ -57,7 +60,7 @@ def evaluate(records: list[dict], config: dict) -> list[dict]:
             by_metric.setdefault(record["metric"], []).append(record)
     verdicts = []
     for metric, rule in sorted(config["metrics"].items()):
-        rows = sorted(by_metric.get(metric, []), key=lambda r: (r["measured_at"], r["recorded_at"], r["id"]))
+        rows = sorted(by_metric.get(metric, []), key=store.series_key)
         verdict = judge([r["value"] for r in rows], rule["better"], rule["noise_pct"],
                         rule.get("window", 3), rule.get("confirm", 1))
         verdict["metric"] = metric
