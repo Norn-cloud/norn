@@ -31,6 +31,7 @@ struct Cfg {
     reflink_dir: Option<PathBuf>,
     reads: usize,
     fork_cache_kib: i64,
+    baseline_fsync: bool,
 }
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
@@ -54,6 +55,7 @@ impl Cfg {
             reflink_dir: std::env::var("FB_REFLINK_DIR").ok().map(PathBuf::from),
             reads: env("FB_READS", 20_000),
             fork_cache_kib: env("FB_FORK_CACHE_KIB", 256),
+            baseline_fsync: env("FB_BASELINE_FSYNC", 1u8) == 1,
         }
     }
 }
@@ -236,7 +238,7 @@ fn spawn_main_writer(main: Connection, subjects: u64, stop: Arc<AtomicBool>, pac
 
 // -------------------------------------------------------------- baselines
 
-fn ficlone(src: &Path, dst: &Path) -> std::io::Result<()> {
+fn ficlone(src: &Path, dst: &Path, sync: bool) -> std::io::Result<()> {
     const FICLONE: libc::c_ulong = 0x4004_9409;
     let s = std::fs::File::open(src)?;
     let d = std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(dst)?;
@@ -244,7 +246,10 @@ fn ficlone(src: &Path, dst: &Path) -> std::io::Result<()> {
     if rc != 0 {
         return Err(std::io::Error::last_os_error());
     }
-    d.sync_all()
+    if sync {
+        d.sync_all()?;
+    }
+    Ok(())
 }
 
 fn baselines(cfg: &Cfg, subjects: u64) {
@@ -276,11 +281,13 @@ fn baselines(cfg: &Cfg, subjects: u64) {
         let dst = cfg.dir.join(format!("copy-{i}.db"));
         let t = Instant::now();
         std::fs::copy(&path, &dst).unwrap();
-        std::fs::File::open(&dst).unwrap().sync_all().unwrap();
+        if cfg.baseline_fsync {
+            std::fs::File::open(&dst).unwrap().sync_all().unwrap();
+        }
         copy.push(t.elapsed().as_nanos() as u64);
         std::fs::remove_file(&dst).unwrap();
     }
-    summary(&format!("fork by file copy+fsync ({})", mib(size)), &mut copy);
+    summary(&format!("fork by file copy, fsync={} ({})", cfg.baseline_fsync, mib(size)), &mut copy);
     println!("  storage per copy fork: {} (100% of the cell)", mib(size));
 
     // Fork by reflink (FICLONE), if the filesystem supports it.
@@ -291,7 +298,7 @@ fn baselines(cfg: &Cfg, subjects: u64) {
     } else {
         std::fs::hard_link(&path, &rsrc).ok();
     }
-    match ficlone(&rsrc, &rdir.join("probe.db")) {
+    match ficlone(&rsrc, &rdir.join("probe.db"), false) {
         Err(e) => println!("  reflink on {}: unsupported ({e})", rdir.display()),
         Ok(()) => {
             let _ = std::fs::remove_file(rdir.join("probe.db"));
@@ -300,10 +307,10 @@ fn baselines(cfg: &Cfg, subjects: u64) {
                 for i in 0..n {
                     let dst = rdir.join(format!("rl-{i}.db"));
                     let t = Instant::now();
-                    ficlone(&rsrc, &dst).unwrap();
+                    ficlone(&rsrc, &dst, cfg.baseline_fsync).unwrap();
                     v.push(t.elapsed().as_nanos() as u64);
                 }
-                summary(&format!("fork by reflink+fsync, {n} forks"), &mut v);
+                summary(&format!("fork by reflink, fsync={}, {n} forks", cfg.baseline_fsync), &mut v);
                 for i in 0..n {
                     let _ = std::fs::remove_file(rdir.join(format!("rl-{i}.db")));
                 }
