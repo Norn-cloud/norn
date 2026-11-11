@@ -774,6 +774,10 @@
       "message": "تسمية تشير إلى تعريف لا تعلنه مجموعة الأدوات ولا القاعدة المثبَّتة",
       "review": "needs_review"
     },
+    "labels.lint.missing_label": {
+      "message": "{$count} تعريفات ليس لها تسمية بلغة {$locale}: {$targets}",
+      "review": "needs_review"
+    },
     "labels.validation.bidi_control": {
       "message": "تسمية أو وصف يحتوي محرف تحكم ثنائي الاتجاه (تضمين أو تجاوز أو عزل)",
       "review": "needs_review"

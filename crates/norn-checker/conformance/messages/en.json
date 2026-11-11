@@ -581,6 +581,9 @@
     "labels.admission.unknown_target": {
       "message": "a label names a definition that neither the artifact set nor the installed base declares"
     },
+    "labels.lint.missing_label": {
+      "message": "{$count} definitions have no {$locale} label: {$targets}"
+    },
     "labels.validation.bidi_control": {
       "message": "a label or description contains a bidi embedding, override or isolate control"
     },
