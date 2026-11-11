@@ -3,7 +3,9 @@
 # crates/norn-kernel/src/decider_fold.rs, standalone, and Lean proves it against
 # the written fold, replay, step-order and envelope semantics in
 # verification/kernel-proof-v1/Decider. Every seeded fold, order and envelope
-# mutant must then extract and fail the same proof.
+# mutant must then extract and elaborate, fail a correspondence proof (FoldProof
+# or StepProof, by an error in that file, not a timeout or a missing import) and
+# be refuted by a kernel `decide` probe in Decider/Probe.lean.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
@@ -261,14 +263,27 @@ while read -r name path; do
   fi
   rm "$tree/$path"
   cp "$pristine" "$tree/$path"
-  # Record which correspondence proofs the mutant breaks (informational).
+  # The correspondence theorems must constrain the mutant: FoldProof or StepProof
+  # must fail on it with an error in that file. A timeout proves nothing, and
+  # neither does StepProof failing only because FoldProof left no object file.
+  unproved=false
   for module in FoldProof StepProof; do
-    if lean_check "$out" "$proof_root" "Decider/$module" > "$result/mutants/$name/$module.log" 2>&1; then
+    log="$result/mutants/$name/$module.log"
+    if lean_check "$out" "$proof_root" "Decider/$module" > "$log" 2>&1; then
       echo "mutant $name: $module elaborates"
-    else
+    elif grep "Decider/$module.lean:[0-9]*:[0-9]*: error" "$log" |
+      grep -v -e "maximum number of heartbeats" -e "object file .* does not exist" | grep -q .; then
       echo "mutant $name: $module fails"
+      unproved=true
+    else
+      echo "mutant $name: $module fails only by a timeout or a missing import"
     fi
   done
+  if ! $unproved; then
+    echo "mutant $name: neither FoldProof nor StepProof fails; the correspondence theorems do not constrain it (survived)" >&2
+    survivors=$((survivors + 1))
+    continue
+  fi
   # Detected means refuted, not merely unproved: a concrete probe must be
   # evaluated on the mutant and `decide` must prove its proposition false.
   if lean_check "$out" "$proof_root" Decider/Probe > "$result/mutants/$name/Probe.log" 2>&1; then
@@ -286,4 +301,4 @@ while read -r name path; do
 done < "$result/mutants/list"
 test "$(wc -l < "$result/mutants/list")" -eq 14
 test "$survivors" -eq 0
-echo "kernel-decider: every seeded fold, step-order and envelope mutant is refuted"
+echo "kernel-decider: every seeded fold, step-order and envelope mutant fails a correspondence proof and is refuted"

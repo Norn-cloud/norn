@@ -15,10 +15,13 @@ exception `k` has identity `ids[k]`, target `parents[k]` and condition `cond k`.
 * `check_shape_correct`: for all slices of one length, `check_shape` returns
   (without panic or divergence) `Ok` exactly when every declaration is valid and
   the tree is `WellFormed`, for every choice of conditions.
-* `lifts_correct`: `lifts` at depth `d` returns the semantic fold `Tree.lifts`
-  with fuel `|ids| + 1 - d`, for every input of at most 64 exceptions.
-* `check_tree_sound` / `fold_lifted`: an admitted tree is `Unambiguous`, and the
-  production fold from the law decides lifting under its unique stable labelling.
+* `check_shape_refusal`: a refusal is the first failing check in the written
+  order, naming its first offending declaration.
+* `lifted_correct`: `lifted` returns the semantic fold `Tree.lifts` with fuel
+  `|ids| + 1`, for all slices of one length.
+* `check_shape_sound` / `lifted_sound`: an admitted tree is `Unambiguous`, and
+  the production fold from the law decides lifting under its unique stable
+  labelling.
 -/
 
 namespace Norn.Checker.LawExceptions

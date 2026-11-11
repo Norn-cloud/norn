@@ -7,6 +7,9 @@ import Scaled.Types
 Written from `rust_decimal` 1.43's documented behaviour, over the
 `Decimal` model of `Scaled/TypesExternal.lean`. Part of
 `TRUST-CHARON-AENEAS-AND-CORE-MODELS`; no axiom is introduced.
+
+One deliberate difference: see `try_from_i128_with_scale` for the error variant
+on a coefficient that is too negative.
 -/
 
 open Aeneas Aeneas.Std Result
@@ -51,7 +54,14 @@ def rust_decimal.decimal.Decimal.normalize (d : rust_decimal.decimal.Decimal) :
     (rust_decimal.decimal.stripZeros d.coeff d.places).2, h.1, le_trans h.2 d.places_bound⟩
 
 /-- `Decimal::try_from_i128_with_scale`: `Ok` exactly when the scale is at most
-    28 and the coefficient fits 96 bits. -/
+    28 and the coefficient fits 96 bits.
+
+    The error variant is not modelled faithfully. For a coefficient at or below
+    `-2^96` this model returns `ExceedsMaximumPossibleValue`, where
+    `rust_decimal` 1.43 returns `LessThanMinimumPossibleValue`. The scaled core
+    cannot observe the difference: its only caller, `to_decimal`, discards the
+    error with `.ok()`. A caller that inspects the variant must not rely on this
+    model. -/
 def rust_decimal.decimal.Decimal.try_from_i128_with_scale (c : Std.I128) (s : Std.U32) :
     Result (core.result.Result rust_decimal.decimal.Decimal
       zen_expression.rust_decimal.error.Error) :=

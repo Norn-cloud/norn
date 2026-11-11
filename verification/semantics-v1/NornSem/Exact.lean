@@ -19,8 +19,9 @@ The theorems show that the canonical form is a function of the value
 leaves the range (`Dec.canonical_in_range`). So comparing canonical forms decides
 numeric equality, and canonical encodings identify values.
 
-This module mentions no machine integer and no Rust code. exact-arith-v1's
-`IsCanonicalForm` and `RoundingReference` are bridged to it by a separate module.
+This module mentions no machine integer and no Rust code. No module bridges it
+to exact-arith-v1's `IsCanonicalForm` or `RoundingReference` yet: the two
+statements of canonical form are separate.
 -/
 
 namespace Norn.Sem.Exact

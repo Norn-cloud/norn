@@ -2,9 +2,10 @@
 # #718 lane C-C (U3, U4): Charon/Aeneas extract norm precedence's decision core
 # (crates/norn-checker/src/norm_precedence/decision.rs), and Lean proves it
 # sound against the written semantics in verification/semantics-v1/NornSem:
-# `admits` decides admissibility and an exact closure certificate,
-# `resolution_holds` decides that a context's resolution is the unique stable
-# set of survivors, and every admitted order satisfies the meta-theorems
+# `admits` returns true only when the order is admissible and its closure
+# certificate is exact, `resolution_holds` returns true only when a context's
+# resolution is the unique stable set of survivors, and every admitted order
+# satisfies the meta-theorems
 # (downstream can't defeat upstream, strict-layer preservation, overlays
 # preserve upstream survivors).
 #

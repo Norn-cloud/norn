@@ -25,12 +25,12 @@ the law), the following hold:
 * `lifted_iff`: the fold with fuel `|nodes| + 1` decides lifting under it;
 * compiled guard = defeasible semantics.
 
-**Exceptions only narrow, relative to the bare law:** `binds_bare` and
-`holdsOn_of_bare` show that an exception tree never makes a law bind where the
-bare law does not, so it never adds a requirement. `lifts_needs_top_condition`
-shows that lifting needs a first-level exception whose condition holds.
-Narrowing is *not* monotone in the tree: `nested_exception_can_lift` adds one
-exception under another and lifts the law where the smaller tree did not.
+**Never binds beyond the bare law:** `binds_bare` and `holdsOn_of_bare` show that an
+exception tree never makes a law bind where the bare law does not, so it never
+adds a requirement. `lifts_needs_top_condition` shows that lifting needs a
+first-level exception whose condition holds. This is *not* monotone in the
+tree: `nested_exception_can_lift` adds one exception under another and lifts
+the law where the smaller tree did not.
 -/
 
 namespace Norn.Sem
@@ -411,7 +411,7 @@ omit [DecidableEq Id] in
 /-- The same law with no exceptions. -/
 def bare (L : Law Id σ) : Law Id σ := { L with exceptions := [] }
 
-/-- Exceptions only narrow: a law binds only where its bare law binds. -/
+/-- Never binds beyond the bare law: a law binds only where its bare law binds. -/
 theorem binds_bare (L : Law Id σ) (x : σ) (h : L.binds x = true) : L.bare.binds x = true := by
   have hnil : (Tree.mk L.id ([] : List (Exception Id σ))).lifts x 1 L.id = false :=
     Tree.lifts_nil _ _ _
@@ -419,7 +419,7 @@ theorem binds_bare (L : Law Id σ) (x : σ) (h : L.binds x = true) : L.bare.bind
   rw [Bool.and_eq_true] at h ⊢
   exact ⟨h.1, by simpa [bare, tree] using hnil⟩
 
-/-- Exceptions only narrow: an exception tree never adds a requirement, so a
+/-- Never binds beyond the bare law: an exception tree never adds a requirement, so a
     trace satisfying the bare law satisfies the law. -/
 theorem holdsOn_of_bare (L : Law Id σ) (tr : ℕ → σ) (h : L.bare.holdsOn tr) : L.holdsOn tr :=
   fun i hb => h i (binds_bare L (tr i) hb)
