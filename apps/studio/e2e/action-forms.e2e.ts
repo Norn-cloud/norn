@@ -245,14 +245,13 @@ test("retry: after an outage, Retry re-sends the same body under the same key; a
   await form.getByRole("button", { name: "Retry" }).click()
   await expect(form.getByRole("button", { name: "Retry" })).toBeVisible()
   const [first, retried] = actions.calls.slice(-2)
-  expect(keyOf(retried!)).toBe(keyOf(first!))
-  expect(inputOf(retried!)).toBe(inputOf(first!))
+  expect(retried!.body).toBe(first!.body) // the same key and the same exact body
   await form.getByLabel("Counted quantity").fill("13.000")
   await form.getByRole("button", { name: "Adjust quantity" }).click()
   await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0002 adjusted · just now")
   const edited = actions.calls.at(-1)!
   expect(keyOf(edited)).not.toBe(keyOf(first!))
-  expect(inputOf(edited)).toContain("13.000")
+  expect(edited.body).toMatch(/"quantity":\s*13\.000\b/) // the raw body, exact digits
 })
 
 test("undo: a lost answer reads as unconfirmed, Retry undo re-sends it under the same key, and Another still starts a new draft", async ({ page }) => {
