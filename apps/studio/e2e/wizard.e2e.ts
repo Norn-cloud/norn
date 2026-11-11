@@ -82,18 +82,16 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
   await expect(form.getByRole("region", { name: "Review" })).toBeVisible()
 })
 
-test("validate: the cell checks on submit; its refusal opens the first step it names and marks every step with a problem", async ({ page }) => {
+test("validate: the cell checks on submit; its input refusal names no field, so the wizard stays on the review", async ({ page }) => {
   await start(page)
   const form = sheet(page)
   for (let i = 0; i < 3; i += 1) await form.locator('button[type="submit"]').click() // Next, Next, Review
   await form.getByRole("button", { name: "Open a holding" }).click()
-  await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step")
-  await expect(form.locator('[data-pointer="/id"]')).toContainText("Holding id is required.")
-  await expect(steps(page).nth(0)).toHaveAccessibleName(/What is held\s*, 4 problems/)
-  await expect(steps(page).nth(1)).toHaveAccessibleName(/Where it is\s*, 1 problem/)
+  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  await expect(steps(page).nth(3)).toHaveAttribute("aria-current", "step")
+  await expect(steps(page).nth(0)).not.toHaveAccessibleName(/problem/)
+  await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
   await shoot(page, "refused")
-  await steps(page).nth(3).click()
-  await expect(form.getByRole("region", { name: "Review" })).toContainText("4 to fix")
 })
 
 test("reopen: Keep draft closes and restores the draft later in this session; Start over clears it; a commit forgets it", async ({ page }) => {
