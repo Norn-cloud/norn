@@ -6,7 +6,7 @@ boat_nightly.py runs this inside a Boat VM at a checkout of main. It prints, on 
     ENV {json}                     the machine (record.py env)
     METRIC {json}                  one measurement: probe, metric, value, unit, statistic, measured_at,
                                    workload, caveats (and samples when the probe gave them)
-    SKIP <probe> <reason>          a probe whose files are not at this commit
+    SKIP <probe> <reason>          a probe whose files are not at this commit, or that is disabled
     FAIL <probe> <reason>          a probe whose prepare or run failed; nothing is recorded for it
 
 A probe's `run` is timed (wall clock) when it names a `timed` metric; lines its command
@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import subprocess
 import sys
@@ -46,16 +47,25 @@ def segment(text: str) -> str:
 
 def run_probe(probe: dict, root: Path) -> bool:
     name = probe["name"]
+    if probe.get("disabled"):
+        emit("SKIP", f"{name} disabled: {probe['disabled']}")
+        return True
     missing = [path for path in probe.get("requires", []) if not (root / path).exists()]
     if missing:
         emit("SKIP", f"{name} missing {', '.join(missing)}")
         return True
     timeout = probe.get("timeout_s", 1800)
     shell = ["bash", "-o", "pipefail", "-ec"]
+    # `pin_rust` runs the probe on CI's pinned toolchain (the snapshot's default rustc may differ).
+    # Gates that pin their own toolchains (hax, Aeneas, Kani) must not inherit it.
+    env = dict(os.environ)
+    env.pop("RUSTUP_TOOLCHAIN", None)
+    if probe.get("pin_rust") and os.environ.get("METRICS_RUST_TOOLCHAIN"):
+        env["RUSTUP_TOOLCHAIN"] = os.environ["METRICS_RUST_TOOLCHAIN"]
     if probe.get("prepare"):
         try:
             prepared = subprocess.run([*shell, probe["prepare"]], cwd=root, timeout=timeout, stdout=sys.stderr,
-                                      stderr=sys.stderr)
+                                      stderr=sys.stderr, env=env)
         except subprocess.TimeoutExpired:
             emit("FAIL", f"{name} prepare exceeded {timeout} s")
             return False
@@ -64,7 +74,8 @@ def run_probe(probe: dict, root: Path) -> bool:
             return False
     started = time.monotonic()
     try:
-        ran = subprocess.run([*shell, probe["run"]], cwd=root, timeout=timeout, capture_output=True, text=True)
+        ran = subprocess.run([*shell, probe["run"]], cwd=root, timeout=timeout, capture_output=True, text=True,
+                             env=env)
     except subprocess.TimeoutExpired:
         emit("FAIL", f"{name} run exceeded {timeout} s")
         return False

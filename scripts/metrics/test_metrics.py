@@ -322,19 +322,21 @@ class Probes(unittest.TestCase):
                            "unit": "s", "statistic": "single"},
                  "workload": {"bench": "b"}, "caveats": "one run"},
                 {"name": "broken", "requires": [], "run": "exit 3", "caveats": "c"},
+                {"name": "off", "requires": [], "run": "exit 4", "caveats": "c", "disabled": "no recipe yet"},
             ]
             out = io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
                 results = [run_probes.run_probe(probe, Path(root)) for probe in probes]
-        self.assertEqual(results, [True, True, False])
+        self.assertEqual(results, [True, True, False, True])
         lines = out.getvalue()
         self.assertIn("SKIP absent missing missing", lines)
         self.assertIn("FAIL broken run exited 3", lines)
+        self.assertIn("SKIP off disabled: no recipe yet", lines)
         lines = 'ENV {"vcpu": 4, "cpu_model": "x"}\n' + lines
 
         rows, notes = boat_nightly.records_from(lines, SHA, "2026-11-11T12:23:59Z", "bx_abcdefgh", "snap", "default")
         rows.append(boat_nightly.starts_record({"starts": {"day": {"used": 410, "limit": 840}}}, "2026-11-11T15:28:26Z"))
-        self.assertEqual(len(notes), 2)
+        self.assertEqual(len(notes), 3)
         self.assertEqual(sorted(r["metric"] for r in rows), ["boat.starts.used_24h", "fork.cow.create.f20.p50",
                                                             "proof.gate.all.s", "proof.gate.kani_ledger_a.s"])
         schema = record.load_schema()

@@ -16,11 +16,6 @@
       "noise_pct": 5,
       "why": "Storage of 1000 forks against 1000 full copies. Page counts are deterministic for a fixed workload, so only a real layout change moves it."
     },
-    "proof.gate.promoted_subsystems.s": {
-      "better": "lower",
-      "noise_pct": 20,
-      "why": "The formal phase's proof run (verify-promoted-subsystems.sh full) on a default Boat VM after untimed tool bootstraps; solver and Lean times vary with VM load, and Rust builds inside the gate start cold."
-    },
     "sim.dst.serial_total_s": {
       "better": "lower",
       "noise_pct": 15,

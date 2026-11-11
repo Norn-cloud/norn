@@ -1,5 +1,5 @@
 {
-  "comment": "Nightly Boat measurements of main, run by run_probes.py on default Boat VMs, one per snapshot (`snapshot`, else the top-level default). A probe whose `requires` paths are absent at the commit is skipped, so a lane registers its probe here in the PR that adds the benchmark. `prepare` is untimed (builds); `run` is timed when `timed` names a metric, and any line it prints as `METRIC {json}` is recorded too (metric, value, unit, statistic, optional workload, samples, caveats).",
+  "comment": "Nightly Boat measurements of main, run by run_probes.py on default Boat VMs, one per snapshot (`snapshot`, else the top-level default). A probe whose `requires` paths are absent at the commit is skipped, so a lane registers its probe here in the PR that adds the benchmark. `prepare` is untimed (builds); `run` is timed when `timed` names a metric, and any line it prints as `METRIC {json}` is recorded too (metric, value, unit, statistic, optional workload, samples, caveats). `pin_rust` runs a probe on CI's pinned Rust toolchain; leave it off for gates that pin their own (hax, Aeneas, Kani). `disabled` (a reason) skips a probe and says why in the run's output.",
   "snapshot": "norn-ci-main-a8c384a14d-v1",
   "probes": [
     {
@@ -23,7 +23,8 @@
         "profile": "debug",
         "filter": "test(/injected|mutant_do|mutant_comm|do_transaction_glue|do_request/)"
       },
-      "caveats": "The 11-test D79 simulator set (DST steps 1 and 1b), serial, nextest Summary wall time; one default Boat VM, single run. Simulator stores are unsynced on /dev/shm by design; before that change file-store reopen cost varied about 5x between VMs. Step 2 responder tests are excluded so this id stays comparable."
+      "caveats": "The 11-test D79 simulator set (DST steps 1 and 1b), serial, nextest Summary wall time; one default Boat VM, single run. Simulator stores are unsynced on /dev/shm by design; before that change file-store reopen cost varied about 5x between VMs. Step 2 responder tests are excluded so this id stays comparable.",
+      "pin_rust": true
     },
     {
       "name": "bench-forks",
@@ -37,7 +38,8 @@
         "bench": "BENCH-FORK-1",
         "profile": "release"
       },
-      "caveats": "BENCH-FORK-1, one run per night. In-memory page tier only: no durability (U4), cold object-storage reads (U7), multi-node or contention. Fork p99 is a CPU tail on 4 vCPUs."
+      "caveats": "BENCH-FORK-1, one run per night. In-memory page tier only: no durability (U4), cold object-storage reads (U7), multi-node or contention. Fork p99 is a CPU tail on 4 vCPUs.",
+      "pin_rust": true
     },
     {
       "name": "promoted-proof-gates",
@@ -63,7 +65,8 @@
         "phase": "core.sh formal"
       },
       "caveats": "Wall time of the formal phase's proof run (verify-promoted-subsystems.sh full), on the verification-tools snapshot whose prebuilt tool roots are linked in; the bootstraps (checksum checks) are untimed. Per-gate values are the script's own [pass] seconds (1 s resolution). One run on a default Boat VM; Rust builds inside the gate start cold.",
-      "snapshot": "norn-verification-tools-2a4a90522c10"
+      "snapshot": "norn-verification-tools-2a4a90522c10",
+      "disabled": "Unavailable until the formal gate has a known-good Boat recipe: five attempts on 2026-11-11 failed on setup, not on the gates (bootstraps past the timeout on the toolchain snapshot; tool files in the tree; no git HEAD; cargo-hax under a forced RUSTUP_TOOLCHAIN; a run that ended without a result). Re-enable by timing the same command the formal-gate lane runs on Boat."
     }
   ]
 }

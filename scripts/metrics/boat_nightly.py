@@ -7,7 +7,7 @@ can push the metrics branch (the controller; schedule it with cron, see --help).
 1. fetches origin/main and resolves its commit;
 2. one `boat run --type default` per snapshot the probes name (probes.json): the VM fetches that
    exact commit from the public repository into a git checkout and runs this script's own
-   `run_probes.py` against it (CARGO_INCREMENTAL=0, CI's pinned toolchain);
+   `run_probes.py` against it (CARGO_INCREMENTAL=0; probes with `pin_rust` run on CI's pinned toolchain);
    `boat run` deletes the VM when the command ends, and this script then checks `boat info <id>`
    reports it gone, deleting it with --yes if not;
 3. turns each METRIC line into a record (runner boat, the VM's own ENV line, the commit
@@ -133,7 +133,7 @@ def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
                   f"python3 metrics-tools/run_probes.py --root norn-measured --probes metrics-tools/probes.json {only}")
         ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
                    "--no-env", "--push", str(upload), "-e", "CARGO_INCREMENTAL=0",
-                   "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", "bash", "-c", script,
+                   "-e", f"METRICS_RUST_TOOLCHAIN={rust}", "--", "bash", "-c", script,
                    capture_output=True)
     sys.stderr.write(ran.stderr[-4000:])
     sandbox = next(iter(SANDBOX.findall(ran.stdout + ran.stderr)), None)
