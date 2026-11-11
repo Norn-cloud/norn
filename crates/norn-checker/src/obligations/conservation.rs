@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::UnitRef;
 
+/// The extracted, proved acceptance decision for one writer (#718 U5).
+pub mod decision;
 /// Untrusted exact equality-feasibility discovery; candidates require checking.
 pub mod discovery;
 
@@ -117,6 +119,15 @@ pub fn check(
     certificate: &[Rational],
 ) -> Result<(), Failure> {
     validate(coordinates, writers, certificate)?;
+    // Label each coordinate with the first coordinate of its scope/unit class.
+    // The ordered map also fixes which unbalanced class is reported first.
+    let mut classes = BTreeMap::new();
+    let partition: Vec<usize> = coordinates
+        .iter()
+        .enumerate()
+        .map(|(index, c)| *classes.entry((&c.scope, &c.unit)).or_insert(index))
+        .collect();
+    let weights: Vec<Rational> = coordinates.iter().map(|c| c.weight).collect();
     let mut work = 0_usize;
     for writer in writers {
         let rows = match &writer.delta {
@@ -136,45 +147,65 @@ pub fn check(
         if work > 65_536 {
             return Err(Failure::Unknown("coefficient budget exceeded".into()));
         }
-        let mut partitions = BTreeMap::new();
-        for (coordinate, row) in coordinates.iter().zip(rows) {
-            let (_, totals) = partitions
-                .entry((&coordinate.scope, &coordinate.unit))
-                .or_insert_with(|| {
-                    (
-                        &coordinate.id,
-                        vec![
-                            Rational {
-                                numerator: 0,
-                                denominator: 1
-                            };
-                            columns
-                        ],
-                    )
-                });
-            for (total, coefficient) in totals.iter_mut().zip(row) {
-                *total = coefficient
-                    .mul(coordinate.weight)
-                    .and_then(|v| total.add(v))
-                    .ok_or_else(|| {
-                        Failure::Unknown(format!("{}: rational representation limit", writer.id))
-                    })?;
+        match decision::check_writer(&partition, &weights, rows, columns) {
+            Ok(()) => {}
+            Err(decision::Refusal::Malformed) => return Err(Failure::Malformed),
+            Err(decision::Refusal::Overflow) => {
+                return Err(Failure::Unknown(format!(
+                    "{}: rational representation limit",
+                    writer.id
+                )));
             }
-        }
-        for (_, (coordinate, totals)) in partitions {
-            for (column, residual) in totals.into_iter().enumerate() {
-                if residual.numerator != 0 {
-                    return Err(Failure::Unbalanced {
-                        writer: writer.id.clone(),
-                        coordinate: coordinate.clone(),
-                        column,
-                        residual,
-                    });
-                }
+            Err(decision::Refusal::Unbalanced(totals)) => {
+                return Err(first_unbalanced(&writer.id, coordinates, &classes, &totals));
             }
         }
     }
     Ok(())
+}
+
+impl decision::ExactArithmetic for Rational {
+    fn exact_zero() -> Self {
+        Self {
+            numerator: 0,
+            denominator: 1,
+        }
+    }
+    fn exact_is_zero(self) -> bool {
+        self.numerator == 0
+    }
+    fn exact_add(self, rhs: Self) -> Option<Self> {
+        self.add(rhs)
+    }
+    fn exact_mul(self, rhs: Self) -> Option<Self> {
+        self.mul(rhs)
+    }
+}
+
+/// Report the first nonzero total in scope/unit order, naming the class's
+/// first coordinate. Only reached after the decision core refused.
+fn first_unbalanced(
+    writer: &str,
+    coordinates: &[Coordinate],
+    classes: &BTreeMap<(&BTreeMap<String, String>, &UnitRef), usize>,
+    totals: &[Vec<Rational>],
+) -> Failure {
+    classes
+        .values()
+        .find_map(|&class| {
+            let (column, residual) = totals
+                .get(class)?
+                .iter()
+                .enumerate()
+                .find(|(_, residual)| residual.numerator != 0)?;
+            Some(Failure::Unbalanced {
+                writer: writer.to_owned(),
+                coordinate: coordinates.get(class)?.id.clone(),
+                column,
+                residual: *residual,
+            })
+        })
+        .unwrap_or(Failure::Malformed)
 }
 
 #[cfg(test)]
