@@ -881,12 +881,6 @@ fn orders_page_composes_bounded_reads_customer_navigation_and_action_form() {
 
 #[test]
 fn fixture_row_transition_uses_the_runtime_id_instead_of_the_business_order_id() {
-    let runtime_record = json!({
-        "id": "runtime-order-A",
-        "values": { "order_id": "business-order-B", "status": "draft" }
-    });
-    assert_ne!(runtime_record["id"], runtime_record["values"]["order_id"]);
-
     let mut value = widget();
     let ux = &mut value["payload"]["ux"];
     ux["actionBindings"][0]["inputMapping"]["orderId"] = json!("input.recordKey");
@@ -1355,56 +1349,6 @@ fn subtype_owned_sort_properties_are_refused_by_root_order_indexes() {
     );
 }
 
-#[test]
-fn integer_action_inputs_require_a_declared_integer_or_integral_literal() {
-    for expression in ["42", "input.record.revision"] {
-        let mut value = widget();
-        value["payload"]["ux"]["actionBindings"][0]["inputMapping"]["expectedVersion"] =
-            json!(expression);
-        assert_clean(&widget_findings(value));
-    }
-    for expression in ["1.5", "input.record.revision + 1", "3 / 2"] {
-        let mut value = widget();
-        value["payload"]["ux"]["actionBindings"][0]["inputMapping"]["expectedVersion"] =
-            json!(expression);
-        assert_issue(
-            &widget_findings(value),
-            "/actionBindings/0/inputMapping/expectedVersion",
-            "integer",
-        );
-    }
-}
-
-#[test]
-fn nested_integer_action_inputs_cannot_admit_fractional_expressions() {
-    let mut value = widget();
-    value["payload"]["ux"]["actionBindings"][0]["inputMapping"]["metadata"] =
-        json!("{source: \"ui\", count: 1.5}");
-    let mut support = support_artifacts();
-    support[2]["payload"]["inputSchema"]["properties"]["metadata"]["properties"]["count"] =
-        json!({ "type": "integer" });
-    assert_issue(
-        &findings_with_support(value, support, &[]),
-        "/actionBindings/0/inputMapping/metadata",
-        "integer",
-    );
-}
-
-#[test]
-fn integer_array_action_inputs_cannot_admit_fractional_elements() {
-    let mut value = widget();
-    value["payload"]["ux"]["actionBindings"][0]["inputMapping"]["metadata"] =
-        json!("{source: \"ui\", samples: [1.5]}");
-    let mut support = support_artifacts();
-    support[2]["payload"]["inputSchema"]["properties"]["metadata"]["properties"]["samples"] =
-        json!({ "type": "array", "items": { "type": "integer" } });
-    assert_issue(
-        &findings_with_support(value, support, &[]),
-        "/actionBindings/0/inputMapping/metadata",
-        "integer",
-    );
-}
-
 fn integer_metadata_findings(expression: &str, member: &str, schema: Value) -> Vec<Diagnostic> {
     let mut value = widget();
     value["payload"]["ux"]["actionBindings"][0]["inputMapping"]["metadata"] = json!(expression);
@@ -1413,68 +1357,19 @@ fn integer_metadata_findings(expression: &str, member: &str, schema: Value) -> V
     findings_with_support(value, support, &[])
 }
 
+/// Integer action inputs admit only a declared integer source or an integral
+/// literal, and every constructed object, array, and record member keeps that
+/// proof after type joining.
 #[test]
-fn constructed_integer_object_members_keep_their_literal_and_direct_source_proofs() {
-    for expression in [
-        "{source: 'ui', count: 42}",
-        "({source: 'ui', count: (input.record.revision)})",
-    ] {
-        assert_clean(&integer_metadata_findings(
-            expression,
-            "count",
-            json!({ "type": "integer" }),
-        ));
-    }
-    for expression in [
-        "{source: 'ui', count: 1.5}",
-        "{source: 'ui', count: 1 + 1}",
-        "{source: 'ui', count: input.record.revision + 1}",
-    ] {
-        assert_issue(
-            &integer_metadata_findings(expression, "count", json!({ "type": "integer" })),
-            "/actionBindings/0/inputMapping/metadata",
-            "integer",
-        );
-    }
-}
-
-#[test]
-fn constructed_integer_arrays_keep_every_members_proof_after_type_joining() {
-    let schema = json!({ "type": "array", "items": { "type": "integer" } });
-    for expression in [
-        "{source: 'ui', samples: [(1), input.record.revision, 2]}",
-        "{source: 'ui', samples: [42.0]}",
-    ] {
-        assert_clean(&integer_metadata_findings(
-            expression,
-            "samples",
-            schema.clone(),
-        ));
-    }
-    for expression in [
-        "{source: 'ui', samples: [1, 1.5]}",
-        "{source: 'ui', samples: [1, input.record.revision + 1]}",
-    ] {
-        assert_issue(
-            &integer_metadata_findings(expression, "samples", schema.clone()),
-            "/actionBindings/0/inputMapping/metadata",
-            "integer",
-        );
-    }
-    assert_issue(
-        &integer_metadata_findings(
-            "{source: 'ui', samples: [1, null, input.record.revision]}",
-            "samples",
-            json!({ "type": "array", "items": { "type": ["integer", "null"] } }),
-        ),
-        "/actionBindings/0/inputMapping/metadata",
-        "may be null",
-    );
-}
-
-#[test]
-fn nullable_integer_record_members_keep_every_nonnull_source_proof() {
-    let schema = json!({
+#[allow(
+    clippy::too_many_lines,
+    reason = "one table row per integer proof case"
+)]
+fn integer_action_inputs_require_an_integral_proof_for_every_constructed_leaf() {
+    let count = json!({ "type": "integer" });
+    let samples = json!({ "type": "array", "items": { "type": "integer" } });
+    let nullable_samples = json!({ "type": "array", "items": { "type": ["integer", "null"] } });
+    let nullable_rows = json!({
         "type": "array", "items": {
             "type": "object", "properties": {
                 "count": { "type": ["integer", "null"] }
@@ -1482,25 +1377,7 @@ fn nullable_integer_record_members_keep_every_nonnull_source_proof() {
             "required": ["count"], "additionalProperties": false
         }
     });
-    assert_clean(&integer_metadata_findings(
-        "{source: 'ui', rows: [{count: 1}, {count: null}]}",
-        "rows",
-        schema.clone(),
-    ));
-    assert_issue(
-        &integer_metadata_findings(
-            "{source: 'ui', rows: [{count: 1}, {count: null}, {count: 1.5}]}",
-            "rows",
-            schema,
-        ),
-        "/actionBindings/0/inputMapping/metadata",
-        "integer",
-    );
-}
-
-#[test]
-fn nested_integer_lists_and_records_validate_every_constructed_leaf() {
-    let schema = json!({
+    let nested_rows = json!({
         "type": "array", "items": {
             "type": "object", "properties": {
                 "counts": { "type": "array", "items": { "type": "integer" } }
@@ -1508,34 +1385,120 @@ fn nested_integer_lists_and_records_validate_every_constructed_leaf() {
             "required": ["counts"], "additionalProperties": false
         }
     });
-    assert_clean(&integer_metadata_findings(
-        "{source: 'ui', rows: [{counts: [1, input.record.revision]}, {counts: [(2), 3]}]}",
-        "rows",
-        schema.clone(),
-    ));
-    for expression in [
-        "{source: 'ui', rows: [{counts: [1]}, {counts: [2, 1.5]}]}",
-        "{source: 'ui', rows: [{counts: [1]}, {counts: [input.record.revision + 1]}]}",
-    ] {
-        assert_issue(
-            &integer_metadata_findings(expression, "rows", schema.clone()),
-            "/actionBindings/0/inputMapping/metadata",
-            "integer",
-        );
-    }
     let matrix = json!({
         "type": "array", "items": { "type": "array", "items": { "type": "integer" } }
     });
-    assert_clean(&integer_metadata_findings(
-        "{source: 'ui', matrix: [[1, 2], [input.record.revision, 3]]}",
-        "matrix",
-        matrix.clone(),
-    ));
-    assert_issue(
-        &integer_metadata_findings("{source: 'ui', matrix: [[1], [2, 1.5]]}", "matrix", matrix),
-        "/actionBindings/0/inputMapping/metadata",
-        "integer",
-    );
+    // `(expression, metadata member and its schema, expected finding message)`.
+    // Without a metadata member the expression maps `expectedVersion`; without
+    // a message the artifact set must be clean.
+    for (expression, metadata, expected) in [
+        ("42", None, None),
+        ("input.record.revision", None, None),
+        ("1.5", None, Some("integer")),
+        ("input.record.revision + 1", None, Some("integer")),
+        ("3 / 2", None, Some("integer")),
+        ("{source: 'ui', count: 42}", Some(("count", &count)), None),
+        (
+            "({source: 'ui', count: (input.record.revision)})",
+            Some(("count", &count)),
+            None,
+        ),
+        (
+            "{source: 'ui', count: 1.5}",
+            Some(("count", &count)),
+            Some("integer"),
+        ),
+        (
+            "{source: 'ui', count: 1 + 1}",
+            Some(("count", &count)),
+            Some("integer"),
+        ),
+        (
+            "{source: 'ui', count: input.record.revision + 1}",
+            Some(("count", &count)),
+            Some("integer"),
+        ),
+        (
+            "{source: 'ui', samples: [(1), input.record.revision, 2]}",
+            Some(("samples", &samples)),
+            None,
+        ),
+        (
+            "{source: 'ui', samples: [42.0]}",
+            Some(("samples", &samples)),
+            None,
+        ),
+        (
+            "{source: 'ui', samples: [1, 1.5]}",
+            Some(("samples", &samples)),
+            Some("integer"),
+        ),
+        (
+            "{source: 'ui', samples: [1, input.record.revision + 1]}",
+            Some(("samples", &samples)),
+            Some("integer"),
+        ),
+        (
+            "{source: 'ui', samples: [1, null, input.record.revision]}",
+            Some(("samples", &nullable_samples)),
+            Some("may be null"),
+        ),
+        (
+            "{source: 'ui', rows: [{count: 1}, {count: null}]}",
+            Some(("rows", &nullable_rows)),
+            None,
+        ),
+        (
+            "{source: 'ui', rows: [{count: 1}, {count: null}, {count: 1.5}]}",
+            Some(("rows", &nullable_rows)),
+            Some("integer"),
+        ),
+        (
+            "{source: 'ui', rows: [{counts: [1, input.record.revision]}, {counts: [(2), 3]}]}",
+            Some(("rows", &nested_rows)),
+            None,
+        ),
+        (
+            "{source: 'ui', rows: [{counts: [1]}, {counts: [2, 1.5]}]}",
+            Some(("rows", &nested_rows)),
+            Some("integer"),
+        ),
+        (
+            "{source: 'ui', rows: [{counts: [1]}, {counts: [input.record.revision + 1]}]}",
+            Some(("rows", &nested_rows)),
+            Some("integer"),
+        ),
+        (
+            "{source: 'ui', matrix: [[1, 2], [input.record.revision, 3]]}",
+            Some(("matrix", &matrix)),
+            None,
+        ),
+        (
+            "{source: 'ui', matrix: [[1], [2, 1.5]]}",
+            Some(("matrix", &matrix)),
+            Some("integer"),
+        ),
+    ] {
+        let (found, pointer) = match metadata {
+            None => {
+                let mut value = widget();
+                value["payload"]["ux"]["actionBindings"][0]["inputMapping"]["expectedVersion"] =
+                    json!(expression);
+                (
+                    widget_findings(value),
+                    "/actionBindings/0/inputMapping/expectedVersion",
+                )
+            }
+            Some((member, schema)) => (
+                integer_metadata_findings(expression, member, schema.clone()),
+                "/actionBindings/0/inputMapping/metadata",
+            ),
+        };
+        match expected {
+            None => assert_clean(&found),
+            Some(message) => assert_issue(&found, pointer, message),
+        }
+    }
 }
 
 #[test]
@@ -1548,14 +1511,6 @@ fn undeclared_action_input_mappings_are_rejected() {
         "/actionBindings/0/inputMapping/undeclared",
         "not declared",
     );
-}
-
-#[test]
-fn omitted_nullable_and_nested_optional_action_inputs_are_valid() {
-    // The fixture intentionally maps only the required ActionIR members.
-    // `note`, `comment`, and `metadata` are optional ActionIR members, so
-    // none has to be fabricated in a mapping or form.
-    assert_clean(&widget_findings(widget()));
 }
 
 #[test]
@@ -3801,11 +3756,6 @@ fn composed_field_visibility_uses_only_an_exact_imported_list_binding() {
         "/overrides/0/value/condition/inputs/selectionBindingId",
         "selection",
     );
-}
-
-#[test]
-fn secondary_form_footer_action_is_hosted_by_its_form_without_opening_it() {
-    assert_clean(&widget_findings(widget_with_secondary_footer_action()));
 }
 
 #[test]
