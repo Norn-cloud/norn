@@ -1,0 +1,100 @@
+{
+  "atlasVersion": 1,
+  "domain": "social-marketing",
+  "entries": [
+    {
+      "id": "activitystreams-2-0",
+      "name": "W3C ActivityStreams 2.0 JSON-LD context",
+      "publisher": "W3C Social Web Working Group",
+      "kind": "standard",
+      "domains": [
+        "social-marketing"
+      ],
+      "version": "2.0",
+      "versionDate": "2017-05-23",
+      "versionBasis": "Selected dated W3C Recommendation, not the timestamp of the mutable namespace resource.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No separate context-specific copyright/license grant confirmed; public standards documentation alone is not the acquisition rights decision.",
+        "termsUrl": "https://www.w3.org/TR/2017/REC-activitystreams-core-20170523/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-LD",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/ns/activitystreams.jsonld",
+      "evidenceUrls": [
+        "https://www.w3.org/TR/2017/REC-activitystreams-core-20170523/",
+        "https://www.w3.org/ns/activitystreams.jsonld",
+        "https://github.com/w3c/activitystreams/blob/main/ns/activitystreams.jsonld"
+      ],
+      "norn": {
+        "overlap": "Actor, Object, Activity and Collection; social exchange only, not generic Core Event authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "open-graph-rdf",
+      "name": "Open Graph protocol RDF vocabulary",
+      "publisher": "Open Graph protocol project",
+      "kind": "ontology",
+      "domains": [
+        "social-marketing"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Unversioned published vocabulary; no trustworthy release identity/date exposed in inspected page.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No explicit vocabulary redistribution/derivative license established from the checked publisher page/artifact; do not assume Facebook software licenses apply.",
+        "termsUrl": "https://ogp.me/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://ogp.me/ns/ogp.me.ttl",
+      "evidenceUrls": [
+        "https://ogp.me/",
+        "https://ogp.me/ns/ogp.me.ttl"
+      ],
+      "norn": {
+        "overlap": "Title, type, image, URL and locale for externally published pages; no product taxonomy or ad-account model.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

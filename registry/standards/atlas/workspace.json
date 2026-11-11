@@ -1,0 +1,406 @@
+{
+  "atlasVersion": 1,
+  "domain": "workspace",
+  "entries": [
+    {
+      "id": "caldav-rfc4791",
+      "name": "Calendaring Extensions to WebDAV (CalDAV) (RFC 4791)",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "workspace",
+        "time"
+      ],
+      "version": "RFC 4791",
+      "versionDate": "2007-03",
+      "versionBasis": "rfc-editor.org RFC 4791 metadata: March 2007, Proposed Standard, updated by RFC 5689, 6638, 6764, 7809, 7953 and 8996.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-BCP78-pre5378",
+        "text": "IETF Trust (2007) under BCP 78 as then in force; pre-RFC 5378 material, so no TLP code-component licence",
+        "status": "verified",
+        "basis": "Read the RFC 4791 copyright notice ('Copyright (C) The IETF Trust (2007)') and the IETF Trust TLP page, which says pre-5378 material (before 2008-11-10) is not licensed outside the IETF process unless the Trust obtains rights.",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML",
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc4791",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc4791.txt",
+        "https://www.rfc-editor.org/rfc/rfc4791.json",
+        "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/"
+      ],
+      "norn": {
+        "overlap": "calendar collections, events/tasks sync, free-busy and scheduling (with RFC 6638)",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "CalendarEvent"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "The dogfood workspace needs calendars, contacts and mail."
+      },
+      "notes": "Implementing the protocol is unrestricted. Do not copy grammar text verbatim as BSD code; it predates RFC 5378.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "carddav-rfc6352",
+      "name": "CardDAV: vCard Extensions to WebDAV (RFC 6352)",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "workspace",
+        "parties-identity"
+      ],
+      "version": "RFC 6352",
+      "versionDate": "2011-08",
+      "versionBasis": "rfc-editor.org RFC 6352 metadata: August 2011, Proposed Standard, updated by RFC 6764.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-TLP AND BSD-3-Clause",
+        "text": "IETF Trust Legal Provisions; code components under the Revised BSD licence",
+        "status": "verified",
+        "basis": "Read the RFC 6352 copyright notice (Copyright (c) 2011 IETF Trust, code components under BSD per TLP 4.e) and the IETF Trust TLP page naming the Revised BSD License.",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XML",
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc6352",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc6352.txt",
+        "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/"
+      ],
+      "norn": {
+        "overlap": "address book collections, contact sync",
+        "concepts": [
+          "canon.Party"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Contact"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "The dogfood workspace needs calendars, contacts and mail."
+      },
+      "notes": "The RFC may itself contain pre-5378 material carried over from earlier documents; check the boilerplate before copying large passages.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "icalendar-rfc5545",
+      "name": "iCalendar: recurrence, events, tasks and free/busy",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "workspace",
+        "time"
+      ],
+      "version": "RFC 5545",
+      "versionDate": "2009-09",
+      "versionBasis": "RFC header; fixed base specification, with later updates listed by RFC Editor.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-Legal-Provisions-BCP",
+        "text": "IETF Trust Legal Provisions / BCP 78",
+        "status": "verified",
+        "basis": "RFC copyright notice invokes BCP 78 and the Trust Legal Provisions in effect at publication. Preserve document notices; extracted Code Components use the specified BSD terms. Not a blanket BSD licence on prose. This artifact explicitly reserves rights in pre-10-November-2008 material: outside the IETF Standards Process, document modifications/derivatives may require additional permission except RFC formatting and translation. Unchanged document redistribution and Code Component terms must be distinguished from permission to modify the grammar or document.",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc5545",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc5545",
+        "https://trustee.ietf.org/documents/trust-legal-provisions/"
+      ],
+      "norn": {
+        "overlap": "Source event/task/recurrence representation; retain TZID, local versus UTC time, recurrence exceptions and free/busy distinctions.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "CalendarEvent"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P2",
+        "reason": "The dogfood workspace needs calendars, contacts and mail."
+      },
+      "notes": "ABNF is embedded in a machine-readable RFC, not a claimed standalone JSON Schema. Inventory RFC updates/errata before any implementation; this entry is not a complete conformance profile. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "imap4rev2-rfc9051",
+      "name": "Internet Message Access Protocol (IMAP) Version 4rev2 (RFC 9051)",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "workspace"
+      ],
+      "version": "RFC 9051",
+      "versionDate": "2021-08",
+      "versionBasis": "rfc-editor.org RFC 9051 metadata: August 2021, Proposed Standard, obsoletes RFC 3501, not updated.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-TLP AND BSD-3-Clause",
+        "text": "IETF Trust Legal Provisions; code components under the Revised BSD licence",
+        "status": "verified",
+        "basis": "Read the RFC 9051 copyright notice (Copyright (c) 2021 IETF Trust, code components under BSD per TLP 4.e) and the IETF Trust TLP page naming the Revised BSD License.",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc9051",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc9051.txt",
+        "https://www.rfc-editor.org/rfc/rfc9051.json"
+      ],
+      "norn": {
+        "overlap": "mailbox access, message flags, search, folder sync",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Message"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "The dogfood workspace needs calendars, contacts and mail."
+      },
+      "notes": "The ABNF grammar is a code component and can be reused under BSD-3-Clause.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "imf-rfc5322",
+      "name": "Internet Message Format (RFC 5322)",
+      "publisher": "IETF",
+      "kind": "standard",
+      "domains": [
+        "workspace"
+      ],
+      "version": "RFC 5322",
+      "versionDate": "2008-10",
+      "versionBasis": "rfc-editor.org RFC 5322 metadata: October 2008, Draft Standard, obsoletes RFC 2822, updated by RFC 6854.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-BCP78-pre5378",
+        "text": "IETF Trust (2008) under BCP 78 as then in force; pre-RFC 5378 material",
+        "status": "verified",
+        "basis": "Read the RFC 5322 Full Copyright Statement ('Copyright (C) The IETF Trust (2008)', subject to BCP 78) and the TLP page on pre-5378 material (published before 2008-11-10).",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc5322",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc5322.txt",
+        "https://www.rfc-editor.org/rfc/rfc5322.json"
+      ],
+      "norn": {
+        "overlap": "email headers (From, To, Subject, Message-ID, Date), message structure",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Message"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "The dogfood workspace needs calendars, contacts and mail."
+      },
+      "notes": "Internationalised headers are in RFC 6532 (not opened today).",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "jmap-core-mail",
+      "name": "JSON Meta Application Protocol (JMAP) Core (RFC 8620) and JMAP for Mail (RFC 8621)",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "workspace"
+      ],
+      "version": "RFC 8620 + RFC 8621",
+      "versionDate": "2019-08",
+      "versionBasis": "rfc-editor.org metadata: RFC 8620 July 2019 (updated by RFC 9404 Blob Management and RFC 9670 Sharing) and RFC 8621 August 2019, both Proposed Standard.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-TLP AND BSD-3-Clause",
+        "text": "IETF Trust Legal Provisions; code components under the Revised BSD licence",
+        "status": "verified",
+        "basis": "Read the RFC 8620 and RFC 8621 copyright notices (Copyright (c) 2019 IETF Trust, code components under BSD per TLP 4.e) and the IETF Trust TLP page naming the Revised BSD License.",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON",
+        "API",
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc8620",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc8620.txt",
+        "https://www.rfc-editor.org/rfc/rfc8621.txt",
+        "https://datatracker.ietf.org/doc/draft-ietf-jmap-calendars/",
+        "https://www.rfc-editor.org/rfc/rfc9610.json"
+      ],
+      "norn": {
+        "overlap": "mailboxes, threads, email objects, submission, push state sync",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Message"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "The dogfood workspace needs calendars, contacts and mail."
+      },
+      "notes": "JMAP for Contacts is RFC 9610 (Dec 2024, uses JSContact RFC 9553). JMAP for Calendars (draft-ietf-jmap-calendars-33, uses JSCalendar RFC 8984) is in the RFC Editor queue as of 2026-10-19 and not yet an RFC.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "jscalendar-rfc8984",
+      "name": "JSCalendar RFC 8984: IANA property and type registries",
+      "publisher": "IANA / IETF",
+      "kind": "protocol",
+      "domains": [
+        "workspace",
+        "time"
+      ],
+      "version": "IANA registry updated 2024-12-03",
+      "versionDate": "2024-12-03",
+      "versionBasis": "Actual IANA XML updated element; normative RFC 8984 publication is 2021-07, a separate date and artifact.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0-1.0 (IANA/IETF protocol-registry rights)",
+        "status": "verified",
+        "basis": "IANA/IETF joint statement applies CC0 to protocol-registry rights they own or may sublicense. RFC prose/XML remains under its own publication-time TLP, not CC0.",
+        "termsUrl": "https://www.iana.org/help/licensing-terms",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.iana.org/assignments/jscalendar/jscalendar.xml",
+      "evidenceUrls": [
+        "https://www.iana.org/assignments/jscalendar/jscalendar.xml",
+        "https://www.iana.org/help/licensing-terms",
+        "https://www.rfc-editor.org/rfc/rfc8984",
+        "https://www.rfc-editor.org/rfc/rfc8984.xml"
+      ],
+      "norn": {
+        "overlap": "Calendar event/task/group interchange; independent model, not a mechanical renaming of iCalendar.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "CalendarEvent"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "The dogfood workspace needs calendars, contacts and mail."
+      },
+      "notes": "Registry metadata is the structured source, not substituted RFC documentation. It does not contain every semantic constraint or constitute a complete JSON Schema validator. RFC is a separate normative reference; semantic mapping remains deferred. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "mime-rfc2045",
+      "name": "Multipurpose Internet Mail Extensions (MIME) Parts One to Five (RFC 2045-2049)",
+      "publisher": "IETF",
+      "kind": "standard",
+      "domains": [
+        "workspace"
+      ],
+      "version": "RFC 2045-2049",
+      "versionDate": "1996-11",
+      "versionBasis": "rfc-editor.org RFC 2045 text and metadata: November 1996, Draft Standard, updated by RFC 2184, 2231, 5335 and 6532.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-BCP78-pre5378",
+        "text": "Pre-1999 RFC with no copyright notice ('Distribution of this memo is unlimited'); pre-5378 material",
+        "status": "verified",
+        "basis": "Read the RFC 2045 header (no copyright notice; 'Distribution of this memo is unlimited') and the TLP page, which leaves documents before its effective date under earlier IETF policies such as RFC 1602 and 2026.",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc2045",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc2045.txt",
+        "https://www.rfc-editor.org/rfc/rfc2045.json"
+      ],
+      "norn": {
+        "overlap": "attachments, multipart bodies, content types and transfer encodings",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Message",
+          "Document"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "The dogfood workspace needs calendars, contacts and mail."
+      },
+      "notes": "Only the RFC 2045 header and metadata were read; RFCs 2046-2049 were not opened individually. Media type values live in the IANA registry.",
+      "origin": "atlas-2026-11-11"
+    }
+  ]
+}

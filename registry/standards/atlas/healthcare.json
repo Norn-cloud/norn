@@ -1,0 +1,239 @@
+{
+  "atlasVersion": 1,
+  "domain": "healthcare",
+  "entries": [
+    {
+      "id": "hl7-fhir-r5-definitions",
+      "name": "FHIR R5 machine-readable resource definitions",
+      "publisher": "HL7 International",
+      "kind": "standard",
+      "domains": [
+        "healthcare"
+      ],
+      "version": "5.0.0 (R5)",
+      "versionDate": "2023-03-26",
+      "versionBasis": "R5 downloads footer generation timestamp Sun Mar 26 2023; selected published release, not a rolling build or verified latest-version claim.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0-1.0 for FHIR specification; external terminology exceptions",
+        "status": "verified",
+        "basis": "HL7 dedicates specification under CC0 and permits redistribution/derivatives with trademark/conformance restrictions; imported code systems retain independent licenses.",
+        "termsUrl": "https://hl7.org/fhir/R5/license.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://hl7.org/fhir/R5/definitions.json.zip",
+      "evidenceUrls": [
+        "https://hl7.org/fhir/R5/downloads.html",
+        "https://hl7.org/fhir/R5/license.html",
+        "https://hl7.org/fhir/R5/definitions.json.zip"
+      ],
+      "norn": {
+        "overlap": "Patient/Practitioner/Organization, observation, clinical document and precision; domain pack only.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "FHIRPath invariants need an admitted semantic profile; schema availability does not prove lossless lowering. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "loinc-accessory-third-party-content",
+      "name": "LOINC accessory/mapping content in complete distribution",
+      "publisher": "Regenstrief Institute and named third-party licensors",
+      "kind": "code-list",
+      "domains": [
+        "healthcare"
+      ],
+      "version": "2.83 complete archive listing",
+      "versionDate": "2026-08-19",
+      "versionBasis": "Archive release date, not a claim all accessory components share this semantic version.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "LOINC license lists SNOMED, RxNorm/UMLS, RadLex, IEEE and UCUM dependencies; Group 1 permission cannot be applied to all accessory/mapping data.",
+        "termsUrl": "https://loinc.org/license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://loinc.org/downloads",
+      "evidenceUrls": [
+        "https://loinc.org/downloads",
+        "https://loinc.org/kb/license"
+      ],
+      "norn": {
+        "overlap": "Terminology crosswalks are correspondence evidence, not equivalence or Core definitions.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "loinc-table-2-83",
+      "name": "LOINC 2.83 code table (Group 1 artifacts)",
+      "publisher": "Regenstrief Institute / LOINC Committee",
+      "kind": "code-list",
+      "domains": [
+        "healthcare"
+      ],
+      "version": "2.83",
+      "versionDate": "2026-08-19",
+      "versionBasis": "Publisher download listing explicitly names version, release date and archive. Payload not fetched.",
+      "licence": {
+        "spdx": "LicenseRef-LOINC-custom-license-Group-1",
+        "text": "LOINC custom license (Group 1)",
+        "status": "verified",
+        "basis": "Commercial/noncommercial use and distribution allowed subject to notices, version/date, preservation restrictions and ban on promulgating a competing observation standard; not an unrestricted open-data license.",
+        "termsUrl": "https://loinc.org/license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://loinc.org/downloads",
+      "evidenceUrls": [
+        "https://loinc.org/downloads",
+        "https://loinc.org/kb/license"
+      ],
+      "norn": {
+        "overlap": "Observation identifiers and units links; retain LOINC codes/provenance, no semantic authority promotion.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Only Group 1 table admission proposed. Complete archive accessory artifacts have separate rights, catalogued separately below. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "snomed-ct-international",
+      "name": "SNOMED CT International Edition",
+      "publisher": "SNOMED International",
+      "kind": "code-list",
+      "domains": [
+        "healthcare"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Licensing/access page checked; no entitled release archive inspected, so no invented monthly latest version.",
+      "licence": {
+        "spdx": "LicenseRef-SNOMED-CT-Affiliate-License-Agreement",
+        "text": "SNOMED CT Affiliate License Agreement / territorial licensing",
+        "status": "unverified",
+        "basis": "Free use in member territories does not establish unrestricted redistribution. Affiliate, deployment territory and recipient entitlements must be checked before any distribution.",
+        "termsUrl": "https://www.snomed.org/get-snomed",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.snomed.org/get-snomed",
+      "evidenceUrls": [
+        "https://www.snomed.org/get-snomed"
+      ],
+      "norn": {
+        "overlap": "Clinical concepts/relationships; owned terminology pack only, no Core authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "who-icd-11-api",
+      "name": "WHO ICD-11 classification through ICD API",
+      "publisher": "World Health Organization",
+      "kind": "code-list",
+      "domains": [
+        "healthcare"
+      ],
+      "version": "ICD-11 2026-01; API software 2.6 is separate",
+      "versionDate": null,
+      "versionBasis": "WHO supported-classification table explicitly identifies release 2026-01, including Arabic ICD-11 MMS. Exact publication day remains unverified; API software version is not classification version.",
+      "licence": {
+        "spdx": "CC-BY-ND-3.0-IGO",
+        "text": "CC-BY-ND-3.0-IGO for ICD-11 classifications; separate software terms",
+        "status": "verified",
+        "basis": "WHO terms permit attributed incorporation retaining classification codes and URIs; adaptations/renaming or stripped identifiers are restricted. Do not infer permission to publish a remodelled ontology.",
+        "termsUrl": "https://icd.who.int/docs/icd-api/license/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "JSON",
+        "API"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://icd.who.int/icdapi",
+      "evidenceUrls": [
+        "https://icd.who.int/icdapi",
+        "https://icd.who.int/docs/icd-api/SupportedClassifications/",
+        "https://icd.who.int/docs/icd-api/license/",
+        "https://icd.who.int/en/docs/ICD11-license.pdf"
+      ],
+      "norn": {
+        "overlap": "Disease/classification identifiers only; preserve source hierarchy and identifiers rather than promote to Core.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "License evidence is PDF but classification is an API corpus, so this is not a PDF-only source. ICD-10/national modifications require separate version and rights investigation; no inferred shared license. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

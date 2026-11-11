@@ -1,0 +1,389 @@
+{
+  "atlasVersion": 1,
+  "domain": "education",
+  "entries": [
+    {
+      "id": "ieee-xapi-2-0",
+      "name": "IEEE xAPI 2.0 documentation (access unresolved)",
+      "publisher": "IEEE Learning Technology Standards Committee",
+      "kind": "standard",
+      "domains": [
+        "education"
+      ],
+      "version": "2.0 (ADL successor reference)",
+      "versionDate": null,
+      "versionBasis": "ADL README points here as current successor; publisher request returned HTTP 418 so release/date cannot be independently certified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No IEEE artifact license inspected; do not transfer ADL Apache-2.0 grant to IEEE standard.",
+        "termsUrl": "https://opensource.ieee.org/xapi/xapi-base-standard-documentation",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://opensource.ieee.org/xapi/xapi-base-standard-documentation",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/adlnet/xAPI-Spec/master/README.md",
+        "https://opensource.ieee.org/xapi/xapi-base-standard-documentation"
+      ],
+      "norn": {
+        "overlap": "Training event exchange, future domain pack.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "one-edtech-case-1-1",
+      "name": "1EdTech CASE 1.1 competencies and academic standards exchange",
+      "publisher": "1EdTech Consortium",
+      "kind": "standard",
+      "domains": [
+        "education"
+      ],
+      "version": "1.1; document version 1",
+      "versionDate": "2025-01-24",
+      "versionBasis": "Final-release heading explicitly identifies January 24th, 2025.",
+      "licence": {
+        "spdx": "LicenseRef-1EdTech-Specification-Document-License",
+        "text": "1EdTech Specification Document License",
+        "status": "unverified",
+        "basis": "Royalty-free implementation grant does not establish a blanket grant to redistribute/modify source specifications.",
+        "termsUrl": "https://www.1edtech.org/standards/specification-license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://www.imsglobal.org/spec/case/v1p1/",
+      "evidenceUrls": [
+        "https://www.imsglobal.org/spec/case/v1p1/",
+        "https://www.1edtech.org/standards/specification-license"
+      ],
+      "norn": {
+        "overlap": "Competency frameworks and associations; correspondence to ESCO or HR skills would require evidence, not name matching.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "one-edtech-clr-2-0-context",
+      "name": "1EdTech Comprehensive Learner Record 2.0 JSON-LD context",
+      "publisher": "1EdTech Consortium",
+      "kind": "standard",
+      "domains": [
+        "education"
+      ],
+      "version": "CLR 2.0; context 2.0.1; document revision 1.1",
+      "versionDate": "2025-10-14",
+      "versionBasis": "Specification header gives document version 1.1 and October 14, 2025; context filename separately identifies 2.0.1, whose own release date is unverified.",
+      "licence": {
+        "spdx": "LicenseRef-1EdTech-Specification-Document-License-context",
+        "text": "1EdTech Specification Document License; context-specific permission unverified",
+        "status": "unverified",
+        "basis": "Implementation grant checked; independent permission to modify/redistribute normative context bytes not established.",
+        "termsUrl": "https://www.1edtech.org/standards/specification-license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-LD",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://purl.imsglobal.org/spec/clr/v2p0/context-2.0.1.json",
+      "evidenceUrls": [
+        "https://www.imsglobal.org/spec/clr/v2p0/",
+        "https://purl.imsglobal.org/spec/clr/v2p0/context-2.0.1.json",
+        "https://www.1edtech.org/standards/specification-license"
+      ],
+      "norn": {
+        "overlap": "Learner credential, achievement and evidence; not universal Party or qualification authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "one-edtech-lti-1-3",
+      "name": "1EdTech LTI 1.3 core launch protocol",
+      "publisher": "1EdTech Consortium",
+      "kind": "standard",
+      "domains": [
+        "education"
+      ],
+      "version": "1.3; document version 3",
+      "versionDate": "2019-04-16",
+      "versionBasis": "Selected LTI core specification final-release heading; LTI Advantage companion services version independently.",
+      "licence": {
+        "spdx": "LicenseRef-1EdTech-Specification-Document-License",
+        "text": "1EdTech Specification Document License",
+        "status": "unverified",
+        "basis": "Implementation permitted under license; no blanket derivative/redistribution permission established for this schema or specification documents.",
+        "termsUrl": "https://www.1edtech.org/standards/specification-license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://purl.imsglobal.org/spec/lti/v1p3/schema/json/LtiResourceLinkRequest.json",
+      "evidenceUrls": [
+        "https://www.imsglobal.org/spec/lti/v1p3/",
+        "https://www.1edtech.org/standards/specification-license",
+        "https://purl.imsglobal.org/spec/lti/v1p3/schema/json/LtiResourceLinkRequest.json"
+      ],
+      "norn": {
+        "overlap": "External learning-tool launches, context and roles; no replacement Norn permission system.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Fetched filename says ResourceLinkRequest but internal title/$id say deeplinkingrequest. Preserve discrepancy; do not silently validate resource-link messages against it. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "one-edtech-oneroster-1-2",
+      "name": "1EdTech OneRoster 1.2 rostering and gradebook bindings",
+      "publisher": "1EdTech Consortium (formerly IMS Global)",
+      "kind": "standard",
+      "domains": [
+        "education"
+      ],
+      "version": "1.2; document version 2",
+      "versionDate": "2022-09-19",
+      "versionBasis": "Final-release heading identifies specification and document versions/date.",
+      "licence": {
+        "spdx": "LicenseRef-1EdTech-Specification-Document-License",
+        "text": "1EdTech Specification Document License",
+        "status": "unverified",
+        "basis": "Implementation grant is not a general document/schema derivative grant; no independent schema redistribution/derivative permission established.",
+        "termsUrl": "https://www.1edtech.org/standards/specification-license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://purl.imsglobal.org/spec/or/v1p2/schema/jsd/onerosterrosteringservicev1p2-getallclasses-200-responsepayload-schemav1p0.json",
+      "evidenceUrls": [
+        "https://www.imsglobal.org/spec/oneroster/v1p2/",
+        "https://www.imsglobal.org/spec/oneroster/v1p2/rostering/bind/rest",
+        "https://www.1edtech.org/standards/specification-license",
+        "https://purl.imsglobal.org/spec/or/v1p2/schema/jsd/onerosterrosteringservicev1p2-getallclasses-200-responsepayload-schemav1p0.json"
+      ],
+      "norn": {
+        "overlap": "Person, organization, course, enrollment and grade records; educational domain only.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "One response schema proves machine-readable availability, not complete roster/gradebook/schema dependency coverage. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "one-edtech-open-badges-3-0",
+      "name": "1EdTech Open Badges 3.0",
+      "publisher": "1EdTech Consortium",
+      "kind": "standard",
+      "domains": [
+        "education"
+      ],
+      "version": "3.0; document version 1.4.5",
+      "versionDate": "2026-06-29",
+      "versionBasis": "Publisher specification revision 1.4.5 is dated June 29, 2026; selected schema and context returned structured JSON. That specification date is not an independently verified schema modification date.",
+      "licence": {
+        "spdx": "LicenseRef-1EdTech-Specification-Document-License-per",
+        "text": "1EdTech Specification Document License; per-artifact exceptions require inspection",
+        "status": "unverified",
+        "basis": "Do not inherit an open-source implementation's license for normative credential schemas; artifact-specific redistribution remains unverified.",
+        "termsUrl": "https://www.1edtech.org/standards/specification-license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-LD",
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://purl.imsglobal.org/spec/ob/v3p0/schema/json/ob_v3p0_achievementcredential_schema.json",
+      "evidenceUrls": [
+        "https://www.imsglobal.org/spec/ob/v3p0/",
+        "https://purl.imsglobal.org/spec/ob/v3p0/schema/json/ob_v3p0_achievementcredential_schema.json",
+        "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json",
+        "https://www.1edtech.org/standards/specification-license"
+      ],
+      "norn": {
+        "overlap": "Achievement, issuer, recipient and credential evidence; future HR/learning extension.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "one-edtech-qti-3-accessibility-schema",
+      "name": "1EdTech QTI 3.0 accessibility preferences schema",
+      "publisher": "1EdTech Consortium",
+      "kind": "standard",
+      "domains": [
+        "education"
+      ],
+      "version": "QTI 3.0; component v1p0",
+      "versionDate": "2021-01-31",
+      "versionBasis": "Selected XSD source-information block explicitly records Release 1.0 dated 31 January 2021; documentation header separately says Version 2.0 dated 18 January 2021. Preserve both source blocks rather than use the unrelated 2023 QTI specification date.",
+      "licence": {
+        "spdx": "LicenseRef-1EdTech-Specification-Document-License-XSD",
+        "text": "1EdTech Specification Document License; XSD-specific permission unverified",
+        "status": "unverified",
+        "basis": "Implementation license does not establish blanket source XSD derivative/redistribution permission; retain component notices for admission review.",
+        "termsUrl": "https://www.1edtech.org/standards/specification-license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://purl.imsglobal.org/spec/qti/v3p0/schema/xsd/imsqtiv3p0_afa3p0pnp_v1p0.xsd",
+      "evidenceUrls": [
+        "https://www.imsglobal.org/spec/qti/v3p0/",
+        "https://purl.imsglobal.org/spec/qti/v3p0/schema/xsd/imsqtiv3p0_afa3p0pnp_v1p0.xsd",
+        "https://www.1edtech.org/standards/specification-license"
+      ],
+      "norn": {
+        "overlap": "Assessment accessibility preferences are a domain extension; no claim of full assessment model coverage.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "xapi-1-0-3-legacy",
+      "name": "ADL xAPI 1.0.3 structured statement specification (legacy)",
+      "publisher": "Advanced Distributed Learning Initiative",
+      "kind": "standard",
+      "domains": [
+        "education"
+      ],
+      "version": "1.0.3; git 1155c3b53d7218c99077b33d9c9b69c45b347fb1",
+      "versionDate": null,
+      "versionBasis": "GitHub tag xAPI-1.0.3 resolved to this commit; exact release day not verified. Current README explicitly labels this old and points to IEEE xAPI 2.0.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0 (ADL repository)",
+        "status": "verified",
+        "basis": "Apache repository license permits distribution/derivatives with license, notices and change marking; grant is for ADL repository, not IEEE 2.0 text.",
+        "termsUrl": "https://raw.githubusercontent.com/adlnet/xAPI-Spec/master/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://github.com/adlnet/xAPI-Spec/tree/1155c3b53d7218c99077b33d9c9b69c45b347fb1",
+      "evidenceUrls": [
+        "https://api.github.com/repos/adlnet/xAPI-Spec/tags",
+        "https://raw.githubusercontent.com/adlnet/xAPI-Spec/master/README.md",
+        "https://raw.githubusercontent.com/adlnet/xAPI-Spec/master/LICENSE",
+        "https://raw.githubusercontent.com/adlnet/xAPI-Spec/1155c3b53d7218c99077b33d9c9b69c45b347fb1/xAPI-Data.md"
+      ],
+      "norn": {
+        "overlap": "Actor, verb, object, result and learning activity; statement log is not Norn ledger authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

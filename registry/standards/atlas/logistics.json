@@ -1,0 +1,706 @@
+{
+  "atlasVersion": 1,
+  "domain": "logistics",
+  "entries": [
+    {
+      "id": "dcsa-arrival-notice",
+      "name": "DCSA Arrival Notice 1.0.1",
+      "publisher": "Digital Container Shipping Association",
+      "kind": "protocol",
+      "domains": [
+        "logistics"
+      ],
+      "version": "1.0.1",
+      "versionDate": null,
+      "versionBasis": "Official current-release page and downloaded info.version agree; exact release date absent from inspected evidence.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Explicit Apache-2.0 specification notice; retain copyright/license/notices and mark modifications. This does not license attached customer transport documents.",
+        "termsUrl": "https://reference.dcsa.org/content/standards/releases/arrival-notice/v1/an-v1-openapi-specification",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://reference.dcsa.org/files/content/standards/releases/arrival-notice/v1/an-v1-0-1-openapi-specification/dcsa-an-v101-release-openapi-specification.yaml",
+      "evidenceUrls": [
+        "https://reference.dcsa.org/content/standards/releases/arrival-notice/v1",
+        "https://reference.dcsa.org/content/standards/releases/arrival-notice/v1/an-v1-openapi-specification"
+      ],
+      "norn": {
+        "overlap": "Carrier arrival-notice exchange; external document contract only.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dcsa-bill-of-lading",
+      "name": "DCSA Bill of Lading 3.0.4",
+      "publisher": "Digital Container Shipping Association",
+      "kind": "protocol",
+      "domains": [
+        "logistics"
+      ],
+      "version": "3.0.4",
+      "versionDate": null,
+      "versionBasis": "Official current and archive pages identify 3.0.4; no exact release date verified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Public page Apache-2.0 notice does not establish current schema or referenced eBL legal-rule rights.",
+        "termsUrl": "https://reference.dcsa.org/content/standards/releases/bill-of-lading/v3",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://reference.dcsa.org/content/standards/releases/bill-of-lading/archive/v3-0-4",
+      "evidenceUrls": [
+        "https://reference.dcsa.org/content/standards/releases/bill-of-lading/v3",
+        "https://reference.dcsa.org/content/standards/releases/bill-of-lading/archive/v3-0-4"
+      ],
+      "norn": {
+        "overlap": "Transport document issuance/lifecycle; external document contract only.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dcsa-booking",
+      "name": "DCSA Booking 2.0.5",
+      "publisher": "Digital Container Shipping Association",
+      "kind": "protocol",
+      "domains": [
+        "logistics"
+      ],
+      "version": "2.0.5",
+      "versionDate": null,
+      "versionBasis": "Official booking index and immutable-release archive name 2.0.5; no release date or payload version inspected.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Apache-2.0 footer verified for public documentation only; machine-readable artifact rights remain unverified.",
+        "termsUrl": "https://reference.dcsa.org/content/standards/releases/booking/v2",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://reference.dcsa.org/content/standards/releases/booking/archive/v2-0-5",
+      "evidenceUrls": [
+        "https://reference.dcsa.org/content/standards/releases/booking/v2",
+        "https://reference.dcsa.org/content/standards/releases/booking/archive/v2-0-5"
+      ],
+      "norn": {
+        "overlap": "Container-carrier booking lifecycle; external contract, not Core order authority.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dcsa-commercial-schedules",
+      "name": "DCSA Commercial Schedules 1.0.3",
+      "publisher": "Digital Container Shipping Association",
+      "kind": "protocol",
+      "domains": [
+        "logistics"
+      ],
+      "version": "1.0.3",
+      "versionDate": null,
+      "versionBasis": "Downloaded info.version and official current-release page identify 1.0.3; release date unverified. Do not substitute third-party claims of 1.0.4.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Explicit Apache-2.0 specification license and public page notice; preserve notices and mark modifications.",
+        "termsUrl": "https://reference.dcsa.org/content/standards/releases/commercial-schedules/v1/cs-v1-openapi-specification",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://reference.dcsa.org/files/content/standards/releases/commercial-schedules/v1/cs-v1-0-3-openapi-specification/dcsa-cs-v103-release-openapi-specification.yaml",
+      "evidenceUrls": [
+        "https://reference.dcsa.org/content/standards/releases/commercial-schedules/v1",
+        "https://reference.dcsa.org/content/standards/releases/commercial-schedules/v1/cs-v1-openapi-specification"
+      ],
+      "norn": {
+        "overlap": "Point-to-point routes, port and vessel schedules; external carrier data rather than tenant scheduling authority.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dcsa-operational-vessel-schedules",
+      "name": "DCSA Operational Vessel Schedules 3.0.3",
+      "publisher": "Digital Container Shipping Association",
+      "kind": "protocol",
+      "domains": [
+        "logistics"
+      ],
+      "version": "3.0.3",
+      "versionDate": null,
+      "versionBasis": "Public reference explicitly identifies 3.0.3; exact date and current payload not verified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Apache-2.0 footer applies to public page; no inspected current schema grant.",
+        "termsUrl": "https://reference.dcsa.org/content/standards/releases/operational-vessel-schedules/v3",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://reference.dcsa.org/content/standards/releases/operational-vessel-schedules/v3",
+      "evidenceUrls": [
+        "https://reference.dcsa.org/content/standards/releases/operational-vessel-schedules",
+        "https://reference.dcsa.org/content/standards/releases/operational-vessel-schedules/v3"
+      ],
+      "norn": {
+        "overlap": "Carrier operational vessel schedules; separate from commercial schedules and retail shifts.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dcsa-port-call",
+      "name": "DCSA Port Call 2.0.0",
+      "publisher": "Digital Container Shipping Association",
+      "kind": "protocol",
+      "domains": [
+        "logistics"
+      ],
+      "version": "2.0.0",
+      "versionDate": null,
+      "versionBasis": "Downloaded info.version and official release page identify 2.0.0; precise release date unverified.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Specification's Apache-2.0 grant; retain notices and modification history. Referenced IMO documents have independent terms.",
+        "termsUrl": "https://reference.dcsa.org/content/standards/releases/port-call/v2/pc-v2-openapi-specification",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://reference.dcsa.org/files/content/standards/releases/port-call/v2/pc-v2-0-0-openapi-specification/dcsa-pc-v200-release-openapi-specification.yaml",
+      "evidenceUrls": [
+        "https://reference.dcsa.org/content/standards/releases/port-call/v2",
+        "https://reference.dcsa.org/content/standards/releases/port-call/v2/pc-v2-openapi-specification"
+      ],
+      "norn": {
+        "overlap": "Port-call service events and estimated/requested/planned/actual timestamps; preserve their distinct time semantics.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dcsa-track-trace",
+      "name": "DCSA Track & Trace v3",
+      "publisher": "Digital Container Shipping Association",
+      "kind": "protocol",
+      "domains": [
+        "logistics"
+      ],
+      "version": "3 (major only)",
+      "versionDate": null,
+      "versionBasis": "Official public reference names v3 but redirects prospective adopters to member/partner access; exact patch and date unverified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Public landing page carries Apache-2.0, but no current OpenAPI bytes/license inspected. Do not inherit the landing-page license as verified schema rights.",
+        "termsUrl": "https://reference.dcsa.org/content/standards/releases/track-and-trace/v3",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://reference.dcsa.org/content/standards/releases/track-and-trace/v3",
+      "evidenceUrls": [
+        "https://reference.dcsa.org/content/standards/releases/track-and-trace/v3",
+        "https://reference.dcsa.org/content",
+        "https://github.com/dcsaorg/DCSA-OpenAPI"
+      ],
+      "norn": {
+        "overlap": "Carrier container events, not retail inventory state or universal shipping semantics.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dcsa-verified-gross-mass",
+      "name": "DCSA Verified Gross Mass 1.0.1",
+      "publisher": "Digital Container Shipping Association",
+      "kind": "protocol",
+      "domains": [
+        "logistics"
+      ],
+      "version": "1.0.1",
+      "versionDate": null,
+      "versionBasis": "Downloaded info.version and official current-release page identify 1.0.1; exact date not verified.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Specification explicitly licensed Apache-2.0; preserve notices and mark changes. No grant inferred for customer declarations or IMO rule text.",
+        "termsUrl": "https://reference.dcsa.org/content/standards/releases/verified-gross-mass/v1/vgm-v1-openapi-specification",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://reference.dcsa.org/files/content/standards/releases/verified-gross-mass/v1/vgm-v1-0-1-openapi-specification/dcsa-vgm-v101-release-openapi-specification.yaml",
+      "evidenceUrls": [
+        "https://reference.dcsa.org/content/standards/releases/verified-gross-mass/v1",
+        "https://reference.dcsa.org/content/standards/releases/verified-gross-mass/v1/vgm-v1-openapi-specification"
+      ],
+      "norn": {
+        "overlap": "Container-mass declaration exchange; typed quantities require units/precision representation first.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "incoterms-2020",
+      "name": "Incoterms® 2020",
+      "publisher": "International Chamber of Commerce (ICC)",
+      "kind": "standard",
+      "domains": [
+        "logistics",
+        "supply-chain",
+        "law"
+      ],
+      "version": "Incoterms® 2020",
+      "versionDate": null,
+      "versionBasis": "ICC Incoterms 2020 page and trademark/copyright policy refer only to Incoterms® 2020; no newer edition is mentioned on iccwbo.org (the date is not stated on the pages read).",
+      "licence": {
+        "spdx": "LicenseRef-ICC-Incoterms",
+        "text": "ICC copyright on rule text and registered trademark 'Incoterms'; use in contracts encouraged; extracts must quote whole rules unaltered with ICC copyright statement; no own translations",
+        "status": "verified",
+        "basis": "Read ICC's 'Incoterms® rules trademark and copyright policy' page on iccwbo.org (do not amend the wording, whole-rule extracts with 'The Incoterms® Rules are protected by copyright owned by ICC.', trademark used as an adjective with ®).",
+        "termsUrl": "https://iccwbo.org/business-solutions/incoterms-rules/incoterms-rules-trademark-and-copyright-policy/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://iccwbo.org/business-solutions/incoterms-rules/incoterms-2020/",
+      "evidenceUrls": [
+        "https://iccwbo.org/business-solutions/incoterms-rules/incoterms-2020/",
+        "https://iccwbo.org/business-solutions/incoterms-rules/incoterms-rules-trademark-and-copyright-policy/"
+      ],
+      "norn": {
+        "overlap": "delivery terms on sales/purchase orders (EXW, FCA, CPT, CIP, DAP, DPU, DDP, FAS, FOB, CFR, CIF), risk/cost transfer point",
+        "concepts": [
+          "canon.Delivery",
+          "core.Commitment"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "TradeTerm"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "Trade terms on every cross-border order."
+      },
+      "notes": "Store the three-letter code plus the named place and the edition ('Incoterms® 2020'). Do not ship the rule text. ICC follows a roughly ten-year revision cycle; no 2030 edition is announced on the pages read.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "unece-rec5-incoterms",
+      "name": "UNECE Recommendation 5: Incoterms abbreviations only",
+      "publisher": "UNECE / UN/CEFACT; Incoterms trademark/rules owned by ICC",
+      "kind": "code-list",
+      "domains": [
+        "logistics",
+        "supply-chain"
+      ],
+      "version": "2020 edition (ECE/TRADE/458)",
+      "versionDate": null,
+      "versionBasis": "Official UNECE indexed PDF title/foreword identifies 2020 edition; 2023-10 URL is an upload path, not a verified release date. Direct fetch returned 403.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Owner says codes are free; no inspected artifact-specific redistribution grant was verified. Do not extend code-use claims to ICC rule prose.",
+        "termsUrl": "https://unece.org/sites/default/files/2023-10/Rec5-ECE-TRADE-458E.pdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://unece.org/sites/default/files/2023-10/Rec5-ECE-TRADE-458E.pdf",
+      "evidenceUrls": [
+        "https://unece.org/sites/default/files/2023-10/Rec5-ECE-TRADE-458E.pdf",
+        "https://github.com/Norn-cloud/norn-platform/issues/2986#issuecomment-6315013276"
+      ],
+      "norn": {
+        "overlap": "External trade-term identifiers only; neither obligations nor jurisdictional interpretations enter Core.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Never vendor ICC copyrighted rule text or substitute unrelated delivery-terms codes for a verified Rec 5 source. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unlocode-prerelease",
+      "name": "UN/LOCODE continuously updated pre-release",
+      "publisher": "UNECE / UN/CEFACT",
+      "kind": "code-list",
+      "domains": [
+        "logistics"
+      ],
+      "version": null,
+      "versionDate": "2026-10-16",
+      "versionBasis": "Official publications page states pre-release last updated 2026-10-16; mutable ZIP returned 200. Date is advertised update date, not production release.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Conflicting CC BY 4.0 footer and restrictive general terms; no per-file license grant established.",
+        "termsUrl": "https://unlocode.unece.org/terms/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF",
+        "CSV",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://unlocode.unece.org/downloads/unlocode-latest.zip",
+      "evidenceUrls": [
+        "https://unlocode.unece.org/publications/",
+        "https://unlocode.unece.org/downloads/unlocode-latest.zip",
+        "https://unlocode.unece.org/terms/"
+      ],
+      "norn": {
+        "overlap": "External location-code changes before production; never silently replace historic codes.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unlocode-production",
+      "name": "UN/LOCODE 2025-1 official publication",
+      "publisher": "UNECE / UN/CEFACT",
+      "kind": "code-list",
+      "domains": [
+        "logistics"
+      ],
+      "version": "2025-1",
+      "versionDate": null,
+      "versionBasis": "Official publications page labels January 2025; old Codes for Trade page says issued 15 January 2026; GitLab tag commit is 8 May 2026. Conflicting identities recorded without choosing an invented release date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Site footer declares CC BY 4.0 for standards, while terms prohibit redistribution/derivatives. Corpus license inaccessible; resolve conflicting claims before admission.",
+        "termsUrl": "https://unlocode.unece.org/terms/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "CSV",
+        "XML"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://opensource.unicc.org/un/unece/uncefact/vocab-locode/-/jobs/artifacts/2025-1/download?job=package-release",
+      "evidenceUrls": [
+        "https://unlocode.unece.org/publications/",
+        "https://unlocode.unece.org/terms/",
+        "https://unece.org/trade/cefact/UNLOCODE-Download?product=service",
+        "https://opensource.unicc.org/un/unece/uncefact/vocab-locode/-/tags/2025-1"
+      ],
+      "norn": {
+        "overlap": "External transport location codes; not street addresses, warehouses or tenant authorization locations.",
+        "concepts": [
+          "std.value_types",
+          "location.Region"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": "Norn-cloud/norn-platform#3453"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unlocode-skos-alpha",
+      "name": "UN/LOCODE SKOS alpha vocabulary",
+      "publisher": "UNECE / UN/CEFACT",
+      "kind": "code-list",
+      "domains": [
+        "logistics"
+      ],
+      "version": "2025-1 (publisher label; alpha)",
+      "versionDate": null,
+      "versionBasis": "Publications page labels alpha 2025-1 / January 2025, while URL is latest; immutable release date not verified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "CC BY footer conflicts with restrictive terms; no verified per-file resolution.",
+        "termsUrl": "https://unlocode.unece.org/terms/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF",
+        "SKOS"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://unlocode.unece.org/downloads/unlocode-skos-latest.zip",
+      "evidenceUrls": [
+        "https://unlocode.unece.org/publications/",
+        "https://unlocode.unece.org/downloads/unlocode-skos-latest.zip",
+        "https://unlocode.unece.org/terms/"
+      ],
+      "norn": {
+        "overlap": "Alternative representation of external location codes, not extra location semantics.",
+        "concepts": [
+          "canon.Delivery",
+          "location.Region",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TransportEquipment"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Shipping and locations matter once cross-border trade starts."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

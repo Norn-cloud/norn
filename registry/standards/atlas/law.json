@@ -1,0 +1,268 @@
+{
+  "atlasVersion": 1,
+  "domain": "law",
+  "entries": [
+    {
+      "id": "catala",
+      "name": "Catala programming language for law",
+      "publisher": "Catala project (Inria and contributors)",
+      "kind": "standard",
+      "domains": [
+        "law",
+        "process-rules"
+      ],
+      "version": "1.3.0",
+      "versionDate": "2026-10-01",
+      "versionBasis": "GitHub release 1.3.0 of CatalaLang/catala, published 2026-10-01.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0",
+        "status": "verified",
+        "basis": "GitHub licence metadata for CatalaLang/catala reports Apache-2.0 (read 2026-11-11).",
+        "termsUrl": "https://github.com/CatalaLang/catala/blob/master/LICENSE.txt",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "source-code",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/CatalaLang/catala",
+      "evidenceUrls": [
+        "https://github.com/CatalaLang/catala",
+        "https://github.com/CatalaLang/catala/releases/tag/1.3.0"
+      ],
+      "norn": {
+        "overlap": "statutes as code with prioritized default logic (exceptions over base rules), scope inputs and outputs, legal-article citations",
+        "concepts": [],
+        "irTargets": [
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "LegalSource",
+          "LawException"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P2",
+        "reason": "Prioritized default logic matches Norn's exception trees (#1207); tax and labour rules as code."
+      },
+      "notes": "Default-logic exceptions map to LawIR exception trees and norm precedence; each Catala scope cites its article, which maps to a LegalSource link. A real tax rule set translated and was proven in prior research (#1128).",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "eli-ontology",
+      "name": "European Legislation Identifier (ELI) ontology",
+      "publisher": "Publications Office of the European Union",
+      "kind": "ontology",
+      "domains": [
+        "law",
+        "records"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "The EU Vocabularies ELI page links a release note and version history but states no version on the page itself.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "EU Publications Office legal notice (reuse policy not read)",
+        "status": "unverified",
+        "basis": "The ELI page has no licence statement; its legal notice page was not read, so the Commission reuse policy is not confirmed for this artifact.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OWL",
+        "RDF",
+        "spec-PDF",
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://op.europa.eu/en/web/eu-vocabularies/eli",
+      "evidenceUrls": [
+        "https://op.europa.eu/en/web/eu-vocabularies/eli"
+      ],
+      "norn": {
+        "overlap": "identifiers and FRBR-style metadata for legislation, versions and consolidations",
+        "concepts": [],
+        "irTargets": [
+          "StructuredRequirement"
+        ],
+        "proposedConcepts": [
+          "LegalSource"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3774"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Stable identifiers for legal-source provenance links."
+      },
+      "notes": "Ships eli.owl and a schema.org legal alignment (eli-sdo.ttl). Used for stable legal-source identifiers in law provenance links.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "legaldocml-akoma-ntoso-1-0",
+      "name": "LegalDocML / Akoma Ntoso 1.0 XML schema",
+      "publisher": "OASIS LegalDocumentML Technical Committee",
+      "kind": "standard",
+      "domains": [
+        "law"
+      ],
+      "version": "OASIS 1.0; Akoma Ntoso schema 3.0",
+      "versionDate": "2018-08-29",
+      "versionBasis": "OASIS Standard heading/header dated 29 August 2018; embedded schema history says release 30/03/2017. These are different release identities, preserved rather than conflated.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0 (explicit XSD notice)",
+        "status": "verified",
+        "basis": "XSD expressly grants CC BY 4.0; attribution and modification notices required. Grant does not cover legislation or judgments supplied by another publisher.",
+        "termsUrl": "https://docs.oasis-open.org/legaldocml/akn-core/v1.0/os/part2-specs/schemas/akomantoso30.xsd",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XSD",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.oasis-open.org/legaldocml/akn-core/v1.0/os/part2-specs/schemas/akomantoso30.xsd",
+      "evidenceUrls": [
+        "https://docs.oasis-open.org/legaldocml/akn-core/v1.0/os/part2-specs/schemas/akomantoso30.xsd",
+        "https://docs.oasis-open.org/legaldocml/akn-core/v1.0/akn-core-v1.0-part2-specs.html"
+      ],
+      "norn": {
+        "overlap": "Document, version, citation and provenance; legislative XML is not a general contract ontology.",
+        "concepts": [],
+        "irTargets": [
+          "StructuredRequirement"
+        ],
+        "proposedConcepts": [
+          "LegalSource"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#351"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Legislation text as the source each law links to."
+      },
+      "notes": "Akoma Ntoso is the LegalDocML standard, not two independent schemas to count twice. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "legalruleml-1-0",
+      "name": "LegalRuleML 1.0 compact XML schema",
+      "publisher": "OASIS LegalRuleML Technical Committee",
+      "kind": "ontology",
+      "domains": [
+        "law"
+      ],
+      "version": "1.0",
+      "versionDate": "2021-08-30",
+      "versionBasis": "OASIS Standard and XSD header date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "XSD says OASIS copyright/all rights reserved. No artifact-specific redistribution/derivative grant established by this review; do not infer from public download.",
+        "termsUrl": "https://docs.oasis-open.org/legalruleml/legalruleml-core-spec/v1.0/os/legalruleml-core-spec-v1.0-os.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.oasis-open.org/legalruleml/legalruleml-core-spec/v1.0/os/xsd-schema/compact/lrml-compact.xsd",
+      "evidenceUrls": [
+        "https://docs.oasis-open.org/legalruleml/legalruleml-core-spec/v1.0/os/xsd-schema/compact/lrml-compact.xsd",
+        "https://docs.oasis-open.org/legalruleml/legalruleml-core-spec/v1.0/os/legalruleml-core-spec-v1.0-os.html"
+      ],
+      "norn": {
+        "overlap": "Rules, temporal validity, obligations and defeasibility; no automatic lowering to executable decision rules.",
+        "concepts": [],
+        "irTargets": [
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "LegalSource",
+          "Norm",
+          "LawException"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#351"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Interchange for defeasible norms; ~9% coverage in research (#1128)."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "lkif-core",
+      "name": "LKIF Core legal ontology",
+      "publisher": "ESTRELLA project (Leibniz Center for Law); maintained by R. Hoekstra",
+      "kind": "ontology",
+      "domains": [
+        "law",
+        "upper-ontology"
+      ],
+      "version": null,
+      "versionDate": "2026-02-23",
+      "versionBasis": "No release tags; the date is the last push to RinkeHoekstra/lkif-core on GitHub.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "Creative Commons Attribution 4.0 International",
+        "status": "verified",
+        "basis": "LICENSE file in RinkeHoekstra/lkif-core is CC BY 4.0 (read 2026-11-11).",
+        "termsUrl": "https://github.com/RinkeHoekstra/lkif-core/blob/master/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/RinkeHoekstra/lkif-core",
+      "evidenceUrls": [
+        "https://github.com/RinkeHoekstra/lkif-core"
+      ],
+      "norn": {
+        "overlap": "norms, legal roles, legal actions and qualifications as OWL modules",
+        "concepts": [],
+        "irTargets": [
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Norm",
+          "LegalSource",
+          "LegalRole"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#351"
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Law-as-code feeds country packs and defeasible laws."
+      },
+      "notes": "15 OWL modules (norm, legal-role, legal-action, time, mereology). Alignment vocabulary for LawIR norm kinds; not an executable rule language.",
+      "origin": "atlas-2026-11-11"
+    }
+  ]
+}

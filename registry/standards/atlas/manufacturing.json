@@ -1,0 +1,441 @@
+{
+  "atlasVersion": 1,
+  "domain": "manufacturing",
+  "entries": [
+    {
+      "id": "iof-core",
+      "name": "Industrial Ontology Foundry Core ontology",
+      "publisher": "Industrial Ontology Foundry / OAGi",
+      "kind": "ontology",
+      "domains": [
+        "manufacturing"
+      ],
+      "version": "Release_202603",
+      "versionDate": "2026-09-03",
+      "versionBasis": "GitHub release published_at 2026-09-03T10:03:36Z. The 202603 label is not interpreted as March; payload maturity is Released.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT",
+        "status": "verified",
+        "basis": "Release LICENSE and ontology dcterms:license identify MIT; retain copyright and permission notice. This does not relicense imported BFO/QUDT/etc.",
+        "termsUrl": "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/core/Core.rdf",
+      "evidenceUrls": [
+        "https://github.com/iofoundry/ontology/releases/tag/Release_202603",
+        "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/core/Core.rdf",
+        "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Industrial asset, process, role and resource concepts; industry pack only under #2986 Astra direction.",
+        "concepts": [
+          "core.Process",
+          "core.Conversion",
+          "core.Resource"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BillOfMaterials",
+          "WorkCenter"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Production orders and recipes are needed for in-house manufacturing."
+      },
+      "notes": "Use the active iofoundry/ontology repository, not the archived 2022 iofoundry/Core beta. OWL axioms require an explicit supported import profile. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iof-maintenance",
+      "name": "IOF Maintenance reference ontology",
+      "publisher": "Industrial Ontology Foundry / OAGi",
+      "kind": "ontology",
+      "domains": [
+        "manufacturing"
+      ],
+      "version": "Release_202603",
+      "versionDate": "2026-09-03",
+      "versionBasis": "Suite release published_at 2026-09-03T10:03:36Z; selected maintenance payload declares Released maturity.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT",
+        "status": "verified",
+        "basis": "Payload identifies MIT and suite LICENSE grants redistribution with notices; imported ontologies need separate checks.",
+        "termsUrl": "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/maintenance/Maintenance.rdf",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/maintenance/Maintenance.rdf",
+        "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/LICENSE",
+        "https://github.com/iofoundry/ontology/releases/tag/Release_202603"
+      ],
+      "norn": {
+        "overlap": "Maintenance activities, failures and maintainable assets; not a replacement for ISO 14224 rights or semantics.",
+        "concepts": [
+          "core.Process",
+          "core.Conversion",
+          "core.Resource"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BillOfMaterials",
+          "WorkCenter"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "Production orders and recipes are needed for in-house manufacturing."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "isa-88",
+      "name": "ANSI/ISA-88 Batch Control (with MESA BatchML)",
+      "publisher": "International Society of Automation (ISA); BatchML by MESA International",
+      "kind": "standard",
+      "domains": [
+        "manufacturing"
+      ],
+      "version": "ANSI/ISA-88.00.01-2010 (Part 1); BatchML in B2MML V7.00.00",
+      "versionDate": null,
+      "versionBasis": "isa.org ISA-88 page lists ISA-88.00.01-2010 Part 1, -00.02-2001 Part 2, -00.03-2003 Part 3, -00.04-2006 Part 4 and ISA-TR88.00.02-2022; the MESA GitHub repo's latest release is V7.00.00 (2020-11-05).",
+      "licence": {
+        "spdx": "LicenseRef-ISA-Copyright AND LicenseRef-MESA-B2MML",
+        "text": "ISA standards are sold copyrighted documents; BatchML XSDs are under the MESA B2MML licence (use, copy, modify, redistribute free with the required acknowledgement)",
+        "status": "unverified",
+        "basis": "Read the MESA B2MML-BatchML LICENSE on GitHub (permissive, with the acknowledgement 'The Business To Manufacturing Markup Language (B2MML) is used courtesy of MESA International.'); ISA's own terms page could not be found (isa.org terms and copyright URLs returned 404), so only the purchase listing was seen.",
+        "termsUrl": "https://github.com/MESAInternational/B2MML-BatchML/blob/master/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "spec-PDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/MESAInternational/B2MML-BatchML",
+      "evidenceUrls": [
+        "https://www.isa.org/standards-and-publications/isa-standards/isa-88-standards",
+        "https://github.com/MESAInternational/B2MML-BatchML"
+      ],
+      "norn": {
+        "overlap": "recipes (general/site/master/control), equipment hierarchy, procedural model, batch production records",
+        "concepts": [
+          "core.Process",
+          "core.Conversion",
+          "core.Resource"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BillOfMaterials",
+          "WorkCenter"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Recipes and batches for in-house manufacturing."
+      },
+      "notes": "'code-reusable' covers only the MESA BatchML XSDs (with acknowledgement); the ISA-88 prose is paid and reference-only. The BatchML repo has had no push since 2023-08.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "isa95-publications",
+      "name": "ISA-95 enterprise-control integration publications",
+      "publisher": "International Society of Automation",
+      "kind": "standard",
+      "domains": [
+        "manufacturing"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Series landing page lists multiple independently versioned parts; no single release inferred.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "ISA copyright policy does not grant general republication of its standards; B2MML's separate grant is not a grant for ISA prose.",
+        "termsUrl": "https://www.isa.org/about-isa/governing-documents/intellectual-property-policy",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.isa.org/standards-and-publications/isa-standards/isa-95-standard",
+      "evidenceUrls": [
+        "https://www.isa.org/standards-and-publications/isa-standards/isa-95-standard",
+        "https://www.isa.org/about-isa/governing-documents/intellectual-property-policy"
+      ],
+      "norn": {
+        "overlap": "Manufacturing resources, schedules, tests and performance; conceptual comparison only.",
+        "concepts": [
+          "core.Process",
+          "core.Conversion",
+          "core.Resource"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BillOfMaterials",
+          "WorkCenter"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Production orders and recipes are needed for in-house manufacturing."
+      },
+      "notes": "Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso-9202-fineness",
+      "name": "ISO 9202 Jewellery and precious metals: fineness of precious metal alloys",
+      "publisher": "ISO",
+      "kind": "standard",
+      "domains": [
+        "manufacturing",
+        "products-units"
+      ],
+      "version": "ISO 9202:2019",
+      "versionDate": "2019",
+      "versionBasis": "Edition as listed in #351 research; the ISO page was not re-read this round.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-Copyright",
+        "text": "ISO copyright; paid standard",
+        "status": "unverified",
+        "basis": "iso.org refuses automated fetches; ISO publications are paid and copyrighted, and ISO terms forbid using ISO content for AI training or prompting.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": null,
+      "evidenceUrls": [],
+      "norn": {
+        "overlap": "standard fineness values (parts per thousand) for gold, silver, platinum and palladium alloys",
+        "concepts": [
+          "core.Resource",
+          "core.Conversion"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Assay",
+          "Fineness"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P2",
+        "reason": "Precious-metal fineness and purity bounds for jewelry; Norn records fineness as measured values."
+      },
+      "notes": "Use only the published fineness numbers as facts (e.g. 750 for 18 ct gold); never feed ISO text to a model.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "iso14224-availability",
+      "name": "ISO 14224 reliability and maintenance data availability",
+      "publisher": "ISO",
+      "kind": "standard",
+      "domains": [
+        "manufacturing"
+      ],
+      "version": "ISO 14224:2016 edition 3",
+      "versionDate": "2016-09-16",
+      "versionBasis": "Publisher lifecycle records publication 2016-09-16, corrected English version 2016-10, confirmed 2022; website copyright 2026 is not publication.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "ISO requires written permission for reproduction; purchase alone is not redistribution permission.",
+        "termsUrl": "https://www.iso.org/copyright.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.iso.org/standard/64076.html",
+      "evidenceUrls": [
+        "https://www.iso.org/standard/64076.html",
+        "https://www.iso.org/copyright.html"
+      ],
+      "norn": {
+        "overlap": "Equipment taxonomy, failure and maintenance data may guide a future licensed comparison only.",
+        "concepts": [
+          "core.Process",
+          "core.Conversion",
+          "core.Resource"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BillOfMaterials",
+          "WorkCenter"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Production orders and recipes are needed for in-house manufacturing."
+      },
+      "notes": "Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "mesa-b2mml",
+      "name": "B2MML / BatchML ISA-95 XML implementation",
+      "publisher": "MESA International",
+      "kind": "standard",
+      "domains": [
+        "manufacturing",
+        "supply-chain"
+      ],
+      "version": "V7.00.00",
+      "versionDate": "2020-11-05",
+      "versionBasis": "GitHub release published_at 2020-11-05T15:08:21Z; release implements 2018 ISA-95 changes, not a 2018 publication date.",
+      "licence": {
+        "spdx": "LicenseRef-MESA-B2MML-custom-permission-grant",
+        "text": "MESA B2MML custom permission grant",
+        "status": "verified",
+        "basis": "LICENSE and XSD notice permit use, copying, modification and redistribution without fee with the specified MESA acknowledgement.",
+        "termsUrl": "https://raw.githubusercontent.com/MESAInternational/B2MML-BatchML/V7.00.00/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/MESAInternational/B2MML-BatchML/V7.00.00/Schema/AllSchemas.xsd",
+      "evidenceUrls": [
+        "https://github.com/MESAInternational/B2MML-BatchML/releases/tag/V7.00.00",
+        "https://raw.githubusercontent.com/MESAInternational/B2MML-BatchML/V7.00.00/Schema/AllSchemas.xsd",
+        "https://raw.githubusercontent.com/MESAInternational/B2MML-BatchML/V7.00.00/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Equipment, personnel, physical assets, material, operations tests, quality, schedules and performance remain source-owned shapes.",
+        "concepts": [
+          "core.Process",
+          "core.Conversion",
+          "core.Resource"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BillOfMaterials",
+          "WorkCenter"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "ISA-95 production orders and material lots."
+      },
+      "notes": "Release notes label the accompanying JSON conversion untested; XML XSD is the selected artifact. Includes ISA-88 BatchML; no claim of complete normative ISA text coverage. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "opcua-base-nodeset",
+      "name": "OPC UA base information model NodeSet",
+      "publisher": "OPC Foundation / OPC Federation AISBL",
+      "kind": "standard",
+      "domains": [
+        "manufacturing"
+      ],
+      "version": "git:30f83e344076daac4b712eda0224bcecef12e0e6",
+      "versionDate": "2026-10-20",
+      "versionBasis": "Repository snapshot commit timestamp 2026-10-20T19:35:39Z; not a claimed suite release or publication date for every companion model.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "OPC Foundation MIT License 1.00 (selected NodeSet header)",
+        "status": "verified",
+        "basis": "Selected XML header contains the MIT-style permission grant and notice requirement. Companion models and prose require their own per-file checks.",
+        "termsUrl": "https://opcfoundation.org/License/MIT/1.00/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XSD",
+        "CSV",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/OPCFoundation/UA-Nodeset/30f83e344076daac4b712eda0224bcecef12e0e6/Schema/Opc.Ua.NodeSet2.xml",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/OPCFoundation/UA-Nodeset/30f83e344076daac4b712eda0224bcecef12e0e6/Schema/Opc.Ua.NodeSet2.xml",
+        "https://github.com/OPCFoundation/UA-Nodeset/blob/latest/readme.md",
+        "https://api.github.com/repos/OPCFoundation/UA-Nodeset/commits/30f83e344076daac4b712eda0224bcecef12e0e6",
+        "https://opcfoundation.org/license-agreement/"
+      ],
+      "norn": {
+        "overlap": "Typed nodes, references, state machines and observations; no device permission model or runtime introduced.",
+        "concepts": [
+          "core.Process",
+          "core.Conversion",
+          "core.Resource"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "BillOfMaterials",
+          "WorkCenter"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Production orders and recipes are needed for in-house manufacturing."
+      },
+      "notes": "MIT claim is established by the selected file's embedded grant, not by assigning one blanket licence to the entire UA-Nodeset repository. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

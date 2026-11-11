@@ -1,0 +1,99 @@
+{
+  "atlasVersion": 1,
+  "domain": "travel",
+  "entries": [
+    {
+      "id": "opentravel-1",
+      "name": "OpenTravel 1.0 XML specification distribution",
+      "publisher": "OpenTravel Alliance",
+      "kind": "standard",
+      "domains": [
+        "travel"
+      ],
+      "version": "2024A (1.0 family)",
+      "versionDate": null,
+      "versionBasis": "Publisher form lists 2024A under OpenTravel 1.0. Release date and exact downloaded schema version are not verified.",
+      "licence": {
+        "spdx": "LicenseRef-OpenTravel-custom-specification-agreement-applic",
+        "text": "OpenTravel custom specification agreement; applicability/derivative grant review pending",
+        "status": "unverified",
+        "basis": "Public agreement contains use/modification conditions and reciprocal patent provisions; no unrestricted ontology-derivative or payload-redistribution grant established.",
+        "termsUrl": "https://opentravel.org/download-specs/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://opentravel.org/download-specs/",
+      "evidenceUrls": [
+        "https://opentravel.org/download-specs/",
+        "https://opentravel.org/wp-content/uploads/2017/05/LicenseAgreement.pdf"
+      ],
+      "norn": {
+        "overlap": "Travel reservations, inventory, rates and guest/traveller data; no Core authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "opentravel-2",
+      "name": "OpenTravel 2.0 JSON/XML specification distribution",
+      "publisher": "OpenTravel Alliance",
+      "kind": "standard",
+      "domains": [
+        "travel"
+      ],
+      "version": "2019A (2.0 family)",
+      "versionDate": null,
+      "versionBasis": "Publisher form lists 2019A under OpenTravel 2.0. Do not confuse the newer architecture family with the newer 2024A 1.0 release label; exact date unverified.",
+      "licence": {
+        "spdx": "LicenseRef-OpenTravel-custom-specification-agreement-applic",
+        "text": "OpenTravel custom specification agreement; applicability/derivative grant review pending",
+        "status": "unverified",
+        "basis": "Custom agreement is not a standard permissive licence; derivative model publication rights need artifact-specific review.",
+        "termsUrl": "https://opentravel.org/download-specs/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML",
+        "JSON"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://opentravel.org/download-specs/",
+      "evidenceUrls": [
+        "https://opentravel.org/download-specs/",
+        "https://opentravel.org/wp-content/uploads/2017/05/LicenseAgreement.pdf"
+      ],
+      "norn": {
+        "overlap": "Travel objects and service message contracts remain industry-owned schemas, separately versioned from the 1.0 family.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

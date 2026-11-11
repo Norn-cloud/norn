@@ -1,0 +1,1385 @@
+{
+  "atlasVersion": 1,
+  "domain": "einvoicing-tax",
+  "entries": [
+    {
+      "id": "brazil-nfe",
+      "name": "NF-e (Nota Fiscal Eletrônica) layout and XML schemas",
+      "publisher": "Portal da Nota Fiscal Eletrônica (ENCAT / Receita Federal, Brazil)",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "Leiaute 4.00 as amended by Notas Técnicas; latest NT 2025.002 v1.52 (RTC IBS/CBS) and NT 2026.008 v1.00",
+      "versionDate": "2026-10-01",
+      "versionBasis": "NF-e portal technical-notes list (listaConteudo tipoConteudo=04BIflQt1aY=), read via a Wayback capture dated 2026-10-07 because the live site redirect-loops for non-browsers, shows NTs published 01/10/2026. The schemas list (capture 2024-01) shows PL_009 'V4_00' packages for leiaute 4.00.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence or terms found",
+        "status": "unverified",
+        "basis": "No terms-of-use page was found or read on nfe.fazenda.gov.br, and the schema packages were not opened.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "spec-PDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w=",
+      "evidenceUrls": [
+        "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=04BIflQt1aY=",
+        "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w="
+      ],
+      "norn": {
+        "overlap": "Brazilian goods e-invoice (NF-e/NFC-e), ICMS/IPI/PIS/COFINS and IBS/CBS tax groups, events",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "P0",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Notas Técnicas revise the layout often, especially for the 2026+ tax reform (RTC). Pin to a Pacote de Liberação (schema package).",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "egypt-eta-invoice-v1",
+      "name": "Egypt ETA eInvoice document type v1.0",
+      "publisher": "Egyptian Tax Authority",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "1.0",
+      "versionDate": null,
+      "versionBasis": "Official Invoice v1.0 reference and Get Document Type Version API. Public page SEO timestamps are site-build dates, not verified schema release dates.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "ETA copyright is visible; no public open redistribution/derivative licence found on the inspected reference/API pages. Taxpayer access does not itself grant redistribution.",
+        "termsUrl": "https://sdk.invoicing.eta.gov.eg/documents/invoice-v1-0/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "JSON-Schema",
+        "JSON",
+        "spec-HTML",
+        "API"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://sdk.invoicing.eta.gov.eg/documents/invoice-v1-0/",
+      "evidenceUrls": [
+        "https://sdk.invoicing.eta.gov.eg/documents/invoice-v1-0/",
+        "https://sdk.invoicing.eta.gov.eg/api/04-get-document-type-version/",
+        "https://sdk.invoicing.eta.gov.eg/einvoicingapi/01-submit-documents/",
+        "https://sdk.invoicing.eta.gov.eg/types/"
+      ],
+      "norn": {
+        "overlap": "Jurisdictional invoice representation and validation; no ETA fields promoted to universal Core semantics.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3384"
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P1",
+        "reason": "Statutory e-invoicing in customer #1's jurisdiction."
+      },
+      "notes": "The official API documents jsonSchema/xmlSchema fields. This records that acquisition route, not a downloaded schema. Credit/debit notes and export types are separate document versions in the Types index; applicable active versions must be discovered, not assumed. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "egypt-eta-receipt-v1-2",
+      "name": "Egypt ETA eReceipt and return receipt v1.2",
+      "publisher": "Egyptian Tax Authority",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "1.2",
+      "versionDate": null,
+      "versionBasis": "Official Receipt v1.2 and Types index distinguish receipt, return receipt and return without reference. Original release date unverified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "ETA copyright, without a verified open grant for schema extraction, derivatives or public redistribution.",
+        "termsUrl": "https://sdk.invoicing.eta.gov.eg/documents/receipt-v1-2/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON",
+        "spec-HTML",
+        "API"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://sdk.invoicing.eta.gov.eg/documents/receipt-v1-2/",
+      "evidenceUrls": [
+        "https://sdk.invoicing.eta.gov.eg/documents/receipt-v1-2/",
+        "https://sdk.invoicing.eta.gov.eg/types/",
+        "https://sdk.invoicing.eta.gov.eg/api/04-get-document-type-version/",
+        "https://sdk.invoicing.eta.gov.eg/ereceiptapi/"
+      ],
+      "norn": {
+        "overlap": "B2C receipts and refunds are distinct from eInvoice; preserve identifiers, totals and return relationships before mapping.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3384"
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P1",
+        "reason": "Statutory e-receipts for retail sales in customer #1's jurisdiction."
+      },
+      "notes": "Get Receipt returns source JSON; that business document is not a reusable schema corpus. Receipt reference HTML is not admitted as source payload. Retail-specific variants are catalogued separately. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "egypt-eta-retail-receipt-v1-2",
+      "name": "Egypt ETA retail receipt and retail return receipt v1.2",
+      "publisher": "Egyptian Tax Authority",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "1.2",
+      "versionDate": null,
+      "versionBasis": "Official retail receipt v1.2 page and Types index identify distinct retail/retail-return variants; release date not established.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No verified ETA schema redistribution or derivative licence; visible copyright is not an open licence.",
+        "termsUrl": "https://sdk.invoicing.eta.gov.eg/documents/retail-receipt-v1-2/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON",
+        "spec-HTML",
+        "API"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://sdk.invoicing.eta.gov.eg/documents/retail-receipt-v1-2/",
+      "evidenceUrls": [
+        "https://sdk.invoicing.eta.gov.eg/documents/retail-receipt-v1-2/",
+        "https://sdk.invoicing.eta.gov.eg/types/",
+        "https://sdk.invoicing.eta.gov.eg/api/04-get-document-type-version/"
+      ],
+      "norn": {
+        "overlap": "Retail-specific tax representation, never a new general-purpose sales or ledger authority.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3384"
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P1",
+        "reason": "Statutory e-receipts for retail sales in customer #1's jurisdiction."
+      },
+      "notes": "Applicability is a taxpayer/profile decision still to verify; cataloguing this variant does not assert it is mandatory for every Egyptian retailer. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "en16931-1-semantic-model",
+      "name": "EN 16931-1 Electronic invoicing — Part 1: Semantic data model of the core elements of an electronic invoice",
+      "publisher": "CEN (CEN/TC 434)",
+      "kind": "data-model",
+      "domains": [
+        "einvoicing-tax",
+        "accounting-reporting"
+      ],
+      "version": "EN 16931-1:2026",
+      "versionDate": "2026-03-18",
+      "versionBasis": "European Commission Digital newsroom item 930407 (30/03/2026), read live: the new CEN reference is EN 16931-1:2026, and the Definitive Text was made available 18 March 2026. It replaces EN 16931-1:2017+A1:2019. CEN's own catalogue page returned HTTP 500.",
+      "licence": {
+        "spdx": "LicenseRef-CEN-Copyright",
+        "text": "CEN/CENELEC copyright; sold via national standards bodies",
+        "status": "verified",
+        "basis": "Read cencenelec.eu/european-standardization/ipr-and-patents/copyright live today: CEN and CENELEC standards are protected by copyright, and copying (even partial), translating or distributing them without the national member's rights is illegal.",
+        "termsUrl": "https://www.cencenelec.eu/european-standardization/ipr-and-patents/copyright/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://ec.europa.eu/newsroom/digital/items/930407/en",
+      "evidenceUrls": [
+        "https://ec.europa.eu/newsroom/digital/items/930407/en",
+        "https://www.cencenelec.eu/european-standardization/ipr-and-patents/copyright/"
+      ],
+      "norn": {
+        "overlap": "invoice semantic model (BT/BG business terms), VAT breakdown, seller/buyer, lines",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3384"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "The EU semantic invoice model."
+      },
+      "notes": "The 2026 edition is not backward compatible; the specification identifier is reported as urn:cen.eu:en16931:2026, but that was not checked on a primary source. The Commission funds free national access to the 2017 edition in some countries, which was not checked. Business-term IDs (BT-x) can be used as mapping vocabulary.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "en16931-cii-validation-1-3-17",
+      "name": "EN 16931 Cross Industry Invoice validation artefacts",
+      "publisher": "European Commission / ConnectingEurope",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "validation-1.3.17",
+      "versionDate": "2026-10-12",
+      "versionBasis": "Same official release as UBL variant; distinct CII release asset verified to return ZIP bytes.",
+      "licence": {
+        "spdx": "EUPL-1.2",
+        "text": "EUPL-1.2",
+        "status": "verified",
+        "basis": "EUPL 1.2 notices, source and derivative distribution conditions apply to this work; CEN text and referenced UN/CEFACT artifacts need their own rights evidence.",
+        "termsUrl": "https://raw.githubusercontent.com/ConnectingEurope/eInvoicing-EN16931/validation-1.3.17/LICENSE.txt",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "Schematron"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/ConnectingEurope/eInvoicing-EN16931/releases/download/validation-1.3.17/en16931-cii-1.3.17.zip",
+      "evidenceUrls": [
+        "https://github.com/ConnectingEurope/eInvoicing-EN16931/releases/tag/validation-1.3.17",
+        "https://raw.githubusercontent.com/ConnectingEurope/eInvoicing-EN16931/validation-1.3.17/LICENSE.txt"
+      ],
+      "norn": {
+        "overlap": "CII syntax validation remains a separate source representation from UBL; same billing terms do not prove reversible equivalence.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3384"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "This validator asset is not the complete CII schema corpus or an executable Norn mapping. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "en16931-ubl-validation-1-3-17",
+      "name": "EN 16931 UBL validation artefacts",
+      "publisher": "European Commission / ConnectingEurope",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "validation-1.3.17",
+      "versionDate": "2026-10-12",
+      "versionBasis": "GitHub release API published_at 2026-10-12T12:28:45Z; official release asset returned ZIP bytes.",
+      "licence": {
+        "spdx": "EUPL-1.2",
+        "text": "EUPL-1.2",
+        "status": "verified",
+        "basis": "Tagged LICENSE.txt applies EUPL 1.2 to the work, with notices, source/derivative and applicable distribution obligations. This does not license CEN's full standard text or third-party code lists.",
+        "termsUrl": "https://raw.githubusercontent.com/ConnectingEurope/eInvoicing-EN16931/validation-1.3.17/LICENSE.txt",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "Schematron"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/ConnectingEurope/eInvoicing-EN16931/releases/download/validation-1.3.17/en16931-ubl-1.3.17.zip",
+      "evidenceUrls": [
+        "https://github.com/ConnectingEurope/eInvoicing-EN16931/releases/tag/validation-1.3.17",
+        "https://raw.githubusercontent.com/ConnectingEurope/eInvoicing-EN16931/validation-1.3.17/LICENSE.txt"
+      ],
+      "norn": {
+        "overlap": "European invoice validation constraints, not Core accounting concepts or complete national CIUS coverage.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3384"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "Executable BR rules become candidate laws."
+      },
+      "notes": "Validation rules are the machine-readable artifact. Do not substitute a PDF of EN 16931 or call the repository a licence for the standard itself. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "factur-x-zugferd",
+      "name": "Factur-X / ZUGFeRD hybrid e-invoice (PDF/A-3 + CII XML)",
+      "publisher": "FNFE-MPE (France) and FeRD/AWV e.V. (Germany)",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "Factur-X 1.09.2 / ZUGFeRD 2.5.2",
+      "versionDate": "2026-08-04",
+      "versionBasis": "Read live: fnfe-mpe.org/factur-x/factur-x_en/ names the 'Factur-X 1.09.2 - ZUGFeRD 2.5.2 common publication', and ferd-net.de/standards/zugferd lists the 'ZUGFeRD 2.5.2' information package dated 4 August 2026.",
+      "licence": {
+        "spdx": "Apache-2.0 AND LicenseRef-FeRD-ZUGFeRD-Format-License",
+        "text": "Schemas and Schematron under Apache 2.0; the ZUGFeRD format itself under a free, irrevocable FRAND licence (essential patents excluded)",
+        "status": "verified",
+        "basis": "Read ferd-net.de 'Disclaimer and rights of use ZUGFeRD' live today: 'For the use of the ZUGFeRD Technical Artifacts (Schemata and Schematron) the Apache 2.0 license conditions apply' and 'The license is provided free of charge.'",
+        "termsUrl": "https://www.ferd-net.de/en/ueber-uns/ressourcen-1/veroeffentlichungen/disclaimer-and-rights-of-use-zugferd",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XSD",
+        "Schematron",
+        "spec-PDF"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://fnfe-mpe.org/factur-x/factur-x_en/",
+      "evidenceUrls": [
+        "https://fnfe-mpe.org/factur-x/factur-x_en/",
+        "https://www.ferd-net.de/standards/zugferd",
+        "https://www.ferd-net.de/en/ueber-uns/ressourcen-1/veroeffentlichungen/disclaimer-and-rights-of-use-zugferd"
+      ],
+      "norn": {
+        "overlap": "EN 16931 profiles (MINIMUM to EXTENDED), hybrid PDF invoices, sub-lines",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Both sites gate the package behind a download form (email). The bundled UN/CEFACT CII XSDs keep the UN/CEFACT notice, not Apache-2.0. The Factur-X licence page on fnfe-mpe.org was not read separately.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "india-gst-einvoice",
+      "name": "India GST e-invoice schema (FORM GST INV-01)",
+      "publisher": "CBIC / GST Council (Government of India); IRP portal operated by NIC",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "INV-01 Schema Version 1.1",
+      "versionDate": "2020-07-30",
+      "versionBasis": "Notification No. 60/2020-Central Tax dated 30 July 2020 (PDF on gstcouncil.gov.in), read today, substitutes FORM GST INV-01 with 'Schema (Version 1.1)', where field 1.0 Version has sample value 1.1. The IRP portal einvoice1.gst.gov.in refused connections.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "Statutory form notified in the Gazette of India; no licence statement found",
+        "status": "unverified",
+        "basis": "No terms of use were read: the IRP portal was unreachable (connection refused), and the Gazette notification carries no licence text.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-PDF",
+        "JSON"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://gstcouncil.gov.in/sites/default/files/2024-05/notfctn-60-central-tax-english-2020.pdf",
+      "evidenceUrls": [
+        "https://gstcouncil.gov.in/sites/default/files/2024-05/notfctn-60-central-tax-english-2020.pdf",
+        "https://gstcouncil.gov.in/sites/default/files/2024-05/notfctn-02-central-tax-english-2020.pdf"
+      ],
+      "norn": {
+        "overlap": "Indian GST e-invoice/IRN payload, GSTIN, HSN, tax breakup",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "P0",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "The IRP publishes a JSON schema and master codes, but they could not be reached from here. Later portal schema revisions were not checked.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "italy-fatturapa",
+      "name": "FatturaPA / Sistema di Interscambio (SdI) XML format",
+      "publisher": "Agenzia delle Entrate / Sistema di Interscambio (Italy)",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "Schema FatturaPA 1.2.3; Specifiche tecniche 1.4",
+      "versionDate": "2025-04-01",
+      "versionBasis": "fatturapa.gov.it 'Formato FatturaPA' page, read live: 'Documentazione valida dal 1 aprile 2025' with Schema VFPA12 v1.2.3, Fattura Semplificata 1.0.2 and Specifiche tecniche versione 1.4. The XSD root has version=\"1.2.3\".",
+      "licence": {
+        "spdx": "LicenseRef-SdI-AllRightsReserved",
+        "text": "All rights reserved; no copying or redistribution of site content without written consent",
+        "status": "verified",
+        "basis": "Read fatturapa.gov.it/it/copyright/index.html live today: all content rights reserved, and it may not be copied, reproduced or distributed without the SdI's prior written consent. The XSD itself carries no licence header.",
+        "termsUrl": "https://www.fatturapa.gov.it/it/copyright/index.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "spec-PDF",
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.fatturapa.gov.it/export/documenti/fatturapa/v1.4/Schema_VFPA12_V1.2.3.xsd",
+      "evidenceUrls": [
+        "https://www.fatturapa.gov.it/it/norme-e-regole/documentazione-fattura-elettronica/formato-fatturapa/",
+        "https://www.fatturapa.gov.it/it/copyright/index.html",
+        "https://www.fatturapa.gov.it/export/documenti/fatturapa/v1.4/Schema_VFPA12_V1.2.3.xsd"
+      ],
+      "norn": {
+        "overlap": "Italian B2B/B2G e-invoice, TipoDocumento codes, natura IVA, SdI transmission",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "XSLT stylesheets are also published. Fetch the XSD at build time rather than vendoring it.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "malaysia-myinvois",
+      "name": "MyInvois e-Invoice SDK and document types (UBL 2.1 based)",
+      "publisher": "Lembaga Hasil Dalam Negeri Malaysia (LHDNM / Inland Revenue Board of Malaysia)",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "SDK 1.0 (last update 2026-09-25); Invoice document type v1.1 (v1.0 also accepted; v1.2/v1.3 for the VD programme)",
+      "versionDate": "2026-09-25",
+      "versionBasis": "Read live: sdk.myinvois.hasil.gov.my/release-notes/ shows SDK 1.0 published 6 April 2024 with its latest update on 25 September 2026, and /types/ describes Invoice v1.0, v1.1 (signature validation enabled), v1.2 and v1.3 (SVDP, until 31 December 2027).",
+      "licence": {
+        "spdx": "LicenseRef-LHDNM-Copyright",
+        "text": "Copyright © 2024 Lembaga Hasil Dalam Negeri Malaysia; no reuse licence stated",
+        "status": "verified",
+        "basis": "Read the site footer 'MyInvois Copyright © 2024 - Lembaga Hasil Dalam Negeri Malaysia' on sdk.myinvois.hasil.gov.my live today. No licence or terms page is linked.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON",
+        "XML",
+        "API",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://sdk.myinvois.hasil.gov.my/types/",
+      "evidenceUrls": [
+        "https://sdk.myinvois.hasil.gov.my/",
+        "https://sdk.myinvois.hasil.gov.my/types/",
+        "https://sdk.myinvois.hasil.gov.my/release-notes/"
+      ],
+      "norn": {
+        "overlap": "Malaysian e-invoice/credit/debit/refund notes, self-billed docs, MyInvois submission API",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "P1",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Document structures are UBL 2.1 subsets in JSON or XML. The underlying OASIS UBL is under OASIS terms.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "mexico-cfdi-4",
+      "name": "CFDI 4.0 (Comprobante Fiscal Digital por Internet) XSD",
+      "publisher": "Servicio de Administración Tributaria (SAT), Mexico",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "4.0",
+      "versionDate": null,
+      "versionBasis": "Read live: sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd defines Comprobante with Version fixed=\"4.0\". The in-force date was not read on a primary page.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence or terms found for the XSD or catalogues",
+        "status": "unverified",
+        "basis": "The XSD has no licence header, and no general SAT portal terms of use were found; a search surfaced only service-specific terms (Oficina Virtual).",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd",
+      "evidenceUrls": [
+        "http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd"
+      ],
+      "norn": {
+        "overlap": "Mexican e-invoice (CFDI), catCFDI catalogues, tax regimes, uso CFDI",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "P0",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Imports catCFDI.xsd and tdCFDI.xsd from sat.gob.mx. Complementos (e.g. Pagos 2.0) are separate XSDs.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "oasis-ubl-2-1-invoice",
+      "name": "OASIS UBL 2.1 Invoice schema and dependency closure",
+      "publisher": "OASIS Open UBL Technical Committee",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "2.1 OASIS Standard",
+      "versionDate": "2013-11-04",
+      "versionBasis": "Fetched schema header identifies UBL 2.1 OS and Release Date 04 November 2013.",
+      "licence": {
+        "spdx": "LicenseRef-OASIS-specification-copyright-licence-IPR",
+        "text": "OASIS specification copyright licence / IPR policy",
+        "status": "verified",
+        "basis": "Embedded notice permits copies and implementation/explanatory derivatives with notices. Original document modifications are restricted except specified OASIS/translation cases; not an Apache grant for the standard artifact.",
+        "termsUrl": "https://docs.oasis-open.org/ubl/os-UBL-2.1/xsd/maindoc/UBL-Invoice-2.1.xsd",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.oasis-open.org/ubl/os-UBL-2.1/xsd/maindoc/UBL-Invoice-2.1.xsd",
+      "evidenceUrls": [
+        "https://docs.oasis-open.org/ubl/os-UBL-2.1/xsd/maindoc/UBL-Invoice-2.1.xsd",
+        "https://docs.peppol.eu/poacc/billing/3.0/bis/"
+      ],
+      "norn": {
+        "overlap": "Invoice document representation; preserve optionality, code references and precision rather than promoting source names.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#2739"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "UBL is the base of EN 16931, Peppol and several national CTC schemes."
+      },
+      "notes": "Peppol's UBL 2.1 use does not mean the latest UBL release is the right syntax for every jurisdiction. Invoice is an entry point, not proof all UBL documents have been acquired. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "oasis-ubl-2-5",
+      "name": "OASIS Universal Business Language 2.5 standard package",
+      "publisher": "OASIS Open UBL Technical Committee",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "2.5 OASIS Standard",
+      "versionDate": "2026-08-12",
+      "versionBasis": "OASIS Standard header explicitly dates UBL 2.5 to 12 August 2026 and says it supersedes 2.4. Additional artifacts list the package and annotated/runtime XSD directories; selected invoice XSD returned content.",
+      "licence": {
+        "spdx": "LicenseRef-OASIS-specification-copyright-licence-IPR",
+        "text": "OASIS specification copyright licence / IPR policy",
+        "status": "verified",
+        "basis": "Appendix K permits specification copies and implementation/explanatory derivatives with copyright and notice; document modification is restricted. Embedded third-party component/code-list terms still require review.",
+        "termsUrl": "https://docs.oasis-open.org/ubl/os-UBL-2.5/UBL-2.5.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.oasis-open.org/ubl/os-UBL-2.5/UBL-2.5.zip",
+      "evidenceUrls": [
+        "https://docs.oasis-open.org/ubl/os-UBL-2.5/UBL-2.5.html",
+        "https://docs.oasis-open.org/ubl/os-UBL-2.5/xsd/maindoc/UBL-Invoice-2.5.xsd"
+      ],
+      "norn": {
+        "overlap": "External business-document shapes, not a promotion of UBL's entire business-object model to Core.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#2739"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "UBL is the base of EN 16931, Peppol and several national CTC schemes."
+      },
+      "notes": "Profile-required UBL 2.1 is separately catalogued; current broad UBL coverage uses 2.5. Never transfer a GitHub build-tool licence to the normative standard distribution. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "oecd-saft-2-00-availability",
+      "name": "OECD SAF-T 2.0 generated schema documentation (PDF-only)",
+      "publisher": "OECD Forum on Tax Administration",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "2.00",
+      "versionDate": null,
+      "versionBasis": "OECD-hosted PDF title and target namespace identify SAF-T 2.00. A source-verified exact release date for a raw XSD was not established.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No verified grant for the historical 2010-era artifact or schema derivatives. Current OECD open-access policies must not be retroactively assumed to license it.",
+        "termsUrl": "https://www.oecd.org/en/about/terms-conditions.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "XSD",
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://web-archive-storage.oecd.org/aemint-web-archive-prod/web-archive/cc/ccd3b76ffdaf3c1f3e185a390dba41be2876b0e826925278bbb3e62ad37442bf.pdf",
+      "evidenceUrls": [
+        "https://web-archive-storage.oecd.org/aemint-web-archive-prod/web-archive/cc/ccd3b76ffdaf3c1f3e185a390dba41be2876b0e826925278bbb3e62ad37442bf.pdf",
+        "https://unece.org/fileadmin/DAM/cefact/cf_forums/2019_Geneva/Conf_AccountAudit/PPT_1_3_OECD_SAF.pdf"
+      ],
+      "norn": {
+        "overlap": "Audit-export design reference only until an actual licensed schema source is obtained.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Do not parse PDF diagrams into source schemas or substitute national SAF-T profiles for OECD 2.00. Country adaptations are separate artifacts with separate applicability and rights. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "oecd-saft-2-00-xsd",
+      "name": "OECD SAF-T 2.00 XSD in Norwegian regulator report distribution",
+      "publisher": "OECD; distribution hosted by Norwegian Tax Administration",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "OECD SAF-T 2.00; bundled v2012-06 file",
+      "versionDate": null,
+      "versionBasis": "Independent source review inspected bundled XSD: OECD namespace, version 2.00, final status and OECD copyright. June 2012 filename is not an exact release day. This is the OECD schema member, not an assumed national profile.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Bundled XSD carries OECD copyright; regulator hosting alone does not grant redistribution or derivative rights. Current OECD policy is not assumed to relicense historical bytes.",
+        "termsUrl": "https://www.oecd.org/en/about/terms-conditions.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.skatteetaten.no/globalassets/bedrift-og-organisasjon/starte-og-drive/rutiner-regnskap-og-kassasystem/saf-t-regnskap/saf-trapport2014finansdepartementet.zip",
+      "evidenceUrls": [
+        "https://www.skatteetaten.no/globalassets/bedrift-og-organisasjon/starte-og-drive/rutiner-regnskap-og-kassasystem/saf-t-regnskap/saf-trapport2014finansdepartementet.zip",
+        "https://www.oecd.org/en/about/terms-conditions.html"
+      ],
+      "norn": {
+        "overlap": "Audit-export document structure for accounting ledgers; must preserve source constraints and distinguish national profiles.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "Audit-file export is a statutory ERP feature in many countries."
+      },
+      "notes": "Public machine-readable availability corrects the earlier PDF-only discovery limitation. No schema payload is committed and no executable mapping or national SAF-T conformance is claimed. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "peppol-bis-billing-prose",
+      "name": "Peppol BIS Billing specification prose (rights distinction)",
+      "publisher": "OpenPeppol AISBL",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "3.0 / May 2026 release context",
+      "versionDate": null,
+      "versionBasis": "Linked from verified May 2026 package; exact prose revision date unverified.",
+      "licence": {
+        "spdx": "LicenseRef-OpenPeppol-BIS-document-copyright-restrictions",
+        "text": "OpenPeppol BIS document copyright restrictions",
+        "status": "verified",
+        "basis": "Statement of copyright explicitly requires OpenPeppol prior consent for modification, redistribution, sale or repackaging of the BIS document.",
+        "termsUrl": "https://docs.peppol.eu/poacc/billing/3.0/bis/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://docs.peppol.eu/poacc/billing/3.0/bis/",
+      "evidenceUrls": [
+        "https://docs.peppol.eu/poacc/billing/3.0/bis/"
+      ],
+      "norn": {
+        "overlap": "Documentation-only rights evidence; never a source schema or semantic authority.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Publicly readable specification text is not openly redistributable schema content. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "peppol-bis-billing-rules-3-0-21",
+      "name": "Peppol BIS Billing 3.0 validation Schematron",
+      "publisher": "OpenPeppol AISBL",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "3.0.21 / May 2026 release",
+      "versionDate": null,
+      "versionBasis": "Fetched Schematron header explicitly states Last update: 2026 May release 3.0.21; day unverified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Rule header states CEN reproduction permission for its publisher, not a downstream licence. No repository LICENSE or resource-specific grant verified; restrictive BIS prose is a separate artifact.",
+        "termsUrl": "https://docs.peppol.eu/poacc/billing/3.0/bis/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "Schematron",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.peppol.eu/poacc/billing/3.0/files/PEPPOL-EN16931-UBL.sch",
+      "evidenceUrls": [
+        "https://docs.peppol.eu/poacc/billing/3.0/",
+        "https://docs.peppol.eu/poacc/billing/3.0/files/PEPPOL-EN16931-UBL.sch",
+        "https://docs.peppol.eu/poacc/billing/3.0/bis/"
+      ],
+      "norn": {
+        "overlap": "Peppol profile constraints remain external; passing Schematron does not prove semantic correspondence or network connectivity.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3384"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Do not apply ConnectingEurope's EUPL to OpenPeppol's own rules without an explicit grant; embedded CEN rules and code lists require separate review. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "poland-ksef-fa3",
+      "name": "KSeF structured invoice logical structure FA(3)",
+      "publisher": "Ministerstwo Finansów / Krajowa Administracja Skarbowa (Poland)",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "FA (3), wersjaSchemy 1-0E (namespace crd.gov.pl/wzor/2025/06/25/13775/)",
+      "versionDate": "2026-02-01",
+      "versionBasis": "ksef.podatki.gov.pl 'Faktura ustrukturyzowana i struktura logiczna FA', read live: FA(3) is the binding structure from 1 February 2026. The XSD (crd.gov.pl/wzor/2025/06/25/13775/schemat.xsd), read via a Wayback capture dated 2026-09-23 because crd.gov.pl refused connections, has kodSystemowy 'FA (3)' and wersjaSchemy '1-0E'.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence or terms found for the schema",
+        "status": "unverified",
+        "basis": "The XSD has no licence header, and the KSeF site footer offers only accessibility and cookie pages; no terms of use were found.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "spec-PDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://crd.gov.pl/wzor/2025/06/25/13775/schemat.xsd",
+      "evidenceUrls": [
+        "https://ksef.podatki.gov.pl/informacje-ogolne-ksef-20/faktura-ustrukturyzowana-i-struktura-logiczna-fa/",
+        "https://crd.gov.pl/wzor/2025/06/25/13775/schemat.xsd"
+      ],
+      "norn": {
+        "overlap": "Polish KSeF e-invoice structure, seller/buyer (Podmiot), VAT rates, attachments",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "P0",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Imports the MF StrukturyDanych_v10-0E.xsd. Polish law may exclude official documents from copyright, but that was not verified.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "saudi-zatca-compliance-sdk",
+      "name": "ZATCA FATOORA compliance SDK and XML validation resources",
+      "publisher": "Zakat, Tax and Customs Authority",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Verified SDK landing page does not establish an archive version. Page Last Update 28 May 2025 is not used as a schema release date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Inspected conditions explain validation/compliance responsibilities, not an open source or redistribution grant. SDK/file rights remain unresolved.",
+        "termsUrl": "https://www.zatca.gov.sa/en/E-Invoicing/SystemsDevelopers/ComplianceEnablementToolbox/Pages/DownloadSDK.aspx",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.zatca.gov.sa/en/E-Invoicing/SystemsDevelopers/ComplianceEnablementToolbox/Pages/DownloadSDK.aspx",
+      "evidenceUrls": [
+        "https://www.zatca.gov.sa/en/E-Invoicing/SystemsDevelopers/ComplianceEnablementToolbox/Pages/DownloadSDK.aspx",
+        "https://www.zatca.gov.sa/en/RulesRegulations/Taxes/Pages/ConReqTech.aspx"
+      ],
+      "norn": {
+        "overlap": "Saudi invoice profile and security/compliance rules; adopting UBL does not satisfy the Saudi profile by itself.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "MENA e-invoicing."
+      },
+      "notes": "The implementation-rules page records an update on 19 May 2023; it does not establish the SDK artifact release. PDF implementation guides are documentation, not machine-readable source payloads. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "turkey-ubl-tr",
+      "name": "UBL-TR (Turkish customisation of OASIS UBL 2.1) for e-Fatura",
+      "publisher": "Gelir İdaresi Başkanlığı (GİB), Türkiye",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "UBL-TR 1.2.1",
+      "versionDate": null,
+      "versionBasis": "ebelge.gib.gov.tr/efaturamevzuat.html, read live, lists 'UBL-TR1.2.1 Kılavuzları' and 'UBL-TR1.2.1 Paketi' (dosyalar/kilavuzlar/UBL-TR1.2.1_Paketi.zip). No date is shown.",
+      "licence": {
+        "spdx": "LicenseRef-GIB-AllRightsReserved",
+        "text": "© Gelir İdaresi Başkanlığı, Her Hakkı Saklıdır (all rights reserved)",
+        "status": "verified",
+        "basis": "Read the copyright notice on ebelge.gib.gov.tr/efaturamevzuat.html live today. No other licence for the package was found.",
+        "termsUrl": "https://ebelge.gib.gov.tr/efaturamevzuat.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "Schematron",
+        "spec-PDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://ebelge.gib.gov.tr/dosyalar/kilavuzlar/UBL-TR1.2.1_Paketi.zip",
+      "evidenceUrls": [
+        "https://ebelge.gib.gov.tr/efaturamevzuat.html"
+      ],
+      "norn": {
+        "overlap": "Turkish e-Fatura/e-Arşiv invoice profiles, tax codes, GİB envelope",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "The package contents (XSD/Schematron) were not opened. The underlying OASIS UBL 2.1 schemas are under OASIS terms.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "uae-pint-ae-billing-1-0-4",
+      "name": "UAE MoF/FTA eInvoicing PINT AE Billing resources",
+      "publisher": "UAE Ministry of Finance / OpenPeppol",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "1.0.4",
+      "versionDate": "2026-06-02",
+      "versionBasis": "PINT AE Billing specialized release notes explicitly give 1.0.4 release date 2026-06-02. The package/site July 29 date is a build/publication date, not this billing release identity; TDD has separate release metadata.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "BIS prose forbids modification/repackaging/redistribution without prior consent; no separate grant was verified for downloaded validation/code-list resources. Do not transfer UBL's licence to the whole profile.",
+        "termsUrl": "https://docs.peppol.eu/poac/ae/pint-ae/bis/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "Schematron",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.peppol.eu/poac/ae/pint-ae/resources.zip",
+      "evidenceUrls": [
+        "https://mof.gov.ae/en/about-us/initiatives/einvoicing/",
+        "https://docs.peppol.eu/poac/ae/pint-ae/",
+        "https://docs.peppol.eu/poac/ae/pint-ae/specialized-release-notes/",
+        "https://docs.peppol.eu/poac/ae/pint-ae/bis/",
+        "https://peppol.org/documentation/technical-documentation/post-award-documentation"
+      ],
+      "norn": {
+        "overlap": "UAE invoice/credit-note profile is jurisdictional interchange; no new Core invoice authority.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "MENA e-invoicing."
+      },
+      "notes": "The live URL is mutable; the observed date/version is not an immutable content pin. MoF identifies PINT AE and ASP exchange; do not invent a separate public FTA OpenAPI/schema corpus or claim ASP readiness. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "uae-tax-data-document-1-0-4",
+      "name": "UAE Tax Data Document (TDD) resources",
+      "publisher": "UAE Ministry of Finance / OpenPeppol",
+      "kind": "standard",
+      "domains": [
+        "einvoicing-tax"
+      ],
+      "version": "1.0.4",
+      "versionDate": "2026-07-29",
+      "versionBasis": "TDD package page states version 1.0.4 and Release Date 29 Jul 2026; ZIP fetched and trn-tdd resources observed.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "TDD BIS prohibits redistribution/repackaging of the document without prior consent. No separate permissive grant found for ZIP resource members; artifact-specific review required.",
+        "termsUrl": "https://docs.peppol.eu/poac/ae/ae-tdd/bis/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "Schematron",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.peppol.eu/poac/ae/ae-tdd/resources.zip",
+      "evidenceUrls": [
+        "https://docs.peppol.eu/poac/ae/ae-tdd/",
+        "https://docs.peppol.eu/poac/ae/ae-tdd/bis/",
+        "https://mof.gov.ae/en/about-us/initiatives/einvoicing/"
+      ],
+      "norn": {
+        "overlap": "Tax reporting document is distinct from the buyer/seller invoice and must keep separate provenance.",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "MENA e-invoicing."
+      },
+      "notes": "TDD supports reporting by issuer and receiver; it is not interchangeable with PINT AE invoice payloads. Self-billing is another separately advertised AE profile, not silently covered by these two archives. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "uncefact-cii",
+      "name": "UN/CEFACT Cross Industry Invoice (CII) XML schema",
+      "publisher": "UN/CEFACT (UNECE)",
+      "kind": "data-model",
+      "domains": [
+        "einvoicing-tax",
+        "supply-chain"
+      ],
+      "version": "XML Schemas D23B (latest listed); CII D16B and D22B in use by EN 16931 and Factur-X",
+      "versionDate": "2023",
+      "versionBasis": "UNECE XML Schemas page (unece.org/trade/uncefact/xml-schemas), read via a Wayback capture dated 2025-10-01 because the live site returns 403, lists 23B as the newest release (page last updated 27 June 2024). The FNFE page states Factur-X uses CII D22B.",
+      "licence": {
+        "spdx": "LicenseRef-UNCEFACT-Schema-Notice",
+        "text": "Copyright UN/CEFACT, all rights reserved, with a perpetual permission to copy and distribute, and to make derivative works that explain it or help implement it, if the notice is kept; the schema itself may not be modified",
+        "status": "unverified",
+        "basis": "Read the notice verbatim in the header of an official UN/CEFACT D16B schema file (UNECE_ActionCode_D16A.xsd), as distributed in the European Commission's EN 16931 validation repo on GitHub; unece.org returned 403. The generic UN website terms (Wayback capture) restrict site materials to personal, non-commercial use.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://unece.org/trade/uncefact/xml-schemas",
+      "evidenceUrls": [
+        "https://unece.org/trade/uncefact/xml-schemas",
+        "https://raw.githubusercontent.com/ConnectingEurope/eInvoicing-EN16931/master/cii/schema/D16B%20SCRDM%20(Subset)/coupled%20clm/CII/uncefact/codelist/standard/UNECE_ActionCode_D16A.xsd"
+      ],
+      "norn": {
+        "overlap": "invoice XML syntax (CrossIndustryInvoice), trade parties, settlement, line items",
+        "concepts": [
+          "core.Claim",
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Invoice",
+          "TaxRule",
+          "TaxCategory"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "SAP-class ERPs ship statutory e-invoicing per country."
+      },
+      "notes": "Verbatim redistribution only: schemas can be vendored unmodified with the notice, but not edited. A release newer than D23B (e.g. 24A or later) could not be checked.",
+      "origin": "atlas-2026-11-11"
+    }
+  ]
+}

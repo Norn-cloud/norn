@@ -1,0 +1,685 @@
+{
+  "atlasVersion": 1,
+  "domain": "supply-chain",
+  "entries": [
+    {
+      "id": "asc-x12",
+      "name": "ASC X12 EDI Standard",
+      "publisher": "X12 (Accredited Standards Committee X12)",
+      "kind": "standard",
+      "domains": [
+        "supply-chain",
+        "logistics",
+        "finance",
+        "einvoicing-tax"
+      ],
+      "version": "008070",
+      "versionDate": "2026-03",
+      "versionBasis": "X12 Release Schedule page lists 008070 (ASC ballot December 2025, ballot confirmed January 2026, available March 2026) above 008060 and 008050; 009010 is in ballot.",
+      "licence": {
+        "spdx": "LicenseRef-X12-Licensing-Program",
+        "text": "Proprietary; X12 work products require a paid licence (Licensed User, Licensed Developer, Internal or Commercial Use Licensing Partner)",
+        "status": "verified",
+        "basis": "Read the X12 Licensing Program page on x12.org, which lists the paid licence categories and annual fees for access to and use of X12 work products.",
+        "termsUrl": "https://x12.org/products/licensing-program",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "EDI"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://x12.org/products/licensing-program",
+      "evidenceUrls": [
+        "https://x12.org/products/licensing-program",
+        "https://x12.org/news-and-events/release-schedule"
+      ],
+      "norn": {
+        "overlap": "purchase orders, invoices, advance ship notices, remittance, warehouse and transport EDI transactions",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "P0",
+        "reason": "North American EDI."
+      },
+      "notes": "Schemas and code lists are delivered through the licensed Glass product. HIPAA-mandated implementation guides moved to 008060.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "gs1-cbv",
+      "name": "GS1 Core Business Vocabulary ontology",
+      "publisher": "GS1 AISBL",
+      "kind": "code-list",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": "2.0",
+      "versionDate": "2021-09-30",
+      "versionBasis": "Ontology declares owl:versionInfo 2.0 and dct:modified 2021-09-30; CBV standard cover says ratified June 2022. Recorded date is ontology modification, not ratification; mismatch preserved.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "GS1 repository disclaimer does not establish a redistribution grant; WebVoc Apache license is not inherited by CBV.",
+        "termsUrl": "https://raw.githubusercontent.com/gs1/EPCIS/master/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://ref.gs1.org/standards/epcis/cbv-ontology.ttl",
+      "evidenceUrls": [
+        "https://ref.gs1.org/standards/epcis/artefacts",
+        "https://ref.gs1.org/standards/epcis/cbv-ontology.ttl",
+        "https://ref.gs1.org/standards/cbv/",
+        "https://raw.githubusercontent.com/gs1/EPCIS/master/LICENSE"
+      ],
+      "norn": {
+        "overlap": "External EPCIS business steps/dispositions/transaction types; preserve source values without equating them to Core statuses.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gs1-epc-tds",
+      "name": "GS1 EPC Tag Data Standard prose",
+      "publisher": "GS1 AISBL",
+      "kind": "standard",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": "2.3.0",
+      "versionDate": "2025-10-31",
+      "versionBasis": "GS1 TDS archive lists 2.3.0 published 31 October 2025; direct URL returned application/pdf.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No artifact-specific republication grant verified; do not extrapolate GS1 WebVoc Apache terms to TDS prose.",
+        "termsUrl": "https://www.gs1.org/standards/ip",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://ref.gs1.org/standards/tds/2.3.0/",
+      "evidenceUrls": [
+        "https://ref.gs1.org/standards/tds/archive",
+        "https://ref.gs1.org/standards/tds/2.3.0/",
+        "https://www.gs1.org/standards/ip"
+      ],
+      "norn": {
+        "overlap": "EPC binary and URI encodings of product/asset identifiers; do not replace GTIN/GLN/SSCC base types.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gs1-epc-tdt",
+      "name": "GS1 EPC Tag Data Translation definitions and tables",
+      "publisher": "GS1 AISBL",
+      "kind": "standard",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": "2.2.0",
+      "versionDate": "2025-02-12",
+      "versionBasis": "GS1 repository lists TDT 2.2.0 last modified 12 February 2025; actual SGTIN-96 JSON declares version 2.2 and date 2024-11-18T16:30:00Z.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Public JSON/XML and GS1 implementation IP policy do not establish an artifact-specific redistribution/derivative grant; rights review required before vendoring.",
+        "termsUrl": "https://www.gs1.org/standards/ip",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "JSON-Schema",
+        "XML",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://ref.gs1.org/standards/tdt/SGTIN-96.json",
+      "evidenceUrls": [
+        "https://ref.gs1.org/standards/",
+        "https://ref.gs1.org/standards/tdt/artefacts",
+        "https://ref.gs1.org/standards/tdt/manifest.json",
+        "https://ref.gs1.org/standards/tdt/SGTIN-96.json",
+        "https://www.gs1.org/standards/ip"
+      ],
+      "norn": {
+        "overlap": "SGTIN/SSCC/SGLN and other identifier encodings; translation grammar is source evidence, not an executable Norn mapping.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "TDS 2.3.0 and TDT 2.2.0 have distinct release identities; no invented TDT 2.3 payload or complete support for TDS 2.3 encodings. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gs1-epcis-rest",
+      "name": "GS1 EPCIS REST OpenAPI interface",
+      "publisher": "GS1 AISBL",
+      "kind": "protocol",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": "2.0.1",
+      "versionDate": null,
+      "versionBasis": "Downloaded info.version states 2.0.1; exact patch release date unverified.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Explicit Apache2 declaration applies to this interface document; retain notices and review dependency closure separately before redistribution.",
+        "termsUrl": "https://ref.gs1.org/standards/epcis/2.0.1/openapi.json",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://ref.gs1.org/standards/epcis/2.0.1/openapi.json",
+      "evidenceUrls": [
+        "https://ref.gs1.org/standards/epcis/artefacts",
+        "https://ref.gs1.org/standards/epcis/2.0.1/openapi.json"
+      ],
+      "norn": {
+        "overlap": "Capture/query external visibility events through the ruled observe/perform boundary; no process runtime.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "Separate entry because its explicit license differs from unverified schema/ontology rights; not blanket licensing of all EPCIS artifacts. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gs1-epcis-schema",
+      "name": "GS1 EPCIS event JSON Schema",
+      "publisher": "GS1 AISBL",
+      "kind": "standard",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": "2.0.1",
+      "versionDate": null,
+      "versionBasis": "Downloaded $id names 2.0.1; normative artifacts page lists EPCIS/CBV 2.0.1. The linked specification renders a June 2022 2.0 cover; exact 2.0.1 release date not established.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Schema has no verified license notice; do not inherit Apache2 from the separate REST OpenAPI document.",
+        "termsUrl": "https://raw.githubusercontent.com/gs1/EPCIS/master/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://ref.gs1.org/standards/epcis/2.0.1/epcis-json-schema.json",
+      "evidenceUrls": [
+        "https://ref.gs1.org/standards/epcis/artefacts",
+        "https://ref.gs1.org/standards/epcis/2.0.1/epcis-json-schema.json",
+        "https://raw.githubusercontent.com/gs1/EPCIS/master/LICENSE",
+        "https://ref.gs1.org/standards/epcis/2.0.1/"
+      ],
+      "norn": {
+        "overlap": "Inventory movement/aggregation/transformation observations; external event contract, not a new durable runtime.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gs1-gdsn",
+      "name": "GS1 Global Data Synchronisation Network (GDSN) Business Message Standards",
+      "publisher": "GS1",
+      "kind": "standard",
+      "domains": [
+        "supply-chain",
+        "products-units"
+      ],
+      "version": "3.1.37",
+      "versionDate": "2026-11",
+      "versionBasis": "gs1.org GDSN page lists 'Maintenance release 3.1.37' as the newest release, with 'Approved Attributes for use with Release 3.1.37 (Nov 2026)'.",
+      "licence": {
+        "spdx": "LicenseRef-GS1-Terms-of-Use",
+        "text": "GS1 copyright; unaltered reproduction for personal/internal use; no redistribution without written approval",
+        "status": "verified",
+        "basis": "Read the gs1.org Terms of use copyright notice (same site terms as the GDSN page); terms embedded in the GDSN XSD/BMS packages were not read.",
+        "termsUrl": "https://www.gs1.org/terms-use",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML",
+        "spec-PDF"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.gs1.org/standards/gdsn",
+      "evidenceUrls": [
+        "https://www.gs1.org/standards/gdsn",
+        "https://www.gs1.org/terms-use"
+      ],
+      "norn": {
+        "overlap": "trade item master data, product attributes, catalogue item publication/subscription",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "3.1.x maintenance releases follow a regular cycle, so pin the release per integration. Network exchange runs through certified data pools. The XSD download terms were not checked.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "gs1-general-specifications",
+      "name": "GS1 General Specifications",
+      "publisher": "GS1",
+      "kind": "standard",
+      "domains": [
+        "supply-chain",
+        "products-units",
+        "logistics",
+        "parties-identity"
+      ],
+      "version": "26.0",
+      "versionDate": "2026-01",
+      "versionBasis": "GS1 General Specifications standard page on gs1.org reads 'This version: 26.0, Publication date: Jan 2026, Next version planned for Jan 2027'.",
+      "licence": {
+        "spdx": "LicenseRef-GS1-Terms-of-Use",
+        "text": "GS1 copyright; reproduce unaltered for personal/non-commercial or internal use only; no redistribution or commercialisation without written approval",
+        "status": "verified",
+        "basis": "Read the Copyright Notice in the gs1.org Terms of use page (content may be reproduced only in unaltered form for personal, non-commercial or internal use; re-transmission, distribution or commercialisation needs prior written approval); the PDF's own front-matter disclaimer was not read.",
+        "termsUrl": "https://www.gs1.org/terms-use",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.gs1.org/standards/barcodes-epcrfid-id-keys/gs1-general-specifications",
+      "evidenceUrls": [
+        "https://www.gs1.org/standards/barcodes-epcrfid-id-keys/gs1-general-specifications",
+        "https://www.gs1.org/terms-use"
+      ],
+      "norn": {
+        "overlap": "GTIN/GLN/SSCC identification keys, application identifiers, barcode allocation rules",
+        "concepts": [
+          "std.value_types",
+          "canon.Item",
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "GTIN/GLN allocation and check-digit rules."
+      },
+      "notes": "gs1.org blocks plain fetchers (403) and needed a browser user agent. We can use the key structures and check-digit rules and map to them; issuing real keys needs a GS1 Company Prefix (allocation policy not re-read today).",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "gs1-rain-gen2",
+      "name": "GS1 EPC UHF Gen2 RFID air-interface standard",
+      "publisher": "GS1 AISBL",
+      "kind": "standard",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": "3.0.1",
+      "versionDate": "2026-02-26",
+      "versionBasis": "GS1 standards repository lists 3.0.1 last modified 26 February 2026; direct URL returned application/pdf.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "GS1 IP policy concerns implementation licences; document redistribution grant not verified.",
+        "termsUrl": "https://www.gs1.org/standards/ip",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://ref.gs1.org/standards/gen2/3.0.1/",
+      "evidenceUrls": [
+        "https://ref.gs1.org/standards/",
+        "https://ref.gs1.org/standards/gen2/3.0.1/",
+        "https://www.gs1.org/standards/ip"
+      ],
+      "norn": {
+        "overlap": "Hardware radio protocol underlying RAIN tags; not a business-object schema.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "rain-rci",
+      "name": "RAIN Reader Communication Interface guideline",
+      "publisher": "RAIN RFID Alliance",
+      "kind": "standard",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": "4.0",
+      "versionDate": "2020-08",
+      "versionBasis": "PDF cover explicitly says V.4.0 August 2020; crawl/upload recency is not the release date.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0 (PDF notice)",
+        "status": "verified",
+        "basis": "PDF page 2 carries Apache-2.0 licensing; preserve licence, notices and change identification if redistributed. This is not source-payload admission.",
+        "termsUrl": "https://therainalliance.org/wp-content/uploads/2020/08/RAIN-RFID-RCI-v4-final.pdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "JSON",
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://therainalliance.org/wp-content/uploads/2020/08/RAIN-RFID-RCI-v4-final.pdf",
+      "evidenceUrls": [
+        "https://therainalliance.org/wp-content/uploads/2020/08/RAIN-RFID-RCI-v4-final.pdf"
+      ],
+      "norn": {
+        "overlap": "Reader commands and tag-spot reports could inform connector requirements, not Core semantics.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "uncefact-bsp",
+      "name": "UN/CEFACT Buy-Ship-Pay Web Vocabulary D23B",
+      "publisher": "UNECE / UN/CEFACT",
+      "kind": "ontology",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": "D23B",
+      "versionDate": null,
+      "versionBasis": "Official home/about pages identify BSP D23B; full JSON-LD fetched anonymously (8,764,615 bytes). Directory label alone does not supply a precise release date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Artifact site's terms explicitly withhold redistribution and derivative rights; no specific grant for these D23B bytes verified. A different UN/LOCODE site's CC BY footer is not transferred here.",
+        "termsUrl": "https://vocabulary.uncefact.org/home/terms",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "JSON-LD",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://vocabulary.uncefact.org/unece.jsonld",
+      "evidenceUrls": [
+        "https://vocabulary.uncefact.org/home",
+        "https://vocabulary.uncefact.org/about",
+        "https://vocabulary.uncefact.org/unece.jsonld",
+        "https://vocabulary.uncefact.org/unece-context-D23B.jsonld",
+        "https://vocabulary.uncefact.org/home/terms",
+        "https://opensource.unicc.org/un/unece/uncefact/vocab-bsp"
+      ],
+      "norn": {
+        "overlap": "Modular commerce alignment vocabulary per Astra #2986; trade parties/products/agreements/delivery/payment remain source-namespaced and do not become Core authority.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "Trade documents and item identity are SAP SD/MM table stakes."
+      },
+      "notes": "New GitLab project points to vocab.unece.org (created 2026-04-24); its raw LICENSE returned 403. New deployment is not silently substituted for this identified old D23B artifact. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unedifact-directories",
+      "name": "UN/EDIFACT directories",
+      "publisher": "UNECE / UN/CEFACT",
+      "kind": "standard",
+      "domains": [
+        "supply-chain"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Indexed official download table includes D.24A; live page and sampled d24a structured code pages returned 403. No claim that D.24A is latest.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Indexed directory pages retain United Nations all-rights-reserved notices; no source-specific redistribution/derivative grant verified. Free-download claims do not settle rights.",
+        "termsUrl": "https://unece.org/trade/uncefact/unedifact/download",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://unece.org/trade/uncefact/unedifact/download",
+      "evidenceUrls": [
+        "https://unece.org/trade/uncefact/unedifact/download",
+        "https://service.unece.org/trade/untdid/d24a/tred/tred1001.htm",
+        "https://unece.org/fileadmin/DAM/trade/untdid/d15b/trcd/trcdc045.htm"
+      ],
+      "norn": {
+        "overlap": "External orders, despatch, invoices and transport document schemas; preserve directory/message identity and dependency closure.",
+        "concepts": [
+          "canon.Item",
+          "canon.Holding",
+          "canon.Delivery",
+          "core.EconomicEvent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Shipment",
+          "TradeDocument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "EDI messages SAP IDoc exchanges map to."
+      },
+      "notes": "X12 is not substituted; no paid standards acquired. The directory landing page is not admitted as a source schema. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

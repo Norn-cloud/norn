@@ -1,0 +1,177 @@
+{
+  "atlasVersion": 1,
+  "domain": "process-rules",
+  "entries": [
+    {
+      "id": "omg-bpmn",
+      "name": "Business Process Model and Notation (BPMN) 2.0.2",
+      "publisher": "Object Management Group (OMG)",
+      "kind": "standard",
+      "domains": [
+        "process-rules"
+      ],
+      "version": "2.0.2",
+      "versionDate": "2014-01",
+      "versionBasis": "omg.org/spec/BPMN/ shows Version 2.0.2 as the only formal version, publication date January 2014.",
+      "licence": {
+        "spdx": "LicenseRef-OMG-Specification-License",
+        "text": "OMG spec licence: free licence to use the spec to create and distribute conforming software; copies must keep the notices, be informational, not be posted or resold, and not be modified",
+        "status": "verified",
+        "basis": "Read the 'USE OF SPECIFICATION - TERMS, CONDITIONS & NOTICES / LICENSES' front matter in the BPMN 2.0.2 PDF from omg.org.",
+        "termsUrl": "https://www.omg.org/spec/BPMN/2.0.2/PDF",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML",
+        "spec-PDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.omg.org/spec/BPMN/20100501/BPMN20.xsd",
+      "evidenceUrls": [
+        "https://www.omg.org/spec/BPMN/2.0.2/",
+        "https://www.omg.org/spec/BPMN/2.0.2/PDF",
+        "https://www.omg.org/spec/BPMN/20100501/BPMN20.xsd"
+      ],
+      "norn": {
+        "overlap": "process models, tasks, gateways, events, lanes, message flows",
+        "concepts": [
+          "core.Process",
+          "core.Commitment"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProcessModel",
+          "DecisionTable",
+          "Case"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Process models SAP-class suites export."
+      },
+      "notes": "The XSDs (CMOF/XSD, namespace 20100524/MODEL) are free to download but have no licence header, and the licence does not explicitly allow modifying or redistributing them. The OMG About-page JSON-LD carries dcterms:license MITLicense, but that appears to cover the page metadata, so we did not rely on it.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "omg-cmmn",
+      "name": "Case Management Model and Notation (CMMN) 1.1",
+      "publisher": "Object Management Group (OMG)",
+      "kind": "standard",
+      "domains": [
+        "process-rules"
+      ],
+      "version": "1.1",
+      "versionDate": "2016-12",
+      "versionBasis": "omg.org/spec/CMMN/ shows Version 1.1 as the only formal version, publication date December 2016.",
+      "licence": {
+        "spdx": "LicenseRef-OMG-Specification-License",
+        "text": "OMG spec licence (implementation allowed; spec copies unmodified, non-commercial, with notices)",
+        "status": "verified",
+        "basis": "Read the 'USE OF SPECIFICATION - TERMS, CONDITIONS & NOTICES / LICENSES' front matter in the CMMN 1.1 PDF from omg.org.",
+        "termsUrl": "https://www.omg.org/spec/CMMN/1.1/PDF",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML",
+        "spec-PDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.omg.org/spec/CMMN/20151109/CMMN11.xsd",
+      "evidenceUrls": [
+        "https://www.omg.org/spec/CMMN/",
+        "https://www.omg.org/spec/CMMN/1.1/PDF",
+        "https://www.omg.org/spec/CMMN/20151109/CMMN11.xsd"
+      ],
+      "norn": {
+        "overlap": "case files, stages, milestones, sentries, discretionary tasks",
+        "concepts": [
+          "core.Process",
+          "core.Commitment"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ProcessModel",
+          "DecisionTable",
+          "Case"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Process and decision models are how SAP-class suites configure behaviour."
+      },
+      "notes": "No revision since 2016.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "omg-dmn",
+      "name": "Decision Model and Notation (DMN) incl. FEEL",
+      "publisher": "Object Management Group (OMG)",
+      "kind": "standard",
+      "domains": [
+        "process-rules",
+        "governance"
+      ],
+      "version": "1.6",
+      "versionDate": "2026-09",
+      "versionBasis": "omg.org/spec/DMN/1.6/ shows a formal specification with publication date September 2026 (JSON-LD 2026-09-25); DMN 1.5 formal is dated August 2024, and 1.7 is in beta (September 2026).",
+      "licence": {
+        "spdx": "LicenseRef-OMG-Specification-License",
+        "text": "OMG spec licence (implementation allowed; spec copies unmodified, non-commercial, with notices); IPR mode RF-Limited",
+        "status": "verified",
+        "basis": "Read the LICENSES front matter of the DMN 1.6 PDF from omg.org and the IPR mode 'RF-Limited' on the DMN 1.6 spec page.",
+        "termsUrl": "https://www.omg.org/spec/DMN/1.6/PDF",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML",
+        "spec-PDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.omg.org/spec/DMN/20240513/DMN16.xsd",
+      "evidenceUrls": [
+        "https://www.omg.org/spec/DMN/",
+        "https://www.omg.org/spec/DMN/1.6/",
+        "https://www.omg.org/spec/DMN/1.6/PDF",
+        "https://www.omg.org/spec/DMN/20240513/DMN16.xsd"
+      ],
+      "norn": {
+        "overlap": "decision tables, business rules, FEEL expressions, decision requirement graphs",
+        "concepts": [],
+        "irTargets": [
+          "RuleIR"
+        ],
+        "proposedConcepts": [
+          "ProcessModel",
+          "DecisionTable",
+          "Case"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-checker/src/jdm_profile.rs"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Decision tables use the DMN hit-policy profile."
+      },
+      "notes": "The id keeps the suggested 'dmn-1-5', but the current formal version is 1.6, so renaming to dmn-1-6 is worth considering. FEEL is defined in the spec text, with no separate grammar artifact. The XSDs carry no licence header.",
+      "origin": "atlas-2026-11-11"
+    }
+  ]
+}

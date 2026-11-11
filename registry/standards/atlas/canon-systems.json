@@ -1,0 +1,1682 @@
+{
+  "atlasVersion": 1,
+  "domain": "canon-systems",
+  "entries": [
+    {
+      "id": "acumatica",
+      "name": "Acumatica contract-based REST API (per-endpoint OpenAPI)",
+      "publisher": "Acumatica, Inc.",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Endpoint version is configured per instance; the 2026-10-21 manifest could not verify the current release.",
+      "licence": {
+        "spdx": "LicenseRef-Acumatica-EULA",
+        "text": "Acumatica EULA / customer agreement (proprietary)",
+        "status": "verified",
+        "basis": "Read the Acumatica agreements page today; it states that the EULA sets the terms for access to Acumatica software. No open licence for the OpenAPI output was found.",
+        "termsUrl": "https://www.acumatica.com/agreements/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI",
+        "API"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": null,
+      "evidenceUrls": [
+        "https://www.acumatica.com/agreements/"
+      ],
+      "norn": {
+        "overlap": "customers, vendors, sales orders, invoices, stock items, GL",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Only a tenant-specific swagger.json at https://<instance>/entity/<endpoint>/<version>/swagger.json?company=<tenant> exists. Map to names only.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "apache-fineract",
+      "name": "Apache Fineract (core banking platform)",
+      "publisher": "The Apache Software Foundation",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "finance",
+        "payments",
+        "accounting-reporting"
+      ],
+      "version": "1.16.1",
+      "versionDate": "2026-10-26",
+      "versionBasis": "Latest GitHub release of apache/fineract read today via the GitHub releases API (1.16.0 was released 2026-10-24).",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0 with NOTICE",
+        "status": "verified",
+        "basis": "Read LICENSE_SOURCE (Apache License 2.0) on apache/fineract develop today; GitHub licence detection is also Apache-2.0. The repo has NOTICE_SOURCE and NOTICE_RELEASE files.",
+        "termsUrl": "https://github.com/apache/fineract/blob/develop/LICENSE_SOURCE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "source-code",
+        "OpenAPI",
+        "XML",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/apache/fineract/tree/develop/fineract-provider/src/main/resources/db/changelog",
+      "evidenceUrls": [
+        "https://github.com/apache/fineract",
+        "https://raw.githubusercontent.com/apache/fineract/develop/LICENSE_SOURCE",
+        "https://github.com/apache/fineract/releases"
+      ],
+      "norn": {
+        "overlap": "clients/groups, loan and savings products, repayment schedules, GL accounting rules, journal entries",
+        "concepts": [
+          "canon.Settlement",
+          "core.Claim",
+          "core.Commitment"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Loan",
+          "SavingsAccount"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Apache-2.0 core banking: loans and savings logic."
+      },
+      "notes": "Schema is defined in Liquibase changelogs (db.changelog-master.xml plus tenant and tenant-store sets), and the REST API is described with OpenAPI. Norn may port code and schemas with Apache-2.0 attribution and NOTICE.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "apache-ofbiz",
+      "name": "Apache OFBiz (framework and data model)",
+      "publisher": "The Apache Software Foundation",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain",
+        "manufacturing",
+        "parties-identity"
+      ],
+      "version": "24.09.08",
+      "versionDate": null,
+      "versionBasis": "ofbiz.apache.org/download.html lists 'OFBiz 24.09.08' as the latest stable release today; matching tag release24.09.08 in apache/ofbiz-framework.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0 with NOTICE ('Apache OFBiz, Copyright 2001-2026 The Apache Software Foundation')",
+        "status": "verified",
+        "basis": "GitHub licence detection (Apache-2.0) on apache/ofbiz-framework and the NOTICE file on trunk, both read today.",
+        "termsUrl": "https://github.com/apache/ofbiz-framework/blob/trunk/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XML",
+        "source-code"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/apache/ofbiz-framework/tree/trunk/applications/datamodel/entitydef",
+      "evidenceUrls": [
+        "https://ofbiz.apache.org/download.html",
+        "https://github.com/apache/ofbiz-framework",
+        "https://raw.githubusercontent.com/apache/ofbiz-framework/trunk/NOTICE"
+      ],
+      "norn": {
+        "overlap": "party/role, product, order, invoice/payment, GL accounting, shipment, work effort, manufacturing, HR",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "canon.Item",
+          "canon.Catalog",
+          "canon.Holding",
+          "canon.OrderLine",
+          "canon.Delivery",
+          "canon.Posting",
+          "canon.Settlement",
+          "core.Order",
+          "core.Hold",
+          "core.Claim",
+          "core.Process",
+          "core.Conversion",
+          "core.LedgerEffect"
+        ],
+        "irTargets": [
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Invoice",
+          "Account",
+          "FiscalPeriod",
+          "PriceRule",
+          "Return"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#1238"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "Apache-2.0 ERP on Silverston's universal data model: its logic can be ported with attribution."
+      },
+      "notes": "The data model is in applications/datamodel/entitydef/*-entitymodel.xml (accounting, content, humanres, manufacturing, marketing, order, party, product, shipment, workeffort). It derives from Silverston's universal data model patterns. Norn may port entity definitions and code with Apache-2.0 attribution and must carry the NOTICE.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "beancount",
+      "name": "Beancount (plain-text double-entry accounting)",
+      "publisher": "Beancount project (Martin Blais)",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting"
+      ],
+      "version": "3.2.3",
+      "versionDate": "2026-05-05",
+      "versionBasis": "Highest semantic-version tag on github.com/beancount/beancount from git ls-remote today; date is the tagged commit's committer date. No GitHub release objects exist.",
+      "licence": {
+        "spdx": "GPL-2.0-only",
+        "text": "GNU GPL v2",
+        "status": "verified",
+        "basis": "Read COPYING (GPL Version 2) and beancount/__init__.py (__license__ = \"GNU GPLv2\", no 'or later') on beancount/beancount master today.",
+        "termsUrl": "https://github.com/beancount/beancount/blob/master/COPYING",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "source-code",
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/beancount/beancount",
+      "evidenceUrls": [
+        "https://github.com/beancount/beancount",
+        "https://raw.githubusercontent.com/beancount/beancount/master/COPYING"
+      ],
+      "norn": {
+        "overlap": "accounts, transactions/postings, commodities, lots/cost basis, prices, balance assertions",
+        "concepts": [
+          "core.LedgerEffect",
+          "canon.Posting"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "The directive syntax and semantics (open/close, balance, pad, cost and lot booking) are a useful behaviour reference. GPL source must not be copied. The file format can be read or written as an interop target.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "dolibarr",
+      "name": "Dolibarr ERP & CRM",
+      "publisher": "Dolibarr Foundation / Dolibarr project",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain",
+        "parties-identity"
+      ],
+      "version": "24.0.3",
+      "versionDate": "2026-11-11",
+      "versionBasis": "Latest GitHub release of Dolibarr/dolibarr read today via the GitHub releases API.",
+      "licence": {
+        "spdx": "GPL-3.0-or-later",
+        "text": "GNU GPL v3 or (at your option) any later version (GPL-3+)",
+        "status": "verified",
+        "basis": "Read README.md on Dolibarr/dolibarr develop today ('either Version 3 of the License, or (at your option) any later version (GPL-3+)'); GitHub licence detection is GPL-3.0.",
+        "termsUrl": "https://github.com/Dolibarr/dolibarr/blob/develop/COPYING",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "source-code",
+        "SQL-DDL",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/Dolibarr/dolibarr/tree/develop/htdocs/install/mysql/tables",
+      "evidenceUrls": [
+        "https://github.com/Dolibarr/dolibarr",
+        "https://raw.githubusercontent.com/Dolibarr/dolibarr/develop/README.md",
+        "https://github.com/Dolibarr/dolibarr/releases"
+      ],
+      "norn": {
+        "overlap": "third parties, proposals, orders, invoices, products/stock, projects, HR leave/expenses",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Schema is plain SQL DDL in htdocs/install/mysql/tables (777 files, listed today via the GitHub API). GPL: behaviour reference only, with no source or DDL copying.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "epicor",
+      "name": "Epicor Kinetic REST API (OData v4 metadata)",
+      "publisher": "Epicor Software Corporation",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "manufacturing",
+        "supply-chain"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Kinetic metadata is release- and instance-specific; no release verified in the 2026-10-21 manifest.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "Unknown; proprietary product terms assumed but not read",
+        "status": "unverified",
+        "basis": "epicor.com/en-us/legal returned a bot challenge (HTTP 403) today; the 2026-10-21 manifest also found no licence text.",
+        "termsUrl": "https://www.epicor.com/en-us/legal/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML",
+        "API"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": null,
+      "evidenceUrls": [
+        "https://www.epicor.com/en-us/products/enterprise-resource-planning-erp/kinetic/tools-and-technology/open-rest-api/"
+      ],
+      "norn": {
+        "overlap": "parts, jobs, BOM/BOO, sales/purchase orders, customers, suppliers",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Instance $metadata at /api/v2/odata/<company>/$metadata; no public artifact. Mapping only, and only once the terms are read.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "erpnext",
+      "name": "ERPNext (Frappe framework DocTypes)",
+      "publisher": "Frappe Technologies",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain",
+        "manufacturing",
+        "hr"
+      ],
+      "version": "v16.54.0",
+      "versionDate": "2026-11-06",
+      "versionBasis": "Latest non-prerelease GitHub release on frappe/erpnext, read today via the GitHub releases API (the v15 line is at v15.124.5).",
+      "licence": {
+        "spdx": "GPL-3.0-only",
+        "text": "GNU General Public License v3",
+        "status": "verified",
+        "basis": "Read license.txt (GPLv3 text) and a source header ('License: GNU General Public License v3. See license.txt') on github.com/frappe/erpnext develop today; no 'or later' grant found.",
+        "termsUrl": "https://github.com/frappe/erpnext/blob/develop/license.txt",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "JSON",
+        "source-code"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/frappe/erpnext",
+      "evidenceUrls": [
+        "https://github.com/frappe/erpnext",
+        "https://raw.githubusercontent.com/frappe/erpnext/develop/license.txt",
+        "https://github.com/frappe/erpnext/releases"
+      ],
+      "norn": {
+        "overlap": "chart of accounts, GL entry, sales/purchase invoice, stock ledger, BOM/work order, employee/payroll",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "canon.Item",
+          "canon.Holding",
+          "canon.OrderLine",
+          "canon.Delivery",
+          "canon.Posting",
+          "canon.SettlementObservation"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/packs/erpnext",
+          "registry/packs/THREE-SYSTEMS.md"
+        ],
+        "importerIssue": "Norn-cloud/norn#215"
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P1",
+        "reason": "Customer #1's current system; the first differential oracle."
+      },
+      "notes": "534 standard DocType JSON definitions at the pinned commit 6de47690 (2026-10-21 manifest). GPL copyleft: Norn uses it as a behaviour reference only and must not copy source or DocType JSON into the Apache-2.0 repo. Mapping DocType and field names for import/export is fine.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "formance-ledger",
+      "name": "Formance Ledger (programmable double-entry ledger, Numscript)",
+      "publisher": "Formance Solutions",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "finance",
+        "payments",
+        "accounting-reporting"
+      ],
+      "version": "v2.4.18",
+      "versionDate": "2026-11-05",
+      "versionBasis": "Latest GitHub release of formancehq/ledger read today via the GitHub releases API.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT License (Copyright (c) 2021-present Formance Solutions) at tag v2.4.18",
+        "status": "verified",
+        "basis": "Read LICENSE at tags v2.2.0 through v2.4.18 of formancehq/ledger today (MIT). The current main branch has no LICENSE file at root, and GitHub reports no licence for the repo.",
+        "termsUrl": "https://github.com/formancehq/ledger/blob/v2.4.18/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "source-code",
+        "OpenAPI",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/formancehq/ledger/blob/v2.4.18/openapi.yml",
+      "evidenceUrls": [
+        "https://github.com/formancehq/ledger",
+        "https://raw.githubusercontent.com/formancehq/ledger/v2.4.18/LICENSE",
+        "https://github.com/formancehq/ledger/releases"
+      ],
+      "norn": {
+        "overlap": "accounts with metadata, multi-posting transactions, assets/precision, Numscript money-movement language, balances/volumes",
+        "concepts": [
+          "core.LedgerEffect",
+          "canon.Posting"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Reuse only code pinned at or before v2.4.18 (MIT, with attribution). The missing LICENSE on main may signal a licence change for future versions. Re-check before using any post-v2.4.18 code.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "idempiere",
+      "name": "iDempiere",
+      "publisher": "iDempiere community",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain",
+        "manufacturing"
+      ],
+      "version": "13 LTS (Orion)",
+      "versionDate": "2026-03-12",
+      "versionBasis": "idempiere.org home page links the 2026-03-12 announcement 'iDempiere 13 Orion' (LTS), read today; release-13 is the newest release branch on GitHub.",
+      "licence": {
+        "spdx": "GPL-2.0-only",
+        "text": "GNU GPL version 2 (headers: 'the terms version 2 of the GNU General Public License')",
+        "status": "verified",
+        "basis": "Read LICENSE.md (GPL Version 2, June 1991) and the MInvoice.java header ('version 2 of the GNU General Public License', no 'or later') on idempiere/idempiere master today.",
+        "termsUrl": "https://github.com/idempiere/idempiere/blob/master/LICENSE.md",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "source-code",
+        "SQL-DDL"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/idempiere/idempiere",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/idempiere/idempiere/master/LICENSE.md",
+        "https://raw.githubusercontent.com/idempiere/idempiere/master/org.adempiere.base/src/org/compiere/model/MInvoice.java",
+        "https://www.idempiere.org/"
+      ],
+      "norn": {
+        "overlap": "Application Dictionary (AD_Table/AD_Column), C_Invoice, C_Order, M_InOut, Fact_Acct, C_BPartner, PP manufacturing",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Compiere/ADempiere lineage. The metadata-driven Application Dictionary is a useful design reference. GPL-2.0-only: behaviour reference only, no source copying.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "ifs",
+      "name": "IFS Cloud projections (API Explorer OpenAPI / OData)",
+      "publisher": "IFS",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "manufacturing",
+        "supply-chain"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Docs consulted in the 2026-10-21 manifest cover 26R1/26R2; artifacts are tenant-release-specific.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "Unknown; proprietary product terms assumed but not read",
+        "status": "unverified",
+        "basis": "ifs.com/legal returned a security checkpoint (HTTP 429) today; no licence text read.",
+        "termsUrl": "https://www.ifs.com/legal",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI",
+        "XML",
+        "API"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": null,
+      "evidenceUrls": [
+        "https://docs.ifs.com/techdocs/26r2/040_tailoring/300_extensibility/020_api_explorer/"
+      ],
+      "norn": {
+        "overlap": "projections for assets/EAM, manufacturing, supply chain, finance",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "API Explorer exports OpenAPI v2/v3 or the OData service document per projection inside a tenant. Mapping only.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "infor",
+      "name": "Infor ION Business Object Documents (OAGIS-based)",
+      "publisher": "Infor / Open Applications Group (OAGi)",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "supply-chain",
+        "manufacturing"
+      ],
+      "version": "OAGIS 10.4",
+      "versionDate": null,
+      "versionBasis": "Only verified public artifact in the 2026-10-21 manifest is the OAGIS/connectSpec 10.4 Standard Edition XSD bundle that Infor BODs build on; no Infor-published BOD schema was found.",
+      "licence": {
+        "spdx": "LicenseRef-OAGi-License",
+        "text": "OAGi custom digital-resources licence (revised 2022-03-31)",
+        "status": "unverified",
+        "basis": "The OAGi Confluence licence page loaded today but is script-rendered, so the text was not re-read; licence line carried from the 2026-10-21 manifest.",
+        "termsUrl": "https://oagi.atlassian.net/wiki/spaces/PUB/pages/1043398664/Open+Applications+Group+Inc.+License+Agreement",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://oagi-org.s3.amazonaws.com/oagis/rls10_4/OAGIS_10_4_StandardEdition_XML.zip",
+      "evidenceUrls": [
+        "https://oagi.org/pages/connectspec-10-4",
+        "https://oagi.atlassian.net/wiki/spaces/PUB/pages/1043398664/Open+Applications+Group+Inc.+License+Agreement"
+      ],
+      "norn": {
+        "overlap": "BOD nouns: purchase order, sales order, item master, shipment, invoice",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Thin entry: the manifest has no Infor-specific artifact, only OAGIS, which should also be catalogued as a standard. Infor's own BOD extensions need an Infor account.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "ledger-cli",
+      "name": "Ledger (ledger-cli, plain-text double-entry accounting)",
+      "publisher": "Ledger project (John Wiegley)",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting"
+      ],
+      "version": "v3.4.1",
+      "versionDate": "2025-10-26",
+      "versionBasis": "Latest GitHub release of ledger/ledger read today via the GitHub releases API.",
+      "licence": {
+        "spdx": "BSD-3-Clause",
+        "text": "BSD 3-Clause (Copyright (c) 2003-2025, John Wiegley)",
+        "status": "verified",
+        "basis": "Read LICENSE.md on ledger/ledger master today: the three BSD redistribution conditions, including the non-endorsement clause.",
+        "termsUrl": "https://github.com/ledger/ledger/blob/master/LICENSE.md",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "source-code",
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/ledger/ledger",
+      "evidenceUrls": [
+        "https://github.com/ledger/ledger",
+        "https://raw.githubusercontent.com/ledger/ledger/master/LICENSE.md"
+      ],
+      "norn": {
+        "overlap": "accounts, transactions/postings, commodities and prices, automated transactions, periodic budgets",
+        "concepts": [
+          "core.LedgerEffect",
+          "canon.Posting"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Code is permissive (BSD-3-Clause) and may be ported with the copyright notice kept; endorsement by name is not allowed.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "metasfresh",
+      "name": "metasfresh ERP",
+      "publisher": "metasfresh GmbH",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "supply-chain",
+        "accounting-reporting",
+        "manufacturing"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "The last GitHub release is 5.175 (2023-06-27) and the README badge shows 5.174. Recent tags are named build tags (e.g. zulu_alpha_uat_1), so no current numbered release could be confirmed today.",
+      "licence": {
+        "spdx": "GPL-2.0-or-later",
+        "text": "GNU GPL v2 or (at your option) any later version",
+        "status": "verified",
+        "basis": "Read backend/LICENSE.md (GPL Version 2) and a backend source header ('either version 2 of the License, or (at your option) any later version') on metasfresh/metasfresh default branch new_dawn_uat today; README links a GPL badge.",
+        "termsUrl": "https://github.com/metasfresh/metasfresh/blob/new_dawn_uat/backend/LICENSE.md",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "source-code",
+        "SQL-DDL"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/metasfresh/metasfresh",
+      "evidenceUrls": [
+        "https://github.com/metasfresh/metasfresh",
+        "https://raw.githubusercontent.com/metasfresh/metasfresh/new_dawn_uat/backend/LICENSE.md",
+        "https://raw.githubusercontent.com/metasfresh/metasfresh/new_dawn_uat/backend/de.metas.adempiere.adempiere/base/src/main/java/de/metas/money/CurrencyId.java"
+      ],
+      "norn": {
+        "overlap": "ADempiere-style business partner, order, invoice, inventory/handling units, accounting",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "It is an ADempiere fork, so inherited ADempiere files may be GPL-2.0-only (not checked file by file). No root LICENSE exists; licences are per module (backend, frontend). Behaviour reference only.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "microsoft-cdm",
+      "name": "Microsoft Common Data Model (CDM)",
+      "publisher": "Microsoft",
+      "kind": "data-model",
+      "domains": [
+        "canon-systems",
+        "parties-identity",
+        "finance",
+        "supply-chain",
+        "healthcare"
+      ],
+      "version": "dd21d715e05ebf740a11356c80b5c3b4c38a89c2",
+      "versionDate": "2025-01-22",
+      "versionBasis": "No GitHub releases; HEAD commit of microsoft/CDM master read today via the GitHub API (last push 2025-01-22), same commit pinned in the 2026-10-21 manifest; newest schema manifests in the corpus include foundations 4.7 and schema 1.6.0.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "Creative Commons Attribution 4.0 for schema content; SDK code is MIT (LICENSE-CODE)",
+        "status": "verified",
+        "basis": "Read the LICENSE file (Attribution 4.0 International) on github.com/microsoft/CDM master today.",
+        "termsUrl": "https://github.com/microsoft/CDM/blob/master/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/microsoft/CDM/tree/master/schemaDocuments",
+      "evidenceUrls": [
+        "https://github.com/microsoft/CDM",
+        "https://raw.githubusercontent.com/microsoft/CDM/master/LICENSE"
+      ],
+      "norn": {
+        "overlap": "account, contact, sales order, invoice, product, cross-industry core entities and semantic traits",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#2986"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "The naming canon; CC-BY-4.0 so its schemas can be imported."
+      },
+      "notes": "Repository has been quiet since 2025-01; treat as a stable reference. Schema JSON may be adapted with CC-BY attribution. Business Central API v2.0 and Dataverse Web API v9.2 $metadata are tenant-scoped under the Microsoft APIs Terms of Use (page reloaded today) and are vocabulary-only.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "moqui-mantle-udm",
+      "name": "Moqui Framework with Mantle Universal Data Model (UDM) and Universal Service Library (USL)",
+      "publisher": "Moqui Ecosystem",
+      "kind": "data-model",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain",
+        "parties-identity",
+        "hr"
+      ],
+      "version": "mantle-udm v2.2.1",
+      "versionDate": "2026-03-02",
+      "versionBasis": "Latest GitHub release of moqui/mantle-udm read today via the GitHub releases API (moqui-framework v4.0.0 and mantle-usl v3.0.0 were released the same day).",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0 1.0 Universal public-domain dedication plus a separate Grant of Patent License adapted from Apache-2.0",
+        "status": "verified",
+        "basis": "Read LICENSE.md on moqui/mantle-udm and moqui/moqui-framework master today: CC0 1.0 text preceded by a note that a separate patent grant is included because CC0 lacks patent licensing.",
+        "termsUrl": "https://github.com/moqui/mantle-udm/blob/master/LICENSE.md",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XML",
+        "source-code"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/moqui/mantle-udm/tree/master/entity",
+      "evidenceUrls": [
+        "https://github.com/moqui/mantle-udm",
+        "https://raw.githubusercontent.com/moqui/mantle-udm/master/LICENSE.md",
+        "https://raw.githubusercontent.com/moqui/moqui-framework/master/LICENSE.md"
+      ],
+      "norn": {
+        "overlap": "party, product, order, shipment, invoice/payment, GL ledger, facility, work effort, HR, marketing, requests",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "CC0 universal data model; free to adopt."
+      },
+      "notes": "There are 15 entity XML files (AccountingAccount, AccountingLedger, Party, Product*, Order, Shipment, WorkEffort, etc.). The model is close to Silverston/OFBiz patterns and is the most permissive full ERP model available. Norn may copy or port it freely and should still give attribution. The extra patent grant is not an SPDX id; record it in NOTICE.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "odoo",
+      "name": "Odoo (Community and Enterprise)",
+      "publisher": "Odoo S.A.",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain",
+        "manufacturing",
+        "hr"
+      ],
+      "version": "20.0",
+      "versionDate": null,
+      "versionBasis": "Default branch of github.com/odoo/odoo is 20.0 and odoo.com serves 20.0 documentation (read today); exact release date not read.",
+      "licence": {
+        "spdx": "LGPL-3.0-only",
+        "text": "Community Edition: GNU LGPL v3; Enterprise Edition: proprietary Odoo Enterprise Edition License v1.0 (subscription required)",
+        "status": "verified",
+        "basis": "Read the LICENSE file on odoo/odoo branch 20.0 ('published under the GNU LESSER GENERAL PUBLIC LICENSE, Version 3') and the odoo.com 20.0 licences page (Community LGPLv3; Enterprise under the Odoo Enterprise Edition License v1.0) today.",
+        "termsUrl": "https://www.odoo.com/documentation/20.0/legal/licenses.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "source-code",
+        "API",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/odoo/odoo",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/odoo/odoo/20.0/LICENSE",
+        "https://www.odoo.com/documentation/20.0/legal/licenses.html",
+        "https://www.odoo.com/documentation/master/developer/reference/external_api.html"
+      ],
+      "norn": {
+        "overlap": "account.move/journal items, partners, products, stock moves, sale/purchase orders, MRP",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "canon.Item",
+          "canon.Holding",
+          "canon.OrderLine",
+          "canon.Delivery",
+          "canon.Posting",
+          "canon.SettlementObservation"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/packs/odoo",
+          "registry/packs/THREE-SYSTEMS.md"
+        ],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Models are defined in Python ORM source (no standalone schema export); runtime ir.model/ir.model.fields and fields_get over RPC need a database. The 20.0 licences page still labels its sections 'Odoo 19'. Code is reference-only: LGPL Community source must not be copied into Norn; Enterprise is proprietary. Norn may map to model and field names.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "oracle-fusion-netsuite",
+      "name": "Oracle Fusion Cloud ERP/SCM/HCM and NetSuite (SuiteTalk) record models",
+      "publisher": "Oracle Corporation",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "finance",
+        "supply-chain",
+        "hr"
+      ],
+      "version": "NetSuite SuiteTalk 2025.2",
+      "versionDate": null,
+      "versionBasis": "NetSuite SOAP WSDL/XSD package v2025_2_0 (the last planned SOAP endpoint per Oracle docs) from the 2026-10-21 manifest; Fusion REST versions are tenant-selected.",
+      "licence": {
+        "spdx": "LicenseRef-Oracle-Terms",
+        "text": "Oracle Web Sites Terms of Use and customer agreements (proprietary); no open licence for WSDL/XSD or describe metadata",
+        "status": "unverified",
+        "basis": "oracle.com/legal/terms.html loaded today (title 'Oracle Web Sites Terms of Use') but no artifact-specific licence for the WSDL/XSD package was found; redistribution status unverified.",
+        "termsUrl": "https://www.oracle.com/legal/terms.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML",
+        "OpenAPI",
+        "API",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://content.netsuite.com/download/WSDL_v2025_2_0.zip",
+      "evidenceUrls": [
+        "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_N3418264.html",
+        "https://docs.oracle.com/en/cloud/saas/applications-common/26b/farca/Access_Metadata.html",
+        "https://www.oracle.com/legal/terms.html"
+      ],
+      "norn": {
+        "overlap": "GL/journal, AP/AR invoices, items, purchase/sales orders, workers (HCM)",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P0",
+        "reason": "The other tier-1 ERP data model."
+      },
+      "notes": "Public NetSuite SOAP XSDs are the best openly downloadable artifact (SOAP to be unavailable with 2028.2; REST metadata-catalog is per account). Fusion ERP/SCM (fscmRestApi) and HCM (hcmRestApi) /describe can return OpenAPI 3 but only per tenant. Mapping to names only; no redistribution.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "quickbooks-online",
+      "name": "QuickBooks Online Accounting API (v3) and Intuit SDK XSDs",
+      "publisher": "Intuit Inc.",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "payments"
+      ],
+      "version": "API v3; .NET SDK V14.7.1.6",
+      "versionDate": "2026-09-17",
+      "versionBasis": "Latest GitHub release of intuit/QuickBooks-V3-DotNET-SDK read today via the GitHub releases API; the API itself is v3 per Intuit docs (2026-10-21 manifest).",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0 (SDK including Finance.xsd); API use under Intuit Developer Services terms",
+        "status": "verified",
+        "basis": "Read License.md (Apache License 2.0) on github.com/intuit/QuickBooks-V3-DotNET-SDK master today; the Intuit Developer Services terms page also loaded today.",
+        "termsUrl": "https://github.com/intuit/QuickBooks-V3-DotNET-SDK/blob/master/License.md",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XSD",
+        "API",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/intuit/QuickBooks-V3-DotNET-SDK/tree/master/IPPDotNetDevKitCSV3/Tools/XsdExtension/Intuit.Ipp.XsdExtension/Schema",
+      "evidenceUrls": [
+        "https://github.com/intuit/QuickBooks-V3-DotNET-SDK",
+        "https://raw.githubusercontent.com/intuit/QuickBooks-V3-DotNET-SDK/master/License.md",
+        "https://www.intuit.com/legal/terms/en-us/developer-services/"
+      ],
+      "norn": {
+        "overlap": "account, customer, vendor, invoice, bill, payment, journal entry, item",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "No full public OpenAPI for QBO was verified. The SDK XSDs (Apache-2.0) are the reusable artifact and may be adapted with NOTICE attribution.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "rea-mccarthy",
+      "name": "The REA Accounting Model: A Generalized Framework for Accounting Systems in a Shared Data Environment (McCarthy, 1982)",
+      "publisher": "American Accounting Association (The Accounting Review)",
+      "kind": "data-model",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "upper-ontology"
+      ],
+      "version": "The Accounting Review 57(3):554-578",
+      "versionDate": "1982-07",
+      "versionBasis": "Crossref DOI record 10.2308/tar-4487748 (publisher-deposited metadata) read today: vol. 57, issue 3, pp. 554-578, issued 1982-07-01.",
+      "licence": {
+        "spdx": "LicenseRef-AAA-Copyright",
+        "text": "Journal article under publisher copyright; the concepts (resources, events, agents, duality, stock-flow) are not subject to copyright",
+        "status": "unverified",
+        "basis": "JSTOR stable page returned a client challenge today; no copyright statement was read on the publisher site.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://doi.org/10.2308/tar-4487748",
+      "evidenceUrls": [
+        "https://api.crossref.org/works?query.bibliographic=McCarthy+REA+accounting+model+generalized+framework+shared+data+environment&rows=3"
+      ],
+      "norn": {
+        "overlap": "economic resources, economic events, agents, duality and stock-flow relationships behind double-entry",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Commitment",
+          "core.Claim",
+          "core.Exchange",
+          "core.Conversion"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "done",
+        "mappingEvidence": [
+          "registry/core/src/physics.ts"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P0",
+        "reason": "REA is the core physics every module builds on."
+      },
+      "notes": "Cite the paper; do not reproduce its text or figures. Norn may implement the REA concepts in its own words, since ideas are not covered by copyright. ISO/IEC 15944-4 (REA business transaction ontology) is catalogued separately.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "sage-intacct",
+      "name": "Sage Intacct XML API schemas and REST object model",
+      "publisher": "Sage Group plc",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "finance"
+      ],
+      "version": "5e7ff4c65e897fa3c293ea6d15539a695d93896e",
+      "versionDate": "2025-04-02",
+      "versionBasis": "HEAD commit of github.com/intacct/intacct_dtd (no releases) read today; REST API v1 and portal release 2026 R3 per the 2026-10-21 manifest.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0 (XML schemas/DTDs); REST API under Sage developer terms",
+        "status": "verified",
+        "basis": "Read LICENSE (Apache License 2.0) on github.com/intacct/intacct_dtd master today. The Sage Intacct ToS page returned a Cloudflare 403 today.",
+        "termsUrl": "https://github.com/intacct/intacct_dtd/blob/master/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XSD",
+        "XML",
+        "API",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/intacct/intacct_dtd",
+      "evidenceUrls": [
+        "https://github.com/intacct/intacct_dtd",
+        "https://raw.githubusercontent.com/intacct/intacct_dtd/master/LICENSE"
+      ],
+      "norn": {
+        "overlap": "GL accounts, journals, dimensions, AP/AR, vendors, customers",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "XSD/DTD may be adapted with attribution. The REST object model (core/model) is per tenant and vocabulary-only.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "salesforce-platform",
+      "name": "Salesforce Platform standard objects (REST/SOAP Describe, Metadata API)",
+      "publisher": "Salesforce, Inc.",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "parties-identity",
+        "social-marketing"
+      ],
+      "version": "API v68.0",
+      "versionDate": "2026-10",
+      "versionBasis": "2026-10-21 vendor manifest recorded v68.0 as the documented current API version in October 2026; not re-read today.",
+      "licence": {
+        "spdx": "LicenseRef-Salesforce-MSA",
+        "text": "Salesforce customer subscription and API terms (proprietary); no open redistribution licence",
+        "status": "unverified",
+        "basis": "The salesforce.com legal agreements page loaded today but its agreement text was not readable without scripts; licence line carried from the 2026-10-21 manifest.",
+        "termsUrl": "https://www.salesforce.com/company/legal/agreements/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "API",
+        "JSON",
+        "XML"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://developer.salesforce.com/docs/platform/api-rest/guide/resources-sobject-describe.html",
+      "evidenceUrls": [
+        "https://developer.salesforce.com/docs/platform/api-rest/guide/resources-sobject-describe.html",
+        "https://www.salesforce.com/company/legal/agreements/"
+      ],
+      "norn": {
+        "overlap": "account, contact, lead, opportunity, case, product, price book, quote, order",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "canon.OrderLine"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Opportunity",
+          "Quote",
+          "PriceBook"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#2986"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "The CRM-layer canon."
+      },
+      "notes": "Schema is only available per org via Describe Global or sObject describe (authentication needed). The only public open artifact is the DreamHouse sample app metadata (Apache-2.0, 2 custom objects): too small to serve as a model. Norn may map to standard object and field names, but must not copy Salesforce schema.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "sap-s4hana",
+      "name": "SAP S/4HANA (Business Accelerator Hub APIs, One Domain Model, CSN Interop)",
+      "publisher": "SAP SE",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "finance",
+        "supply-chain",
+        "parties-identity",
+        "products-units"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "No single model release exists: each S/4HANA Cloud API on the Business Accelerator Hub carries its own catalog artifact version (e.g. API_BUSINESS_PARTNER 1.7.0, API_SUPPLIERINVOICE_PROCESS_SRV 1.6.0 per the 2026-10-21 vendor manifest); the open CSN Interop spec is at v1.2.9 (GitHub release 2026-11-09, read today).",
+      "licence": {
+        "spdx": "LicenseRef-SAP-BAH-TOU",
+        "text": "SAP Business Accelerator Hub Terms of Use (proprietary); the CSN Interop and ORD specifications are Apache-2.0",
+        "status": "unverified",
+        "basis": "The TOU page on help.sap.com is client-rendered and returned no readable terms text today; the 2026-10-21 manifest recorded the TOU (updated 2025-10-08) and redistribution as prohibited without permission. CSN Interop LICENSE (Apache-2.0) was re-read today on the SAP GitHub repo.",
+        "termsUrl": "https://help.sap.com/docs/business-accelerator-hub/sap-business-accelerator-hub/terms-of-use-for-sap-business-accelerator-hub?locale=en-US&version=Cloud",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "API",
+        "XML",
+        "JSON",
+        "JSON-Schema"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://api.sap.com/odata/1.0/catalog.svc/Artifacts(Name='API_BUSINESS_PARTNER',Type='API')/$value",
+      "evidenceUrls": [
+        "https://github.com/SAP/csn-interop-specification",
+        "https://raw.githubusercontent.com/SAP/csn-interop-specification/main/LICENSE",
+        "https://help.sap.com/docs/business-accelerator-hub/sap-business-accelerator-hub/terms-of-use-for-sap-business-accelerator-hub?locale=en-US&version=Cloud"
+      ],
+      "norn": {
+        "overlap": "business partner, product, sales/purchase order, billing, supplier invoice, journal entry, material document",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#2986"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "The modelling canon for business-object semantics."
+      },
+      "notes": "Best artifacts: (1) per-API OData EDMX on Business Accelerator Hub (download needs login; proprietary). (2) SAP One Domain Model business objects (catalog metadata only; no full CDS/CSN export found; no open licence). (3) CSN Interop Effective JSON Schema v1.2.9 and ORD spec (both Apache-2.0, code-reusable as a model-exchange format). Norn may map to SAP entity and field names (vocabulary) but must not copy or redistribute EDMX/ODM content; the CSN Interop schema may be ported with attribution.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "shopify-admin-api",
+      "name": "Shopify Admin GraphQL API (and Shopify Product Taxonomy)",
+      "publisher": "Shopify Inc.",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "products-units",
+        "payments",
+        "supply-chain"
+      ],
+      "version": "2026-10",
+      "versionDate": "2026-10",
+      "versionBasis": "Admin API version 2026-10 documented as current in the 2026-10-21 manifest; Product Taxonomy release v2026-10 (2026-10-27) read today via the GitHub releases API.",
+      "licence": {
+        "spdx": "LicenseRef-Shopify-API-Terms",
+        "text": "Shopify API License and Terms of Use (proprietary) for the Admin schema; the Product Taxonomy repo is MIT",
+        "status": "verified",
+        "basis": "shopify.com/legal/api-terms loaded today ('Shopify API License and Terms of Use'); Product Taxonomy LICENSE (MIT permission grant) re-read on GitHub today.",
+        "termsUrl": "https://www.shopify.com/legal/api-terms",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "API",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://shopify.dev/admin-graphql-direct-proxy/2026-10",
+      "evidenceUrls": [
+        "https://www.shopify.com/legal/api-terms",
+        "https://github.com/Shopify/product-taxonomy",
+        "https://raw.githubusercontent.com/Shopify/product-taxonomy/main/LICENSE"
+      ],
+      "norn": {
+        "overlap": "products/variants, orders, fulfillments, inventory, customers, product categories and attributes",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.Holding",
+          "canon.OrderLine",
+          "canon.Delivery",
+          "canon.SettlementObservation"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/packs/shopify",
+          "registry/packs/THREE-SYSTEMS.md"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P2",
+        "reason": "Online retail channel in the MVP three-system mapping."
+      },
+      "notes": "Admin GraphQL SDL is available through the codegen proxy, but no open redistribution licence exists, so it is vocabulary-only. The Product Taxonomy (categories, attributes, values, mappings) is MIT and code-reusable with attribution.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "silverston-universal-data-models",
+      "name": "The Data Model Resource Book, Volumes 1-3 (Universal Data Models)",
+      "publisher": "John Wiley & Sons (author Len Silverston; Vol. 3 with Paul Agnew)",
+      "kind": "data-model",
+      "domains": [
+        "canon-systems",
+        "parties-identity",
+        "accounting-reporting",
+        "supply-chain",
+        "hr"
+      ],
+      "version": "Vol. 1 rev. ed. (2001), Vol. 2 rev. ed. (2001), Vol. 3 (2009)",
+      "versionDate": "2009-01",
+      "versionBasis": "ISBN records 9780471380238 (Vol. 1, 2001), 9780471353485 (Vol. 2, 2001) and 9780470178454 (Vol. 3, 2009-01-09) from the Open Library ISBN API (secondary source); the publisher pages were blocked by a bot challenge.",
+      "licence": {
+        "spdx": "LicenseRef-Wiley-Copyright",
+        "text": "Copyrighted book, all rights reserved (presumed)",
+        "status": "unverified",
+        "basis": "The wiley.com product pages returned a 403 bot challenge today, so no copyright or permissions statement was read on the primary source.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": null,
+      "evidenceUrls": [
+        "https://openlibrary.org/api/books?bibkeys=ISBN:9780470178454&format=json&jscmd=data"
+      ],
+      "norn": {
+        "overlap": "party/role/relationship, product, order, invoice, accounting, work effort, HR; industry patterns; universal patterns (roles, status, classification)",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P0",
+        "reason": "The universal data model OFBiz and Mantle implement."
+      },
+      "notes": "Read and cite only; do not copy diagrams or text. The patterns are already embodied in permissive code (OFBiz Apache-2.0, Mantle UDM CC0), and those artifacts are the reusable route. Vol. 1 and 2 originally came with CD-ROM SQL scripts that are not freely licensed.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "tigerbeetle",
+      "name": "TigerBeetle (financial transactions database)",
+      "publisher": "TigerBeetle, Inc.",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "finance",
+        "payments",
+        "accounting-reporting"
+      ],
+      "version": "0.17.9",
+      "versionDate": "2026-07-06",
+      "versionBasis": "Latest GitHub release of tigerbeetle/tigerbeetle read today via the GitHub releases API.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0",
+        "status": "verified",
+        "basis": "Read LICENSE (Apache License Version 2.0) on tigerbeetle/tigerbeetle main today.",
+        "termsUrl": "https://github.com/tigerbeetle/tigerbeetle/blob/main/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "source-code",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/tigerbeetle/tigerbeetle",
+      "evidenceUrls": [
+        "https://github.com/tigerbeetle/tigerbeetle",
+        "https://raw.githubusercontent.com/tigerbeetle/tigerbeetle/main/LICENSE"
+      ],
+      "norn": {
+        "overlap": "accounts with debit/credit balances, transfers, two-phase (pending/post/void) transfers, linked events, balance limits",
+        "concepts": [
+          "core.LedgerEffect",
+          "canon.Posting",
+          "core.Hold"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Debit/credit and pending-transfer invariants."
+      },
+      "notes": "The fixed 128-byte Account and Transfer schema (ledger, code, user_data, flags) is a strong reference for Norn's ledger kernel. Code and design may be ported with Apache-2.0 attribution. The default branch is very active, so pin a release.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "tryton",
+      "name": "Tryton",
+      "publisher": "Tryton project (Foundation Tryton)",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain",
+        "manufacturing"
+      ],
+      "version": "8.2",
+      "versionDate": null,
+      "versionBasis": "downloads.tryton.org lists series 8.2 as the newest series with trytond-8.2.3 (read today); tryton.org states a series is released every 6 months.",
+      "licence": {
+        "spdx": "GPL-3.0-or-later",
+        "text": "GNU GPL v3 or (at your option) any later version",
+        "status": "verified",
+        "basis": "Read trytond/LICENSE (GPLv3) and trytond/COPYRIGHT ('either version 3 of the License, or ... any later version') today in the tryton/tryton repository, a mirror of code.tryton.org.",
+        "termsUrl": "https://github.com/tryton/tryton/blob/main/trytond/COPYRIGHT",
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "source-code",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://code.tryton.org/tryton",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/tryton/tryton/main/trytond/COPYRIGHT",
+        "https://downloads.tryton.org/",
+        "https://www.tryton.org/download"
+      ],
+      "norn": {
+        "overlap": "account move/lines, party, product/UoM, stock moves, sale/purchase, production",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "Models are defined in Python modules under modules/. GPL copyleft: behaviour reference only, with no source copying. Mapping to model and field names is fine.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "workday",
+      "name": "Workday Web Services (SOAP WSDL/XSD) and REST APIs",
+      "publisher": "Workday, Inc.",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "hr",
+        "finance"
+      ],
+      "version": "v47.0 (2026R2)",
+      "versionDate": null,
+      "versionBasis": "Public production API directory listing recorded as 47.0 / 2026R2 in the 2026-10-21 manifest; directory reachable today (HTTP 200) but version not re-read.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence or terms located for the public WSDL/XSD directory",
+        "status": "unverified",
+        "basis": "The terms URL in the manifest (workday.com/en-us/legal/terms-of-use.html) returns 404 today; no licence text for the API schemas was found.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://community.workday.com/sites/default/files/file-hosting/productionapi/index.html",
+      "evidenceUrls": [
+        "https://community.workday.com/sites/default/files/file-hosting/productionapi/index.html",
+        "https://developer.workday.com/documentation"
+      ],
+      "norn": {
+        "overlap": "worker, position, organization, compensation, payroll, financial accounting, suppliers",
+        "concepts": [
+          "core.Agent",
+          "core.AgentRole"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Employment",
+          "Position"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3523"
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "REST metadata requires tenant access (wd-metadata-api-version v1). Any reuse beyond mapping to names is blocked pending rights review.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "xero",
+      "name": "Xero API OpenAPI contracts",
+      "publisher": "Xero Limited",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "payments",
+        "hr"
+      ],
+      "version": "20.0.1",
+      "versionDate": "2026-11-06",
+      "versionBasis": "Latest GitHub release of XeroAPI/Xero-OpenAPI and 'version: 20.0.1' in xero_accounting.yaml, read today.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT License (OpenAPI files); API use under Xero Developer Platform Terms",
+        "status": "verified",
+        "basis": "Read LICENSE ('MIT License, Copyright (c) 2017 Xero Developer API') on github.com/XeroAPI/Xero-OpenAPI master today.",
+        "termsUrl": "https://github.com/XeroAPI/Xero-OpenAPI/blob/master/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/XeroAPI/Xero-OpenAPI",
+      "evidenceUrls": [
+        "https://github.com/XeroAPI/Xero-OpenAPI",
+        "https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/master/LICENSE",
+        "https://developer.xero.com/xero-developer-platform-terms-conditions"
+      ],
+      "norn": {
+        "overlap": "accounts, contacts, invoices, bank transactions, payments, payroll, assets",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3720"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P1",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "OpenAPI YAML may be copied or adapted with MIT attribution. Calling the live API is governed separately by the Developer Platform Terms (page loaded today).",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "zoho",
+      "name": "Zoho Books / Zoho Inventory OpenAPI bundles",
+      "publisher": "Zoho Corporation",
+      "kind": "system",
+      "domains": [
+        "canon-systems",
+        "accounting-reporting",
+        "supply-chain"
+      ],
+      "version": "Books API v3; Inventory API v1",
+      "versionDate": null,
+      "versionBasis": "API versions in the bundle URLs from the 2026-10-21 manifest; bundle contents are mutable and unversioned.",
+      "licence": {
+        "spdx": "LicenseRef-Zoho-ToS",
+        "text": "Zoho general Terms of Service; no open licence for the OpenAPI bundles",
+        "status": "verified",
+        "basis": "zoho.com/terms.html loaded today (served the German 'Servicebedingungen'); the terms grant no specific licence for the API specs.",
+        "termsUrl": "https://www.zoho.com/terms.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.zoho.com/books/api/v3/openapi-all.zip",
+      "evidenceUrls": [
+        "https://www.zoho.com/books/api/v3/introduction/",
+        "https://www.zoho.com/terms.html"
+      ],
+      "norn": {
+        "overlap": "chart of accounts, invoices, bills, items, sales/purchase orders, contacts",
+        "concepts": [
+          "canon.Party",
+          "canon.Item",
+          "canon.OrderLine",
+          "canon.Posting",
+          "canon.Holding"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Canon systems define the vocabulary Norn maps between."
+      },
+      "notes": "The manifest marked the bundles 'unresolved' (member format unverified). Map to names only.",
+      "origin": "atlas-2026-11-11"
+    }
+  ]
+}

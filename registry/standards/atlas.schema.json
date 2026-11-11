@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://norn.cloud/schema/standards-atlas/1",
+  "title": "Norn standards and systems atlas: one domain file",
+  "description": "Each registry/standards/atlas/<domain>.json file lists the standards, ontologies and systems whose primary domain is <domain>. scripts/standards_atlas.py enforces this schema plus the cross-file rules in registry/standards/README.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["atlasVersion", "domain", "entries"],
+  "properties": {
+    "atlasVersion": { "const": 1 },
+    "domain": { "$ref": "#/$defs/domain" },
+    "entries": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/entry" } }
+  },
+  "$defs": {
+    "domain": {
+      "enum": [
+        "finance", "payments", "accounting-reporting", "einvoicing-tax",
+        "supply-chain", "logistics", "manufacturing", "products-units",
+        "parties-identity", "hr", "workspace", "process-rules", "governance",
+        "capabilities-routing", "canon-systems", "law", "i18n", "time", "geo",
+        "records", "upper-ontology", "ai-agents", "infra-it", "data-spaces",
+        "healthcare", "education", "energy", "agriculture", "transport",
+        "telecom", "insurance", "iot-buildings", "travel", "social-marketing",
+        "sustainability"
+      ]
+    },
+    "priority": { "enum": ["P0", "P1", "P2", "watch", "ignore"] },
+    "date": { "type": "string", "pattern": "^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$" },
+    "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
+    "text": { "type": "string", "minLength": 1 },
+    "issue": { "type": "string", "pattern": "^Norn-cloud/norn(-platform)?#[0-9]+$" },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "publisher", "kind", "domains", "version", "versionDate",
+        "versionBasis", "licence", "reuse", "formats", "machineReadable",
+        "artifactUrl", "evidenceUrls", "norn", "priority", "origin"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$" },
+        "name": { "$ref": "#/$defs/text" },
+        "publisher": { "$ref": "#/$defs/text" },
+        "kind": { "enum": ["standard", "ontology", "code-list", "protocol", "system", "data-model"] },
+        "domains": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/domain" } },
+        "version": { "type": ["string", "null"] },
+        "versionDate": { "anyOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] },
+        "versionBasis": { "$ref": "#/$defs/text" },
+        "licence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["spdx", "text", "status", "basis", "termsUrl", "checked"],
+          "properties": {
+            "spdx": { "type": "string", "pattern": "^\\(?(NOASSERTION|[A-Za-z0-9.+-]+)(\\)? (AND|OR|WITH) \\(?[A-Za-z0-9.+-]+\\)?)*$" },
+            "text": { "$ref": "#/$defs/text" },
+            "status": { "enum": ["verified", "unverified"] },
+            "basis": { "$ref": "#/$defs/text" },
+            "termsUrl": { "anyOf": [{ "$ref": "#/$defs/url" }, { "type": "null" }] },
+            "checked": { "$ref": "#/$defs/date" }
+          }
+        },
+        "reuse": { "enum": ["code-reusable", "vocabulary-only", "reference-only"] },
+        "formats": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {
+            "enum": [
+              "OWL", "RDF", "SKOS", "JSON-LD", "XSD", "JSON-Schema", "OpenAPI",
+              "AsyncAPI", "Schematron", "XBRL", "CSV", "XML", "JSON", "SQL-DDL",
+              "source-code", "spec-HTML", "spec-PDF", "API", "EDI", "ASN1", "other"
+            ]
+          }
+        },
+        "machineReadable": { "enum": ["yes", "restricted", "unverified", "no"] },
+        "artifactUrl": { "anyOf": [{ "$ref": "#/$defs/url" }, { "type": "null" }] },
+        "evidenceUrls": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/url" } },
+        "norn": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["overlap", "concepts", "irTargets", "proposedConcepts", "mapping", "mappingEvidence", "importerIssue"],
+          "properties": {
+            "overlap": { "$ref": "#/$defs/text" },
+            "concepts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[A-Za-z0-9_]+)+$" } },
+            "irTargets": {
+              "type": "array", "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "EntityIR", "InterfaceIR", "ValueType", "SourceSchemaIR", "MappingIR",
+                  "LawIR", "RuleIR", "PolicyIR", "ActionIR", "ConnectorIR", "MetricIR",
+                  "QuestionIR", "SettingIR", "StructuredRequirement", "FunctionManifest"
+                ]
+              }
+            },
+            "proposedConcepts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" } },
+            "mapping": { "enum": ["none", "planned", "partial", "done"] },
+            "mappingEvidence": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_.][A-Za-z0-9_./-]*$" } },
+            "importerIssue": { "anyOf": [{ "$ref": "#/$defs/issue" }, { "type": "null" }] }
+          }
+        },
+        "priority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["customer1", "sapParity", "reason"],
+          "properties": {
+            "customer1": { "$ref": "#/$defs/priority" },
+            "sapParity": { "$ref": "#/$defs/priority" },
+            "reason": { "$ref": "#/$defs/text" }
+          }
+        },
+        "notes": { "type": "string" },
+        "origin": { "enum": ["catalogue-2026-10-21", "atlas-2026-11-11"] }
+      }
+    }
+  }
+}

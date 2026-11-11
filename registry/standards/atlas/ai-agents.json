@@ -1,0 +1,371 @@
+{
+  "atlasVersion": 1,
+  "domain": "ai-agents",
+  "entries": [
+    {
+      "id": "a2a-protocol",
+      "name": "Agent2Agent protocol",
+      "publisher": "A2A project / Linux Foundation",
+      "kind": "protocol",
+      "domains": [
+        "ai-agents"
+      ],
+      "version": "98279d62316361ba8451eaef300f72b72e169185",
+      "versionDate": "2026-10-20",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v1.0.1 published 2026-05-28T11:34:36Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/a2aproject/A2A/98279d62316361ba8451eaef300f72b72e169185/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/a2aproject/A2A/98279d62316361ba8451eaef300f72b72e169185/specification/a2a.proto",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/a2aproject/A2A/98279d62316361ba8451eaef300f72b72e169185/specification/a2a.proto",
+        "https://raw.githubusercontent.com/a2aproject/A2A/98279d62316361ba8451eaef300f72b72e169185/LICENSE",
+        "https://github.com/a2aproject/A2A/commit/98279d62316361ba8451eaef300f72b72e169185",
+        "https://github.com/a2aproject/A2A/releases/tag/v1.0.1"
+      ],
+      "norn": {
+        "overlap": "Agent cards/messages/tasks are interoperability shapes, not a second durable process runtime.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "AgentCard",
+          "Capability"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#1217"
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Agent interoperability, outside the ERP core."
+      },
+      "notes": "Imported protobuf definitions require dependency closure. No adapter or executable semantics are implemented by the catalogue. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "a2ui-protocol",
+      "name": "A2UI declarative agent UI protocol",
+      "publisher": "A2UI project (originated by Google)",
+      "kind": "protocol",
+      "domains": [
+        "ai-agents"
+      ],
+      "version": "059b8d34874f96c0395dbfe23e6cc8b41cdb0f87",
+      "versionDate": "2026-10-20",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release python/a2ui-adk/v0.1.0 published 2026-10-17T00:12:59Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/a2ui-project/a2ui/059b8d34874f96c0395dbfe23e6cc8b41cdb0f87/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/a2ui-project/a2ui/059b8d34874f96c0395dbfe23e6cc8b41cdb0f87/specification/v1_0/json/agent_to_renderer.json",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/a2ui-project/a2ui/059b8d34874f96c0395dbfe23e6cc8b41cdb0f87/specification/v1_0/json/agent_to_renderer.json",
+        "https://raw.githubusercontent.com/a2ui-project/a2ui/059b8d34874f96c0395dbfe23e6cc8b41cdb0f87/LICENSE",
+        "https://github.com/a2ui-project/a2ui/commit/059b8d34874f96c0395dbfe23e6cc8b41cdb0f87",
+        "https://github.com/a2ui-project/a2ui/releases/tag/python/a2ui-adk/v0.1.0"
+      ],
+      "norn": {
+        "overlap": "WidgetIR projection only; no replacement for canonical UI or server permissions.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Capability",
+          "AgentCard",
+          "ModelCard"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Agent interoperability, outside the ERP core."
+      },
+      "notes": "Path selects v1_0. Release API returned a Python SDK package tag, not a protocol release. Catalog/common-type references need closure. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "data-cards-playbook-template",
+      "name": "Data Cards Playbook extended template",
+      "publisher": "Google PAIR",
+      "kind": "standard",
+      "domains": [
+        "ai-agents"
+      ],
+      "version": "9c6545b1fe0e251aa7326969074bc84d5b87693e",
+      "versionDate": "2023-02-22",
+      "versionBasis": "Pinned repository committer date; README separately dates Playbook publication March 5, 2021. No versioned machine schema release verified.",
+      "licence": {
+        "spdx": "CC-BY-SA-4.0",
+        "text": "CC-BY-SA-4.0",
+        "status": "verified",
+        "basis": "README explicitly licenses Data Cards Playbook CC-BY-SA-4.0. Root Apache-2.0 code licence does not replace the Playbook content licence; preserve attribution and ShareAlike conditions.",
+        "termsUrl": "https://github.com/PAIR-code/datacardsplaybook/blob/9c6545b1fe0e251aa7326969074bc84d5b87693e/README.md",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://raw.githubusercontent.com/PAIR-code/datacardsplaybook/9c6545b1fe0e251aa7326969074bc84d5b87693e/templates/DataCardsExtendedTemplate.md",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/PAIR-code/datacardsplaybook/9c6545b1fe0e251aa7326969074bc84d5b87693e/templates/DataCardsExtendedTemplate.md",
+        "https://github.com/PAIR-code/datacardsplaybook/blob/9c6545b1fe0e251aa7326969074bc84d5b87693e/README.md"
+      ],
+      "norn": {
+        "overlap": "Dataset documentation/evidence only; no semantic or quality authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Capability",
+          "AgentCard",
+          "ModelCard"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Agent interoperability, outside the ERP core."
+      },
+      "notes": "Quoted issue search returned []. DOCX/PDF alternatives exist but are not source payloads. Machine-readable=no because headings/questions are narrative, not a typed interchange schema. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "huggingface-dataset-card-template",
+      "name": "Hugging Face Dataset Card metadata template",
+      "publisher": "Hugging Face",
+      "kind": "standard",
+      "domains": [
+        "ai-agents"
+      ],
+      "version": "801da850a833abc51d16880dfefcd32ba76bf2c1",
+      "versionDate": "2026-10-21",
+      "versionBasis": "Pinned repository committer date 2026-10-21T10:29:32Z; template has no separate semantic version/release date.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Pinned hub-docs repository Apache-2.0 licence checked. Template licence does not grant rights in datasets or in cards authored by third parties.",
+        "termsUrl": "https://raw.githubusercontent.com/huggingface/hub-docs/801da850a833abc51d16880dfefcd32ba76bf2c1/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/huggingface/hub-docs/801da850a833abc51d16880dfefcd32ba76bf2c1/datasetcard.md",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/huggingface/hub-docs/801da850a833abc51d16880dfefcd32ba76bf2c1/datasetcard.md",
+        "https://raw.githubusercontent.com/huggingface/hub-docs/801da850a833abc51d16880dfefcd32ba76bf2c1/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Selected typed YAML metadata fields for dataset documentation; narrative content is not formal ontology.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Capability",
+          "AgentCard",
+          "ModelCard"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Agent interoperability, outside the ERP core."
+      },
+      "notes": "Quoted issue search returned []. Metadata template is not JSON Schema, and placeholders need replacement before YAML can serve as an actual card. Do not ingest Markdown narrative as ontology payload. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "mcp-apps-schema",
+      "name": "MCP Apps extension schemas",
+      "publisher": "Model Context Protocol project",
+      "kind": "protocol",
+      "domains": [
+        "ai-agents"
+      ],
+      "version": "82221c0c8ce7661efa6771c9d461511b1650495f",
+      "versionDate": "2026-09-25",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v2.0.3 published 2026-09-25T15:58:06Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "Apache-2.0 AND MIT",
+        "text": "Apache-2.0 AND MIT (contribution-dependent)",
+        "status": "verified",
+        "basis": "Pinned LICENSE describes Apache-2.0/MIT contribution transition and CC-BY-4.0 for non-spec documentation. Preserve applicable notices; third-party app content has separate terms.",
+        "termsUrl": "https://raw.githubusercontent.com/modelcontextprotocol/ext-apps/82221c0c8ce7661efa6771c9d461511b1650495f/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/modelcontextprotocol/ext-apps/82221c0c8ce7661efa6771c9d461511b1650495f/src/generated/schema.json",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/modelcontextprotocol/ext-apps/82221c0c8ce7661efa6771c9d461511b1650495f/src/generated/schema.json",
+        "https://raw.githubusercontent.com/modelcontextprotocol/ext-apps/82221c0c8ce7661efa6771c9d461511b1650495f/LICENSE",
+        "https://github.com/modelcontextprotocol/ext-apps/commit/82221c0c8ce7661efa6771c9d461511b1650495f",
+        "https://github.com/modelcontextprotocol/ext-apps/releases/tag/v2.0.3"
+      ],
+      "norn": {
+        "overlap": "WidgetIR projection to UI transport; WidgetIR stays canonical.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Capability",
+          "AgentCard",
+          "ModelCard"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Agent interoperability, outside the ERP core."
+      },
+      "notes": "SDK v2.0.3 release date is separate from protocol revision identity. Do not call SDK version a protocol version. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "mcp-protocol-schema",
+      "name": "Model Context Protocol schema",
+      "publisher": "Model Context Protocol project",
+      "kind": "protocol",
+      "domains": [
+        "ai-agents"
+      ],
+      "version": "80041ab0a139a8f4fb3adbc99f7ae9113ea59671",
+      "versionDate": "2026-10-20",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release 2026-07-28 published 2026-07-28T16:47:49Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "Apache-2.0 AND MIT",
+        "text": "Apache-2.0 AND MIT (contribution-dependent)",
+        "status": "verified",
+        "basis": "Pinned LICENSE: new code/specifications Apache-2.0; historical contributions without relicensing consent remain MIT; non-specification documentation CC-BY-4.0. Preserve applicable notices; no blanket MIT claim.",
+        "termsUrl": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/80041ab0a139a8f4fb3adbc99f7ae9113ea59671/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/80041ab0a139a8f4fb3adbc99f7ae9113ea59671/schema/2026-07-28/schema.json",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/80041ab0a139a8f4fb3adbc99f7ae9113ea59671/schema/2026-07-28/schema.json",
+        "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/80041ab0a139a8f4fb3adbc99f7ae9113ea59671/LICENSE",
+        "https://modelcontextprotocol.io/specification/2026-07-28",
+        "https://github.com/modelcontextprotocol/modelcontextprotocol/commit/80041ab0a139a8f4fb3adbc99f7ae9113ea59671",
+        "https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28"
+      ],
+      "norn": {
+        "overlap": "Action/resource/tool projection; no runtime or permission authority transfer.",
+        "concepts": [],
+        "irTargets": [
+          "FunctionManifest",
+          "ActionIR"
+        ],
+        "proposedConcepts": [
+          "Capability"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#1217"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P2",
+        "reason": "Agents act through MCP."
+      },
+      "notes": "Dated protocol schema is 2026-07-28; version_date identifies repository commit. Normative prose and authorization are not captured by JSON alone. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "model-card-toolkit-schema",
+      "name": "Model Cards Toolkit model-card schema",
+      "publisher": "TensorFlow / Google",
+      "kind": "standard",
+      "domains": [
+        "ai-agents"
+      ],
+      "version": "74d7e6d8d3163b830711b226491ccd976a2d7018",
+      "versionDate": "2023-07-26",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v2.0.0 published 2023-04-03T17:58:08Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/tensorflow/model-card-toolkit/74d7e6d8d3163b830711b226491ccd976a2d7018/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/tensorflow/model-card-toolkit/74d7e6d8d3163b830711b226491ccd976a2d7018/model_card_toolkit/schema/v0.0.2/model_card.schema.json",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/tensorflow/model-card-toolkit/74d7e6d8d3163b830711b226491ccd976a2d7018/model_card_toolkit/schema/v0.0.2/model_card.schema.json",
+        "https://raw.githubusercontent.com/tensorflow/model-card-toolkit/74d7e6d8d3163b830711b226491ccd976a2d7018/LICENSE",
+        "https://github.com/tensorflow/model-card-toolkit/commit/74d7e6d8d3163b830711b226491ccd976a2d7018",
+        "https://github.com/tensorflow/model-card-toolkit/releases/tag/v2.0.0"
+      ],
+      "norn": {
+        "overlap": "Model documentation metadata; no quality/safety certification.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Capability",
+          "AgentCard",
+          "ModelCard"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Agent interoperability, outside the ERP core."
+      },
+      "notes": "Quoted issue search returned []. Toolkit v2.0.0 was published 2023-04-03; not schema v0.0.2 release date, which remains unverified. No universally normative model-card standard claimed. Repository metadata confirms archived=true; no active maintenance claimed. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

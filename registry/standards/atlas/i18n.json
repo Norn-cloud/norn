@@ -1,0 +1,678 @@
+{
+  "atlasVersion": 1,
+  "domain": "i18n",
+  "entries": [
+    {
+      "id": "bcp47-language-subtag-registry",
+      "name": "IANA Language Subtag Registry for BCP 47",
+      "publisher": "IANA / IETF",
+      "kind": "code-list",
+      "domains": [
+        "i18n"
+      ],
+      "version": "File-Date: 2026-09-17",
+      "versionDate": "2026-09-17",
+      "versionBasis": "Actual response starts File-Date: 2026-09-17; live URL, must hash/archive before source admission.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0-1.0 (IANA/IETF rights in protocol registries)",
+        "status": "verified",
+        "basis": "2021-11-10 IANA/IETF joint statement dedicates their protocol-registry rights under CC0; scope is rights they own or can sublicense, not unrelated ISO publications.",
+        "termsUrl": "https://www.iana.org/help/licensing-terms",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry",
+      "evidenceUrls": [
+        "https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry",
+        "https://www.iana.org/help/licensing-terms",
+        "https://www.rfc-editor.org/rfc/rfc5646"
+      ],
+      "norn": {
+        "overlap": "Language/script/region/variant identifiers and deprecations for localized values; preserve preferred-value metadata and historic tags.",
+        "concepts": [],
+        "irTargets": [
+          "StructuredRequirement"
+        ],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-ir/schema/structured_requirement.schema.json"
+        ],
+        "importerIssue": "Norn-cloud/norn-platform#3438"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "bcp47-rfc4647",
+      "name": "BCP 47 language matching and lookup (RFC 4647)",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "i18n"
+      ],
+      "version": "RFC 4647",
+      "versionDate": "2006-09",
+      "versionBasis": "Fixed RFC header, distinct pre-Trust copyright notice.",
+      "licence": {
+        "spdx": "LicenseRef-BCP-78-as-stated-in",
+        "text": "BCP 78 as stated in RFC 4647 (2006)",
+        "status": "unverified",
+        "basis": "RFC footer subjects document to BCP 78 and retains author rights; publication-time rights and derivative grammar extraction not independently resolved here. Do not apply modern registry CC0 or later BSD code terms by assumption.",
+        "termsUrl": "https://www.rfc-editor.org/rfc/rfc4647.txt",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc4647.txt",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc4647",
+        "https://www.rfc-editor.org/rfc/rfc4647.txt"
+      ],
+      "norn": {
+        "overlap": "Language negotiation ranges and lookup; filtering is not semantic equivalence.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale",
+          "MessageCatalog"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "bcp47-rfc5646",
+      "name": "BCP 47 language-tag syntax (RFC 5646)",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "i18n"
+      ],
+      "version": "RFC 5646",
+      "versionDate": "2009-09",
+      "versionBasis": "Fixed RFC header, separate from changing IANA registry and RFC 4647 matching specification.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-Legal-Provisions-BCP",
+        "text": "IETF Trust Legal Provisions / BCP 78; pre-2008 material caveat",
+        "status": "verified",
+        "basis": "RFC notice permits use under publication-time TLP but expressly notes older contributions may lack outside-standards modification grants. Preserve RFC unchanged/notices; do not claim CC0 on grammar or prose merely because registry data is CC0.",
+        "termsUrl": "https://www.rfc-editor.org/rfc/rfc5646",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc5646",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc5646",
+        "https://trustee.ietf.org/documents/trust-legal-provisions/"
+      ],
+      "norn": {
+        "overlap": "Tag grammar and identifier construction; no automatic language equivalence or translation semantics.",
+        "concepts": [],
+        "irTargets": [
+          "StructuredRequirement"
+        ],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-ir/schema/structured_requirement.schema.json"
+        ],
+        "importerIssue": "Norn-cloud/norn-platform#3438"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "cldr-islamic-calendars",
+      "name": "CLDR Islamic calendars (Umm al-Qura, civil, tabular, Saudi sighting)",
+      "publisher": "Unicode Consortium (CLDR)",
+      "kind": "code-list",
+      "domains": [
+        "i18n",
+        "time"
+      ],
+      "version": "CLDR 49",
+      "versionDate": "2026-10-21",
+      "versionBasis": "GitHub release release-49 of unicode-org/cldr, published 2026-10-21; calendar types per the CLDR Islamic calendar design.",
+      "licence": {
+        "spdx": "Unicode-3.0",
+        "text": "Unicode License v3",
+        "status": "verified",
+        "basis": "unicode.org/license.txt (Unicode License v3) covers CLDR data files (read 2026-11-11).",
+        "termsUrl": "https://www.unicode.org/license.txt",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XML",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/unicode-org/cldr",
+      "evidenceUrls": [
+        "https://cldr.unicode.org/development/development-process/design-proposals/islamic-calendar-types",
+        "https://github.com/unicode-org/cldr/releases/tag/release-49"
+      ],
+      "norn": {
+        "overlap": "Hijri calendar display: islamic-umalqura, islamic-civil, islamic-tbla, islamic-rgsa",
+        "concepts": [
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3438"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P2",
+        "reason": "Hijri (Umm al-Qura) display beside Gregorian; storage stays ISO 8601."
+      },
+      "notes": "Umm al-Qura is the Saudi administrative calendar (computed, deterministic); sighting-based dates (islamic-rgsa) are not computable in advance, so religious holidays stay observed data. Storage stays ISO 8601.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "iso15924-debian",
+      "name": "ISO 15924 script codes: Debian snapshot",
+      "publisher": "Debian iso-codes team",
+      "kind": "code-list",
+      "domains": [
+        "i18n"
+      ],
+      "version": "iso-codes 4.20.1",
+      "versionDate": "2026-01-01",
+      "versionBasis": "Tagged JSON and changelog verified; Debian compilation version rather than ISO edition.",
+      "licence": {
+        "spdx": "LGPL-2.1-or-later",
+        "text": "LGPL-2.1-or-later",
+        "status": "verified",
+        "basis": "REUSE.toml explicitly assigns data/*json LGPL-2.1-or-later; retain notices, licence and corresponding source/modifications under its conditions. This is Debian's compilation grant, not a licence to ISO publications.",
+        "termsUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_15924.json",
+      "evidenceUrls": [
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_15924.json",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/CHANGELOG.md"
+      ],
+      "norn": {
+        "overlap": "Script code identity for localized values; does not prescribe typography, transliteration or language.",
+        "concepts": [],
+        "irTargets": [
+          "ValueType"
+        ],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale",
+          "MessageCatalog"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3453"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso15924-registration-table",
+      "name": "ISO 15924 official script registration table",
+      "publisher": "Unicode Consortium / ISO 15924 Registration Authority",
+      "kind": "code-list",
+      "domains": [
+        "i18n"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Official normative text table fetched; row dates are assignment/change dates, not one table-release date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Code-list page states ISO/Unicode all rights reserved. General Unicode Data Files definition lists directories but does not clearly include /iso15924; no table-specific redistribution grant established. Do not automatically apply CLDR's Unicode-3.0 grant.",
+        "termsUrl": "https://unicode.org/copyright.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://unicode.org/iso15924/iso15924.txt",
+      "evidenceUrls": [
+        "https://unicode.org/iso15924/",
+        "https://unicode.org/iso15924/codelists.html",
+        "https://unicode.org/iso15924/iso15924.txt",
+        "https://unicode.org/copyright.html"
+      ],
+      "norn": {
+        "overlap": "Script identifiers such as Arab/160; independent from language identity and text direction policy.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale",
+          "MessageCatalog"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso639-2-debian",
+      "name": "ISO 639-2/alpha-2 language codes: Debian snapshot",
+      "publisher": "Debian iso-codes team",
+      "kind": "code-list",
+      "domains": [
+        "i18n"
+      ],
+      "version": "iso-codes 4.20.1",
+      "versionDate": "2026-01-01",
+      "versionBasis": "Tagged JSON and release changelog verified.",
+      "licence": {
+        "spdx": "LGPL-2.1-or-later",
+        "text": "LGPL-2.1-or-later",
+        "status": "verified",
+        "basis": "REUSE.toml explicitly assigns data/*json LGPL-2.1-or-later; retain notices, licence and corresponding source/modifications under its conditions. This is Debian's compilation grant, not a licence to ISO publications.",
+        "termsUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_639-2.json",
+      "evidenceUrls": [
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_639-2.json",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/CHANGELOG.md"
+      ],
+      "norn": {
+        "overlap": "Language code-list source; preserve alternative identifiers, do not equate country-language combinations with languages.",
+        "concepts": [],
+        "irTargets": [
+          "ValueType"
+        ],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale",
+          "MessageCatalog"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3453"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso639-2-loc",
+      "name": "Library of Congress ISO 639-2 code table",
+      "publisher": "Library of Congress / ISO 639-2 Registration Authority",
+      "kind": "code-list",
+      "domains": [
+        "i18n"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Direct table and official FAQ requests returned 403; no release pin established.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Primary rights statement inaccessible; no blanket US-government public-domain assumption for source corpus compilation.",
+        "termsUrl": "https://www.loc.gov/standards/iso639-2/faq.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.loc.gov/standards/iso639-2/ISO-639-2_utf-8.txt",
+      "evidenceUrls": [
+        "https://www.loc.gov/standards/iso639-2/ISO-639-2_utf-8.txt",
+        "https://www.loc.gov/standards/iso639-2/faq.html"
+      ],
+      "norn": {
+        "overlap": "Language alpha-2/alpha-3 identities; not equivalent to locale identifiers or every ISO 639-3 language.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale",
+          "MessageCatalog"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso639-3-debian",
+      "name": "ISO 639-3 language codes: Debian snapshot",
+      "publisher": "Debian iso-codes team",
+      "kind": "code-list",
+      "domains": [
+        "i18n"
+      ],
+      "version": "iso-codes 4.20.1",
+      "versionDate": "2026-01-01",
+      "versionBasis": "Tagged JSON and release changelog verified; not a current SIL release claim.",
+      "licence": {
+        "spdx": "LGPL-2.1-or-later",
+        "text": "LGPL-2.1-or-later",
+        "status": "verified",
+        "basis": "REUSE.toml explicitly assigns data/*json LGPL-2.1-or-later; retain notices, licence and corresponding source/modifications under its conditions. This is Debian's compilation grant, not a licence to ISO publications.",
+        "termsUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_639-3.json",
+      "evidenceUrls": [
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_639-3.json",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/CHANGELOG.md"
+      ],
+      "norn": {
+        "overlap": "Language classification/identifiers; retain scope and type. SIL retirements/history require separate source evidence.",
+        "concepts": [],
+        "irTargets": [
+          "ValueType"
+        ],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale",
+          "MessageCatalog"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3453"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso639-3-sil",
+      "name": "SIL ISO 639-3 registration-authority tables",
+      "publisher": "SIL Global / ISO 639-3 Registration Authority",
+      "kind": "code-list",
+      "domains": [
+        "i18n"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Download page and direct table URL returned 403; no release/date/content invented.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Artifact-specific SIL grant inaccessible; neither a SIL font licence nor another SIL site's CC licence establishes table redistribution rights.",
+        "termsUrl": "https://iso639-3.sil.org/code_tables/download_tables",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "CSV"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://iso639-3.sil.org/code_tables/download_tables",
+      "evidenceUrls": [
+        "https://iso639-3.sil.org/code_tables/download_tables",
+        "https://iso639-3.sil.org/sites/iso639-3/files/downloads/iso-639-3.tab"
+      ],
+      "norn": {
+        "overlap": "Language identifiers, macrolanguages and retirements; no inference that all languages share one locale model.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale",
+          "MessageCatalog"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Arabic and English from day one: localized labels, messages and calendars."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unicode-cldr",
+      "name": "Unicode CLDR locale data including Arabic and subdivision names",
+      "publisher": "Unicode Consortium",
+      "kind": "code-list",
+      "domains": [
+        "i18n"
+      ],
+      "version": "48.2",
+      "versionDate": "2026-03-17",
+      "versionBasis": "Official release/download table lists 48.2 on 2026-03-17; tagged release-48-2 licence verified. No invented calendar-based latest version.",
+      "licence": {
+        "spdx": "Unicode-3.0",
+        "text": "Unicode-3.0",
+        "status": "verified",
+        "basis": "Tagged Unicode License V3 explicitly covers Data Files and permits use/modification/distribution with copyright and permission notice in copies or associated documentation; no endorsement by copyright-holder names.",
+        "termsUrl": "https://raw.githubusercontent.com/unicode-org/cldr/release-48-2/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://unicode.org/Public/cldr/48.2/core.zip",
+      "evidenceUrls": [
+        "https://cldr.unicode.org/index/downloads",
+        "https://unicode.org/Public/cldr/48.2/",
+        "https://raw.githubusercontent.com/unicode-org/cldr/release-48-2/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Localized labels, plural rules, calendar/locale metadata and subdivision display names; not an address validation service or legal working calendar.",
+        "concepts": [],
+        "irTargets": [
+          "ValueType"
+        ],
+        "proposedConcepts": [
+          "LocalizedText",
+          "Locale"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3453"
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P1",
+        "reason": "Arabic and English names, plurals, numerals and calendars."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "unicode-mf2",
+      "name": "Unicode MessageFormat 2 (LDML Part 9)",
+      "publisher": "Unicode Consortium",
+      "kind": "standard",
+      "domains": [
+        "i18n"
+      ],
+      "version": "LDML 46.1 final candidate",
+      "versionDate": null,
+      "versionBasis": "spec/README.md in unicode-org/message-format-wg says the final candidate is in LDML 46.1; the editor's copy may be newer.",
+      "licence": {
+        "spdx": "LicenseRef-Unicode-Terms-of-Use AND Unicode-3.0",
+        "text": "Specification text under Unicode Terms of Use; other repository content (tests, data) under Unicode License v3",
+        "status": "verified",
+        "basis": "LICENSE in unicode-org/message-format-wg (read 2026-11-11): the LDML Part 9 text needs permission for public redistribution; all other content is Unicode License v3.",
+        "termsUrl": "https://github.com/unicode-org/message-format-wg/blob/main/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML",
+        "JSON",
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/unicode-org/message-format-wg",
+      "evidenceUrls": [
+        "https://github.com/unicode-org/message-format-wg",
+        "https://www.unicode.org/reports/tr35/tr35-73/tr35-messageFormat.html"
+      ],
+      "norn": {
+        "overlap": "localized message syntax with plural, gender and select variants and formatted placeholders",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "MessageCatalog",
+          "LocalizedText"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3438"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Refusal and label message catalogs in Arabic and English."
+      },
+      "notes": "Target for refusal-message and label catalogs. Implement the syntax; do not copy the spec text. Test data is Unicode-3.0.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "unicode-uax9-bidi",
+      "name": "Unicode Bidirectional Algorithm (UAX #9)",
+      "publisher": "Unicode Consortium",
+      "kind": "standard",
+      "domains": [
+        "i18n"
+      ],
+      "version": "Unicode 18.0.0, revision 52",
+      "versionDate": "2026-09-01",
+      "versionBasis": "Header of unicode.org/reports/tr9 (read 2026-11-11).",
+      "licence": {
+        "spdx": "LicenseRef-Unicode-Terms-of-Use AND Unicode-3.0",
+        "text": "Report under Unicode Terms of Use; data and test files under Unicode License v3",
+        "status": "verified",
+        "basis": "unicode.org/license.txt (Unicode License v3) covers data files such as BidiTest.txt; the report is a stable reference under the Unicode Terms of Use.",
+        "termsUrl": "https://www.unicode.org/license.txt",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML",
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.unicode.org/reports/tr9/",
+      "evidenceUrls": [
+        "https://www.unicode.org/reports/tr9/",
+        "https://www.unicode.org/license.txt"
+      ],
+      "norn": {
+        "overlap": "display order and isolation of mixed right-to-left and left-to-right text",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "LocalizedText"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn-platform#3438"
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P2",
+        "reason": "Mixed Arabic/Latin text needs bidi isolation in every rendered value."
+      },
+      "notes": "Rendering rule, not data: every displayed LocalizedText and interpolated value is bidi-isolated. Use a maintained implementation rather than reimplementing.",
+      "origin": "atlas-2026-11-11"
+    }
+  ]
+}

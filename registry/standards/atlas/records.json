@@ -1,0 +1,311 @@
+{
+  "atlasVersion": 1,
+  "domain": "records",
+  "entries": [
+    {
+      "id": "etsi-xades-schema-1-3-2",
+      "name": "XAdES 1.3.2 schema, June 2015 revision",
+      "publisher": "ETSI ESI",
+      "kind": "standard",
+      "domains": [
+        "records"
+      ],
+      "version": "1.3.2; 201506 schema revision",
+      "versionDate": null,
+      "versionBasis": "ETSI URI directory and TS 119 132-1 V1.0.1 (2015-07) cite this schema; filename gives month only, exact artifact release day unverified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "ETSI terms/IPR pages direct reproduction inquiries to legal services; no XSD-specific grant inspected. Do not treat free PDF access as schema redistribution permission.",
+        "termsUrl": "https://www.etsi.org/terms/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://uri.etsi.org/01903/v1.3.2/XAdES01903v132-201506.xsd",
+      "evidenceUrls": [
+        "https://uri.etsi.org/01903/v1.3.2/",
+        "https://www.etsi.org/deliver/etsi_ts/119100_119199/11913201/01.00.01_60/ts_11913201v010001p.pdf",
+        "https://www.etsi.org/resources/intellectual-property-rights/",
+        "https://www.etsi.org/terms/"
+      ],
+      "norn": {
+        "overlap": "Signature properties, certificates and timestamps; transport syntax does not establish enforceability or trust.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Document",
+          "Record",
+          "Signature"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Signatures and records retention follow statutory documents."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso-15489-1-prose",
+      "name": "ISO 15489-1:2016 records management concepts (exclusion)",
+      "publisher": "ISO",
+      "kind": "standard",
+      "domains": [
+        "records"
+      ],
+      "version": "15489-1:2016",
+      "versionDate": null,
+      "versionBasis": "ISO catalog identifies 2016 edition; exact publication day not verified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No redistribution or derivative grant established. Paid/catalog access does not grant corpus reuse.",
+        "termsUrl": "https://www.iso.org/standard/62542.html?browse=tc",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.iso.org/standard/62542.html?browse=tc",
+      "evidenceUrls": [
+        "https://www.iso.org/standard/62542.html?browse=tc"
+      ],
+      "norn": {
+        "overlap": "Records principles only; never an input payload for mechanical ontology extraction.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Document",
+          "Record",
+          "Signature"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Signatures and records retention follow statutory documents."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "mets-2-0",
+      "name": "METS 2.0 document packaging metadata schema",
+      "publisher": "METS Editorial Board / Library of Congress",
+      "kind": "standard",
+      "domains": [
+        "records"
+      ],
+      "version": "2.0",
+      "versionDate": "2025-03-10",
+      "versionBasis": "Schema history identifies 2.0 final March 10, 2025; header month March 2025.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0-1.0 (schema rights waiver)",
+        "status": "verified",
+        "basis": "Schema contains worldwide copyright waiver; applies to schema, not content packaged in a METS document.",
+        "termsUrl": "https://www.loc.gov/standards/mets/mets2.xsd",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.loc.gov/standards/mets/mets2.xsd",
+      "evidenceUrls": [
+        "https://www.loc.gov/standards/mets/mets2.xsd",
+        "https://loc.gov/standards/mets/mets2.html"
+      ],
+      "norn": {
+        "overlap": "Document file inventory, structural map and administrative metadata; keep source identifiers.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Document",
+          "Record",
+          "Signature"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Signatures and records retention follow statutory documents."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "oasis-dss-x-2-0",
+      "name": "DSS-X 2.0 signature request/verification JSON schema",
+      "publisher": "OASIS Digital Signature Services eXtended Technical Committee",
+      "kind": "protocol",
+      "domains": [
+        "records"
+      ],
+      "version": "2.0 CS02",
+      "versionDate": "2019-12-11",
+      "versionBasis": "Committee Specification 02 heading and schema directory date, not an OASIS Standard claim.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Public OASIS work product inspected; exact JSON-schema redistribution/derivative permission not established.",
+        "termsUrl": "https://docs.oasis-open.org/dss-x/dss-core/v2.0/cs02/dss-core-v2.0-cs02.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "JSON-Schema",
+        "OpenAPI",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.oasis-open.org/dss-x/dss-core/v2.0/cs02/schema/oasis-dss-core-schema.json",
+      "evidenceUrls": [
+        "https://docs.oasis-open.org/dss-x/dss-core/v2.0/cs02/schema/oasis-dss-core-schema.json",
+        "https://docs.oasis-open.org/dss-x/dss-core/v2.0/dss-core-v2.0.html",
+        "https://docs.oasis-open.org/dss-x/dss-core/v2.0/cs02/schema/"
+      ],
+      "norn": {
+        "overlap": "Signing/verifying service requests and responses; no new signing runtime.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Document",
+          "Record",
+          "Signature"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Signatures and records retention follow statutory documents."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "premis-3-0-xsd",
+      "name": "PREMIS preservation metadata schema 3.0",
+      "publisher": "PREMIS Editorial Committee / Library of Congress",
+      "kind": "standard",
+      "domains": [
+        "records"
+      ],
+      "version": "3.0",
+      "versionDate": "2016-01-18",
+      "versionBasis": "XSD header date; distinguish from the June 2015 data dictionary publication.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "LC hosting is not a blanket public-domain grant. No license for these XSD bytes was established; metadata rights elements are not a license of the schema itself.",
+        "termsUrl": "https://www.loc.gov/legal/security-copyright-and-privacy/understanding-copyright/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.loc.gov/standards/premis/v3/premis-v3-0.xsd",
+      "evidenceUrls": [
+        "https://www.loc.gov/standards/premis/v3/premis-v3-0.xsd",
+        "https://www.loc.gov/legal/security-copyright-and-privacy/understanding-copyright/"
+      ],
+      "norn": {
+        "overlap": "Preservation Object, Event, Agent, Rights; overlaps ledger provenance but does not replace the execution ledger.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Document",
+          "Record",
+          "Signature"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Signatures and records retention follow statutory documents."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "xml-signature-schema",
+      "name": "XML Signature core schema",
+      "publisher": "W3C / IETF",
+      "kind": "standard",
+      "domains": [
+        "records"
+      ],
+      "version": "schema revision 1.2",
+      "versionDate": "2013-04-16",
+      "versionBasis": "Fetched schema RCS header revision/date; not a claim that XSD version attribute 0.1 is the XML Signature specification version.",
+      "licence": {
+        "spdx": "W3C-20150513",
+        "text": "W3C Software License (schema notice)",
+        "status": "verified",
+        "basis": "Historic W3C software license checked: retain notices and license reference, identify modifications and dates; no endorsement or trademark grant.",
+        "termsUrl": "https://www.w3.org/Consortium/Legal/copyright-software-19980720",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XSD"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/TR/xmldsig-core/xmldsig-core-schema.xsd",
+      "evidenceUrls": [
+        "https://www.w3.org/TR/xmldsig-core/xmldsig-core-schema.xsd",
+        "https://www.w3.org/Consortium/Legal/copyright-software-19980720"
+      ],
+      "norn": {
+        "overlap": "Signed references, transforms, digest and signature metadata; no cryptographic implementation or trust decision.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Document",
+          "Record",
+          "Signature"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P2",
+        "sapParity": "P2",
+        "reason": "Signatures and records retention follow statutory documents."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

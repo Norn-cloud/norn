@@ -1,0 +1,424 @@
+{
+  "atlasVersion": 1,
+  "domain": "time",
+  "entries": [
+    {
+      "id": "iana-tzdb",
+      "name": "IANA time zone rule data",
+      "publisher": "IANA / Time Zone Database maintainers",
+      "kind": "code-list",
+      "domains": [
+        "time"
+      ],
+      "version": "2026e",
+      "versionDate": "2026-09-29",
+      "versionBasis": "Observed IANA time-zones page lists 2026e released 2026-09-29; versioned archive returned gzip bytes.",
+      "licence": {
+        "spdx": "LicenseRef-tz-public-domain",
+        "text": "Public domain (tz data); file exceptions in LICENSE",
+        "status": "verified",
+        "basis": "Upstream LICENSE places code/data in public domain unless listed otherwise; date.c/newstrftime.3/strftime.c, if present, have BSD-3-Clause material. Admit data separately from optional implementation files.",
+        "termsUrl": "https://data.iana.org/time-zones/tzdb/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://data.iana.org/time-zones/releases/tzdata2026e.tar.gz",
+      "evidenceUrls": [
+        "https://www.iana.org/time-zones",
+        "https://data.iana.org/time-zones/tzdb/LICENSE",
+        "https://data.iana.org/time-zones/releases/tzdata2026e.tar.gz"
+      ],
+      "norn": {
+        "overlap": "Named civil-time rules including Africa/Cairo; not holidays, business calendars or tenant working-time policy.",
+        "concepts": [
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar",
+          "TimeZone",
+          "Holiday"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-cell/src/history.rs"
+        ],
+        "importerIssue": "Norn-cloud/norn-platform#3453"
+      },
+      "priority": {
+        "customer1": "P0",
+        "sapParity": "P1",
+        "reason": "Effective time and periods need the pinned tz version."
+      },
+      "notes": "Observed release date retained as published; no archive hash or acquisition/admission claim in this research module. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso8601-1-publication",
+      "name": "ISO 8601-1 basic rules and 2022 amendment",
+      "publisher": "ISO/TC 154",
+      "kind": "standard",
+      "domains": [
+        "time"
+      ],
+      "version": "ISO 8601-1:2019 + Amd 1:2022",
+      "versionDate": "2019-02-25",
+      "versionBasis": "ISO lifecycle gives base publication 2019-02-25; amendment published 2022-10-25; confirmation in 2024 is not a new edition.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "ISO publication is copyrighted with no open grant verified; purchase does not establish redistribution permission. Specific licensed-user redistribution conditions not acquired.",
+        "termsUrl": "https://www.iso.org/standard/70907.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.iso.org/standard/70907.html",
+      "evidenceUrls": [
+        "https://www.iso.org/standard/70907.html",
+        "https://www.iso.org/standard/81801.html"
+      ],
+      "norn": {
+        "overlap": "Date/time representation reference; free RFC profiles can supply operational grammars without copying ISO prose.",
+        "concepts": [
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar",
+          "TimeZone",
+          "Holiday"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso8601-2-publication",
+      "name": "ISO 8601-2 extensions and 2025 amendment",
+      "publisher": "ISO/TC 154",
+      "kind": "standard",
+      "domains": [
+        "time"
+      ],
+      "version": "ISO 8601-2:2019 + Amd 1:2025",
+      "versionDate": "2019-02-25",
+      "versionBasis": "ISO lifecycle gives base publication 2019-02-25; page lists 2025 amendment for canonical expressions/time arithmetic, exact amendment date unverified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Copyrighted ISO publication; no open redistribution grant established and specific licensed-user conditions not acquired.",
+        "termsUrl": "https://www.iso.org/standard/70908.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.iso.org/standard/70908.html",
+      "evidenceUrls": [
+        "https://www.iso.org/standard/70908.html"
+      ],
+      "norn": {
+        "overlap": "Extended uncertain dates and intervals are representational considerations, not imported definitions.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar",
+          "TimeZone",
+          "Holiday"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "nager-date-eg-api",
+      "name": "Nager.Date Egypt public-holiday API response",
+      "publisher": "Nager.Date / nager.at",
+      "kind": "standard",
+      "domains": [
+        "time"
+      ],
+      "version": "API v3; requested year 2026",
+      "versionDate": null,
+      "versionBasis": "URL identifies API generation and calendar year, not an immutable dataset release; anonymous JSON response verified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Repository MIT licence explicitly covers Software and associated documentation; do not assume it establishes a separate blanket grant for hosted API response datasets.",
+        "termsUrl": "https://github.com/nager/Nager.Date",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://date.nager.at/api/v3/PublicHolidays/2026/EG",
+      "evidenceUrls": [
+        "https://date.nager.at/api/v3/PublicHolidays/2026/EG",
+        "https://date.nager.at/api/v3/AvailableCountries",
+        "https://raw.githubusercontent.com/nager/Nager.Date/main/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Dated holiday observations for a jurisdiction pack; not legal payroll entitlement, working-day policy or authoritative Egyptian proclamation.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar",
+          "TimeZone",
+          "Holiday"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
+      },
+      "notes": "Service returned Egypt support. Islamic holiday completeness and actual official declarations were not certified; public availability is not redistribution admission. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "nager-date-source",
+      "name": "Nager.Date holiday calculation source",
+      "publisher": "Nager.Date maintainers",
+      "kind": "standard",
+      "domains": [
+        "time"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Moving repository inspected; immutable release/commit not selected.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT",
+        "status": "verified",
+        "basis": "MIT licence grants software copying/modification/distribution with copyright and permission notices. This entry covers source, not an inferred licence on hosted API data.",
+        "termsUrl": "https://raw.githubusercontent.com/nager/Nager.Date/main/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/nager/Nager.Date",
+      "evidenceUrls": [
+        "https://github.com/nager/Nager.Date",
+        "https://raw.githubusercontent.com/nager/Nager.Date/main/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Holiday computation implementation is an adoption candidate, not a declarative standards schema or Egyptian legal authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar",
+          "TimeZone",
+          "Holiday"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
+      },
+      "notes": "README reports community API v4 release 2026-06-30, v3 release 2021-05-18 and v3 sunset 2027-01-31. Those are API/product dates, not this unpinned source snapshot's release date; Egypt API response is a separate entry. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "openholidays-data",
+      "name": "OpenHolidays holiday database",
+      "publisher": "OpenPotato / OpenHolidays API project",
+      "kind": "standard",
+      "domains": [
+        "time"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Moving source repository and Countries API inspected; no immutable release selected.",
+      "licence": {
+        "spdx": "ODbL-1.0",
+        "text": "ODbL-1.0 (database)",
+        "status": "verified",
+        "basis": "Data repository has ODbL, distinct from API implementation code; attribution, database notice and derivative-database share-alike obligations apply. ODbL does not itself clear independent rights in individual contents; inspect source provenance.",
+        "termsUrl": "https://raw.githubusercontent.com/openpotato/openholidaysapi.data/main/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/openpotato/openholidaysapi.data",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/openpotato/openholidaysapi.data/main/README.md",
+        "https://raw.githubusercontent.com/openpotato/openholidaysapi.data/main/LICENSE",
+        "https://openholidaysapi.org/Countries"
+      ],
+      "norn": {
+        "overlap": "Jurisdiction-specific dated holidays and localized names, not payroll law.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar",
+          "TimeZone",
+          "Holiday"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "owl-time-vocabulary",
+      "name": "OWL-Time temporal ontology",
+      "publisher": "W3C / OGC",
+      "kind": "ontology",
+      "domains": [
+        "time",
+        "upper-ontology"
+      ],
+      "version": "time#2016",
+      "versionDate": "2017-04-06",
+      "versionBasis": "Fetched artifact has versionIRI http://www.w3.org/2006/time#2016 and dct:modified 2017-04-06; metadata date, not an invented release date.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0",
+        "status": "verified",
+        "basis": "Artifact dct:license explicitly CC-BY-4.0; retain W3C/OGC attribution and linked liability/trademark notices.",
+        "termsUrl": "https://www.w3.org/2006/time",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/2006/time",
+      "evidenceUrls": [
+        "https://www.w3.org/2006/time",
+        "https://www.w3.org/TR/owl-time/"
+      ],
+      "norn": {
+        "overlap": "Temporal intervals/instants/durations; not business clock, validity or total commit-order authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar",
+          "TimeZone",
+          "Holiday"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
+      },
+      "notes": "Year-like versionIRI and modified date differ by design; retain observed values. No promotion of OWL temporal inference to kernel time semantics. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "rfc3339-timestamps",
+      "name": "RFC 3339 Internet timestamp profile",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "time"
+      ],
+      "version": "RFC 3339",
+      "versionDate": "2002-07",
+      "versionBasis": "RFC header; RFC Editor lists RFC 9557 as an update, not replacement by full ISO 8601.",
+      "licence": {
+        "spdx": "LicenseRef-RFC-3339-Full-Copyright-Statement",
+        "text": "RFC 3339 Full Copyright Statement (Internet Society, 2002)",
+        "status": "verified",
+        "basis": "Full Copyright Statement allows copies/translations and implementation/explanatory derivatives with notices; the RFC itself may not be modified except the stated standards/translation cases. Do not apply later TLP automatically.",
+        "termsUrl": "https://www.rfc-editor.org/rfc/rfc3339.txt",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc3339.txt",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc3339",
+        "https://www.rfc-editor.org/rfc/rfc3339.txt"
+      ],
+      "norn": {
+        "overlap": "Timestamp syntax profile only; preserve offsets and unknown-offset distinctions, do not imply full ISO interval/duration coverage.",
+        "concepts": [
+          "std.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Calendar",
+          "TimeZone",
+          "Holiday"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/core/artifacts/std.value_types.entity.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "P1",
+        "sapParity": "P1",
+        "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

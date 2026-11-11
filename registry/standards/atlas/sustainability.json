@@ -1,0 +1,351 @@
+{
+  "atlasVersion": 1,
+  "domain": "sustainability",
+  "entries": [
+    {
+      "id": "esrs-revised-draft-taxonomy-2026",
+      "name": "Draft XBRL Taxonomy for Revised ESRS, September 2026",
+      "publisher": "EFRAG",
+      "kind": "standard",
+      "domains": [
+        "sustainability",
+        "accounting-reporting"
+      ],
+      "version": "September 2026 consultation draft",
+      "versionDate": "2026-09-17",
+      "versionBasis": "EFRAG project page states publication 17 September 2026 and replacement of esrs-reference.xml on 18 September; namespace is 2026-08-30.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No source-specific licence granting redistribution or derivatives was verified for this draft.",
+        "termsUrl": "https://xbrl.efrag.org/taxonomy/esrs/2026-08-30/esrs.xsd",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XBRL"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://xbrl.efrag.org/taxonomy/esrs/2026-08-30/esrs.xsd",
+      "evidenceUrls": [
+        "https://www.efrag.org/en/projects/esrs-xbrl-taxonomy/exposure-draft-consultation",
+        "https://xbrl.efrag.org/taxonomy/esrs/2026-08-30/esrs.xsd"
+      ],
+      "norn": {
+        "overlap": "Draft reporting vocabulary only; no authority to revise Core or final-reporting requirements.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "EmissionRecord"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Sustainability reporting, a later statutory layer."
+      },
+      "notes": "Preserve draft/final distinction and the later reference-file correction; namespace date alone cannot identify the complete release. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "esrs-set1-taxonomy-2024",
+      "name": "ESRS Set 1 XBRL Taxonomy 2024",
+      "publisher": "EFRAG",
+      "kind": "standard",
+      "domains": [
+        "sustainability",
+        "accounting-reporting"
+      ],
+      "version": "ESRS Set 1 2024",
+      "versionDate": "2024-08-30",
+      "versionBasis": "EFRAG project page identifies the final Set 1 release as 30 August 2024. The namespace date 2023-12-22 is not the release date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "XSD carries EFRAG copyright. No artifact-specific redistribution/derivative grant verified; public availability and EU legal-text reuse do not establish taxonomy-file rights.",
+        "termsUrl": "https://xbrl.efrag.org/taxonomy/esrs/2023-12-22/esrs_all.xsd",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XBRL"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://xbrl.efrag.org/taxonomy/esrs/2023-12-22/esrs_all.xsd",
+      "evidenceUrls": [
+        "https://www.efrag.org/en/projects/esrs-xbrl-taxonomy/exposure-draft-consultation",
+        "https://xbrl.efrag.org/taxonomy/esrs/2023-12-22/esrs_all.xsd"
+      ],
+      "norn": {
+        "overlap": "Sustainability disclosure concepts stay an external reporting vocabulary.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "EmissionRecord"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Sustainability reporting, a later statutory layer."
+      },
+      "notes": "Final EFRAG taxonomy publication is not proof that an EC tagging mandate is effective for a particular filer. Do not substitute EFRAG Knowledge Hub terms or VSME's MIT licence for ESRS artifact rights. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "ghg-protocol-calculation-tools",
+      "name": "GHG Protocol calculation-tool catalog (payload unresolved)",
+      "publisher": "World Resources Institute / WBCSD",
+      "kind": "protocol",
+      "domains": [
+        "sustainability"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Publisher catalog redirects to official technical-assistance site; no individual workbook release inspected.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Rights, third-party emission-factor sources and workbook reuse terms require per-tool inspection; corporate PDF access is not a grant.",
+        "termsUrl": "https://ghgprotocol.org/calculation-tools-and-guidance",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://ghgprotocol.org/calculation-tools-and-guidance",
+      "evidenceUrls": [
+        "https://ghgprotocol.org/calculation-tools-and-guidance",
+        "https://ghgptechassistance.zendesk.com/hc/en-us/categories/27448673565716-Calculation-Tools-and-Guidance",
+        "https://ghgptechassistance.zendesk.com/hc/en-us/articles/47400812128148-GHG-Emissions-from-Stationary-Combustion-English"
+      ],
+      "norn": {
+        "overlap": "Activity data, factors and units; calculations require scoped methodology, geography and time evidence.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "EmissionRecord"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Sustainability reporting, a later statutory layer."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "ghg-protocol-corporate-prose",
+      "name": "GHG Protocol Corporate Standard revised edition (PDF-only exclusion)",
+      "publisher": "World Resources Institute / WBCSD",
+      "kind": "protocol",
+      "domains": [
+        "sustainability"
+      ],
+      "version": "Revised edition",
+      "versionDate": null,
+      "versionBasis": "Publisher Corporate Standard page links revised PDF; exact PDF publication day not verified. Page's 2015 Scope 2 update is not a new schema release.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Free download does not establish redistribution or ontology-derivative permission; no machine schema rights inferred.",
+        "termsUrl": "https://ghgprotocol.org/corporate-standard",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://ghgprotocol.org/sites/default/files/ghgp/standards/ghg-protocol-revised.pdf",
+      "evidenceUrls": [
+        "https://ghgprotocol.org/corporate-standard",
+        "https://ghgprotocol.org/sites/default/files/ghgp/standards/ghg-protocol-revised.pdf"
+      ],
+      "norn": {
+        "overlap": "Emissions accounting methodology only, not typed source definitions.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "EmissionRecord"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Sustainability reporting, a later statutory layer."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "issb-sustainability-taxonomy-2024",
+      "name": "IFRS Sustainability Disclosure Taxonomy 2024 (ISSB S1/S2)",
+      "publisher": "IFRS Foundation / ISSB",
+      "kind": "standard",
+      "domains": [
+        "sustainability",
+        "accounting-reporting"
+      ],
+      "version": "2024",
+      "versionDate": "2024-04-30",
+      "versionBasis": "Official release page states publication 30 April 2024; 2024-04-26 in the filename/namespace is a different date.",
+      "licence": {
+        "spdx": "LicenseRef-IFRS-Taxonomy-Materials-Terms-and",
+        "text": "IFRS Taxonomy Materials Terms and Conditions; commercial permission required",
+        "status": "verified",
+        "basis": "Taxonomy terms restrict commercial product/data-service use and commercial derivatives; no Norn permission established. Limited personal/professional rights do not authorize vendoring into a commercial registry.",
+        "termsUrl": "https://www.ifrs.org/content/dam/ifrs/about-us/legal-and-governance/legal-docs/taxonomy/taxonomy-terms-and-conditions.pdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "XBRL",
+        "spec-HTML"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.ifrs.org/content/dam/ifrs/standards/sustainability-disclosure-taxonomy/2024/ifrssdt-2024-04-26.zip",
+      "evidenceUrls": [
+        "https://www.ifrs.org/issued-standards/ifrs-sustainability-taxonomy/ifrs-sustainability-disclosure-taxonomy-2024/",
+        "https://www.ifrs.org/content/dam/ifrs/about-us/legal-and-governance/legal-docs/taxonomy/taxonomy-terms-and-conditions.pdf"
+      ],
+      "norn": {
+        "overlap": "S1/S2 reporting concepts, separate from accounting and from the industry-based SASB taxonomy.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "EmissionRecord"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Sustainability reporting, a later statutory layer."
+      },
+      "notes": "No inferred annual 2026 version. Package advertised by steward is machine-readable in design; returned HTML is not a source payload. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "pact-methodology-3-0-prose",
+      "name": "PACT Methodology 3.0 (PDF-only exclusion)",
+      "publisher": "WBCSD Partnership for Carbon Transparency",
+      "kind": "standard",
+      "domains": [
+        "sustainability"
+      ],
+      "version": "3.0",
+      "versionDate": null,
+      "versionBasis": "Publisher-hosted PDF title/version verified; exact issue day not verified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Methodology's own terms not inspected; do not transfer technical-repository or implementation-code grants to the PDF.",
+        "termsUrl": "https://wbcsd.github.io/tr/methodology/3.0/pact-methodology-v3.0.pdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://wbcsd.github.io/tr/methodology/3.0/pact-methodology-v3.0.pdf",
+      "evidenceUrls": [
+        "https://wbcsd.github.io/tr/methodology/3.0/pact-methodology-v3.0.pdf",
+        "https://github.com/wbcsd/data-exchange-protocol/"
+      ],
+      "norn": {
+        "overlap": "Footprint calculation methodology, not a schema corpus.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "EmissionRecord"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "ignore",
+        "sapParity": "ignore",
+        "reason": "Sustainability reporting, a later statutory layer."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "pact-pathfinder-openapi-3-0-3",
+      "name": "PACT / Pathfinder product carbon footprint exchange API",
+      "publisher": "WBCSD Partnership for Carbon Transparency",
+      "kind": "protocol",
+      "domains": [
+        "sustainability"
+      ],
+      "version": "3.0.3; git cf4ebedb18d42f3453bcc868e01159321297c09a",
+      "versionDate": "2025-12-11",
+      "versionBasis": "Observed info.version 3.0.3; OpenAPI dialect 3.1.0. Date is pinned commit committer date, not independently verified release day. README calls 3.0.0 the focus; preserve schema's distinct version.",
+      "licence": {
+        "spdx": "LicenseRef-WBCSD-custom-data-exchange-protocol",
+        "text": "WBCSD custom data-exchange-protocol license",
+        "status": "verified",
+        "basis": "License permits noncommercial exact reproductions and commercial Separate Derivatives subject to conditions; commercially shipping schema copies/modified source is not a blanket grant. Requires written permission for that distribution plan.",
+        "termsUrl": "https://raw.githubusercontent.com/wbcsd/data-exchange-protocol/cf4ebedb18d42f3453bcc868e01159321297c09a/LICENSE.md",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/wbcsd/data-exchange-protocol/cf4ebedb18d42f3453bcc868e01159321297c09a/spec/v3/openapi.yaml",
+      "evidenceUrls": [
+        "https://github.com/wbcsd/data-exchange-protocol/",
+        "https://raw.githubusercontent.com/wbcsd/data-exchange-protocol/cf4ebedb18d42f3453bcc868e01159321297c09a/spec/v3/openapi.yaml",
+        "https://raw.githubusercontent.com/wbcsd/data-exchange-protocol/cf4ebedb18d42f3453bcc868e01159321297c09a/LICENSE.md",
+        "https://api.github.com/repos/wbcsd/data-exchange-protocol/commits/cf4ebedb18d42f3453bcc868e01159321297c09a"
+      ],
+      "norn": {
+        "overlap": "Product footprint, reporting period, provenance and quantity; no automatic truth/accuracy certification or emissions engine.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "EmissionRecord"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Sustainability reporting, a later statutory layer."
+      },
+      "notes": "Source includes future 2027 applicability annotations; these are rule horizons, not proof of publication in 2027. Research observation date stays 2026-10-21. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

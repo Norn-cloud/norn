@@ -86,6 +86,8 @@ run_phase() {
       python3 scripts/ci/test_implementation_receipts.py
       python3 scripts/test_record_new_files.py
       python3 scripts/test_demo_scenarios.py
+      python3 scripts/standards_atlas.py --check
+      python3 scripts/test_standards_atlas.py
       cargo xtask ci policy
       cargo xtask ci provenance
       ;;

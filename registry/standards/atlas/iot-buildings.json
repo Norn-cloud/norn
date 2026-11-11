@@ -1,0 +1,329 @@
+{
+  "atlasVersion": 1,
+  "domain": "iot-buildings",
+  "entries": [
+    {
+      "id": "brick-buildings",
+      "name": "Brick building metadata ontology",
+      "publisher": "Brick Consortium",
+      "kind": "ontology",
+      "domains": [
+        "iot-buildings"
+      ],
+      "version": "1.4.4",
+      "versionDate": "2025-05-02",
+      "versionBasis": "GitHub stable release published_at 2025-05-02T05:32:33Z; asset uploaded 2025-05-01. Later nightly/1.5.0 release candidates are not substituted for this stable pin.",
+      "licence": {
+        "spdx": "BSD-3-Clause",
+        "text": "BSD-3-Clause",
+        "status": "verified",
+        "basis": "Publisher LICENSE grants source/binary redistribution with notices, disclaimer and non-endorsement condition; bundled external content requires independent checks.",
+        "termsUrl": "https://raw.githubusercontent.com/BrickSchema/Brick/v1.4.4/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/BrickSchema/Brick/releases/download/v1.4.4/Brick-only.ttl",
+      "evidenceUrls": [
+        "https://github.com/BrickSchema/Brick/releases/tag/v1.4.4",
+        "https://github.com/BrickSchema/Brick/releases/download/v1.4.4/Brick-only.ttl",
+        "https://raw.githubusercontent.com/BrickSchema/Brick/v1.4.4/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Building equipment, sensor points and relationships; location concepts may reference RealEstateCore.",
+        "concepts": [
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Device",
+          "Observation"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Device and building data, later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "buildingsmart-ifc",
+      "name": "Industry Foundation Classes (IFC)",
+      "publisher": "buildingSMART International",
+      "kind": "ontology",
+      "domains": [
+        "iot-buildings"
+      ],
+      "version": "4.3.2.0 / IFC4X3_ADD2",
+      "versionDate": null,
+      "versionBasis": "Official schema-specifications index identifies 4.3.2.0 as official, published 2024-04; 4.4/5.0 are development entries. Exact day unverified; artifact request returned 403.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Development repository notice is CC-BY-ND-4.0 with separate attribution/software-development language. It points to official publications but is not proof of the selected release artifact's grant. Verify release notice and derivative rights before any generated mapping.",
+        "termsUrl": "https://raw.githubusercontent.com/buildingSMART/IFC4.x-development/ifc4.3-main/LICENSE.md",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF",
+        "XSD"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/IFC4X3_ADD2.exp",
+      "evidenceUrls": [
+        "https://technical.buildingsmart.org/standards/ifc/ifc-schema-specifications/",
+        "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/IFC4X3_ADD2.exp",
+        "https://raw.githubusercontent.com/buildingSMART/IFC4.x-development/ifc4.3-main/LICENSE.md"
+      ],
+      "norn": {
+        "overlap": "Built assets, spaces, relationships and properties; geometry is a pool concern and IFC is never Core authority.",
+        "concepts": [
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Device",
+          "Observation"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Device and building data, later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "etsi-saref",
+      "name": "SAREF Core ontology",
+      "publisher": "ETSI",
+      "kind": "ontology",
+      "domains": [
+        "iot-buildings"
+      ],
+      "version": "4.1.1",
+      "versionDate": "2024-10-31",
+      "versionBasis": "Version page publication date 2024-10-31, last modification 2024-03-06; Turtle owl:versionInfo v4.1.1. Publication and modification are preserved as different observations.",
+      "licence": {
+        "spdx": "BSD-3-Clause",
+        "text": "BSD-3-Clause (ETSI Forge software licence)",
+        "status": "verified",
+        "basis": "Turtle dcterms:license links ETSI software licence; that policy specifies BSD-3-Clause unless otherwise stated. Preserve notices and check each imported ontology separately.",
+        "termsUrl": "https://forge.etsi.org/etsi-software-license",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF",
+        "JSON-LD",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://saref.etsi.org/core/v4.1.1/saref.ttl",
+      "evidenceUrls": [
+        "https://saref.etsi.org/core/v4.1.1/",
+        "https://saref.etsi.org/core/v4.1.1/saref.ttl",
+        "https://forge.etsi.org/etsi-software-license"
+      ],
+      "norn": {
+        "overlap": "Devices, functions, properties, commands, observations; Astra limits SAREF to industry packs.",
+        "concepts": [
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Device",
+          "Observation"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Device and building data, later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "oscre-idm",
+      "name": "OSCRE Industry Data Model use-case schemas",
+      "publisher": "OSCRE International",
+      "kind": "standard",
+      "domains": [
+        "iot-buildings"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Public overview establishes downloadable use-case schemas, but no exact authorized payload release was observed.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Free end-user access is not commercial reuse or redistribution permission; Norn-specific agreement and derivative rights remain unverified.",
+        "termsUrl": "https://www.oscre.org/Industry-Data-Model/Licensing-to-Fit-Your-Needs",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML",
+        "JSON"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.oscre.org/Industry-Data-Model/Introducing-the-Data-Model",
+      "evidenceUrls": [
+        "https://www.oscre.org/Industry-Data-Model/Introducing-the-Data-Model",
+        "https://www.oscre.org/Industry-Data-Model/Licensing-to-Fit-Your-Needs",
+        "https://www.oscre.org/Industry-Data-Model/Access-To-IDM-Toolkit"
+      ],
+      "norn": {
+        "overlap": "Real-estate lifecycle, assets, leases and transactions; do not infer equivalence to general Party/Asset concepts.",
+        "concepts": [
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Device",
+          "Observation"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "watch",
+        "reason": "Device and building data, later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "realestatecore",
+      "name": "RealEstateCore property and building model",
+      "publisher": "RealEstateCore Consortium",
+      "kind": "standard",
+      "domains": [
+        "iot-buildings"
+      ],
+      "version": "4.1.0",
+      "versionDate": "2026-06-29",
+      "versionBasis": "GitHub release v4.1.0 published_at 2026-06-29T14:18:16Z; selected release file verified by API and HTTP GET.",
+      "licence": {
+        "spdx": "BSD-3-Clause",
+        "text": "BSD-3-Clause",
+        "status": "verified",
+        "basis": "Versioned repository LICENSE grants BSD-3-Clause redistribution with notices and non-endorsement. Independently retain terms for Brick/external dependencies.",
+        "termsUrl": "https://raw.githubusercontent.com/RealEstateCore/rec/v4.1.0/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-LD",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/RealEstateCore/rec/v4.1.0/RealEstateCore.DTDLv2.jsonld",
+      "evidenceUrls": [
+        "https://github.com/RealEstateCore/rec/releases/tag/v4.1.0",
+        "https://raw.githubusercontent.com/RealEstateCore/rec/v4.1.0/RealEstateCore.DTDLv2.jsonld",
+        "https://raw.githubusercontent.com/RealEstateCore/rec/v4.1.0/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Buildings, spaces, assets and relationships; property-domain vocabulary, not the general Core model.",
+        "concepts": [
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Device",
+          "Observation"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Device and building data, later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "wot-thing-description",
+      "name": "W3C Web of Things Thing Description schema",
+      "publisher": "W3C Web of Things Working Group",
+      "kind": "standard",
+      "domains": [
+        "iot-buildings"
+      ],
+      "version": "TD 1.1; schema 1.1-12-March-2025",
+      "versionDate": "2025-03-12",
+      "versionBasis": "Observed JSON schema version field, distinct from the 2023-12-05 TD 1.1 Recommendation date. Namespace URL is mutable; pin exact bytes before use.",
+      "licence": {
+        "spdx": "W3C-20150513",
+        "text": "W3C Software and Document License (repository notice)",
+        "status": "verified",
+        "basis": "Repository documents use W3C Software and Document License; retain copyright/licence/disclaimer notices and identify changes. Recheck the selected schema and dependencies on acquisition.",
+        "termsUrl": "https://raw.githubusercontent.com/w3c/wot-thing-description/main/LICENSE.md",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-LD",
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/2022/wot/td-schema/v1.1",
+      "evidenceUrls": [
+        "https://www.w3.org/2022/wot/td-schema/v1.1",
+        "https://www.w3.org/TR/2023/REC-wot-thing-description11-20231205/",
+        "https://raw.githubusercontent.com/w3c/wot-thing-description/main/LICENSE.md",
+        "https://www.w3.org/copyright/software-license-2023/"
+      ],
+      "norn": {
+        "overlap": "Thing properties, actions, events and security-description metadata; never grants authority or executes device operations.",
+        "concepts": [
+          "location.Space"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Device",
+          "Capability"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#1217"
+      },
+      "priority": {
+        "customer1": "watch",
+        "sapParity": "P2",
+        "reason": "Device and building data, later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}
