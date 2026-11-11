@@ -496,7 +496,9 @@ while read -r name path; do
     fi
   done
   # Detected means refuted, not merely unproved: a vector must evaluate false.
-  lean_check "$out" "$result/vectors" ExactArithVectors > "$result/mutants/$name/vectors.log" 2>&1
+  # Expected to fail on a mutant; the log is inspected below.
+  lean_check "$out" "$result/vectors" ExactArithVectors > "$result/mutants/$name/vectors.log" 2>&1 ||
+    true
   rm "$tree/$path"
   cp "$pristine" "$tree/$path"
   if ! $unproved; then
