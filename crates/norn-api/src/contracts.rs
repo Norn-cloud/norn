@@ -26,18 +26,36 @@ impl Modify for ContractSchemas {
             .components
             .get_or_insert_with(utoipa::openapi::Components::new);
         let artifact_schemas = artifact_envelope_schemas();
-        let effective_law_schemas = project_schemars_components(
+        // Projections that reuse artifact definitions keep the artifact components.
+        let unshadowed = |schemas: Vec<(String, Schema)>| {
+            schemas
+                .into_iter()
+                .filter(|(name, _)| {
+                    !artifact_schemas
+                        .iter()
+                        .any(|(existing, _)| existing == name)
+                })
+                .collect::<Vec<_>>()
+        };
+        let effective_law_schemas = unshadowed(project_schemars_components(
             norn_ir::verification::effective_law_instance_schema(),
             "NornIrEffectiveLawInstance",
             "NornIr",
-        )
-        .into_iter()
-        .filter(|(name, _)| {
-            !artifact_schemas
-                .iter()
-                .any(|(existing, _)| existing == name)
-        })
-        .collect::<Vec<_>>();
+        ));
+        let explain_schemas = unshadowed(
+            project_schemars_components(
+                norn_ir::explain::explain_options_schema(),
+                "NornIrExplainOptions",
+                "NornIr",
+            )
+            .into_iter()
+            .chain(project_schemars_components(
+                norn_ir::explain::explain_schema(),
+                "NornIrExplainReport",
+                "NornIr",
+            ))
+            .collect(),
+        );
         for (name, schema) in artifact_schemas
             .into_iter()
             .chain(effective_law_schemas)
@@ -71,16 +89,7 @@ impl Modify for ContractSchemas {
                 "NornIrLimitProfileRef",
                 "NornIr",
             ))
-            .chain(project_schemars_components(
-                norn_ir::explain::explain_options_schema(),
-                "NornIrExplainOptions",
-                "NornIr",
-            ))
-            .chain(project_schemars_components(
-                norn_ir::explain::explain_schema(),
-                "NornIrExplainReport",
-                "NornIr",
-            ))
+            .chain(explain_schemas)
             .chain(project_schemars_components(
                 norn_ir::refusal_reason_schema(),
                 "NornIrRefusalReason",
