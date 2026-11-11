@@ -1,0 +1,235 @@
+{
+  "artifactId": "norn.ontology-pack.ubl",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "OASIS UBL 2.3 Invoice standard pack (map-only)",
+  "namespace": "norn.ontology",
+  "payload": {
+    "mappings": [
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.oasis-open.org/ubl/os-UBL-2.3/UBL-2.3.html"
+        ],
+        "externalIri": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/maindoc/UBL-Invoice-2.3.xsd#InvoiceType",
+        "justification": "The term names the Invoice document type of the pinned release.",
+        "mappingId": "map.norn.ubl.invoice",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-11T00:00:00Z",
+        "reviewedBy": "l-atlas (agent, proposed)",
+        "sourceId": "source.oasis.ubl",
+        "termId": "norn.ubl.invoice"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.oasis-open.org/ubl/os-UBL-2.3/UBL-2.3.html"
+        ],
+        "externalIri": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/common/UBL-CommonAggregateComponents-2.3.xsd#PartyType",
+        "justification": "The term names the aggregate Party type of the pinned release.",
+        "mappingId": "map.norn.ubl.party",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-11T00:00:00Z",
+        "reviewedBy": "l-atlas (agent, proposed)",
+        "sourceId": "source.oasis.ubl",
+        "termId": "norn.ubl.party"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.oasis-open.org/ubl/os-UBL-2.3/UBL-2.3.html"
+        ],
+        "externalIri": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/common/UBL-CommonAggregateComponents-2.3.xsd#InvoiceLineType",
+        "justification": "The term names the aggregate InvoiceLine type of the pinned release.",
+        "mappingId": "map.norn.ubl.invoice.line",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-11T00:00:00Z",
+        "reviewedBy": "l-atlas (agent, proposed)",
+        "sourceId": "source.oasis.ubl",
+        "termId": "norn.ubl.invoice.line"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.oasis-open.org/ubl/os-UBL-2.3/UBL-2.3.html"
+        ],
+        "externalIri": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/common/UBL-CommonAggregateComponents-2.3.xsd#MonetaryTotalType",
+        "justification": "The term names the aggregate MonetaryTotal type of the pinned release.",
+        "mappingId": "map.norn.ubl.monetary.total",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-11T00:00:00Z",
+        "reviewedBy": "l-atlas (agent, proposed)",
+        "sourceId": "source.oasis.ubl",
+        "termId": "norn.ubl.monetary.total"
+      }
+    ],
+    "packId": "norn.ontology-pack.ubl",
+    "packKind": "ontology",
+    "packVersion": "0.1",
+    "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.ubl.invoice",
+        "termId": "norn.ubl.invoice"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.ubl.party",
+        "termId": "norn.ubl.party"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.ubl.invoice.line",
+        "termId": "norn.ubl.invoice.line"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.ubl.monetary.total",
+        "termId": "norn.ubl.monetary.total"
+      }
+    ],
+    "sources": [
+      {
+        "canonicalUrl": "https://docs.oasis-open.org/ubl/os-UBL-2.3/UBL-2.3.html",
+        "files": [
+          {
+            "path": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/maindoc/UBL-Invoice-2.3.xsd",
+            "sha256": "17be67538966292a3e8e7bd6404c9017b38919184cb7d4c8dc12f0937358e1a4"
+          },
+          {
+            "path": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/common/UBL-CommonAggregateComponents-2.3.xsd",
+            "sha256": "9ff2b3cc1ad590f3fd7ee5c43f3556b4f12347c3d1672965b18c72958c054d65"
+          },
+          {
+            "path": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/common/UBL-CommonBasicComponents-2.3.xsd",
+            "sha256": "9bc47430a6c550684412269dd65f26351b4c3e00b16d805595af581130c2f03a"
+          },
+          {
+            "path": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/common/UBL-QualifiedDataTypes-2.3.xsd",
+            "sha256": "889be90e684097e70d60c8d7d690beeb1d04a5a0c385e6fe49969621f8bab9fd"
+          },
+          {
+            "path": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/common/BDNDR-UnqualifiedDataTypes-1.1.xsd",
+            "sha256": "6be0887f677a21d1fa2b363b0abe2385b713a20befee85d1a8fed5ef7d76993c"
+          },
+          {
+            "path": "https://docs.oasis-open.org/ubl/os-UBL-2.3/xsd/common/BDNDR-CCTS_CCT_SchemaModule-1.1.xsd",
+            "sha256": "dd546e4809df86b6445589f69f0d6c9df162840ae386574ddfc1da7638103e15"
+          }
+        ],
+        "importMode": "map_only",
+        "importer": {
+          "name": "norn.formats.xsd",
+          "version": "0.1.0"
+        },
+        "license": "OASIS specification copyright permissions (notices retained in every unmodified source file)",
+        "redistribution": "reference_only",
+        "releaseId": "2.3",
+        "releasedAt": "2021-06-15",
+        "retrievedAt": "2026-11-11",
+        "sourceId": "source.oasis.ubl"
+      }
+    ],
+    "terms": [
+      {
+        "definition": "A UBL document claiming payment for goods or services supplied.",
+        "label": "Invoice",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.ubl.invoice",
+        "termKind": "class"
+      },
+      {
+        "definition": "A UBL party: the supplier or customer of a document.",
+        "label": "Party",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.ubl.party",
+        "termKind": "class"
+      },
+      {
+        "definition": "One charged item on a UBL invoice.",
+        "label": "InvoiceLine",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.ubl.invoice.line",
+        "termKind": "class"
+      },
+      {
+        "definition": "The totals of a UBL invoice, including the payable amount.",
+        "label": "LegalMonetaryTotal",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.ubl.monetary.total",
+        "termKind": "class"
+      },
+      {
+        "definition": "The amount due for payment.",
+        "domainTermId": "norn.ubl.monetary.total",
+        "label": "PayableAmount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.ubl.invoice.payable.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The date payment is due.",
+        "domainTermId": "norn.ubl.invoice",
+        "label": "DueDate",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.ubl.invoice.due.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "The default currency of the document's amounts.",
+        "domainTermId": "norn.ubl.invoice",
+        "label": "DocumentCurrencyCode",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.ubl.invoice.currency",
+        "termKind": "property"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ubl/artifacts/norn.ontology-pack.ubl.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

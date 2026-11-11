@@ -1,0 +1,23 @@
+{
+  "sha256": "2d01ea2f5532685a0640213bc4b7a16279613073d679c1ba072b1245a1e42c66",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/ubl/source.read.json",
+    "crates/norn-formats/src/bin/norn-format-read.rs",
+    "crates/norn-formats/src/pack.rs",
+    "crates/norn-formats/src/xsd.rs",
+    "crates/norn-formats/src/xsd_projection.rs"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

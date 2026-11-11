@@ -1,0 +1,30 @@
+[package]
+name = "norn-formats"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "format-family readers: source bytes → SourceSchemaIR with a loss report; files only (ring 1; see README.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Namespace-aware streaming XML reader for the XSD reader; DTDs are rejected.
+quick-xml = "=0.41.0"
+# Type tables are RuleIR v2 decision tables evaluated in the pinned Norn ZEN
+# profile; both ring 0, pure, wasm32-buildable.
+norn-decisions = { path = "../norn-decisions" }
+norn-expr = { path = "../norn-expr" }
+norn-ir = { path = "../norn-ir" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+# Input and type-table pins in import provenance.
+sha2 = "0.10.9"
+
+[dev-dependencies]
+# The conformance harness checks every imported layer with the checker.
+norn-checker = { path = "../norn-checker" }
+
+[lints]
+workspace = true
