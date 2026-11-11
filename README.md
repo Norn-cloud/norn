@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,873 records across 134 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,910 records across 134 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -27,43 +27,43 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
-| `fork.cow.create.f100.p50` | 0.3249 | ms (p50) | boat | 2 | 0.32 / 0.3249 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.create.f100.p99` | 0.4791 | ms (p99) | boat | 2 | 0.4791 / 0.66 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.create.f1000.p50` | 0.3116 | ms (p50) | boat | 1 | 0.3116 / 0.3116 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.create.f1000.p99` | 0.4699 | ms (p99) | boat | 1 | 0.4699 / 0.4699 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.create.f20.p50` | 0.332 | ms (p50) | boat | 2 | 0.332 / 0.37 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.create.f20.p99` | 0.6948 | ms (p99) | boat | 2 | 0.6948 / 12.5 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.collect_live.f100` | 10.63 | ms (single) | boat | 2 | 10.63 / 15 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.collect_live.f1000` | 129.4 | ms (single) | boat | 1 | 129.4 / 129.4 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.collect_live.f20` | 2.635 | ms (single) | boat | 1 | 2.635 / 2.635 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.discard_collect.f100` | 2.695 | ms (single) | boat | 2 | 2.695 / 2.9 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.discard_collect.f1000` | 12.24 | ms (single) | boat | 1 | 12.24 / 12.24 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.discard_collect.f20` | 1.834 | ms (single) | boat | 1 | 1.834 / 1.834 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.pages_freed.f100` | 931 | count (single) | boat | 2 | 931 / 931 | ▁▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.pages_freed.f1000` | 9,031 | count (single) | boat | 1 | 9,031 / 9,031 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.gc.pages_freed.f20` | 211 | count (single) | boat | 1 | 211 / 211 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.pages_per_fork.f100` | 9.31 | count (mean) | boat | 2 | 9.3 / 9.31 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.pages_per_fork.f1000` | 9.031 | count (mean) | boat | 1 | 9.031 / 9.031 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.pages_per_fork.f20` | 10.55 | count (mean) | boat | 2 | 10.55 / 10.6 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.fork.f100.p50` | 10.44 | us (p50) | boat | 2 | 9.7 / 10.44 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.fork.f100.p99` | 20.92 | us (p99) | boat | 1 | 20.92 / 20.92 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.fork.f1000.p50` | 10.37 | us (p50) | boat | 1 | 10.37 / 10.37 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.fork.f1000.p99` | 24.61 | us (p99) | boat | 1 | 24.61 / 24.61 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.fork.f20.p50` | 10.32 | us (p50) | boat | 2 | 9.7 / 10.32 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.fork.f20.p99` | 20.36 | us (p99) | boat | 1 | 20.36 / 20.36 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.main.f100.p50` | 9.86 | us (p50) | boat | 2 | 9.86 / 9.9 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.main.f100.p99` | 18.46 | us (p99) | boat | 1 | 18.46 / 18.46 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.main.f1000.p50` | 10.26 | us (p50) | boat | 1 | 10.26 / 10.26 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.main.f1000.p99` | 22.32 | us (p99) | boat | 1 | 22.32 / 22.32 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.main.f20.p50` | 9.89 | us (p50) | boat | 2 | 9.7 / 9.89 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.read.main.f20.p99` | 18.35 | us (p99) | boat | 1 | 18.35 / 18.35 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.storage_vs_full.f100` | 0.1934 | percent (single) | boat | 2 | 0.19 / 0.1934 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.storage_vs_full.f1000` | 0.1876 | percent (single) | boat | 1 | 0.1876 / 0.1876 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.cow.storage_vs_full.f20` | 0.2192 | percent (single) | boat | 2 | 0.2192 / 0.22 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.full_copy.create.f100.p50` | 4.971 | ms (p50) | boat | 2 | 4.971 / 10.5 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.full_copy.create.f100.p99` | 15.01 | ms (p99) | boat | 2 | 15.01 / 1,630 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.full_copy.create.f20.p50` | 3.145 | ms (p50) | boat | 2 | 3.145 / 3.6 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
-| `fork.full_copy.create.f20.p99` | 4.181 | ms (p99) | boat | 2 | 4.181 / 11.9 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f100.p50` | 0.3249 | ms (p50) | boat | 3 | 0.32 / 0.35 | ▁█▂ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f100.p99` | 0.4791 | ms (p99) | boat | 3 | 0.4791 / 0.66 | █▄▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f1000.p50` | 0.3116 | ms (p50) | boat | 2 | 0.31 / 0.3116 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f1000.p99` | 0.4699 | ms (p99) | boat | 2 | 0.4699 / 2.1 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f20.p50` | 0.332 | ms (p50) | boat | 3 | 0.332 / 0.41 | ▄█▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f20.p99` | 0.6948 | ms (p99) | boat | 3 | 0.6948 / 12.5 | █▅▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.collect_live.f100` | 10.63 | ms (single) | boat | 3 | 10.63 / 20 | ▄█▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.collect_live.f1000` | 129.4 | ms (single) | boat | 2 | 129.4 / 134 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.collect_live.f20` | 2.635 | ms (single) | boat | 2 | 2.635 / 3.7 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.discard_collect.f100` | 2.695 | ms (single) | boat | 3 | 2.695 / 3.2 | ▄█▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.discard_collect.f1000` | 12.24 | ms (single) | boat | 2 | 10.6 / 12.24 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.discard_collect.f20` | 1.834 | ms (single) | boat | 2 | 1.834 / 2 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.pages_freed.f100` | 931 | count (single) | boat | 3 | 931 / 931 | ▁▁▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.pages_freed.f1000` | 9,031 | count (single) | boat | 2 | 9,031 / 9,031 | ▁▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.pages_freed.f20` | 211 | count (single) | boat | 2 | 211 / 211 | ▁▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.pages_per_fork.f100` | 9.31 | count (mean) | boat | 3 | 9.3 / 9.31 | ▁▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.pages_per_fork.f1000` | 9.031 | count (mean) | boat | 2 | 9 / 9.031 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.pages_per_fork.f20` | 10.55 | count (mean) | boat | 3 | 10.55 / 10.6 | ██▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f100.p50` | 10.44 | us (p50) | boat | 3 | 9.7 / 10.44 | ▁▄█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f100.p99` | 20.92 | us (p99) | boat | 2 | 20.92 / 26 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f1000.p50` | 10.37 | us (p50) | boat | 2 | 9.7 / 10.37 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f1000.p99` | 24.61 | us (p99) | boat | 2 | 23.7 / 24.61 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f20.p50` | 10.32 | us (p50) | boat | 3 | 9.7 / 10.32 | ▁▃█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f20.p99` | 20.36 | us (p99) | boat | 2 | 20.36 / 23.7 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f100.p50` | 9.86 | us (p50) | boat | 3 | 9.86 / 10.2 | ▂█▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f100.p99` | 18.46 | us (p99) | boat | 2 | 18.46 / 27.7 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f1000.p50` | 10.26 | us (p50) | boat | 2 | 9.5 / 10.26 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f1000.p99` | 22.32 | us (p99) | boat | 2 | 16.5 / 22.32 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f20.p50` | 9.89 | us (p50) | boat | 3 | 9.7 / 12.2 | ▁█▂ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f20.p99` | 18.35 | us (p99) | boat | 2 | 18.35 / 24.8 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.storage_vs_full.f100` | 0.1934 | percent (single) | boat | 3 | 0.19 / 0.1934 | ▁▇█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.storage_vs_full.f1000` | 0.1876 | percent (single) | boat | 2 | 0.1876 / 0.188 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.storage_vs_full.f20` | 0.2192 | percent (single) | boat | 3 | 0.219 / 0.22 | █▁▂ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.full_copy.create.f100.p50` | 4.971 | ms (p50) | boat | 3 | 4.971 / 14.2 | ▅█▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.full_copy.create.f100.p99` | 15.01 | ms (p99) | boat | 3 | 15.01 / 1,630 | █▆▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.full_copy.create.f20.p50` | 3.145 | ms (p50) | boat | 3 | 3.145 / 4.6 | ▃█▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.full_copy.create.f20.p99` | 4.181 | ms (p99) | boat | 3 | 4.181 / 11.9 | █▄▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
 | `fork.proto.create.durable.f100.p50` | 45 | ms (p50) | boat | 1 | 45 / 45 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
 | `fork.proto.create.durable.f100.p99` | 107 | ms (p99) | boat | 1 | 107 / 107 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
 | `fork.proto.create.durable.f1000.p50` | 61 | ms (p50) | boat | 1 | 61 / 61 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
