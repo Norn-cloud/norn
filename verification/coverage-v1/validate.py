@@ -475,6 +475,42 @@ PR_CONCURRENCY = (
 )
 
 
+# Every case the pull_request concurrency parity fixture
+# (fixtures/pull-request-concurrency.json) must keep, with its verdict. The fixture is
+# not a gate file, so it may gain cases freely; this gate-pinned list stops it losing
+# or flipping one. negative_canaries.py and crates/norn-skeleton-guard/src/ci/mod.rs
+# both read this block, one `"name": "verdict",` per line.
+PULL_REQUEST_CONCURRENCY_CASES = {
+    "codeql.yml as checked in": "accept",
+    "ci-policy.yml as checked in": "accept",
+    "folded multi-line group": "accept",
+    "out of scope: pull_request_target without concurrency": "accept",
+    "out of scope: pull_request_target with an unconditional cancel": "accept",
+    "out of scope: push and workflow_run list": "accept",
+    "out of scope: workflow_run mapping": "accept",
+    "pull_request string without concurrency": "reject",
+    "pull_request in a list without concurrency": "reject",
+    "pull_request mapping without concurrency": "reject",
+    "codeql: no concurrency": "reject",
+    "codeql: group-only concurrency string": "reject",
+    "codeql: PR number replaced by the ref": "reject",
+    "codeql: PR number dropped": "reject",
+    "codeql: one shared group": "reject",
+    "codeql: no workflow prefix": "reject",
+    "codeql: other events share a group": "reject",
+    "codeql: unconditional cancel": "reject",
+    "codeql: main pushes cancelled without the main-push group": "reject",
+    "codeql: no cancel-in-progress": "reject",
+    "codeql: cancel disabled": "reject",
+    "codeql: extra concurrency key": "reject",
+    "ci-policy: every push branch superseded": "reject",
+    "ci-policy: release pushes superseded": "reject",
+    "ci-policy: main-push cancel without its own group": "reject",
+    "ci-policy: main-push group with a PR-only cancel": "reject",
+    "ci-policy: merge groups cancelled": "reject",
+}
+
+
 def validate_pull_request_concurrency(sources: dict[str, str]) -> None:
     for path, text in sources.items():
         workflow = yaml.load(text, Loader=WorkflowLoader)
@@ -511,7 +547,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
     validate_pull_request_concurrency({**{f".github/workflows/{path.name}": path.read_text(encoding="utf-8")
-                                          for path in sorted(workflows.glob("*.yml"))},
+                                          for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])},
                                        ".github/workflows/ci-policy.yml": source})
     validate_expression_lengths({formal_path.name: source,
                                  "trusted-merge-group.yml": (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")})

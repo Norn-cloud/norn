@@ -1134,7 +1134,16 @@ fn cell_host_mutant_do_storage_committing_on_rollback_is_caught() {
             .max_shrink_iters(1),
     )
     .expect_err("a storage that commits on rollback must fail the laws");
-    assert!(!failure.transitions.is_empty(), "{failure}");
+    // A law, not a harness panic, must refuse it, on a run that rolled back a
+    // faulted transaction.
+    assert!(failure.reason.starts_with("law violated:"), "{failure}");
+    assert!(
+        failure
+            .transitions
+            .iter()
+            .any(|op| matches!(op, CellOp::Faulted(_))),
+        "{failure}"
+    );
 }
 
 /// Cases for the responder-fault tests (law 7): file stores, crashes

@@ -824,10 +824,70 @@ mod tests {
 
     /// The verdicts `validate.py`'s `validate_pull_request_concurrency` must also reach
     /// (`negative_canaries.py --workflow-contract` checks that side). The fixture is not a
-    /// gate file on purpose: flipping a verdict in it fails both tests unless the gate-pinned
-    /// rule changes too, and that change needs `/approve-gates`.
+    /// gate file, so it may gain cases freely; `validate.py`'s gate-pinned
+    /// `PULL_REQUEST_CONCURRENCY_CASES` stops it losing or flipping one, and changing that
+    /// list needs `/approve-gates`.
     const CONCURRENCY_CASES: &str =
         include_str!("../../../../verification/coverage-v1/fixtures/pull-request-concurrency.json");
+    const VALIDATOR: &str = include_str!("../../../../verification/coverage-v1/validate.py");
+
+    /// `validate.py`'s `PULL_REQUEST_CONCURRENCY_CASES`, one `"name": "verdict",` per line.
+    fn pinned_concurrency_cases() -> super::BTreeMap<String, String> {
+        let block = VALIDATOR
+            .split_once("\nPULL_REQUEST_CONCURRENCY_CASES = {\n")
+            .and_then(|(_, rest)| rest.split_once("\n}\n"))
+            .map(|(block, _)| block)
+            .unwrap_or_default();
+        let entries = block
+            .lines()
+            .map(|line| line.trim().trim_end_matches(','))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parsed = serde_json::from_str::<super::BTreeMap<String, String>>(&format!("{{{entries}}}"));
+        assert!(parsed.is_ok(), "PULL_REQUEST_CONCURRENCY_CASES: {parsed:?}");
+        let pinned = parsed.unwrap_or_default();
+        assert!(
+            pinned.len() > 2,
+            "PULL_REQUEST_CONCURRENCY_CASES not found in validate.py"
+        );
+        pinned
+    }
+
+    /// The gate-pinned cases the fixture lost, or whose verdict it flipped.
+    fn missing_pinned_cases(cases: &[Value]) -> Vec<String> {
+        let present = cases
+            .iter()
+            .map(|case| (case["name"].as_str(), case["expect"].as_str()))
+            .collect::<super::BTreeMap<_, _>>();
+        pinned_concurrency_cases()
+            .into_iter()
+            .filter(|(name, expect)| present.get(&Some(name.as_str())) != Some(&Some(expect.as_str())))
+            .map(|(name, _)| name)
+            .collect()
+    }
+
+    #[test]
+    fn the_parity_fixture_keeps_every_gate_pinned_case() {
+        let parsed = serde_json::from_str::<Value>(CONCURRENCY_CASES);
+        assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
+        let cases = parsed.unwrap_or_default()["cases"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(missing_pinned_cases(&cases), Vec::<String>::new());
+        // Canaries: deleting a case, or flipping its verdict, is caught.
+        let mut deleted = cases.clone();
+        let last = deleted.pop().unwrap_or_default();
+        assert_eq!(
+            missing_pinned_cases(&deleted),
+            vec![last["name"].as_str().unwrap_or_default().to_owned()]
+        );
+        let mut flipped = cases.clone();
+        if let Some(first) = flipped.first_mut() {
+            first["expect"] = Value::from(if first["expect"] == "accept" { "reject" } else { "accept" });
+        }
+        assert_eq!(missing_pinned_cases(&flipped).len(), 1);
+    }
 
     #[test]
     fn pull_request_concurrency_matches_the_shared_parity_fixture() {
@@ -835,6 +895,7 @@ mod tests {
         assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
         let fixture = parsed.unwrap_or_default();
         let cases = fixture["cases"].as_array().cloned().unwrap_or_default();
+        assert_eq!(missing_pinned_cases(&cases), Vec::<String>::new());
         let mut verdicts = std::collections::BTreeSet::new();
         for case in &cases {
             let text = |key: &str| case[key].as_str().unwrap_or_default().to_owned();

@@ -776,6 +776,27 @@ def workflow_concurrency_parity() -> None:
     """
     validator = load_module("norn_workflow_concurrency_parity", VALIDATOR)
     cases = json.loads(CONCURRENCY_CASES.read_text(encoding="utf-8"))["cases"]
+    check_concurrency_cases(validator, cases)
+    # The fixture can lose no gate-pinned case: drop one, then flip one.
+    for label, mutated in (
+        ("a deleted reject case", cases[:-1]),
+        ("a flipped verdict", [{**cases[0], "expect": "reject" if cases[0]["expect"] == "accept" else "accept"}]
+         + cases[1:]),
+    ):
+        try:
+            check_concurrency_cases(validator, mutated)
+        except AssertionError:
+            continue
+        raise AssertionError(f"concurrency parity accepted {label} in the fixture")
+
+
+def check_concurrency_cases(validator, cases: list) -> None:
+    """Every fixture case reaches its verdict, and every gate-pinned case is present."""
+    pinned = validator.PULL_REQUEST_CONCURRENCY_CASES
+    present = {case.get("name"): case.get("expect") for case in cases if isinstance(case, dict)}
+    missing = sorted(name for name, expect in pinned.items() if present.get(name) != expect)
+    if missing:
+        raise AssertionError(f"concurrency parity fixture lost or flipped gate-pinned cases: {missing}")
     verdicts = set()
     for case in cases:
         if (not isinstance(case, dict) or not set(case) <= {"name", "on", "concurrency", "expect", "source"}
