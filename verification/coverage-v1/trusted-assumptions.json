@@ -40,6 +40,22 @@
       "justification": "Current formal artifacts model transition semantics and selected predicates; they do not prove the storage engine, OS, hardware, or SHA implementation.",
       "blastRadius": "Corruption or unsound durability beneath the checked kernel can break replay and canonical-state claims.",
       "falsificationTest": "Run crash/reopen and corruption campaigns, independently verify backups and receipt hashes, and retain SQLite compatibility recovery tests."
+    },
+    {
+      "id": "TRUST-KERNEL-DECIDER-STEP-GLUE",
+      "owner": "Norn kernel maintainers",
+      "boundary": "The Turn and Ledger adaptors in crates/norn-kernel/src/decider.rs (evolve and initial_state delegate to the decider, clone_state is State::clone, counts are the event count and the is_perform and is_timer effect counts, events is the decision's event Vec), the Vec collect in the public fold and replay, the usize to u64 count conversions, and the caps and refusal rebuilding in crates/norn-kernel/src/envelope.rs",
+      "justification": "scripts/verify-kernel-decider-aeneas.sh proves the extracted fold_events, replay_events, run_step, exceeded_cap and exceeded_turn_cap for every Evolve and StepTurn implementation; that the production adaptors are such an implementation with a faithful clone and one shared evolve (the live_state_is_replay hypotheses) is ordinary reviewed code.",
+      "blastRadius": "An adaptor that evolved with a different function, cloned unfaithfully, miscounted effects or rebuilt the wrong cap would let step or replay diverge from the proved driver while every theorem still holds.",
+      "falsificationTest": "The norn-kernel decider tests and the norn-testkit state-machine laws (replay(ledger) == state after every turn, split-fold composition, refused turns leave state untouched) run the public step, fold and replay against the decider laws."
+    },
+    {
+      "id": "TRUST-CHARON-AENEAS-AND-CORE-MODELS",
+      "owner": "Norn verification maintainers",
+      "boundary": "Pinned Charon (a1d98905, nightly-2026-08-18 rustc front end) and Aeneas (74a460a2) translation of Rust MIR to Lean, and the Aeneas Lean standard-library models of machine integers, slices, control flow and core traits",
+      "justification": "Aeneas implementation proofs are about the Lean translation of the production MIR, not about compiled code. Translation correctness and the Aeneas core models are trusted; rustc and LLVM codegen below MIR are trusted as for every Rust claim.",
+      "blastRadius": "A translation defect or a wrong core model could make a correspondence theorem hold for code that behaves differently, affecting every claim proved through scripts/verify-kernel-l1-aeneas.sh and scripts/verify-kernel-decider-aeneas.sh.",
+      "falsificationTest": "Run the seeded mutants in each Aeneas gate and require each to extract, elaborate and be refuted; re-extract with a newer pinned Charon/Aeneas and require the same theorems to check."
     }
   ]
 }
