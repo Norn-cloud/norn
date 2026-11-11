@@ -49,11 +49,20 @@ where
     P: FnOnce(&Model) -> Result<Model, X>,
     X: std::fmt::Debug,
 {
-    let documents = documents(set);
+    admitted_store(&documents(set), prepare)
+}
+
+/// A provisioned in-memory store for `org_demo/dev` whose installed,
+/// receipt-verified definitions are `documents`, admitted by the checker.
+pub(crate) fn admitted_store<P, X>(documents: &[Value], prepare: P) -> CellStore<NativeEngine>
+where
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
     let mut types = Vec::new();
     let mut properties = Vec::new();
     let mut interfaces = Vec::new();
-    for document in &documents {
+    for document in documents {
         let payload = &document["payload"];
         if let Some(object_type) = payload.get("objectType") {
             types.push(serde_json::from_value(object_type.clone()).unwrap());
@@ -71,7 +80,7 @@ where
         }
     }
     let artifacts: Vec<norn_ir::ArtifactEnvelope> =
-        serde_json::from_value(Value::Array(documents.clone())).unwrap();
+        serde_json::from_value(Value::Array(documents.to_vec())).unwrap();
     let model = Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
         .unwrap()
         .with_governing_laws(&artifacts)
@@ -95,7 +104,7 @@ where
     .unwrap();
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let input = InstalledDefinitionInput {
-        canonical_set: serde_json::to_string(&documents).unwrap(),
+        canonical_set: serde_json::to_string(documents).unwrap(),
         registry: vec![],
         receipt_sha256: checked.receipt.content_sha256().unwrap(),
         admission_receipt: Some(

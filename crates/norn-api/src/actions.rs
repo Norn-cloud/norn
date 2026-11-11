@@ -239,9 +239,7 @@ pub fn call_action<E: SqlEngine>(
         .with_interfaces(model.interfaces())
         .with_governing_laws(model.law_artifacts())
         .with_action_rules(&admitted.rules);
-    let floor = cell.store().read().clock_floor().map_err(Refusal::host)?;
-    let now = now.max(LogicalTime::from_millis(floor));
-    cell.advance_to(now);
+    let now = turn_clock(&mut cell, now)?;
     let kernel_call = norn_kernel::ActionCall {
         action,
         action_artifact_id: &artifact.artifact_id,
@@ -294,6 +292,19 @@ pub fn call_action<E: SqlEngine>(
     caller_receipt(store, action_id, request, outcome, raw_hash, key)
 }
 
+/// The kernel turn's time: the cell clock after advancing it to `now` and the
+/// stored floor. It is the clock the receipt records, so a naming series and
+/// the receipt agree even after a refused call moved the cell clock past `now`
+/// without moving the floor.
+fn turn_clock<E: SqlEngine>(
+    cell: &mut crate::host::ActionCell<E>,
+    now: LogicalTime,
+) -> Result<LogicalTime, Refusal> {
+    let floor = cell.store().read().clock_floor().map_err(Refusal::host)?;
+    cell.advance_to(now.max(LogicalTime::from_millis(floor)));
+    Ok(cell.now())
+}
+
 /// The caller's view of `outcome`: the receipt it committed or replayed,
 /// its hash raw only when `raw_hash` (whole-world Values), else keyed.
 fn caller_receipt<E: SqlEngine>(
@@ -318,7 +329,7 @@ fn caller_receipt<E: SqlEngine>(
             (ActionCallOutcome::Replayed, record, receipt)
         }
     };
-    let version = written_version(&receipt, &record)?;
+    let version = target_version(store, &receipt, &record)?;
     let receipt_hash = if raw_hash {
         receipt.hash.clone()
     } else {
@@ -353,17 +364,28 @@ fn original_receipt<E: SqlEngine>(
         .map_err(Refusal::host)
 }
 
-/// The target's version as `receipt` wrote it.
-fn written_version(receipt: &Receipt, record: &ActionCallRecord) -> Result<u64, Refusal> {
-    receipt
+/// The target's version as `receipt` wrote it. A call that commits without
+/// rewriting its target (a row mutation with an empty parent patch and no row
+/// operations) is still a success: it reports the target's current version,
+/// which a fresh commit reads under the same cell lock.
+fn target_version<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    receipt: &Receipt,
+    record: &ActionCallRecord,
+) -> Result<u64, Refusal> {
+    let object_type = record.object.object_type.as_str();
+    let written = receipt
         .body
         .written
         .iter()
-        .find(|row| {
-            row.object_type == record.object.object_type.as_str() && row.key == record.object.key
-        })
-        .map(|row| row.version)
-        .ok_or_else(|| Refusal::host("the receipt does not carry the action target"))
+        .find(|row| row.object_type == object_type && row.key == record.object.key);
+    match written {
+        Some(row) => Ok(row.version),
+        None => store
+            .read()
+            .version(MAIN_WORLD, object_type, &record.object.key)
+            .map_err(Refusal::host),
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

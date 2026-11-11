@@ -25,7 +25,10 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *        Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
  *
  *   A visibility or permission refusal is the one opaque 403 `authz.denied`, whatever the target or
- *   action, so a refusal never tells a known action from an unknown one.
+ *   action, so that refusal never tells a known action from an unknown one. The guarantee is not
+ *   universal: a caller the host lets call any action and that pins a stale `version` gets 409
+ *   `defs.stale` for a known action but 403 `authz.denied` for an unknown one, until action-level
+ *   host authorization closes that gap.
  *   Any 404 or 503, whatever its body (the cell's carries `route.not_found`), means the cell does
  *   not serve the route: Studio says so and offers no action.
  *

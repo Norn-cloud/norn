@@ -20,7 +20,10 @@ use norn_kernel::{
 
 #[path = "../tests/support/action_cell.rs"]
 mod action_cell;
-use action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, OMITS_LOSS, melt_body, melt_store};
+use action_cell::{
+    DERIVES_LOSS, MELT, MELT_ACTION, OMITS_LOSS, admitted_store, melt_body, melt_store,
+};
+use serde_json::{Value, json};
 
 const OPERATOR: &str = "user:operator";
 const AUDITOR: &str = "user:auditor";
@@ -161,7 +164,13 @@ fn host() -> DevHost<NativeEngine> {
 }
 
 fn host_with(writer: &str) -> DevHost<NativeEngine> {
-    let store = melt_store(writer, crate::action_admission::prepare_action_model);
+    host_of(melt_store(
+        writer,
+        crate::action_admission::prepare_action_model,
+    ))
+}
+
+fn host_of(store: CellStore<NativeEngine>) -> DevHost<NativeEngine> {
     let scope = CellScope {
         org_id: "org_demo".into(),
         environment_id: "dev".into(),
@@ -186,16 +195,26 @@ fn call(
     action: &str,
     body: &str,
 ) -> Result<ActionReceipt, Refusal> {
-    let request = decode_action_request(body)?;
-    call_action(
+    call_at(
         host,
         query,
         actor,
         action,
-        &request,
-        &Disclosure,
+        body,
         LogicalTime::from_millis(1_700_000_000_000),
     )
+}
+
+fn call_at(
+    host: &DevHost<NativeEngine>,
+    query: &ActionQuery,
+    actor: Option<&str>,
+    action: &str,
+    body: &str,
+    now: LogicalTime,
+) -> Result<ActionReceipt, Refusal> {
+    let request = decode_action_request(body)?;
+    call_action(host, query, actor, action, &request, &Disclosure, now)
 }
 
 fn dump(host: &DevHost<NativeEngine>) -> BTreeMap<String, Vec<String>> {
@@ -498,5 +517,194 @@ fn admission_refuses_sqlite_equivalent_internal_type_names() {
             .unwrap()
             .status,
         400
+    );
+}
+
+const ORDER_EDIT: &str = "test.order.edit";
+
+fn envelope(artifact_id: &str, kind: &str, payload: &Value, dependencies: &[&str]) -> Value {
+    let dependencies: Vec<Value> = dependencies
+        .iter()
+        .map(|id| json!({ "artifactId": id, "kind": "entity", "version": "1.0.0", "required": true }))
+        .collect();
+    json!({
+        "irVersion": "0.1",
+        "artifactId": artifact_id,
+        "kind": kind,
+        "namespace": "test",
+        "name": artifact_id.split('.').nth(1).unwrap(),
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": { "orgId": "org_demo", "environmentId": "dev" },
+        "dependencies": dependencies,
+        "provenance": { "source": "authoring_sdk", "sourcePath": "crates/norn-api/src/actions_tests.rs" },
+        "payload": payload
+    })
+}
+
+fn entity(artifact_id: &str, object_type: &Value, dependencies: &[&str]) -> Value {
+    envelope(
+        artifact_id,
+        "entity",
+        &json!({ "entityVersion": "2.0", "objectType": object_type }),
+        dependencies,
+    )
+}
+
+fn action_artifact(
+    artifact_id: &str,
+    action_id: &str,
+    input_schema: &Value,
+    writes: &Value,
+    effect: &Value,
+    dependencies: &[&str],
+) -> Value {
+    envelope(
+        artifact_id,
+        "action",
+        &json!({
+            "actionId": action_id,
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": input_schema,
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "writes": writes,
+            "effectProgram": effect
+        }),
+        dependencies,
+    )
+}
+
+/// `test.order.edit` patches a `test.Order` and its owned `lines` rows.
+fn rows_host() -> DevHost<NativeEngine> {
+    let order = entity(
+        "test.Order.entity",
+        &json!({
+            "name": "test.Order",
+            "properties": [{ "id": "title", "type": { "kind": "text" }, "constraints": { "nullable": true } }],
+            "links": [{ "id": "lines", "target": "test.OrderLine", "cardinality": { "to": "many", "from": "one" } }],
+            "ownedCollections": [{
+                "id": "lines", "childType": "test.OrderLine", "rowIdProperty": "row_id",
+                "orderingKey": "idx", "cascadeOnParentDelete": true, "maxRows": 20
+            }]
+        }),
+        &["test.OrderLine.entity"],
+    );
+    let line = entity(
+        "test.OrderLine.entity",
+        &json!({
+            "name": "test.OrderLine",
+            "properties": [
+                { "id": "row_id", "type": { "kind": "text" } },
+                { "id": "idx", "type": { "kind": "integer" } },
+                { "id": "label", "type": { "kind": "text" } },
+                { "id": "quantity", "type": { "kind": "integer" } },
+                { "id": "double_quantity", "type": { "kind": "integer" } }
+            ]
+        }),
+        &[],
+    );
+    let any = json!({ "type": ["null", "boolean", "number", "string", "array", "object"] });
+    let edit = action_artifact(
+        "test.Order.edit.action",
+        ORDER_EDIT,
+        &json!({
+            "type": "object",
+            "properties": {
+                "parentId": { "type": "string" },
+                "parentValues": any,
+                "parentVersion": { "type": "string" },
+                "rowOps": any
+            },
+            "required": ["parentId", "parentValues", "parentVersion", "rowOps"],
+            "additionalProperties": false
+        }),
+        &json!([
+            { "entityKind": "test.Order", "change": "created" },
+            { "entityKind": "test.Order", "change": "modified" },
+            { "entityKind": "test.OrderLine", "change": "created" },
+            { "entityKind": "test.OrderLine", "change": "modified" },
+            { "entityKind": "test.OrderLine", "change": "deleted" }
+        ]),
+        &json!({
+            "kind": "mutate_parent_with_rows",
+            "objectIdField": "parentId",
+            "objectKind": "test.Order",
+            "entityArtifactId": "test.Order.entity",
+            "entityArtifactVersion": "1.0.0",
+            "parentValuesField": "parentValues",
+            "rowOpsField": "rowOps",
+            "parentVersionField": "parentVersion",
+            "collections": [{
+                "id": "lines",
+                "preconditions": ["self.quantity > 0"],
+                "derive": { "double_quantity": "self.quantity * 2" }
+            }]
+        }),
+        &["test.Order.entity", "test.OrderLine.entity"],
+    );
+    host_of(admitted_store(
+        &[order, line, edit],
+        crate::action_admission::prepare_action_model,
+    ))
+}
+
+#[test]
+fn the_kernel_turn_runs_on_the_cell_clock_a_refusal_advanced() {
+    let host = host();
+    let query = scoped("org_demo");
+    let later = LogicalTime::from_millis(1_767_225_600_000);
+    let earlier = LogicalTime::from_millis(1_767_225_599_000);
+    // The kernel hides every target from HIDDEN: refused after the cell clock
+    // moved to `later`, committing nothing, so the stored floor stays behind.
+    let hidden = melt_body("melt-h", "12", "10", "hidden");
+    let refused = call_at(&host, &query, Some(HIDDEN), MELT_ACTION, &hidden, later).unwrap_err();
+    assert_eq!(refused.status, 403);
+    // A call carrying the older time still runs its turn (and so any naming
+    // series it allocates) on the clock its receipt records.
+    assert_eq!(
+        turn_clock(&mut host.cell().unwrap(), earlier).unwrap(),
+        later
+    );
+    let body = melt_body("melt-t", "12", "10", "turn");
+    let receipt = call_at(&host, &query, Some(OPERATOR), MELT_ACTION, &body, earlier).unwrap();
+    assert_eq!(receipt.receipt.recorded_at_ms, later.as_millis());
+}
+
+#[test]
+fn a_call_that_leaves_its_target_unwritten_reports_its_current_version() {
+    let host = rows_host();
+    let query = scoped("org_demo");
+    let operator = Some(OPERATOR);
+    let body = |values: &str, version: &str, key: &str| {
+        format!(
+            r#"{{"input":{{"parentId":"order-1","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
+        )
+    };
+    let created = call(
+        &host,
+        &query,
+        operator,
+        ORDER_EDIT,
+        &body(r#"{"title":"first"}"#, "0", "create"),
+    )
+    .unwrap();
+    assert_eq!(created.outcome, ActionCallOutcome::Committed);
+    // An empty parent patch and no row operations: the kernel commits the call
+    // record without rewriting the order.
+    let unchanged = body("{}", &created.version.to_string(), "noop");
+    let committed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
+    assert_eq!(committed.outcome, ActionCallOutcome::Committed);
+    assert_eq!(
+        (committed.object_id.as_str(), committed.version),
+        ("order-1", created.version)
+    );
+    assert!(committed.receipt.commit_seq > created.receipt.commit_seq);
+    let replayed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(
+        (replayed.version, &replayed.receipt),
+        (committed.version, &committed.receipt)
     );
 }
