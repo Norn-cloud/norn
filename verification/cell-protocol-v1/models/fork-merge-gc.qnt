@@ -16,7 +16,8 @@
 module fork_merge_gc {
   type Addr = (int, int)                    // content address: (key, value)
   type Row = { addr: Addr, label: int }
-  type Cmd = { k: int, delta: int, perform: bool, readVer: int }
+  // origin: (world, index) of the admitting commit; a replay keeps its fork origin.
+  type Cmd = { k: int, delta: int, perform: bool, origin: (int, int) }
   type Receipt = { n: int, minter: int }
   type Pin = { parent: int, base: int, horizon: int }
   type Gc = { phase: str, marked: Set[Addr], barrier: Set[Addr] }
@@ -117,7 +118,8 @@ module fork_merge_gc {
   // WORLD-ISOLATE-1 decided by the pin (L5): perform in a fork refuses before
   // anything is written. `byLabel` is the variant that reads the row label.
   action commit(w: int, k: int, delta: int, perform: bool, byLabel: bool, barrierOnHit: bool): bool = {
-    val c = { k: k, delta: delta, perform: perform, readVer: ver.get(w).get(k) }
+    val c = { k: k, delta: delta, perform: perform,
+      origin: if (w == MAIN) (MAIN, seq.get(MAIN) + 1) else (w, forkLog.get(w).length()) }
     val isMain = if (byLabel) root.get(w).get(k).label == MAIN else w == MAIN
     all {
       status.get(w) == "open", lawAfter(w, k, delta),
@@ -173,8 +175,11 @@ module fork_merge_gc {
   }
 
   // FORK-MERGE-1: replay each command the fork admitted after its base,
-  // against main's current state under main's law. The cursor is durable:
-  // a refused merge reopens the fork and a later promote resumes there.
+  // against main's current state under main's law, each as an ordinary main
+  // commit. A merge is NOT atomic: Core 08 replays command by command, so a
+  // refusal keeps the prefix already replayed in main. The cursor is
+  // durable: a refused merge reopens the fork and a later promote resumes
+  // there. Mutant `resetOnRefuse` restarts from 0 and replays the prefix again.
   action promote(w: int): bool = all {
     status.get(w) == "open", pin.get(w).parent == MAIN,
     status' = status.set(w, "promoting"),
@@ -183,7 +188,7 @@ module fork_merge_gc {
     ext' = ext, exported' = exported, shadow' = shadow, copyVals' = copyVals,
     baseRoot' = baseRoot, lastAction' = "promote",
   }
-  action mergeStep(w: int, barrierOnHit: bool): bool = {
+  action mergeStep(w: int, barrierOnHit: bool, resetOnRefuse: bool): bool = {
     val i = cursor.get(w)
     all {
       status.get(w) == "promoting",
@@ -196,15 +201,17 @@ module fork_merge_gc {
       } else {
         val c = forkLog.get(w)[i]
         if (lawAfter(MAIN, c.k, c.delta)) all {
-          apply(MAIN, { ...c, readVer: ver.get(MAIN).get(c.k) }, true, false, barrierOnHit),
+          apply(MAIN, c, true, false, barrierOnHit),
           cursor' = cursor.set(w, i + 1),
           status' = status, pin' = pin, exported' = exported, baseRoot' = baseRoot,
           lastAction' = "mergeReplay",
         } else all {
-          // core.world.merge_refused: main unchanged, the fork reopens
+          // core.world.merge_refused for this command: main gets no further
+          // change (the replayed prefix stays), the fork reopens
           status' = status.set(w, "open"),
           pin' = pin, root' = root, seq' = seq, ver' = ver, receipts' = receipts,
-          stored' = stored, gc' = gc, forkLog' = forkLog, cursor' = cursor, mainLog' = mainLog,
+          stored' = stored, gc' = gc, forkLog' = forkLog,
+          cursor' = if (resetOnRefuse) cursor.set(w, 0) else cursor, mainLog' = mainLog,
           ext' = ext, exported' = exported, shadow' = shadow, copyVals' = copyVals,
           baseRoot' = baseRoot, lastAction' = "mergeRefused",
         }
@@ -248,7 +255,7 @@ module fork_merge_gc {
     }
   }
 
-  action stepWith(byLabel: bool, barrierOnHit: bool, ownBase: bool): bool = {
+  action stepWith(byLabel: bool, barrierOnHit: bool, ownBase: bool, resetOnRefuse: bool): bool = {
     nondet w = WORLDS.oneOf()
     nondet f = FORKS.oneOf()
     nondet k = KEYS.oneOf()
@@ -260,16 +267,23 @@ module fork_merge_gc {
     any {
       commit(w, k, delta, perform, byLabel, barrierOnHit),
       create(w, f, if (stale) seq.get(w) - 1 else seq.get(w)),
-      close(f, how), promote(f), mergeStep(f, barrierOnHit),
+      close(f, how), promote(f), mergeStep(f, barrierOnHit, resetOnRefuse),
       gcMark, gcSweep, exportRecord(w, r, ownBase),
     }
   }
-  action step = stepWith(false, true, false)
-  action stepByLabel = stepWith(true, true, false)
-  action stepNoDedupeBarrier = stepWith(false, false, false)
-  action stepOwnBaseFence = stepWith(false, true, true)
+  action step = stepWith(false, true, false, false)
+  action stepByLabel = stepWith(true, true, false, false)
+  action stepNoDedupeBarrier = stepWith(false, false, false, false)
+  action stepOwnBaseFence = stepWith(false, true, true, false)
+  action stepCursorReset = stepWith(false, true, false, true)
 
-  // --- Invariants (candidate theorem statements) -------------------------
+  // --- Invariants ------------------------------------------------------
+  // Candidate theorems, each refuted by a mutant: noEscape (stepByLabel),
+  // gcSafe (stepNoDedupeBarrier), evidenceIsMain (stepOwnBaseFence),
+  // mergeOnce (stepCursorReset); mergeReachable has no mutant yet.
+  // nonInterference, snapshotRoot and readsMatchCopy can fail here only
+  // through GC freeing a reachable page, because every world has its own
+  // root map. pinWellFormed holds by construction.
   // FORK-ISOLATE 1, non-interference: main equals main run alone.
   def nonInterference = KEYS.forall(k => valOf(MAIN, k) == shadow.vals.get(k)
     and ver.get(MAIN).get(k) == shadow.ver.get(k)) and seq.get(MAIN) == shadow.seq
@@ -284,8 +298,12 @@ module fork_merge_gc {
       and KEYS.forall(k => nv.get(k) >= 0 and nv.get(k) <= MAX_VAL) }
   })
   def mergeReachable = mainReplay.ok and KEYS.forall(k => shadow.vals.get(k) == mainReplay.vals.get(k))
-  // Each fork command is replayed into main at most once.
+  // MERGE-ONCE: each fork command is replayed into main at most once (no two
+  // main-log entries share a fork origin), and the cursor stays in range.
   def mergeOnce = FORKS.forall(w => cursor.get(w) <= forkLog.get(w).length())
+    and mainLog.foldl({ seen: Set(), ok: true }, (acc, c) =>
+      if (c.origin._1 == MAIN) acc
+      else { seen: acc.seen.union(Set(c.origin)), ok: acc.ok and not(acc.seen.contains(c.origin)) }).ok
   // L1 holds by construction: an address is its content. L2: a fork's root
   // differs from its base root only at keys the fork wrote.
   def snapshotRoot = FORKS.forall(w => status.get(w) != "absent" implies KEYS.forall(k =>

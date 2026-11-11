@@ -9,9 +9,10 @@
       "step": "step",
       "seed": 1,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "29f81cfe254ccdab5607895678e77d2f78351f13b96fabc5f9ab1f5bad2f6046",
-      "traceSha256": "06285954d70f6840dec94551cc90483646aeabf62475af9b0c1b0eeb1aa49ebb"
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "1a53ff20fd7eb7de208bfbf6bebb55e860c897a7aa2b1523a854a28882c617f7"
     },
     {
       "file": "cell-lifecycle-step-2.json",
@@ -20,9 +21,10 @@
       "step": "step",
       "seed": 2,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "29f81cfe254ccdab5607895678e77d2f78351f13b96fabc5f9ab1f5bad2f6046",
-      "traceSha256": "30097d002061648f0dbc38a796d4a210363be9fc702759e117bcc902da0de8ae"
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "cae1a2ca67fd1f907b9f63d2881f5cf884936fa3536d1e39470ae4091fc9894b"
     },
     {
       "file": "cell-lifecycle-step-3.json",
@@ -31,20 +33,82 @@
       "step": "step",
       "seed": 3,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "29f81cfe254ccdab5607895678e77d2f78351f13b96fabc5f9ab1f5bad2f6046",
-      "traceSha256": "7eaa60d2246c51e8203c59a1e947157ec295fa43a906525965713aa87c70e22a"
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "4b61612f7b54848d55f3245f76b1c68c4b4a65ab389a084125fbe99895f54a16"
+    },
+    {
+      "file": "cell-lifecycle-stepDoubleDispatch-dispatchOnce.cex.json",
+      "model": "cell-lifecycle",
+      "kind": "counterexample",
+      "step": "stepDoubleDispatch",
+      "seed": 7,
+      "violates": "dispatchOnce",
+      "engine": "quint-rust-simulator",
+      "states": 25,
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "938d3e3983f4c98a3201d6c886e1b4fcaed7c5d948b773f9b7e1f1970c679f68"
+    },
+    {
+      "file": "cell-lifecycle-stepNoConsumeMark-exactlyOnce.cex.json",
+      "model": "cell-lifecycle",
+      "kind": "counterexample",
+      "step": "stepNoConsumeMark",
+      "seed": 7,
+      "violates": "exactlyOnce",
+      "engine": "quint-rust-simulator",
+      "states": 26,
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "2e1123088a231fbde32138981cf6ecc2f90890690a78ef3ebac933e9f5926cd6"
+    },
+    {
+      "file": "cell-lifecycle-stepNoProviderDedupe-resultFidelity.cex.json",
+      "model": "cell-lifecycle",
+      "kind": "counterexample",
+      "step": "stepNoProviderDedupe",
+      "seed": 13,
+      "violates": "resultFidelity",
+      "engine": "quint-rust-simulator",
+      "states": 21,
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "a2648eb618828b63b2bd68e8aecae346e1113e78fef9943c4ab3bd9f8aaebbf3"
+    },
+    {
+      "file": "cell-lifecycle-stepNoResultFence-noStaleGeneration.cex.json",
+      "model": "cell-lifecycle",
+      "kind": "counterexample",
+      "step": "stepNoResultFence",
+      "seed": 7,
+      "violates": "noStaleGeneration",
+      "engine": "quint-rust-simulator",
+      "states": 19,
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "c0bc7e8aee9c189d432737b2e94539a500c9120a8394ea6a99444d233d0396e8"
+    },
+    {
+      "file": "cell-lifecycle-stepNoTimerFence-noStaleTimer.cex.json",
+      "model": "cell-lifecycle",
+      "kind": "counterexample",
+      "step": "stepNoTimerFence",
+      "seed": 7,
+      "violates": "noStaleTimer",
+      "engine": "quint-rust-simulator",
+      "states": 15,
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "c95350edc71c89d783434f3e314a867ad84121167b6045da70fb86fa6930e975"
     },
     {
       "file": "cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json",
       "model": "cell-lifecycle",
       "kind": "counterexample",
       "step": "stepUnfenced",
-      "seed": null,
+      "seed": 7,
       "violates": "refusedNeverExecutes",
-      "states": 16,
-      "modelSha256": "29f81cfe254ccdab5607895678e77d2f78351f13b96fabc5f9ab1f5bad2f6046",
-      "traceSha256": "a46db39e881ad4fc0efd074caf26897bf7dd30b286a1f5f2fe65d1d34d075a1b"
+      "engine": "quint-rust-simulator",
+      "states": 25,
+      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "traceSha256": "524ba7e221800b8d7270a883bb223c5c4b387badf096ef55febe5536922c6853"
     },
     {
       "file": "cross-cell-commitment-step-1.json",
@@ -53,9 +117,10 @@
       "step": "step",
       "seed": 1,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "e3741d747ff765d512dccc54069de4379abd7e72d87efe79e8dd012c15e4c8eb",
-      "traceSha256": "e61d8fb7a10ea174a4b7352e5e65fbf881b6a76a76809e16d73187a4a3124c2a"
+      "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
+      "traceSha256": "5f3f10be3ef798369ffbee49820a2b65bbeab4078358f70bf3cdfa07b7f911d0"
     },
     {
       "file": "cross-cell-commitment-step-2.json",
@@ -64,9 +129,10 @@
       "step": "step",
       "seed": 2,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "e3741d747ff765d512dccc54069de4379abd7e72d87efe79e8dd012c15e4c8eb",
-      "traceSha256": "43c64c02d4181563dd770c2364879e81b5694ab1d148a2e13224776506deab81"
+      "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
+      "traceSha256": "efbdaf0e9ce6a406e9f35aded66d28316546eb4710c024f81a760d64ce1c6275"
     },
     {
       "file": "cross-cell-commitment-step-3.json",
@@ -75,42 +141,58 @@
       "step": "step",
       "seed": 3,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "e3741d747ff765d512dccc54069de4379abd7e72d87efe79e8dd012c15e4c8eb",
-      "traceSha256": "66a91d09d7ec8295f54d2f9c79f670539cf708e1f95ddeb5dd5ed0d1759e3cfc"
+      "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
+      "traceSha256": "0ac0cc3045886721e25fcae81e6a6556837ec563d9c9278b033d7edcd79cd810"
+    },
+    {
+      "file": "cross-cell-commitment-stepNoCapCheck-capacityLaw.cex.json",
+      "model": "cross-cell-commitment",
+      "kind": "counterexample",
+      "step": "stepNoCapCheck",
+      "seed": 7,
+      "violates": "capacityLaw",
+      "engine": "quint-rust-simulator",
+      "states": 9,
+      "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
+      "traceSha256": "0f74727e4fac0466fb7dea9b9f028784fd9f4ad65350ecae5809420eea14aeb7"
     },
     {
       "file": "cross-cell-commitment-stepNoDedupe-acceptOnce.cex.json",
       "model": "cross-cell-commitment",
       "kind": "counterexample",
       "step": "stepNoDedupe",
-      "seed": null,
+      "seed": 7,
       "violates": "acceptOnce",
-      "states": 19,
-      "modelSha256": "e3741d747ff765d512dccc54069de4379abd7e72d87efe79e8dd012c15e4c8eb",
-      "traceSha256": "ba4db9a198a64fdc6a8cbe8b142e9538e6b94aeff0c206e73b19b39622ae5aa2"
+      "engine": "quint-rust-simulator",
+      "states": 14,
+      "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
+      "traceSha256": "bfad61480ad58783483529c003cdff67a77387e52b0f3a5da52f9b88040fc54c"
     },
     {
-      "file": "cross-cell-commitment-stepNoFence-agreement.cex.json",
+      "file": "cross-cell-commitment-stepNoFence-conservation.cex.json",
       "model": "cross-cell-commitment",
       "kind": "counterexample",
       "step": "stepNoFence",
-      "seed": null,
-      "violates": "agreement",
-      "states": 19,
-      "modelSha256": "e3741d747ff765d512dccc54069de4379abd7e72d87efe79e8dd012c15e4c8eb",
-      "traceSha256": "92274b19ccc567ff5b0f63cd1cb38eccaaeca53372776c41131b9e049916b01c"
+      "seed": 7,
+      "violates": "conservation",
+      "engine": "quint-rust-simulator",
+      "states": 15,
+      "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
+      "traceSha256": "82ada4834e887a334475bf6f8d01187cb7151d93f83fc98a0954617f967b55a3"
     },
     {
       "file": "cross-cell-commitment-stepNoIssuerCheck-agreement.cex.json",
       "model": "cross-cell-commitment",
       "kind": "counterexample",
       "step": "stepNoIssuerCheck",
-      "seed": null,
+      "seed": 7,
       "violates": "agreement",
-      "states": 9,
-      "modelSha256": "e3741d747ff765d512dccc54069de4379abd7e72d87efe79e8dd012c15e4c8eb",
-      "traceSha256": "2d96565946203baa6d92f8ddc2d839853621c73754f770820b55501802fb288e"
+      "engine": "quint-rust-simulator",
+      "states": 13,
+      "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
+      "traceSha256": "ad5d095450c55f79d3535be4a4a70364d84967c09df96c8a0b6ab80ccb38defc"
     },
     {
       "file": "fork-merge-gc-step-1.json",
@@ -119,9 +201,10 @@
       "step": "step",
       "seed": 1,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "8c4c9b25d745cc44e692df88018927c69575bfa6e91cb48e64c74dbbee4a476d",
-      "traceSha256": "bfce0c513af4f7abfbfad3a309c8584f203daa09be17b51f0d761ab6a3f6b876"
+      "modelSha256": "171a6034a84ee0607890049f7c258073b9c6a7099c86be6527fbff064dc2441c",
+      "traceSha256": "b7dc289f5e9b7ab5f7759fbd36237e24f83ffdeddf32f180ff3f513563a8e934"
     },
     {
       "file": "fork-merge-gc-step-2.json",
@@ -130,9 +213,10 @@
       "step": "step",
       "seed": 2,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "8c4c9b25d745cc44e692df88018927c69575bfa6e91cb48e64c74dbbee4a476d",
-      "traceSha256": "eedd01f436a8c0909a2dd94dccd93a6bf8ef6128ae34659c2074e120fa4fbb7e"
+      "modelSha256": "171a6034a84ee0607890049f7c258073b9c6a7099c86be6527fbff064dc2441c",
+      "traceSha256": "7fb1b9ab4183cd530dba5c3a18c40f50dc956825a4551963004909de6eb36c0a"
     },
     {
       "file": "fork-merge-gc-step-3.json",
@@ -141,31 +225,46 @@
       "step": "step",
       "seed": 3,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "8c4c9b25d745cc44e692df88018927c69575bfa6e91cb48e64c74dbbee4a476d",
-      "traceSha256": "2e284c956bc27e4831815aa50e079535f4dea2157a0e9e4488f8f3020964b721"
+      "modelSha256": "171a6034a84ee0607890049f7c258073b9c6a7099c86be6527fbff064dc2441c",
+      "traceSha256": "1c99f146ce4424ecaed5001ae238b444448f6bd99761da9feda925c2fd6267a5"
     },
     {
       "file": "fork-merge-gc-stepByLabel-noEscape.cex.json",
       "model": "fork-merge-gc",
       "kind": "counterexample",
       "step": "stepByLabel",
-      "seed": null,
+      "seed": 7,
       "violates": "noEscape",
+      "engine": "quint-rust-simulator",
       "states": 14,
-      "modelSha256": "8c4c9b25d745cc44e692df88018927c69575bfa6e91cb48e64c74dbbee4a476d",
-      "traceSha256": "d80cbe52d4d49940900d2488f8cb2e1d81f100e69b03c666839a3f83038d2b9a"
+      "modelSha256": "171a6034a84ee0607890049f7c258073b9c6a7099c86be6527fbff064dc2441c",
+      "traceSha256": "ec96915175e66454511c84b1bde191979ccce8b1bf31a2472b6c0fb0deaa6c4d"
+    },
+    {
+      "file": "fork-merge-gc-stepCursorReset-mergeOnce.cex.json",
+      "model": "fork-merge-gc",
+      "kind": "counterexample",
+      "step": "stepCursorReset",
+      "seed": 7,
+      "violates": "mergeOnce",
+      "engine": "quint-rust-simulator",
+      "states": 24,
+      "modelSha256": "171a6034a84ee0607890049f7c258073b9c6a7099c86be6527fbff064dc2441c",
+      "traceSha256": "1b174e62d8c10deed8bb12b8c5a18fca85ea51dbcc311fe402e396a8f57c063a"
     },
     {
       "file": "fork-merge-gc-stepNoDedupeBarrier-gcSafe.cex.json",
       "model": "fork-merge-gc",
       "kind": "counterexample",
       "step": "stepNoDedupeBarrier",
-      "seed": null,
+      "seed": 7,
       "violates": "gcSafe",
+      "engine": "quint-rust-simulator",
       "states": 14,
-      "modelSha256": "8c4c9b25d745cc44e692df88018927c69575bfa6e91cb48e64c74dbbee4a476d",
-      "traceSha256": "ffa49e685afbcade45b1d48d391b1d9bf031901fa153cd745d012498390270b3"
+      "modelSha256": "171a6034a84ee0607890049f7c258073b9c6a7099c86be6527fbff064dc2441c",
+      "traceSha256": "deceaea4ce0f34d5445d75c2f68074e464aeca53b61c051a2de8649d5c60b122"
     },
     {
       "file": "fork-merge-gc-stepOwnBaseFence-evidenceIsMain.cex.json",
@@ -174,9 +273,10 @@
       "step": "stepOwnBaseFence",
       "seed": null,
       "violates": "evidenceIsMain",
+      "engine": "apalache-0.56.1",
       "states": 5,
-      "modelSha256": "8c4c9b25d745cc44e692df88018927c69575bfa6e91cb48e64c74dbbee4a476d",
-      "traceSha256": "f3b711ea07a4ee237ef98e0a9ee45bd9744d707d97c3980ee7c88332aaaa951f"
+      "modelSha256": "171a6034a84ee0607890049f7c258073b9c6a7099c86be6527fbff064dc2441c",
+      "traceSha256": "8fe766865010299294411b8faa2e115487300e734dcb2bd97188630411fbbb29"
     },
     {
       "file": "offline-leases-step-1.json",
@@ -185,9 +285,10 @@
       "step": "step",
       "seed": 1,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "76df4fde3c6a9e2de92953841234209163690e8842b60409d70efe9fedfc2ecf",
-      "traceSha256": "30899688bb3df8bed9a13bcd59852bcdb2332e4f142cf66292473cb26103eb33"
+      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "traceSha256": "51b300d873a12f21f2a38c5beb1e7288aa5dbe1e3256a4a9770071433cb6bae4"
     },
     {
       "file": "offline-leases-step-2.json",
@@ -196,9 +297,10 @@
       "step": "step",
       "seed": 2,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "76df4fde3c6a9e2de92953841234209163690e8842b60409d70efe9fedfc2ecf",
-      "traceSha256": "f7d5c5e763710f70baf7518f284828eaa4504aeba2a1b763423d180e321382eb"
+      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "traceSha256": "105190cfceaa2e13b57b9f36f14eda9afad703d2bd60a491c0cbc19414b2fccb"
     },
     {
       "file": "offline-leases-step-3.json",
@@ -207,42 +309,46 @@
       "step": "step",
       "seed": 3,
       "violates": null,
+      "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "76df4fde3c6a9e2de92953841234209163690e8842b60409d70efe9fedfc2ecf",
-      "traceSha256": "118c589699f510241a1428a34c421b4b9979dafa549f7008822a59e1774119e1"
+      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "traceSha256": "4605e4c1d3e4c62172dd77980fed856ab7b4e124f895c45522ebd44d34e0d2bd"
     },
     {
       "file": "offline-leases-stepClampDeficit-withinLeaseNeverShort.cex.json",
       "model": "offline-leases",
       "kind": "counterexample",
       "step": "stepClampDeficit",
-      "seed": null,
+      "seed": 7,
       "violates": "withinLeaseNeverShort",
+      "engine": "quint-rust-simulator",
       "states": 25,
-      "modelSha256": "76df4fde3c6a9e2de92953841234209163690e8842b60409d70efe9fedfc2ecf",
-      "traceSha256": "ccaf0f1415e060bc3b9c1228bd5b89e720fcec56f37aefe0595baaf3785fc80e"
+      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "traceSha256": "818009b251cd9a9ca293c9c34e41dd60a85beb593daf654c3d5115ddebade6a5"
     },
     {
       "file": "offline-leases-stepReclaimOffline-withinLeaseNeverShort.cex.json",
       "model": "offline-leases",
       "kind": "counterexample",
       "step": "stepReclaimOffline",
-      "seed": null,
+      "seed": 7,
       "violates": "withinLeaseNeverShort",
+      "engine": "quint-rust-simulator",
       "states": 20,
-      "modelSha256": "76df4fde3c6a9e2de92953841234209163690e8842b60409d70efe9fedfc2ecf",
-      "traceSha256": "35b3cedc6a8f510c26b976b49652d4772079ac0d5ec26934f9617564af2ee0a2"
+      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "traceSha256": "2986422e7d7f58a370ef93bf65dd81ea0c0b79d5e7c5d5b25c6277aaf88aed68"
     },
     {
       "file": "offline-leases-stepUnsequencedReturn-onHandNonNegative.cex.json",
       "model": "offline-leases",
       "kind": "counterexample",
       "step": "stepUnsequencedReturn",
-      "seed": null,
+      "seed": 7,
       "violates": "onHandNonNegative",
+      "engine": "quint-rust-simulator",
       "states": 24,
-      "modelSha256": "76df4fde3c6a9e2de92953841234209163690e8842b60409d70efe9fedfc2ecf",
-      "traceSha256": "ac2110360db11393deb55bdc946f1f46908ff47ac6d7d351f7ba4436bba65506"
+      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "traceSha256": "c3bda29fbc147bb1763e3509337ae4aa04a517f194e3f84f401f811f89f5ab82"
     }
   ]
 }

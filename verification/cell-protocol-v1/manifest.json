@@ -11,18 +11,6 @@
       "scope": "command/perform lifecycle, timers, crash and DO eviction, reconciliation (norn-kernel cell_host.rs; norn-cell host.rs, store.rs)",
       "proofLane": "K-C binding (idempotency and replay decisions); P9 cell host",
       "invariant": "invariantWithProgress",
-      "invariants": [
-        "exactlyOnce",
-        "dispatchOnce",
-        "dispatchNeedsClaim",
-        "noStaleGeneration",
-        "noStaleTimer",
-        "atomicity",
-        "replayEqualsLive",
-        "resultFidelity",
-        "refusedNeverExecutes",
-        "progressEnabled"
-      ],
       "temporal": [
         "claimedResolves (all pairs; premises in liveness/cell-lifecycle-live.qnt)"
       ],
@@ -37,7 +25,8 @@
         "I8 outcome unknown",
         "I9 fenced generation",
         "I10 timer due / fired, incarnation",
-        "I11 evicted or crashed"
+        "I11 evicted or crashed",
+        "I12 fenced at the provider, refusal not yet committed"
       ],
       "bounds": {
         "commands": 2,
@@ -54,16 +43,46 @@
       },
       "assumptions": [
         "A1 the provider deduplicates on the operation key (EFFECT-IDENTITY-1)",
-        "A2 a refusal of an unknown outcome is preceded by a provider lookup-and-fence on that key",
+        "A2 the provider fences the operation key atomically with its lookup; the cell commits the refusal in a separate step (crash point I12)",
         "A3 a store transaction is atomic, so a crash mid-commit equals a crash before it",
-        "A4 DO eviction happens only when idle"
+        "A4 DO eviction happens only when idle (assumed, not verified against norn-cell-do)"
       ],
       "variants": [
         {
           "step": "stepUnfenced",
           "invariant": "refusedNeverExecutes",
           "expect": "refuted",
-          "meaning": "without A2 a request still on the wire executes after the cell refused it"
+          "meaning": "without A2's fence, a request still on the wire executes after the cell refused it"
+        },
+        {
+          "step": "stepNoTimerFence",
+          "invariant": "noStaleTimer",
+          "expect": "refuted",
+          "meaning": "a cancelled or replaced timer incarnation fires"
+        },
+        {
+          "step": "stepDoubleDispatch",
+          "invariant": "dispatchOnce",
+          "expect": "refuted",
+          "meaning": "dispatch that keeps its volatile licence dispatches a generation twice"
+        },
+        {
+          "step": "stepNoConsumeMark",
+          "invariant": "exactlyOnce",
+          "expect": "refuted",
+          "meaning": "a commit that does not mark the generation consumed lets it be consumed again"
+        },
+        {
+          "step": "stepNoResultFence",
+          "invariant": "noStaleGeneration",
+          "expect": "refuted",
+          "meaning": "a commit without the consume fence consumes a generation replaced since the peek"
+        },
+        {
+          "step": "stepNoProviderDedupe",
+          "invariant": "resultFidelity",
+          "expect": "refuted",
+          "meaning": "without A1, a re-executed key changes the provider's outcome after the cell consumed the first"
         }
       ],
       "witnesses": [
@@ -71,10 +90,29 @@
         "witnessRefused",
         "witnessStaleRefused",
         "witnessRescheduledFired",
-        "witnessRecordedAfterReopen"
+        "witnessRecordedAfterReopen",
+        "witnessFencedUncommitted"
       ],
       "exclusions": [
-        "EffectRow::Enqueue appending a newer generation of an already consumed command. Under EFFECT-IDENTITY-1 a new business operation carries a new operation key, so the model treats it as a fresh command; reuse of a consumed command id is not modelled."
+        "EffectRow::Enqueue appending a newer generation of an already consumed command. Under EFFECT-IDENTITY-1 a new business operation carries a new operation key, so the model treats it as a fresh command; reuse of a consumed command id is not modelled.",
+        "The restored perform fence (perform_fence_generation): after restore, a reconciled claim is admitted only above the fenced generation; the model reissues from any outcome-unknown state.",
+        "FIFO-head claiming: the code claims only the outbox head; the model claims any pending command (an over-approximation).",
+        "PARKED-1 out-of-order completion of parked commands.",
+        "A4 (eviction only when idle) is an assumption, not verified."
+      ],
+      "candidateTheorems": [
+        "exactlyOnce",
+        "dispatchOnce",
+        "noStaleGeneration",
+        "noStaleTimer",
+        "atomicity",
+        "resultFidelity",
+        "refusedNeverExecutes"
+      ],
+      "consistencyChecks": [
+        "dispatchNeedsClaim",
+        "replayEqualsLive",
+        "progressEnabled"
       ]
     },
     {
@@ -83,17 +121,6 @@
       "scope": "fork pin, copy-on-write roots over a content-addressed page store, merge by replay, two-phase reachability GC, export fence (Core 08 Fork lifecycle; #1226 U1/U2, units 3 and 6)",
       "proofLane": "FORK-ISOLATE (#1226 unit 10): Lean world-indexed non-interference; L1-L6",
       "invariant": "invariant",
-      "invariants": [
-        "nonInterference",
-        "noEscape",
-        "mergeReachable",
-        "mergeOnce",
-        "snapshotRoot",
-        "gcSafe",
-        "readsMatchCopy",
-        "evidenceIsMain",
-        "pinWellFormed"
-      ],
       "implicitStates": [
         "J1 fork pin with its main horizon",
         "J2 page shared through content-address dedupe",
@@ -130,6 +157,12 @@
           "invariant": "evidenceIsMain",
           "expect": "refuted",
           "meaning": "L6: the #1226 fence (commit_seq > pin.base.commits) exports a parent fork's records from a fork of a fork"
+        },
+        {
+          "step": "stepCursorReset",
+          "invariant": "mergeOnce",
+          "expect": "refuted",
+          "meaning": "resetting the merge cursor on refusal replays the prefix twice"
         }
       ],
       "witnesses": [
@@ -139,6 +172,25 @@
         "witnessForkExport",
         "witnessForkOfForkCommit",
         "witnessRefusedPerform"
+      ],
+      "candidateTheorems": [
+        "noEscape",
+        "gcSafe",
+        "evidenceIsMain",
+        "mergeOnce",
+        "mergeReachable"
+      ],
+      "consistencyChecks": [
+        "pinWellFormed"
+      ],
+      "gcDependent": [
+        "nonInterference",
+        "snapshotRoot",
+        "readsMatchCopy"
+      ],
+      "mergeAtomicity": "not atomic: commands replay one by one as ordinary main commits (Core 08 FORK-MERGE-1); a refusal keeps the replayed prefix in main and reopens the fork; a later promote resumes at the durable cursor",
+      "exclusions": [
+        "The #1239 finding concerns #1226's head (export_record with the own-base fence). export_record on main has no fork fence at all; re-check there once forks land."
       ]
     },
     {
@@ -147,18 +199,6 @@
       "scope": "per-device stock leases, offline sales, deterministic sync, shortfall and resolution obligations (#1225)",
       "proofLane": "linear conservation meta-theorem (P6 U5); #1225 design requirements",
       "invariant": "invariant (includes obligationProgress)",
-      "invariants": [
-        "conservation",
-        "onHandNonNegative",
-        "shortfallObligated",
-        "factNeverRefused",
-        "prefixApplied",
-        "replayEqualsLive",
-        "shortfallOnlyFromFacts",
-        "withinLeaseNeverShort",
-        "localTracksLease",
-        "obligationProgress"
-      ],
       "temporal": [
         "shortfallResolves (all slots; premises in liveness/offline-leases-live.qnt)"
       ],
@@ -215,6 +255,23 @@
         "witnessGap",
         "witnessWithinLeaseApplied",
         "witnessSequencedReturn"
+      ],
+      "candidateTheorems": [
+        "onHandNonNegative",
+        "withinLeaseNeverShort",
+        "localTracksLease",
+        "conservation",
+        "shortfallObligated",
+        "factNeverRefused",
+        "prefixApplied"
+      ],
+      "consistencyChecks": [
+        "replayEqualsLive",
+        "shortfallOnlyFromFacts",
+        "obligationProgress"
+      ],
+      "exclusions": [
+        "Stranded lease: localTracksLease is one-sided, so the cell can hold lease units for a device that the device can neither sell within lease nor return (lease 1, sell 2 offline, apply, grant 1). Reported on #1225; not prevented by this model."
       ]
     },
     {
@@ -223,16 +280,6 @@
       "scope": "cross-cell commitment: source reserve + outbox, target acceptance with receipt deduplicated by id, reconciliation settled/refused/unknown, query and fence, compensation that can fail (#493 and its design consult)",
       "proofLane": "#493 commitments; guarantees view (settled/refused/pending/overdue/outcome-unknown/compensation)",
       "invariant": "invariant",
-      "invariants": [
-        "conservation",
-        "nonNegative",
-        "capacityLaw",
-        "acceptOnce",
-        "agreement",
-        "receiptBinding",
-        "deadlineHonest",
-        "compensationTracked"
-      ],
       "temporal": [
         "commitmentResolves (premises in liveness/cross-cell-commitment-live.qnt)"
       ],
@@ -252,7 +299,7 @@
           1,
           2
         ],
-        "capacity": 3,
+        "capacity": 2,
         "total": 3,
         "time": [
           0,
@@ -269,19 +316,25 @@
           "step": "stepNoIssuerCheck",
           "invariant": "agreement",
           "expect": "refuted",
-          "meaning": "a receipt from another cell settles the commitment (#493: a wrong-cell receipt must not satisfy acceptance)"
+          "meaning": "a receipt from another cell settles the commitment"
         },
         {
           "step": "stepNoFence",
-          "invariant": "agreement",
+          "invariant": "conservation",
           "expect": "refuted",
-          "meaning": "answering an unseen-id query without fencing lets a late command be accepted after the source released"
+          "meaning": "answering an unseen-id query without fencing lets a late command be accepted after the source released, duplicating units"
         },
         {
           "step": "stepNoDedupe",
           "invariant": "acceptOnce",
           "expect": "refuted",
           "meaning": "a duplicated command is accepted twice"
+        },
+        {
+          "step": "stepNoCapCheck",
+          "invariant": "capacityLaw",
+          "expect": "refuted",
+          "meaning": "a target that accepts without its capacity law exceeds it"
         }
       ],
       "witnesses": [
@@ -291,7 +344,20 @@
         "witnessUnknownThenSettled",
         "witnessCompensated",
         "witnessCompensationFailed",
-        "witnessForeignIgnored"
+        "witnessForeignIgnored",
+        "witnessLawRefused"
+      ],
+      "candidateTheorems": [
+        "conservation",
+        "acceptOnce",
+        "agreement",
+        "capacityLaw"
+      ],
+      "consistencyChecks": [
+        "receiptBinding",
+        "deadlineHonest",
+        "compensationTracked",
+        "nonNegative"
       ]
     }
   ],
@@ -307,7 +373,7 @@
   },
   "liveness": {
     "engine": "TLC 1.8.0 over `quint compile --target tlaplus` output (with Apalache.tla and Variants.tla from apalache v0.56.1)",
-    "method": "each harness imports its model, gives faults a finite budget (so 'eventually the faults stop' is explicit and the state space is finite) and states per-action weak fairness; TLC checks `live` = fairness => properties exhaustively, with the model invariant",
+    "method": "each harness imports its model, gives faults a finite budget (so 'eventually the faults stop' is explicit and the state space is finite) and states per-action weak fairness; TLC is run on `live` = fairness => properties with the model invariant. TLC finished (complete state graph) only for the cross-cell harness; the cell and offline-leases runs stopped incomplete (results.json: unknown).",
     "harnesses": [
       {
         "path": "liveness/cell-lifecycle-live.qnt",

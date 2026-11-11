@@ -30,7 +30,8 @@ module cross_cell_commitment {
   pure val CELLS = Set(1, 2, 3)
   pure val IDS = Set(1, 2)                  // 1: transfer A -> B; 2: its compensation B -> A
   pure val QTY = Set(1, 2)
-  pure val CAP = 3                          // each cell's capacity law: avail + reserved <= CAP
+  pure val CAP = 2                          // each cell's capacity law: avail + reserved <= CAP;
+                                            // binds: B (1 unit) cannot accept a transfer of 2
   pure val INIT_AVAIL = Map(1 -> 2, 2 -> 1, 3 -> 0)
   pure val TOTAL = 3
   pure val MAX_TIME = 4
@@ -79,10 +80,12 @@ module cross_cell_commitment {
   // capacity law, or refuse by policy) and records its receipt in the same
   // commit; a duplicate re-sends the recorded receipt (X2). `dedupe` false
   // is the variant that decides every delivery afresh.
-  action accept(id: int, refuseByPolicy: bool, dedupe: bool): bool = {
+  // Mutant `checkCap` false: the target accepts without its capacity law.
+  action accept(id: int, refuseByPolicy: bool, dedupe: bool, checkCap: bool): bool = {
     val c = cmt.get(id)
     val fresh = tgtSeen.get(id) == "none" or (not(dedupe) and tgtSeen.get(id) == "accepted")
-    val ok = not(refuseByPolicy) and capOk(c.dst, c.k)
+    val lawOk = not(checkCap) or capOk(c.dst, c.k)
+    val ok = not(refuseByPolicy) and lawOk
     all {
       cmdNet.contains(id),
       if (fresh) all {
@@ -90,7 +93,7 @@ module cross_cell_commitment {
         tgtSeen' = tgtSeen.set(id, if (ok) "accepted" else "refused"),
         acceptCount' = if (ok) acceptCount.setBy(id, x => x + 1) else acceptCount,
         rcptNet' = rcptNet.union(Set({ id: id, issuer: c.dst, outcome: if (ok) "accepted" else "refused" })),
-        lastAction' = if (ok) "accept" else "refuse",
+        lastAction' = if (ok) "accept" else if (not(lawOk)) "refuseLaw" else "refusePolicy",
       } else all {
         avail' = avail, tgtSeen' = tgtSeen, acceptCount' = acceptCount,
         rcptNet' = rcptNet.union(Set({ id: id, issuer: c.dst,
@@ -217,7 +220,7 @@ module cross_cell_commitment {
     settledBy' = settledBy, lastAction' = "tick",
   }
 
-  action stepWith(checkIssuer: bool, fence: bool, dedupe: bool): bool = {
+  action stepWith(checkIssuer: bool, fence: bool, dedupe: bool, checkCap: bool): bool = {
     nondet id = IDS.oneOf()
     nondet k = QTY.oneOf()
     nondet c = Set(A, B).oneOf()
@@ -225,17 +228,23 @@ module cross_cell_commitment {
     nondet outcome = Set("accepted", "refused").oneOf()
     nondet r = rcptNet.union(Set({ id: 1, issuer: 0, outcome: "none" })).oneOf()
     any {
-      proposeTransfer(k), accept(id, policy, dedupe), foreignReceipt(id, outcome),
+      proposeTransfer(k), accept(id, policy, dedupe, checkCap), foreignReceipt(id, outcome),
       reconcile(r, checkIssuer), overdue(id), query(id), answer(id, fence), compensate,
       consume(c, k), dropCmd(id), dropReceipt(r), dropQuery(id), tick,
     }
   }
-  action step = stepWith(true, true, true)
-  action stepNoIssuerCheck = stepWith(false, true, true)
-  action stepNoFence = stepWith(true, false, true)
-  action stepNoDedupe = stepWith(true, true, false)
+  action step = stepWith(true, true, true, true)
+  action stepNoIssuerCheck = stepWith(false, true, true, true)
+  action stepNoFence = stepWith(true, false, true, true)
+  action stepNoDedupe = stepWith(true, true, false, true)
+  action stepNoCapCheck = stepWith(true, true, true, false)
 
-  // --- Invariants (candidate theorem statements) -------------------------
+  // --- Invariants ------------------------------------------------------
+  // Candidate theorems, each refuted by a mutant: conservation (stepNoFence:
+  // a late command accepted after the source released duplicates units),
+  // acceptOnce (stepNoDedupe), agreement (stepNoIssuerCheck), capacityLaw
+  // (stepNoCapCheck). Hold by construction here: receiptBinding (a ghost of
+  // reconcile's own guard), deadlineHonest, compensationTracked, nonNegative.
   // In-flight claims: accepted at the target, still reserved at the source.
   def inFlight: int = IDS.fold(0, (a, id) => a +
     (if (tgtSeen.get(id) == "accepted" and Set("pending", "unknown").contains(srcStatus.get(id)))
@@ -272,7 +281,11 @@ module cross_cell_commitment {
   def witnessUnknownThenSettled = srcStatus.get(1) == "settled" and missed.contains(1)
   def witnessCompensated = comp == "compensated"
   def witnessCompensationFailed = comp == "failed"
-  def witnessForeignIgnored = rcptNet.exists(r => r.issuer == C) and srcStatus.get(1) == "settled"
+  // A foreign receipt was on the wire when the source settled (settle adds
+  // no receipt, so it was emitted before) and settlement used the target's.
+  def witnessForeignIgnored = lastAction == "settle" and rcptNet.exists(r => r.issuer == C)
+  // The target refused under its own capacity law, not by policy.
+  def witnessLawRefused = lastAction == "refuseLaw"
 
   // A commitment is resolved once its source has settled or released it.
   def resolvedId(id: int): bool = Set("settled", "refused").contains(srcStatus.get(id))

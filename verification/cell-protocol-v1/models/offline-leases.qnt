@@ -280,7 +280,14 @@ module offline_leases {
   action stepReclaimOffline = stepWith(false, true, true)
   action stepUnsequencedReturn = stepWith(false, false, false)
 
-  // --- Invariants (candidate theorem statements) -------------------------
+  // --- Invariants ------------------------------------------------------
+  // Candidate theorems, each refuted by a mutant: onHandNonNegative
+  // (stepUnsequencedReturn), withinLeaseNeverShort (stepClampDeficit,
+  // stepReclaimOffline), localTracksLease. Unrefuted so far: conservation,
+  // shortfallObligated, factNeverRefused, prefixApplied. Hold by construction
+  // here (consistency checks, not theorem candidates): replayEqualsLive (the
+  // books and the log are written by the same commit), shortfallOnlyFromFacts,
+  // obligationProgress (deadlines are clamped to MAX_TIME).
   def leasedTotal = DEVICES.fold(0, (a, d) => a + books.leased.get(d))
   def owedTotal = OBLS.fold(0, (a, o) => a + (if (owed(books.obl.get(o))) books.obl.get(o).qty else 0))
   // CONSERVATION: every unit is on hand (available or leased), delivered or
@@ -309,14 +316,18 @@ module offline_leases {
   def withinLeaseNeverShort = factLog.foldl(true, (a, x) => a and (x.f.within implies x.excess == 0))
   // The device's local balance never exceeds what the cell holds for it,
   // net of grants and returns in flight and its unsynced sales (K4, K5, K6).
+  // One-sided on purpose, and the gap is a known hazard (manifest
+  // `exclusions`, #1225): lease 1, sell 2 offline (local -1), apply (lease
+  // 0), grant 1 (local 0, lease 1). The cell then holds a unit for the
+  // device that the device can neither sell within its lease nor return.
   def unappliedQty(d: int): int =
     dev.get(d).recorded.fold(0, (a, f) => a + (if (f.lseq > applied.get(d)) f.q else 0))
   def localTracksLease = DEVICES.forall(d => dev.get(d).local <=
     books.leased.get(d) - dev.get(d).grantIn - dev.get(d).returnOut - unappliedQty(d))
 
-  // PROGRESS (WF1 premise): an open obligation can always move toward
-  // resolved or escalated, because deadlines never pass MAX_TIME: either
-  // time can advance or escalation is enabled.
+  // Enabledness check (true by construction, since deadlines are clamped to
+  // MAX_TIME; not evidence for liveness): an open obligation can always
+  // advance time or escalate.
   def obligationProgress = OBLS.forall(o => books.obl.get(o).state == "open" implies
     (books.obl.get(o).deadline <= MAX_TIME and (now < MAX_TIME or now >= books.obl.get(o).deadline)))
   def invariant = conservation and onHandNonNegative and shortfallObligated and factNeverRefused
@@ -332,7 +343,9 @@ module offline_leases {
   def witnessSequencedReturn = factLog.foldl(false, (a, x) => a or x.f.kind == "return")
   temporal safety = always(invariant)
 
-  // LIVENESS: every shortfall slot is eventually resolved or escalated.
+  // LIVENESS: every shortfall slot is eventually resolved or escalated. Under
+  // fairness of tick and escalate alone this says the deadline timer fires,
+  // not that the shortfall is resolved.
   // This is the conclusion only; its weak-fairness premises (tick, escalate,
   // sync, heal) and the finite fault budget are encoded in
   // liveness/offline-leases-live.qnt (`live`).

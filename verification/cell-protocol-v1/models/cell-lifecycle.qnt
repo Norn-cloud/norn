@@ -19,6 +19,8 @@
 //   I9 fenced        a generation replaced while pending (g.replaced)
 //   I10 timer due    scheduled incarnation with now >= due; fired = consumed
 //   I11 evicted/crashed  every volatile field lost, durable store intact
+//   I12 fenced at the provider, refusal not yet committed (a crash between
+//       the provider's fence and the cell's refusal commit leaves this state)
 // Environment: results are duplicated (delivery never removes a message),
 // dropped and reordered (the wire is a set).
 module cell_lifecycle {
@@ -33,7 +35,12 @@ module cell_lifecycle {
   type Env = { now: int, toProvider: Set[Pair], net: Set[Msg], done: int -> int,
     doneVal: int -> int, fenced: int -> bool }
   type Ghost = { dispatches: Pair -> int, claimedEver: Set[Pair], replaced: Set[Pair],
-    last: str, rescheduledIncs: Set[int], epoch: int, claimEpoch: Pair -> int, lastRecorded: Pair }
+    last: str, rescheduledIncs: Set[int], epoch: int, claimEpoch: Pair -> int, lastRecorded: Pair,
+    staleIncs: Set[int], reissued: Set[Pair] }
+  // Mutants: each flag removes one mechanism; the matching step must refute
+  // the invariant that depends on it (manifest `variants`).
+  type Mut = { unfenced: bool, noTimerFence: bool, keepLicence: bool, noConsumeMark: bool,
+    noResultFence: bool, noProviderDedupe: bool }
 
   pure val CMDS = Set(1, 2)
   pure val TIMERS = Set(1)
@@ -43,6 +50,8 @@ module cell_lifecycle {
   pure val GENS = 1.to(MAX_GEN)
   pure val PAIRS = tuples(CMDS, GENS)
   pure val NONE: Delivery = { kind: "none", id: 0, gen: 0, value: 0 }
+  pure val NOMUT: Mut = { unfenced: false, noTimerFence: false, keepLicence: false,
+    noConsumeMark: false, noResultFence: false, noProviderDedupe: false }
 
   var d: Durable
   var v: Volatile
@@ -63,7 +72,7 @@ module cell_lifecycle {
       fenced: CMDS.mapBy(_ => false) },
     g' = { dispatches: PAIRS.mapBy(_ => 0), claimedEver: Set(), replaced: Set(),
       last: "init", rescheduledIncs: Set(), epoch: 0, claimEpoch: PAIRS.mapBy(_ => 0),
-      lastRecorded: (0, 0) },
+      lastRecorded: (0, 0), staleIncs: Set(), reissued: Set() },
   }
 
   def pending(c: int): bool = d.gen.get(c) > d.consumedGen.get(c)
@@ -80,16 +89,18 @@ module cell_lifecycle {
   // already consumed command. Under EFFECT-IDENTITY-1 that is a new business
   // operation (a new operation key), so it is a fresh command here; reusing
   // a consumed command id is outside this model (see manifest `exclusions`).
-  action enqueue(c: int): bool = {
+  action enqueueAs(c: int, reissue: bool): bool = {
     val ng = d.gen.get(c) + 1
     all {
       v.up, ng <= MAX_GEN, d.gen.get(c) == 0 or pending(c),
       d' = { ...d, gen: d.gen.set(c, ng), seq: d.seq + 1 },
       v' = v, env' = env,
-      g' = { ...g, last: "enqueue",
-        replaced: if (pending(c)) g.replaced.union(Set((c, d.gen.get(c)))) else g.replaced },
+      g' = { ...g, last: if (reissue) "reissue" else "enqueue",
+        replaced: if (pending(c)) g.replaced.union(Set((c, d.gen.get(c)))) else g.replaced,
+        reissued: if (reissue) g.reissued.union(Set((c, ng))) else g.reissued },
     }
   }
+  action enqueue(c: int): bool = enqueueAs(c, false)
   // EffectRow::ClaimPerform: a zero-event commit before any dispatch.
   action claim(c: int): bool = all {
     v.up, pending(c), d.claimed.get(c) != d.gen.get(c), d.resultGen.get(c) != d.gen.get(c),
@@ -100,28 +111,33 @@ module cell_lifecycle {
       claimEpoch: g.claimEpoch.set((c, d.gen.get(c)), g.epoch) },
   }
   // PerformClaim::Fresh is the only dispatch licence, and it is volatile.
-  action dispatch(p: Pair): bool = all {
+  // Mutant `keepLicence`: dispatch leaves the licence in place.
+  action dispatchWith(p: Pair, keepLicence: bool): bool = all {
     v.up, v.fresh.contains(p),
     d' = d,
-    v' = { ...v, fresh: v.fresh.exclude(Set(p)), inflight: v.inflight.union(Set(p)) },
+    v' = { ...v, fresh: if (keepLicence) v.fresh else v.fresh.exclude(Set(p)),
+      inflight: v.inflight.union(Set(p)) },
     env' = { ...env, toProvider: env.toProvider.union(Set(p)) },
     g' = { ...g, last: "dispatch", dispatches: g.dispatches.setBy(p, n => n + 1) },
   }
+  action dispatch(p: Pair): bool = dispatchWith(p, false)
   // The provider deduplicates on the operation key (the command id): a
   // repeated key returns the recorded outcome. A fenced key never executes.
-  action providerExec(p: Pair, x: int): bool = {
+  // Mutant `noProviderDedupe` (drops assumption A1): every request executes.
+  action providerExecWith(p: Pair, x: int, dedupe: bool): bool = {
     val c = p._1
     all {
       env.toProvider.contains(p),
       d' = d, v' = v, g' = { ...g, last: "providerExec" },
       env' = if (env.fenced.get(c)) { ...env, toProvider: env.toProvider.exclude(Set(p)) }
-        else if (env.done.get(c) != 0) { ...env, toProvider: env.toProvider.exclude(Set(p)),
+        else if (dedupe and env.done.get(c) != 0) { ...env, toProvider: env.toProvider.exclude(Set(p)),
           net: env.net.union(Set({ cmd: c, gen: p._2, value: env.doneVal.get(c) })) }
         else { ...env, toProvider: env.toProvider.exclude(Set(p)),
           done: env.done.set(c, p._2), doneVal: env.doneVal.set(c, x),
           net: env.net.union(Set({ cmd: c, gen: p._2, value: x })) },
     }
   }
+  action providerExec(p: Pair, x: int): bool = providerExecWith(p, x, true)
   action dropRequest(p: Pair): bool = all {
     env.toProvider.contains(p),
     d' = d, v' = v, g' = { ...g, last: "dropRequest" },
@@ -150,25 +166,30 @@ module cell_lifecycle {
   // OutcomeUnknown, policy 1: claim_reconciled_perform authorizes a newer
   // generation under the same operation key (replace in place).
   action reconcileReissue(c: int): bool = all {
-    outcomeUnknown(c), enqueue(c),
+    outcomeUnknown(c), enqueueAs(c, true),
   }
-  // OutcomeUnknown, policy 2: refuse, after the provider's lookup-and-fence
-  // on the operation key. An executed key returns its recorded outcome
-  // instead of refusing.
+  // OutcomeUnknown, policy 2, in two steps with a crash point between them
+  // (I12). Step 1, at the provider: lookup-and-fence on the operation key
+  // (assumption A2: the provider fences atomically with its lookup). Step 2,
+  // in the cell: an executed key returns its recorded outcome; a fenced,
+  // unexecuted key is refused by a cell commit.
+  action providerFence(c: int): bool = all {
+    v.up, outcomeUnknown(c), env.done.get(c) == 0, not(env.fenced.get(c)),
+    d' = d, v' = v, g' = { ...g, last: "providerFence" },
+    env' = { ...env, fenced: env.fenced.set(c, true) },
+  }
   action reconcileRefuse(c: int): bool = {
     val gc = d.gen.get(c)
     all {
-      v.up, outcomeUnknown(c),
-      if (env.done.get(c) != 0) all {
-        d' = d, v' = v, g' = { ...g, last: "reconcileRefetch" },
-        env' = { ...env, net: env.net.union(Set({ cmd: c, gen: gc, value: env.doneVal.get(c) })) },
-      } else all {
-        d' = { ...d, consumedGen: d.consumedGen.set(c, gc), refusedGen: d.refusedGen.set(c, gc),
+      v.up, outcomeUnknown(c), env.done.get(c) != 0 or env.fenced.get(c),
+      env' = if (env.done.get(c) != 0)
+          { ...env, net: env.net.union(Set({ cmd: c, gen: gc, value: env.doneVal.get(c) })) }
+        else env,
+      d' = if (env.done.get(c) != 0) d
+        else { ...d, consumedGen: d.consumedGen.set(c, gc), refusedGen: d.refusedGen.set(c, gc),
           seq: d.seq + 1, log: d.log.union(Set({ seq: d.seq + 1, kind: "refused", id: c, gen: gc, value: 0 })) },
-        v' = v,
-        env' = { ...env, fenced: env.fenced.set(c, true) },
-        g' = { ...g, last: "reconcileRefuse" },
-      },
+      v' = v,
+      g' = { ...g, last: if (env.done.get(c) != 0) "reconcileRefetch" else "reconcileRefuse" },
     }
   }
   // Variant: refuse after a lookup with no fence. Not in `step`; it exists
@@ -190,12 +211,14 @@ module cell_lifecycle {
     d' = { ...d, seq: d.seq + 1, timerInc: d.timerInc.set(t, d.seq + 1), timerDue: d.timerDue.set(t, due) },
     v' = v, env' = env,
     g' = { ...g, last: if (d.timerInc.get(t) != 0) "reschedule" else "schedule",
-      rescheduledIncs: if (d.timerInc.get(t) != 0) g.rescheduledIncs.union(Set(d.seq + 1)) else g.rescheduledIncs },
+      rescheduledIncs: if (d.timerInc.get(t) != 0) g.rescheduledIncs.union(Set(d.seq + 1)) else g.rescheduledIncs,
+      staleIncs: if (d.timerInc.get(t) != 0) g.staleIncs.union(Set(d.timerInc.get(t))) else g.staleIncs },
   }
   action cancel(t: int): bool = all {
     v.up, d.timerInc.get(t) != 0,
     d' = { ...d, seq: d.seq + 1, timerInc: d.timerInc.set(t, 0) },
-    v' = v, env' = env, g' = { ...g, last: "cancel" },
+    v' = v, env' = env,
+    g' = { ...g, last: "cancel", staleIncs: g.staleIncs.union(Set(d.timerInc.get(t))) },
   }
   action tick = all {
     env.now < MAX_TIME,
@@ -218,16 +241,19 @@ module cell_lifecycle {
   def fenceHolds(t: Delivery): bool =
     if (t.kind == "result") d.gen.get(t.id) == t.gen and pending(t.id) and d.resultGen.get(t.id) == t.gen
     else d.timerInc.get(t.id) == t.gen
-  action commitTurn = {
+  // Mutants: `noResultFence` / `noTimerFence` skip the fence for that kind;
+  // `noConsumeMark` commits without marking the generation consumed.
+  action commitTurnWith(mut: Mut): bool = {
     val t = v.turn
     val n = d.seq + 1
+    val skip = (t.kind == "result" and mut.noResultFence) or (t.kind == "timer" and mut.noTimerFence)
     all {
       v.up, t != NONE,
       env' = env,
-      if (fenceHolds(t)) all {
+      if (skip or fenceHolds(t)) all {
         d' = { ...d, seq: n, facts: d.facts + t.value,
           log: d.log.union(Set({ seq: n, kind: t.kind, id: t.id, gen: t.gen, value: t.value })),
-          consumedGen: if (t.kind == "result") d.consumedGen.set(t.id, t.gen) else d.consumedGen,
+          consumedGen: if (t.kind == "result" and not(mut.noConsumeMark)) d.consumedGen.set(t.id, t.gen) else d.consumedGen,
           timerInc: if (t.kind == "timer") d.timerInc.set(t.id, 0) else d.timerInc },
         v' = { ...v, turn: NONE, cache: d.facts + t.value },
         g' = { ...g, last: "commit" },
@@ -236,6 +262,7 @@ module cell_lifecycle {
       },
     }
   }
+  action commitTurn = commitTurnWith(NOMUT)
 
   // --- Process failure -------------------------------------------------
   // A crash can strike anywhere, including between peek and commit (the
@@ -256,7 +283,7 @@ module cell_lifecycle {
     v' = { ...emptyVolatile, cache: d.facts },
   }
 
-  action stepWith(unfenced: bool): bool = {
+  action stepWith(mut: Mut): bool = {
     nondet c = CMDS.oneOf()
     nondet t = TIMERS.oneOf()
     nondet p = PAIRS.oneOf()
@@ -264,17 +291,29 @@ module cell_lifecycle {
     nondet due = 0.to(MAX_TIME).oneOf()
     nondet m = env.net.union(Set({ cmd: 1, gen: 0, value: 0 })).oneOf()
     any {
-      enqueue(c), claim(c), dispatch(p), providerExec(p, x), dropRequest(p),
-      dropResult(m), record(m), timeout(p), reconcileReissue(c),
-      if (unfenced) reconcileRefuseUnfenced(c) else reconcileRefuse(c),
-      schedule(t, due), cancel(t), tick, peekResult(c), peekTimer(t), commitTurn,
+      enqueue(c), claim(c), dispatchWith(p, mut.keepLicence),
+      providerExecWith(p, x, not(mut.noProviderDedupe)), dropRequest(p),
+      dropResult(m), record(m), timeout(p), reconcileReissue(c), providerFence(c),
+      if (mut.unfenced) reconcileRefuseUnfenced(c) else reconcileRefuse(c),
+      schedule(t, due), cancel(t), tick, peekResult(c), peekTimer(t), commitTurnWith(mut),
       crash, evict, reopen,
     }
   }
-  action step = stepWith(false)
-  action stepUnfenced = stepWith(true)
+  action step = stepWith(NOMUT)
+  action stepUnfenced = stepWith({ ...NOMUT, unfenced: true })
+  action stepNoTimerFence = stepWith({ ...NOMUT, noTimerFence: true })
+  action stepDoubleDispatch = stepWith({ ...NOMUT, keepLicence: true })
+  action stepNoConsumeMark = stepWith({ ...NOMUT, noConsumeMark: true })
+  action stepNoResultFence = stepWith({ ...NOMUT, noResultFence: true })
+  action stepNoProviderDedupe = stepWith({ ...NOMUT, noProviderDedupe: true })
 
-  // --- Invariants (candidate theorem statements) -------------------------
+  // --- Invariants ------------------------------------------------------
+  // Candidate theorems (each has a mutant that refutes it, see manifest):
+  // exactlyOnce, dispatchOnce, noStaleGeneration, noStaleTimer, atomicity,
+  // resultFidelity, refusedNeverExecutes. Consistency checks that hold by
+  // construction of this model (not theorem candidates): dispatchNeedsClaim,
+  // replayEqualsLive (state and log are written by the same assignment),
+  // progressEnabled (follows from the definition of outcomeUnknown).
   def sameDelivery(a: Entry, b: Entry): bool =
     a.id == b.id and a.gen == b.gen
       and (a.kind == "timer") == (b.kind == "timer")
@@ -283,10 +322,12 @@ module cell_lifecycle {
   // AT-MOST-ONCE DISPATCH: a generation is dispatched at most once, across crashes.
   def dispatchOnce = PAIRS.forall(p => g.dispatches.get(p) <= 1)
   def dispatchNeedsClaim = PAIRS.forall(p => g.dispatches.get(p) > 0 implies g.claimedEver.contains(p))
-  // NO STALE GENERATION: a fenced (replaced) generation is never consumed,
-  // and a consumed timer incarnation is no longer scheduled.
+  // NO STALE GENERATION: a fenced (replaced) generation is never consumed.
   def noStaleGeneration = d.log.forall(e => e.kind == "result" implies not(g.replaced.contains((e.id, e.gen))))
-  def noStaleTimer = d.log.forall(e => e.kind == "timer" implies d.timerInc.get(e.id) != e.gen)
+  // NO STALE TIMER: a cancelled or replaced incarnation never fires, and a
+  // fired incarnation is no longer scheduled.
+  def noStaleTimer = d.log.forall(e => e.kind == "timer" implies
+    (not(g.staleIncs.contains(e.gen)) and d.timerInc.get(e.id) != e.gen))
   // A lambda fold must end its conjunction: `quint compile --target tlaplus`
   // 0.32.0 prints `x = LET .. IN fold(..) /\ Q`, where the LET swallows Q.
   // (Apalache rejects a named fold function, so the lambda stays.)
@@ -314,7 +355,10 @@ module cell_lifecycle {
 
   // Non-vacuity witnesses: each must be reachable (a run violating
   // `not(witness)` exports the witnessing trace).
-  def witnessReissuedConsumed = d.log.exists(e => e.kind == "result" and e.gen == 2)
+  // A generation created by reconcileReissue (not a plain replacement) was consumed.
+  def witnessReissuedConsumed = d.log.exists(e => e.kind == "result" and g.reissued.contains((e.id, e.gen)))
+  // The provider fenced and the cell has not committed the refusal (I12).
+  def witnessFencedUncommitted = CMDS.exists(c => env.fenced.get(c) and d.refusedGen.get(c) == 0)
   def witnessRefused = d.log.exists(e => e.kind == "refused")
   def witnessStaleRefused = g.last == "refuseStale"
   // A fired incarnation that replaced a still-scheduled timer.
@@ -325,16 +369,14 @@ module cell_lifecycle {
     and g.claimEpoch.get(g.lastRecorded) < g.epoch
 
   def resolved(p: Pair): bool = d.consumedGen.get(p._1) >= p._2 or g.replaced.contains(p)
-  // PROGRESS (the WF1 premise of the liveness argument): while a claimed
-  // generation is unresolved, some step that lowers its rank is enabled.
-  // Rank, highest first: down > fresh > in flight > outcome unknown >
-  // recorded > peeked. Reopen, dispatch, timeout, reconcile, peek and commit
-  // each strictly lower it. Weak fairness alone is not enough: unbounded
-  // timer turns can keep the single turn slot busy, so peekResult is
-  // repeatedly disabled. `claimedResolves` follows under weak fairness of
-  // those steps plus a finite budget of crashes, drops and timer churn (as
-  // liveness/cell-lifecycle-live.qnt bounds them), or under strong fairness
-  // of peekResult.
+  // Enabledness check (by construction; not evidence for liveness): while a
+  // claimed generation is unresolved, some step that could lower its rank is
+  // enabled. Weak fairness alone does not give `claimedResolves`: unbounded
+  // timer turns can keep the single turn slot busy and peekResult repeatedly
+  // disabled. The intended premise is weak fairness plus a finite budget of
+  // crashes, drops and timer churn (liveness/cell-lifecycle-live.qnt), or
+  // strong fairness of peekResult. That liveness claim is NOT established:
+  // TLC did not finish on the harness (results.json: unknown).
   def progressEnabled = PAIRS.forall(p => (g.claimedEver.contains(p) and not(resolved(p))) implies (
     not(v.up) or v.fresh.contains(p) or v.inflight.contains(p) or outcomeUnknown(p._1)
       or v.turn != NONE or d.resultGen.get(p._1) == p._2))

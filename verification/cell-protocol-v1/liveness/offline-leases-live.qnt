@@ -1,6 +1,8 @@
 // Liveness harness for offline_leases (D83). Partitions and dropped
 // messages get a finite budget; sync, per-device in-order application,
-// heal, time and escalation are weakly fair. TLC checks `live`.
+// heal, time and escalation are weakly fair. TLC was run on `live` and did
+// not finish within its time budget; the verdict is unknown (results.json).
+// `healF` is environmental: a partitioned device is assumed to come back.
 module offline_leases_live {
   import offline_leases as L from "../models/offline-leases"
 

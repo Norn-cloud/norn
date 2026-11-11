@@ -1,7 +1,8 @@
 // Liveness harness for cell_lifecycle (D83). Faults (crash, eviction and
 // dropped messages) and timer churn get a finite budget, so the state space
 // is finite and "eventually the faults stop" is explicit. Every recovery
-// step is weakly fair. TLC checks `live` exhaustively over this instance.
+// step is weakly fair. TLC was run on `live` over this instance and did not
+// finish within its time budget; the verdict is unknown (results.json).
 module cell_lifecycle_live {
   import cell_lifecycle as L from "../models/cell-lifecycle"
 
@@ -25,7 +26,7 @@ module cell_lifecycle_live {
       all { L::record(m), same } },
   }
   action timeoutF(p: L::Pair): bool = all { L::timeout(p), same }
-  action reconcileF(c: int): bool = all { any { L::reconcileRefuse(c), L::reconcileReissue(c) }, same }
+  action reconcileF(c: int): bool = all { any { L::providerFence(c), L::reconcileRefuse(c), L::reconcileReissue(c) }, same }
   action peekResultF(c: int): bool = all { L::peekResult(c), same }
   action peekTimerF(t: int): bool = all { L::peekTimer(t), same }
   action commitF = all { L::commitTurn, same }

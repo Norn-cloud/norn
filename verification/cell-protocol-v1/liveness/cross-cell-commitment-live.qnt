@@ -1,7 +1,8 @@
 // Liveness harness for cross_cell_commitment (D83). Drops, foreign
 // receipts and consumption get a finite budget; delivery, the target's
 // decision, reconciliation, the deadline, query, answer and time are weakly
-// fair. TLC checks `live`.
+// fair. TLC explored the complete state graph of this instance with `live`
+// and found no violation (results.json: exhaustive-finite).
 module cross_cell_commitment_live {
   import cross_cell_commitment as L from "../models/cross-cell-commitment"
 
@@ -11,7 +12,7 @@ module cross_cell_commitment_live {
   action same = faults' = faults
   action fault = all { faults < MAX_FAULTS, faults' = faults + 1 }
 
-  action acceptF(id: int): bool = { nondet policy = Set(false, true).oneOf() all { L::accept(id, policy, true), same } }
+  action acceptF(id: int): bool = { nondet policy = Set(false, true).oneOf() all { L::accept(id, policy, true, true), same } }
   // Reconcile with a receipt from the commitment's target.
   action reconcileF(id: int): bool = all {
     L::rcptNet.exists(r => r.id == id and r.issuer == L::cmt.get(id).dst),
