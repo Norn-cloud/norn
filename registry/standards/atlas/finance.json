@@ -1,0 +1,223 @@
+{
+  "atlasVersion": 1,
+  "domain": "finance",
+  "entries": [
+    {
+      "id": "edmc-fibo-2026q3",
+      "name": "Financial Industry Business Ontology (selected finance modules)",
+      "publisher": "EDM Council; also standardized by OMG",
+      "kind": "ontology",
+      "domains": [
+        "finance",
+        "upper-ontology"
+      ],
+      "version": "master_2026Q3",
+      "versionDate": "2026-10-20",
+      "versionBasis": "Official GitHub release API reports tag master_2026Q3, published_at 2026-10-20T20:02:05Z; archive returned gzip bytes. Quarter label is not publication date.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT",
+        "status": "verified",
+        "basis": "Tagged MIT licence permits use, copying, modification and distribution with copyright and permission notices. Imported ontologies and individual notices still require closure-level checking.",
+        "termsUrl": "https://raw.githubusercontent.com/edmcouncil/fibo/master_2026Q3/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://codeload.github.com/edmcouncil/fibo/tar.gz/refs/tags/master_2026Q3",
+      "evidenceUrls": [
+        "https://github.com/edmcouncil/fibo/releases/tag/master_2026Q3",
+        "https://raw.githubusercontent.com/edmcouncil/fibo/master_2026Q3/LICENSE",
+        "https://spec.edmcouncil.org/fibo/"
+      ],
+      "norn": {
+        "overlap": "Selected BE/FBC/LOAN modules are correspondence evidence; FIBO is finance-industry vocabulary, never SME accounting or Core authority.",
+        "concepts": [
+          "core.Agent",
+          "core.Claim",
+          "core.Commitment",
+          "canon.Party"
+        ],
+        "irTargets": [
+          "SourceSchemaIR",
+          "MappingIR"
+        ],
+        "proposedConcepts": [
+          "FinancialInstrument",
+          "LegalEntity"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Finance alignment ontology; MIT, so the OWL can be imported."
+      },
+      "notes": "A historical LinkML title does not override the current SourceSchemaIR/profile direction. Preserve asserted/inferred distinction and unsupported axioms; recurrence does not establish equivalence. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "fdx-api",
+      "name": "Financial Data Exchange (FDX) API",
+      "publisher": "Financial Data Exchange (FDX)",
+      "kind": "standard",
+      "domains": [
+        "finance",
+        "payments"
+      ],
+      "version": "6.4",
+      "versionDate": "2025-06-16",
+      "versionBasis": "financialdataexchange.org home page and the FDX Feed post 'FDX Announces Spring 2025 API Release – FDX API Version 6.4' (datePublished 2025-06-16), read live. No later release was announced on the public site.",
+      "licence": {
+        "spdx": "LicenseRef-FDX-API-License",
+        "text": "FDX API License Agreement (last modified 2026-07-15): limited, non-exclusive, non-transferable, non-sublicensable licence to use the API spec to build applications; no copying, modification, derivative works or distribution",
+        "status": "verified",
+        "basis": "Read the FDX API License Agreement PDF (financialdataexchange.org/wp-content/uploads/2026/08/...July-15-2026...pdf), linked from the FDX home page, today: sections 1 (grant) and 2 (use restrictions 2.1 to 2.4).",
+        "termsUrl": "https://financialdataexchange.org/wp-content/uploads/2026/08/FDX-API-License-Agreement-July-15-2026-Final-II.pdf",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI",
+        "spec-HTML"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://dev.spechub.financialdataexchange.org/",
+      "evidenceUrls": [
+        "https://financialdataexchange.org/",
+        "https://financialdataexchange.org/fdx-feed/fdx-announces-spring-2025-api-release-fdx-api-version-6-4/",
+        "https://financialdataexchange.org/wp-content/uploads/2026/08/FDX-API-License-Agreement-July-15-2026-Final-II.pdf"
+      ],
+      "norn": {
+        "overlap": "consumer-permissioned account, transaction, statement and payment-network data sharing",
+        "concepts": [
+          "core.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Currency",
+          "FinancialInstrument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Money and instrument identity underpin every ledger."
+      },
+      "notes": "FDX says it releases twice a year, so a member-only release newer than 6.4 may exist. The spec hub page rendered empty to the fetcher. Access is under a click-through licence.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "iso4217-current-six",
+      "name": "ISO 4217 current currency and funds codes (SIX List One)",
+      "publisher": "SIX Financial Information, ISO 4217 Maintenance Agency",
+      "kind": "code-list",
+      "domains": [
+        "finance"
+      ],
+      "version": null,
+      "versionDate": "2026-09-17",
+      "versionBasis": "Fetched XML root ISO_4217 has Pblshd=2026-09-17. No separately numbered release asserted.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No licence notice in inspected XML and no artifact-specific redistribution/derivative grant established from SIX pages. Official/free access is not an open licence.",
+        "termsUrl": "https://www.six-group.com/en/services/legal/terms-and-conditions.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml",
+      "evidenceUrls": [
+        "https://www.six-group.com/en/products-services/financial-information/market-reference-data/data-standards.html",
+        "https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml",
+        "https://www.six-group.com/en/services/legal/terms-and-conditions.html"
+      ],
+      "norn": {
+        "overlap": "Currency identifier and minor-unit reference for Money values; no FX rate or permission to override explicit monetary precision.",
+        "concepts": [
+          "core.value_types"
+        ],
+        "irTargets": [
+          "ValueType"
+        ],
+        "proposedConcepts": [
+          "Currency",
+          "FinancialInstrument"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-ir/src/entity_v2/property.rs"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Every money amount carries an ISO 4217 currency."
+      },
+      "notes": "Do not use a third-party CC0/MIT repackaging to infer rights in the official XML. Preserve special nonnumeric minor-unit values as published. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso4217-historical-six",
+      "name": "ISO 4217 historical currency and funds codes (SIX List Three)",
+      "publisher": "SIX Financial Information, ISO 4217 Maintenance Agency",
+      "kind": "code-list",
+      "domains": [
+        "finance"
+      ],
+      "version": null,
+      "versionDate": "2026-01-01",
+      "versionBasis": "Fetched XML root ISO_4217 has Pblshd=2026-01-01, distinct from List One's 2026-09-17. No inferred synchronized release.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No verified open redistribution or derivative grant for this official XML. Rights must be established separately from the fact it downloads publicly.",
+        "termsUrl": "https://www.six-group.com/en/services/legal/terms-and-conditions.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-three.xml",
+      "evidenceUrls": [
+        "https://www.six-group.com/en/products-services/financial-information/market-reference-data/data-standards.html",
+        "https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-three.xml"
+      ],
+      "norn": {
+        "overlap": "Historical currency codes and withdrawal periods preserve financial-record interpretation; never discard retired identifiers.",
+        "concepts": [
+          "core.value_types"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Currency",
+          "FinancialInstrument"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Historic currencies keep old ledgers valid."
+      },
+      "notes": "Withdrawal dates can have month/range precision; do not invent day-level validity or remove withdrawn records. The clock does not determine the source release date. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

@@ -24,6 +24,11 @@ branched never reads as a removal. Additions pass. These fail:
 - a contract-shaped file (a `schema`/`schemas` directory, `*.schema.json`,
   `*.contract.json`) that is neither enrolled here nor listed as internal.
 
+Refusal codes are read from Rust source by a small lexer. It fails closed: a
+source it cannot fully classify (an unterminated literal or comment, unbalanced
+delimiters, a test `cfg` attribute it cannot scope) fails the check and names
+the file and line. It never skips or cuts a file short.
+
 The only escape is an entry for each break in `scripts/ci/contract-breaks.json`
 added by the change itself, naming the ruling that approved it. That file is a
 gate file: changing it needs an admin's `/approve-gates <head sha>` (the
@@ -65,23 +70,39 @@ SCHEMA_DIRS = ("crates/norn-ir/schema", "crates/norn-kernel/schema", "tools/norn
 # and kept forever, so its record format only ever changes additively.
 SCHEMA_FILES = ("scripts/metrics/record.schema.json",)
 APPROVALS = "scripts/ci/contract-breaks.json"
-# Contract-shaped files that are not external contracts: CI tooling records and
-# proof bookkeeping read only by this repository's own scripts. Adding to this
-# list changes this gate file, so it needs `/approve-gates` like any gate change.
-INTERNAL = ("scripts/ci/implementation-receipt.schema.json", "verification/coverage-v1/result.schema.json",
-            "verification/stripmine-2026-08-22/schemas/")
+# Which list a contract-shaped file goes on is a rule, not a judgement:
+# - enrolled (SCHEMA_DIRS, SCHEMA_FILES): it describes data that outlives or
+#   leaves its own tool: IR, API, CLI, ledgers, anything a user or another
+#   system reads. It may only change additively.
+# - internal (below): exactly one in-repo tool reads it and it may change
+#   freely. Each entry says which tool.
+# Both lists are in this gate file, so every addition needs `/approve-gates`.
+INTERNAL = (
+    "scripts/ci/implementation-receipt.schema.json",  # read by scripts/ci/implementation_receipts.py
+    "verification/coverage-v1/result.schema.json",  # read by verification/coverage-v1/validate.py
+    "verification/stripmine-2026-08-22/schemas/",  # proof bookkeeping of that one verification run
+    "registry/standards/atlas.schema.json",  # planning data read by scripts/standards_atlas.py; to be restructured
+)
 # Example and test inputs are not contracts.
 NOT_CONTRACT_DIRS = ("fixtures", "test", "tests")
 CODE = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+")
-STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
 # A literal that is a code, or starts with one as `a.b: detail`.
 CODE_LITERAL = re.compile(r"(" + CODE.pattern + r")(?:: .*)?", re.DOTALL)
-# Where a Rust comment, string, raw string or char literal starts.
-RUST_TOKEN = re.compile(r"""//|/\*|(?<![A-Za-z0-9_])b?r(#*)"|"|b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^\\'])'""", re.DOTALL)
-CFG = re.compile(r"#(!?)\[cfg\(")
-ATTRIBUTE = re.compile(r"\s*#\[")
-DECLARED_MODULE = re.compile(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
-TEST_FILE = re.compile(r"(?:^|/)(?:tests?|[a-z0-9_]+_tests?)\.rs$")
+# Where a Rust comment, string, raw string, char literal or lifetime may start.
+RUST_TOKEN = re.compile(r"""//|/\*|(?<![A-Za-z0-9_])b?r(#*)"|"|'""")
+STRING = re.compile(r'"((?:[^"\\]|\\.)*)"', re.DOTALL)  # across lines: `\` before a newline continues it
+CHAR = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^\\'])'", re.DOTALL)
+LIFETIME = re.compile(r"'[A-Za-z_][A-Za-z0-9_]*(?!')")
+DELIMITER = re.compile(r"[()\[\]{}]")
+CFG = re.compile(r"#\s*(!?)\s*\[\s*cfg\s*\(")
+ATTRIBUTE = re.compile(r"\s*#\s*\[")
+INNER_ATTRIBUTE = re.compile(r"\s*#\s*!\s*\[")
+MODULE = re.compile(r"\bmod\s+(\w+)\s*;")
+# Items that end at their `;`, or after their first `{ .. }` body.
+BLOCK_ITEM = re.compile(r"\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:(?:default|async|const|unsafe|extern(?:\s*\"\")?)\s+)*"
+                        r"(?:fn|mod|struct|enum|union|impl|trait|macro_rules\s*!)\b")
+# Items and statements that end at their `;`.
+LINE_ITEM = re.compile(r"\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:let|const|static|type|use|extern\s+crate)\b")
 
 # A tree is how the check reads one revision: list the files under a directory
 # and read one file, or None when it does not exist.
@@ -307,14 +328,23 @@ def _default(schema: object, root: object, depth: int = 0) -> object:
 
 
 def _compare_default(old: object, new: object, where: str, out: list[str], docs: Documents) -> None:
-    """An input whose own `default` changed or went away (a `$ref` with a
-    sibling `default` included). The server acts on it when the field is absent."""
-    if not isinstance(old, dict) or "default" not in old:
+    """An input whose effective `default` (its own, else its `$ref` target's)
+    changed or went away. The server acts on it when the field is absent, so
+    this covers a default beside a `$ref`, one added over the target's, and one
+    moved between the two. Two nodes that only point at the same target are
+    left to that target, which is compared once by name."""
+    if not isinstance(old, dict):
         return
-    after = _default(new, docs.new)
-    if after is _MISSING or not _same(old["default"], after):
-        shown = "removed" if after is _MISSING else json.dumps(after)
-        out.append(f"{where}: input default changed from {json.dumps(old['default'])} to {shown}")
+    same_target = isinstance(new, dict) and old.get("$ref") is not None and old.get("$ref") == new.get("$ref")
+    if same_target and "default" not in old and "default" not in new:
+        return
+    before, after = _default(old, docs.old), _default(new, docs.new)
+    if before is _MISSING or (after is not _MISSING and _same(before, after)):
+        return
+    shown = "removed" if after is _MISSING else json.dumps(after)
+    out.append(f"{where}: input default changed from {json.dumps(before)} to {shown}")
+
+
 ANNOTATIONS = {"description", "title", "examples", "default", "deprecated", "$comment", "readOnly", "writeOnly", "format"}
 
 
@@ -396,8 +426,6 @@ def compare_schema(old: object, new: object, where: str, directions: frozenset[s
         if old is None or new is None:
             out.append(f"{where}: $ref {old_ref or new_ref} does not resolve")
             return
-        if IN in directions and old_ref is not None:
-            _compare_default(old, new, where, out, docs)  # the target's own default
     # A schema that only annotates (`{"format": "date"}`) accepts anything, but
     # its format is still what an output promises and an input is parsed as.
     if isinstance(old, dict) and "format" in old and _is_any(old, docs.old):
@@ -652,11 +680,21 @@ def sdk_exports(text: str | None) -> set[str]:
     return names
 
 
-def _lex(text: str) -> tuple[str, list[tuple[int, str]]]:
+class LexError(Exception):
+    """The lexer met Rust it cannot fully classify. The check fails: it never
+    skips or truncates a file, since what it skipped would leave the surface."""
+
+
+def _fail(path: str, text: str, index: int, what: str) -> LexError:
+    return LexError(f"{path}:{text.count(chr(10), 0, index) + 1}: {what}")
+
+
+def _lex(text: str, path: str = "<source>") -> tuple[str, list[tuple[int, str]]]:
     """Rust source as structure and literals: the code with comments removed
     and every string, raw string and char literal blanked (so a brace, quote or
     `//` inside one is never read as code), plus each string literal's content
-    with its position in that code."""
+    with its position in that code. Newlines are kept, so a line of the code is
+    the same line of the source. Anything unterminated is a `LexError`."""
     out: list[str] = []
     literals: list[tuple[int, str]] = []
     index = position = 0
@@ -665,6 +703,9 @@ def _lex(text: str) -> tuple[str, list[tuple[int, str]]]:
         nonlocal position
         out.append(piece)
         position += len(piece)
+
+    def blank(placeholder: str, start: int, end: int) -> None:
+        emit(placeholder + "\n" * text.count("\n", start, end))
 
     while True:
         token = RUST_TOKEN.search(text, index)
@@ -678,44 +719,60 @@ def _lex(text: str) -> tuple[str, list[tuple[int, str]]]:
             index = len(text) if end < 0 else end
         elif lead == "/*":
             depth, index = 1, start + 2
-            while index < len(text) and depth:
-                if text.startswith("/*", index):
-                    depth, index = depth + 1, index + 2
-                elif text.startswith("*/", index):
-                    depth, index = depth - 1, index + 2
+            while depth:
+                opened, closed = text.find("/*", index), text.find("*/", index)
+                if closed < 0:
+                    raise _fail(path, text, start, "unterminated block comment")
+                if 0 <= opened < closed:
+                    depth, index = depth + 1, opened + 2
                 else:
-                    index += 1
-            emit(" ")
+                    depth, index = depth - 1, closed + 2
+            blank(" ", start, index)
         elif lead == '"':
             literal = STRING.match(text, start)
-            if literal:
-                literals.append((position, literal.group(1)))
-            emit('""')
-            index = literal.end() if literal else len(text)
-        elif lead.endswith('"'):
-            close = text.find('"' + token.group(1), token.end())
-            end = len(text) if close < 0 else close
-            literals.append((position, text[token.end():end]))
-            emit('""')
-            index = len(text) if close < 0 else close + 1 + len(token.group(1))
+            if not literal:
+                raise _fail(path, text, start, "unterminated string literal")
+            literals.append((position, literal.group(1)))
+            blank('""', start, literal.end())
+            index = literal.end()
+        elif lead == "'":
+            literal = CHAR.match(text, start) or LIFETIME.match(text, start)
+            if not literal:
+                raise _fail(path, text, start, "a quote that is neither a char literal nor a lifetime")
+            emit("' '" if literal.re is CHAR else literal.group(0))
+            index = literal.end()
         else:
-            emit("' '")
-            index = token.end()
+            close = text.find('"' + token.group(1), token.end())
+            if close < 0:
+                raise _fail(path, text, start, "unterminated raw string literal")
+            literals.append((position, text[token.end():close]))
+            index = close + 1 + len(token.group(1))
+            blank('""', start, index)
 
 
-def _closing(code: str, index: int, opening: str, closing: str) -> int:
-    """The index after the bracket that closes the one before `index`."""
-    depth = 1
-    while index < len(code) and depth:
-        depth += (code[index] == opening) - (code[index] == closing)
-        index += 1
-    return index
+def _blocks(code: str, path: str) -> dict[int, int]:
+    """Every opening delimiter's index mapped to the index after its closer.
+    A closer without its opener, or an opener left open, is a `LexError`."""
+    pairs = {")": "(", "]": "[", "}": "{"}
+    closes: dict[int, int] = {}
+    stack: list[int] = []
+    for delimiter in DELIMITER.finditer(code):
+        char = delimiter.group(0)
+        if char in "([{":
+            stack.append(delimiter.start())
+        elif not stack or code[stack[-1]] != pairs[char]:
+            raise _fail(path, code, delimiter.start(), f"unbalanced `{char}`")
+        else:
+            closes[stack.pop()] = delimiter.end()
+    if stack:
+        raise _fail(path, code, stack[-1], f"`{code[stack[-1]]}` is never closed")
+    return closes
 
 
 def _is_test_cfg(condition: str) -> bool:
     """Whether a `cfg(..)` condition holds only in test builds: `test`, or an
     `all(..)` with such a member. `any(test, ..)` and `not(test)` are production."""
-    condition = condition.strip()
+    condition = "".join(condition.split())
     if condition == "test":
         return True
     if not (condition.startswith("all(") and condition.endswith(")")):
@@ -730,58 +787,109 @@ def _is_test_cfg(condition: str) -> bool:
     return any(_is_test_cfg(member) for member in members)
 
 
+def _gated_end(code: str, index: int, closes: dict[int, int], path: str) -> int:
+    """The index after what an outer attribute ending before `index` gates.
+
+    - `fn`, `mod`, `struct`, `enum`, `impl`, `trait`, ..: through the item's
+      `;`, or through its first `{ .. }` body.
+    - `let`, `const`, `static`, `type`, `use`: through its `;`.
+    - Anything else is a field, a variant, a match arm, a struct-literal field
+      or an expression: through its `,`; or up to the closer of the list it is
+      the last member of; or through its `{ .. }` when nothing continues the
+      expression after it (a match arm with a block body and no comma).
+    Reaching the end of the file without one of these is a `LexError`."""
+    block_item, line_item = BLOCK_ITEM.match(code, index), LINE_ITEM.match(code, index)
+    cursor = index
+    while cursor < len(code):
+        char = code[cursor]
+        if char in "([" or (char == "{" and not block_item):
+            after = closes[cursor]
+            if char == "{" and not line_item:
+                rest = code[after:].lstrip()
+                if rest.startswith(","):
+                    return code.index(",", after) + 1
+                if not rest.startswith((".", "?", "=", "+", "-", "*", "/", "%", "|", "&", "<", ">", "as ", "else", "(", "[")):
+                    return after
+            cursor = after
+        elif char == "{":
+            return closes[cursor]
+        elif char == ";" or (char == "," and not block_item and not line_item):
+            return cursor + 1
+        elif char in ")]}":
+            if block_item or line_item:
+                break
+            return cursor
+        else:
+            cursor += 1
+    raise _fail(path, code, index, "cannot tell where the item under this test `cfg` attribute ends")
+
+
 @dataclass
 class RustFile:
-    """One lexed source: its production literals and the test-only modules it declares."""
+    """One lexed source: its string literals outside test-only items, whether
+    the whole file is test-only, and the module files it declares (those
+    declared under a test `cfg` separately)."""
     literals: list[str]
     test_only: bool
+    modules: list[str]
     test_modules: list[str]
+    test_ranges: list[tuple[int, int]] = field(default_factory=list)
+    code: str = ""
 
 
 def _rust_file(path: str, text: str) -> RustFile:
-    code, literals = _lex(text)
+    """Lex one source and scope its test-only items. Raises `LexError` rather
+    than guess: on an unterminated literal or comment, unbalanced delimiters,
+    or a test `cfg` attribute whose extent it cannot determine."""
+    code, literals = _lex(text, path)
+    closes = _blocks(code, path)
+    braces = sorted((start, end) for start, end in closes.items() if code[start] == "{")
     ranges: list[tuple[int, int]] = []
-    modules: list[str] = []
     test_only = False
-    directory = path.rsplit("/", 1)[0]
-    base = directory if path.rsplit("/", 1)[-1] in ("mod.rs", "lib.rs", "main.rs") else path[:-3]
     for cfg in CFG.finditer(code):
-        closed = _closing(code, cfg.end(), "(", ")")
-        if not _is_test_cfg(code[cfg.end():closed - 1]):
+        condition_end = closes[cfg.end() - 1]
+        if not _is_test_cfg(code[cfg.end():condition_end - 1]):
             continue
+        attribute_end = closes[code.index("[", cfg.start())]
         if cfg.group(1):
-            test_only = True  # `#![cfg(test)]`: the whole file
+            # `#![cfg(test)]` gates what encloses it: the file when it comes
+            # before the first item, else the block it is written in.
+            lead = 0
+            while True:
+                inner = INNER_ATTRIBUTE.match(code, lead)
+                if not inner or inner.start() > cfg.start():
+                    break
+                lead = closes[inner.end() - 1]
+            if not code[lead:cfg.start()].strip() or lead > cfg.start():
+                test_only = True
+                continue
+            enclosing = [(start, end) for start, end in braces if start < cfg.start() < end]
+            if not enclosing:
+                raise _fail(path, code, cfg.start(), "`#![cfg(test)]` after the first item but inside no block")
+            ranges.append((max(enclosing)[0] + 1, max(enclosing)[1] - 1))
             continue
-        index = code.find("]", closed) + 1
+        index = attribute_end
         while True:
             attribute = ATTRIBUTE.match(code, index)
             if not attribute:
                 break
-            index = _closing(code, attribute.end(), "[", "]")
-        # The item the attribute gates: up to its `;`, or through its `{ .. }` body.
-        end, depth = index, 0
-        while end < len(code):
-            char = code[end]
-            end += 1
-            if char in "([":
-                depth += 1
-            elif char in ")]":
-                depth -= 1
-            elif char == ";" and depth == 0:
-                break
-            elif char == "{" and depth == 0:
-                end = _closing(code, end, "{", "}")
-                break
-        ranges.append((cfg.start(), end))
-        declared = DECLARED_MODULE.match(code, index)
-        if declared and declared.end() == end:
-            name = declared.group(1)
-            modules += [f"{base}/{name}.rs", f"{base}/{name}/"]
-            # `#[path = "x.rs"]` names the file itself.
-            modules += [os.path.normpath(f"{directory}/{literal}") for position, literal in literals
-                        if cfg.start() <= position < end and literal.endswith(".rs")]
+            index = closes[attribute.end() - 1]
+        ranges.append((cfg.start(), _gated_end(code, index, closes, path)))
+    directory = path.rsplit("/", 1)[0]
+    base = directory if path.rsplit("/", 1)[-1] in ("mod.rs", "lib.rs", "main.rs") else path[:-3]
+    modules: list[str] = []
+    test_modules: list[str] = []
+    for module in MODULE.finditer(code):
+        gate = next(((start, end) for start, end in ranges if start <= module.start() < end), None)
+        declared = [f"{base}/{module.group(1)}.rs", f"{base}/{module.group(1)}/"]
+        # `#[path = "x.rs"]` on the declaration names the file itself.
+        attributes = code.rfind(";", 0, module.start()) + 1
+        declared += [os.path.normpath(f"{directory}/{literal}") for position, literal in literals
+                     if max(attributes, code.rfind("}", 0, module.start()) + 1) <= position < module.start()
+                     and literal.endswith(".rs")]
+        (test_modules if gate else modules).extend(declared)
     kept = [literal for position, literal in literals if not any(start <= position < end for start, end in ranges)]
-    return RustFile(kept, test_only, modules)
+    return RustFile(kept, test_only, modules, test_modules, ranges, code)
 
 
 def _codes(literals: list[str]) -> Counter[str]:
@@ -794,40 +902,61 @@ def rust_literals(text: str, path: str = "crates/x/src/lib.rs") -> set[str]:
 
 
 def _rust_sources(tree: Tree) -> list[str]:
-    paths = []
-    for path in tree.list("crates"):
-        parts = path.split("/")
-        if len(parts) >= 4 and parts[2] == "src" and path.endswith(".rs") and not TEST_FILE.search(path) \
-                and not {"tests", "test"} & set(parts[3:-1]):
-            paths.append(path)
-    return paths
+    """Every `.rs` under a crate's `src`. Nothing is excluded by its name."""
+    return [path for path in tree.list("crates")
+            if len(path.split("/")) >= 4 and path.split("/")[2] == "src" and path.endswith(".rs")]
+
+
+def production_files(tree: Tree) -> dict[str, RustFile]:
+    """The lexed production sources: every file under `crates/*/src` except a
+    `#![cfg(test)]` file, a module file declared under a test `cfg`, and the
+    module files those declare in turn. A file is test-only because a test
+    `cfg` says so, never because of its name."""
+    files = {path: _rust_file(path, tree.read(path) or "") for path in _rust_sources(tree)}
+
+    def owned(modules: list[str]) -> set[str]:
+        return {path for path in files for module in modules
+                if path == module or (module.endswith("/") and path.startswith(module))}
+
+    test_only = {path for path, file in files.items() if file.test_only}
+    test_only |= owned([module for file in files.values() for module in file.test_modules])
+    while True:
+        more = owned([module for path in test_only for module in files[path].modules + files[path].test_modules]) - test_only
+        if not more:
+            return {path: file for path, file in files.items() if path not in test_only}
+        test_only |= more
 
 
 def refusal_codes(tree: Tree) -> Counter[str]:
     """The refusal-code surface, independent of how a code is constructed: every
     string literal of code shape (lowercase dotted segments, alone or as the
-    `a.b: detail` prefix of a message) in production Rust under `crates/*/src`.
-    Test files, `#[cfg(test)]`/`#[cfg(all(test, ..))]` items and the modules
-    they declare are not production. Each code maps to how many times
-    production spells it. This over-approximates on purpose: a literal that is
-    not a code costs an approval when it is removed, and a code the check does
-    not see would be a silent break."""
-    files = {path: _rust_file(path, tree.read(path) or "") for path in _rust_sources(tree)}
-    test_modules = [module for file in files.values() for module in file.test_modules]
+    `a.b: detail` prefix of a message) in production Rust under `crates/*/src`
+    (see `production_files`), outside comments and items under `#[cfg(test)]`
+    or `#[cfg(all(test, ..))]`. Each code maps to how many times production
+    spells it. This over-approximates on purpose: a literal that is not a code
+    costs an approval when it is removed, and a code the check does not see
+    would be a silent break. A file the lexer cannot classify is a `LexError`,
+    which fails the check; no file is skipped or cut short."""
     codes: Counter[str] = Counter()
-    for path, file in files.items():
-        if file.test_only or any(path == module or (module.endswith("/") and path.startswith(module)) for module in test_modules):
-            continue
+    for file in production_files(tree).values():
         codes += _codes(file.literals)
     return codes
 
 
 def removed_refusal_codes(old: Tree, new: Tree) -> dict[str, tuple[int, int]]:
     """Codes production spells fewer times at the head than at the base, as
-    code -> (before, after). Moving a code keeps its count; renaming it at any
-    one site lowers it, even while another site (an error message attribute,
-    say) still spells the old name; merging duplicate spellings into one
-    constant lowers it too, and costs an approval."""
+    code -> (before, after). Moving a code within the workspace keeps its
+    count; renaming it at one site lowers it, even while another site (an
+    error message attribute, say) still spells the old name; merging duplicate
+    spellings into one constant lowers it too, and costs an approval.
+
+    Limits of counting, which make this a net for accidents and not a proof:
+    - a rename is masked when the same change adds another production spelling
+      of the old code anywhere (a second call site, a constant, an item under
+      `#[cfg(any(test, ..))]`);
+    - counts are per workspace, so a code that moves between crates passes;
+    - a code assembled at run time (`format!`, `concat!`) or read from a data
+      file is not a literal and is not seen."""
     before, after = refusal_codes(old), refusal_codes(new)
     return {code: (count, after[code]) for code, count in before.items() if after[code] < count}
 
@@ -988,8 +1117,15 @@ def diff(old: Tree, new: Tree) -> list[str]:
 
 def verdict(old: Tree, new: Tree, label: str) -> bool:
     """Pass when every break from `old` to `new` is approved by an entry that
-    `new` adds to `contract-breaks.json` (a gate file: `/approve-gates`)."""
-    breaks = diff(old, new)
+    `new` adds to `contract-breaks.json` (a gate file: `/approve-gates`). A
+    source the lexer cannot classify fails, and no entry can approve that."""
+    try:
+        breaks = diff(old, new)
+    except LexError as error:
+        print(f"{label}: cannot read the refusal-code surface: {error}\n"
+              "The check fails instead of skipping what it cannot classify. Teach the lexer in "
+              "scripts/ci/contract_diff.py this form (a gate-file change), or write the source another way.")
+        return False
     if not breaks:
         print(f"{label}: no contract breaks")
         return True

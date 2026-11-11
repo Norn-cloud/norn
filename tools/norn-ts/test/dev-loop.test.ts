@@ -234,6 +234,13 @@ test("the compile worker reads sources only inside the project, and its digest c
     expect(JSON.stringify(escaped.event)).not.toContain("shop.Customer")
     rmSync(join(dir, "src/secret.ts"))
 
+    // A dangling module link is a project diagnostic too, not an internal error.
+    symlinkSync(join(dir, "shared/gone.ts"), join(dir, "src/gone.ts"))
+    const dangling = compileOnce(dir)
+    expect(dangling).toMatchObject({ status: 0, event: { ok: false } })
+    expect(dangling.event.diagnostics[0]).toMatchObject({ code: "cli.project.invalid_manifest", message: expect.stringContaining("src/gone.ts") })
+    rmSync(join(dir, "src/gone.ts"))
+
     // A source directory reached through a symlinked ancestor is refused the same way.
     symlinkSync(join(root, "elsewhere"), join(dir, "linked"))
     writeFileSync(join(dir, "norn.json"), JSON.stringify({ ...manifest, sources: ["src", "linked/sub"] }))

@@ -231,6 +231,16 @@ pub const CRATES: &[CrateRule] = &[
         Ring::One,
         &["norn-checker", "norn-projections", "norn-expr", "norn-ir"],
     ),
+    // Format-family readers (XSD first; norn-platform#2739, #3507): decisions +
+    // expr evaluate the type tables; the checker runs the conformance harness
+    // in tests only. Standards and systems are packs, never Rust.
+    CrateRule {
+        name: "norn-formats",
+        ring: Ring::One,
+        allowed_norn: &["norn-ir", "norn-decisions", "norn-expr"],
+        dev_only_norn: &["norn-checker"],
+        third_party: &[],
+    },
     rule("norn-skeleton-guard", Ring::Tooling, &[]),
     CrateRule {
         name: "norn-testkit",
