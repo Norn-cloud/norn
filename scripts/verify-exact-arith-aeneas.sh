@@ -57,43 +57,52 @@ export CARGO_TARGET_DIR="$result/target"
 rm -rf "$result/baseline" "$result/common" "$result/mutants"
 mkdir -p "$result/common"
 
-# extract <workspace> <out>: translate the fragments from <workspace>'s sources.
-# Each step returns on failure explicitly: callers also run this under `if !`.
-extract() {
-  local tree="$1" out="$2"
-  mkdir -p "$out/Decimal" "$out/Scaled" "$out/ExactRational" || return
-  # decimal.rs uses pub(super), so it is compiled as the module it is in production.
-  printf '#[path = "%s"]\npub mod decimal;\n' "$tree/$decimal_source" > "$out/decimal_root.rs" || return
-  (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
-    --start-from crate::decimal::canonical_parts --start-from crate::decimal::checked_pow10 \
-    --start-from crate::decimal::canonical --start-from crate::decimal::rescale \
-    --start-from crate::decimal::checked_add --start-from crate::decimal::checked_sub \
-    --start-from crate::decimal::checked_mul \
-    --dest-file "$out/decimal.llbc" -- --crate-name norn_checker_decimal --crate-type lib \
-    --edition 2024 "$out/decimal_root.rs") || return
-  printf '#[path = "%s"]\npub mod exact_rational;\n' "$tree/$rational_source" \
-    > "$out/rational_root.rs" || return
-  # The whole module: Charon's --start-from does not take inherent methods.
-  (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
-    --start-from crate::exact_rational \
-    --dest-file "$out/exact_rational.llbc" -- --crate-name norn_checker_rational \
-    --crate-type lib --edition 2024 "$out/rational_root.rs") || return
-  local core=(rounding_site exact_result_scale exact_binary exact_compare coefficient rescale
-    divide binary rounded_quotient)
-  (cd "$tree" && "$charon" cargo --preset=aeneas --error-on-warnings \
-    "${core[@]/#/--start-from=crate::scaled::}" \
-    --dest-file "$out/scaled.llbc" -- -p zen-expression --lib) || return
-  "$aeneas" -backend lean -dest "$out/Decimal" -emit-json -split-files -warnings-as-errors \
-    "$out/decimal.llbc" || return
-  "$aeneas" -backend lean -dest "$out/Scaled" -emit-json -split-files \
-    -warnings-as-errors "$out/scaled.llbc" || return
-  "$aeneas" -backend lean -dest "$out/ExactRational" -emit-json -split-files \
-    -warnings-as-errors "$out/exact_rational.llbc" || return
-  cp "$proof_root/Decimal/FunsExternal.lean" "$out/Decimal/FunsExternal.lean" || return
-  cp "$proof_root/Scaled/TypesExternal.lean" "$out/Scaled/TypesExternal.lean" || return
-  cp "$proof_root/Scaled/FunsExternal.lean" "$out/Scaled/FunsExternal.lean" || return
-  cp "$proof_root/ExactRational/FunsExternal.lean" "$out/ExactRational/FunsExternal.lean"
+# extract_fragment <workspace> <out> <fragment>: translate one fragment from
+# <workspace>'s sources. Each step returns on failure explicitly: callers also
+# run this under `if !`.
+extract_fragment() {
+  local tree="$1" out="$2" fragment="$3"
+  mkdir -p "$out/$fragment" || return
+  case "$fragment" in
+    Decimal)
+      # decimal.rs uses pub(super), so it is compiled as the module it is in production.
+      printf '#[path = "%s"]\npub mod decimal;\n' "$tree/$decimal_source" > "$out/decimal_root.rs" || return
+      (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
+        --start-from crate::decimal::canonical_parts --start-from crate::decimal::checked_pow10 \
+        --start-from crate::decimal::canonical --start-from crate::decimal::rescale \
+        --start-from crate::decimal::checked_add --start-from crate::decimal::checked_sub \
+        --start-from crate::decimal::checked_mul \
+        --dest-file "$out/decimal.llbc" -- --crate-name norn_checker_decimal --crate-type lib \
+        --edition 2024 "$out/decimal_root.rs") || return
+      "$aeneas" -backend lean -dest "$out/Decimal" -emit-json -split-files -warnings-as-errors \
+        "$out/decimal.llbc" || return
+      cp "$proof_root/Decimal/FunsExternal.lean" "$out/Decimal/FunsExternal.lean" ;;
+    ExactRational)
+      printf '#[path = "%s"]\npub mod exact_rational;\n' "$tree/$rational_source" \
+        > "$out/rational_root.rs" || return
+      # The whole module: Charon's --start-from does not take inherent methods.
+      (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
+        --start-from crate::exact_rational \
+        --dest-file "$out/exact_rational.llbc" -- --crate-name norn_checker_rational \
+        --crate-type lib --edition 2024 "$out/rational_root.rs") || return
+      "$aeneas" -backend lean -dest "$out/ExactRational" -emit-json -split-files \
+        -warnings-as-errors "$out/exact_rational.llbc" || return
+      cp "$proof_root/ExactRational/FunsExternal.lean" "$out/ExactRational/FunsExternal.lean" ;;
+    Scaled)
+      local core=(rounding_site exact_result_scale exact_binary exact_compare coefficient rescale
+        divide binary rounded_quotient)
+      (cd "$tree" && "$charon" cargo --preset=aeneas --error-on-warnings \
+        "${core[@]/#/--start-from=crate::scaled::}" \
+        --dest-file "$out/scaled.llbc" -- -p zen-expression --lib) || return
+      "$aeneas" -backend lean -dest "$out/Scaled" -emit-json -split-files \
+        -warnings-as-errors "$out/scaled.llbc" || return
+      cp "$proof_root/Scaled/TypesExternal.lean" "$out/Scaled/TypesExternal.lean" || return
+      cp "$proof_root/Scaled/FunsExternal.lean" "$out/Scaled/FunsExternal.lean" ;;
+    *) return 1 ;;
+  esac
 }
+
+fragments=(Decimal Scaled ExactRational)
 
 # lean_check <out> <root> <module>: elaborate one module into <out>.
 lean_check() {
@@ -103,15 +112,13 @@ lean_check() {
     -R "$root" -o "$out/$module.olean" "$root/$module.lean")
 }
 
-# generated <out>: the extracted code and its core models must elaborate.
+# generated <out> <fragment>: the extracted code and its core models must elaborate.
 generated() {
-  local out="$1" prefix module
-  for prefix in Decimal Scaled ExactRational; do
-    for module in TypesExternal Types FunsExternal Funs; do
-      if [[ "$module" != TypesExternal || -f "$out/$prefix/TypesExternal.lean" ]]; then
-        lean_check "$out" "$out" "$prefix/$module" || return
-      fi
-    done
+  local out="$1" fragment="$2" module
+  for module in TypesExternal Types FunsExternal Funs; do
+    if [[ "$module" != TypesExternal || -f "$out/$fragment/TypesExternal.lean" ]]; then
+      lean_check "$out" "$out" "$fragment/$module" || return
+    fi
   done
 }
 
@@ -123,7 +130,9 @@ for module in CoreModels DecimalReference LedgerReference RoundingReference Roun
 done
 
 baseline="$result/baseline"
-extract "$repo_root" "$baseline"
+for fragment in "${fragments[@]}"; do
+  extract_fragment "$repo_root" "$baseline" "$fragment"
+done
 python3 - "$baseline" <<'PYMANIFEST'
 import json
 import sys
@@ -221,7 +230,9 @@ for prefix, (crate, source, local, external) in expected.items():
     if "sorry" in "".join(p.read_text(encoding="utf-8") for p in (out / prefix).glob("*.lean")):
         raise SystemExit(f"{prefix}: extraction contains sorry")
 PYMANIFEST
-generated "$baseline"
+for fragment in "${fragments[@]}"; do
+  generated "$baseline" "$fragment"
+done
 proof_output=""
 for module in DecimalProof LedgerProof QuotientProof RationalProof ScaledProof; do
   if module_output="$(lean_check "$baseline" "$proof_root" "$module" 2>&1)"; then
@@ -483,11 +494,11 @@ mkdir -p "$tree"
 cp "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$tree/"
 cp -al "$repo_root/crates" "$repo_root/vendor" "$repo_root/third_party" "$tree/"
 if [[ -d "$repo_root/.cargo" ]]; then cp -al "$repo_root/.cargo" "$tree/"; fi
-python3 - "$tree" "$result/mutants" <<'PYMUTANTS' > "$result/mutants/list"
+python3 - "$repo_root" "$result/mutants" <<'PYMUTANTS' > "$result/mutants/list"
 import sys
 from pathlib import Path
 
-tree, root = Path(sys.argv[1]), Path(sys.argv[2])
+source_root, root = Path(sys.argv[1]), Path(sys.argv[2])
 scaled = "vendor/zen/core/expression/src/scaled.rs"
 decimal = "crates/norn-checker/src/quantity_ledger/decimal.rs"
 rational = "crates/norn-checker/src/exact_rational.rs"
@@ -547,51 +558,126 @@ mutants = [
      "let exponent = i64::from(profile.scale) + i64::from(b.scale()) - i64::from(a.scale());",
      "let exponent = i64::from(profile.scale) + i64::from(a.scale()) - i64::from(b.scale());"),
 ]
-for name, path, old, new in mutants:
-    source = (tree / path).read_text(encoding="utf-8")
+for index, (name, path, old, new) in enumerate(mutants):
+    source = (source_root / path).read_text(encoding="utf-8")
     if source.count(old) != 1:
         raise SystemExit(f"{name}: mutation site not found exactly once")
     staged = root / name / Path(path).name
     staged.parent.mkdir(parents=True)
     staged.write_text(source.replace(old, new), encoding="utf-8")
-    print(name, path)
+    print(index, name, path)
 PYMUTANTS
+# Mutant mode (NORN_EXACT_ARITH_MUTANTS):
+# - `affected` (the default, and what CI runs): a mutant edits one source file,
+#   which feeds exactly one fragment. Only that fragment is re-extracted and
+#   re-elaborated, and only the proofs in its transitive import closure (read
+#   from the proof sources) are re-checked. The other fragments are the
+#   baseline's, built from the same sources. A mutant whose file feeds no known
+#   fragment, or whose fragment no proof imports, counts as unrefuted.
+# - `full`: every mutant re-extracts every fragment and re-checks every proof.
+#   It is kept to audit `affected`; both gave the same verdict for every mutant
+#   on Boat (#717).
+# Running the mutants in parallel on a 4-vCPU, 7.8 GiB VM was 2.1 times slower
+# than this serial loop: concurrent Mathlib elaboration exhausts memory, not cores.
+mutant_mode="${NORN_EXACT_ARITH_MUTANTS:-affected}"
+[[ "$mutant_mode" == affected || "$mutant_mode" == full ]]
+declare -A fragment_of=(
+  ["$decimal_source"]=Decimal
+  ["vendor/zen/core/expression/src/scaled.rs"]=Scaled
+  ["$rational_source"]=ExactRational
+)
+proof_modules=(DecimalProof LedgerProof QuotientProof RationalProof ScaledProof)
+declare -A proofs_of
+while read -r fragment module; do
+  proofs_of[$fragment]+="$module "
+done < <(python3 - "$proof_root" "${proof_modules[@]}" <<'PYIMPORTS'
+import re
+import sys
+from pathlib import Path
+
+root, modules = Path(sys.argv[1]), sys.argv[2:]
+fragments = ("Decimal", "Scaled", "ExactRational")
+
+def imports(module):
+    path = root / (module.replace(".", "/") + ".lean")
+    if not path.is_file():
+        return set()
+    return set(re.findall(r"^import (\S+)", path.read_text(encoding="utf-8"), re.M))
+
+def closure(module, seen):
+    for name in imports(module):
+        if name not in seen:
+            seen.add(name)
+            closure(name, seen)
+    return seen
+
+for module in modules:  # dependency order, as the proof loop above
+    for name in sorted(closure(module, set())):
+        fragment = name.split(".")[0]
+        if fragment in fragments and name.startswith(fragment + "."):
+            print(fragment, module)
+PYIMPORTS
+)
+mutant_started=$SECONDS
 survivors=0
-while read -r name path; do
+while read -r _ name path; do
+  dir="$result/mutants/$name"
+  started=$SECONDS
+  fragment="${fragment_of[$path]:-}"
+  if [[ -z "$fragment" || -z "${proofs_of[$fragment]:-}" ]]; then
+    echo "mutant $name: $path feeds no proved fragment; it cannot be refuted" >&2
+    survivors=$((survivors + 1))
+    continue
+  fi
+  if [[ "$mutant_mode" == full ]]; then
+    rebuilt=("${fragments[@]}")
+    checked="${proof_modules[*]}"
+  else
+    rebuilt=("$fragment")
+    checked="${proofs_of[$fragment]}"
+  fi
   pristine="$result/mutants/$name.pristine"
   cp "$tree/$path" "$pristine"
   rm "$tree/$path"
-  cp "$result/mutants/$name/$(basename "$path")" "$tree/$path"
-  out="$result/mutants/$name/out"
-  # A mutant must extract and its code must elaborate: only the proof may fail.
-  if ! extract "$tree" "$out" > "$result/mutants/$name/extract.log" 2>&1 ||
-    ! generated "$out" >> "$result/mutants/$name/extract.log" 2>&1; then
-    tail -n 40 "$result/mutants/$name/extract.log" >&2
-    echo "mutant $name: did not extract and elaborate; it cannot test the proof" >&2
-    exit 1
-  fi
+  cp "$dir/$(basename "$path")" "$tree/$path"
+  out="$dir/out"
+  mkdir -p "$out"
+  : > "$dir/extract.log"
+  for other in "${fragments[@]}"; do
+    if [[ " ${rebuilt[*]} " == *" $other "* ]]; then
+      # A mutant must extract and its code must elaborate: only the proof may fail.
+      if ! extract_fragment "$tree" "$out" "$other" >> "$dir/extract.log" 2>&1 ||
+        ! generated "$out" "$other" >> "$dir/extract.log" 2>&1; then
+        tail -n 40 "$dir/extract.log" >&2
+        echo "mutant $name: did not extract and elaborate; it cannot test the proof" >&2
+        exit 1
+      fi
+    else
+      cp -a "$baseline/$other" "$out/$other"
+    fi
+  done
   unproved=false
-  for module in DecimalProof LedgerProof QuotientProof RationalProof ScaledProof; do
-    if ! lean_check "$out" "$proof_root" "$module" > "$result/mutants/$name/$module.log" 2>&1; then
+  for module in $checked; do
+    if ! lean_check "$out" "$proof_root" "$module" > "$dir/$module.log" 2>&1; then
       unproved=true
     fi
   done
   # Detected means refuted, not merely unproved: a vector must evaluate false.
   # Expected to fail on a mutant; the log is inspected below.
-  lean_check "$out" "$result/vectors" ExactArithVectors > "$result/mutants/$name/vectors.log" 2>&1 ||
-    true
+  lean_check "$out" "$result/vectors" ExactArithVectors > "$dir/vectors.log" 2>&1 || true
   rm "$tree/$path"
   cp "$pristine" "$tree/$path"
   if ! $unproved; then
     echo "mutant $name: proof still holds (survived)" >&2
     survivors=$((survivors + 1))
-  elif grep -q "$vector_pattern" "$result/mutants/$name/vectors.log"; then
-    echo "mutant $name: refuted by $(grep -o "$vector_pattern" "$result/mutants/$name/vectors.log" | wc -l) vector(s)"
+  elif grep -q "$vector_pattern" "$dir/vectors.log"; then
+    echo "mutant $name: refuted by $(grep -o "$vector_pattern" "$dir/vectors.log" | wc -l) vector(s) in $((SECONDS - started))s"
   else
-    tail -n 20 "$result/mutants/$name/vectors.log" >&2
+    tail -n 20 "$dir/vectors.log" >&2
     echo "mutant $name: unproved but not refuted by any vector" >&2
     survivors=$((survivors + 1))
   fi
 done < "$result/mutants/list"
 test "$survivors" -eq 0
+echo "exact-arith: $(wc -l < "$result/mutants/list") mutants in $((SECONDS - mutant_started))s ($mutant_mode mode)"
 echo "exact-arith: every seeded rounding and overflow mutant is refuted"
