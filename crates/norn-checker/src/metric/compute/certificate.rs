@@ -106,40 +106,13 @@ pub fn question(plan: &QuestionPlan) -> QuestionCertificate<'_> {
 #[allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
-    reason = "exhaustive fixed two-key reference relations"
+    reason = "exhaustive fixed join coefficient checks"
 )]
 mod tests {
     use super::*;
 
     #[test]
-    fn exhaustive_signed_relations_detect_each_omitted_join_term() {
-        // Two-key relations with signed multiplicities; +/-2 includes duplicates.
-        let relations: Vec<[i32; 2]> = (-2..=2)
-            .flat_map(|a| (-2..=2).map(move |b| [a, b]))
-            .collect();
-        let join = |a: [i32; 2], b: [i32; 2]| [a[0] * b[0], a[1] * b[1]];
-        let add = |a: [i32; 2], b: [i32; 2]| [a[0] + b[0], a[1] + b[1]];
-        let mut witnessed = [false; 3];
-        for &l in &relations {
-            for &r in &relations {
-                for &dl in &relations {
-                    for &dr in &relations {
-                        let old = join(l, r);
-                        let new = join(add(l, dl), add(r, dr));
-                        let delta = [new[0] - old[0], new[1] - old[1]];
-                        let terms = [join(dl, r), join(l, dr), join(dl, dr)];
-                        assert_eq!(add(add(terms[0], terms[1]), terms[2]), delta);
-                        for omitted in 0..3 {
-                            let mut mutant = terms;
-                            mutant[omitted] = [0, 0];
-                            witnessed[omitted] |=
-                                add(add(mutant[0], mutant[1]), mutant[2]) != delta;
-                        }
-                    }
-                }
-            }
-        }
-        assert_eq!(witnessed, [true; 3]);
+    fn each_omitted_join_term_is_refuted_at_its_index() {
         for term in 0..3 {
             let mut coefficients = [1; 3];
             coefficients[term] = 0;
@@ -175,17 +148,44 @@ mod tests {
         );
     }
 
-    proptest::proptest! {
-        #[test]
-        fn generated_join_coefficients_match_independent_basis(coefficients in proptest::array::uniform3(-8i8..=8)) {
-            let samples = [(0i32, 1i32, 1i32, 0i32), (1, 0, 0, 1), (0, 0, 1, 1)];
-            let correct = samples.into_iter().all(|(l, r, dl, dr)| {
-                let [a, b, c] = coefficients.map(i32::from);
-                a * dl * r + b * l * dr + c * dl * dr == (l + dl) * (r + dr) - l * r
-            });
-            let result = check(&[Operator::Input, Operator::Join { left: 0, right: 0, coefficients }], true);
-            proptest::prop_assert_eq!(result.get(1) == Some(&Algebraic::ProvedAlgebraic), correct);
+    #[test]
+    fn every_join_coefficient_matches_independent_basis() {
+        let samples = [(0i32, 1i32, 1i32, 0i32), (1, 0, 0, 1), (0, 0, 1, 1)];
+        let mut proved = Vec::new();
+        for first in -8i8..=8 {
+            for second in -8i8..=8 {
+                for cross in -8i8..=8 {
+                    let coefficients = [first, second, cross];
+                    let [first, second, cross] = coefficients.map(i32::from);
+                    let correct =
+                        samples
+                            .into_iter()
+                            .all(|(left, right, left_delta, right_delta)| {
+                                first * left_delta * right
+                                    + second * left * right_delta
+                                    + cross * left_delta * right_delta
+                                    == (left + left_delta) * (right + right_delta) - left * right
+                            });
+                    let result = check(
+                        &[
+                            Operator::Input,
+                            Operator::Join {
+                                left: 0,
+                                right: 0,
+                                coefficients,
+                            },
+                        ],
+                        true,
+                    );
+                    let certified = result.get(1) == Some(&Algebraic::ProvedAlgebraic);
+                    assert_eq!(certified, correct, "coefficients {coefficients:?}");
+                    if certified {
+                        proved.push(coefficients);
+                    }
+                }
+            }
         }
+        assert_eq!(proved, [[1; 3]]);
     }
 
     #[test]
