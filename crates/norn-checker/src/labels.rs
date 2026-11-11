@@ -1,13 +1,13 @@
 //! LABEL-LOCALE-1: localized labels are checked presentation metadata.
 //!
-//! Per catalog ([`check_local`]): the payload decodes into the strict
+//! Per catalog (`check_local`): the payload decodes into the strict
 //! [`LabelCatalogRoot`]; every locale tag is well-formed BCP 47 and unique
 //! ignoring case; every text is non-blank and free of bidi embedding,
 //! override and isolate controls (renderers isolate ids themselves, and a
 //! stored control could reorder surrounding text); a description or review
 //! entry names a locale that has a label; a target appears once.
 //!
-//! Over an artifact set ([`check_label_set`]): every candidate target resolves
+//! Over an artifact set (`check_label_set`): every candidate target resolves
 //! to a definition in the candidate set or the installed base, and no two
 //! candidate catalogs label the same target in the same locale. A candidate
 //! label replaces an installed one ([`norn_ir::labels`] states the precedence),
