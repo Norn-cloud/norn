@@ -223,6 +223,9 @@ PY
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile
+        # The checker-admission case needs the WASM package built above, so it runs here,
+        # not in the cheap phase, and is required: a missing package fails it, never skips.
+        bun test test/decision.test.ts
         bun run build
         # "No tests found" must fail: a broken testDir or testMatch is never a pass.
         listed=$(bunx playwright test --list | sed -n 's/^Total: \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p')

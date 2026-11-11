@@ -629,7 +629,8 @@ def studio_browser_pin_canaries() -> None:
                 ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
-                ("not in the plan", " integration browser formal ", " integration formal ")):
+                ("not in the plan", " integration browser formal ", " integration formal "),
+                ("no checker-admission test", "        bun test test/decision.test.ts\n", "")):
             if core.count(before) != 1:
                 raise AssertionError(f"browser pin canary target drifted: {label}")
             mutated.write_text(core.replace(before, after), encoding="utf-8")
@@ -683,7 +684,7 @@ def studio_browser_phase_canaries() -> None:
         bin_dir.mkdir()
         tools = {
             "cargo": "exit 0",
-            "bun": "exit 0",
+            "bun": 'if [ "$1" = test ]; then exit "$BUN_TEST_STATUS"; fi; exit 0',
             "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
             "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
                     'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
@@ -705,7 +706,8 @@ def studio_browser_phase_canaries() -> None:
                 ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir), "0"),
                 ("config, every row skipped", True, True, "99", 0, 1, str(wasm_libdir), "0"),
                 ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir), "99"),
-                ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98")):
+                ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98"),
+                ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99")):
             config.unlink(missing_ok=True)
             if has_config:
                 config.write_text("export default {}\n")
@@ -721,6 +723,7 @@ def studio_browser_phase_canaries() -> None:
                                                                 "CARGO_HOME": str(Path(directory) / "cargo-home"),
                                                                 "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
                                                                 "WASM_LIBDIR": libdir, "RAN": ran,
+                                                                "BUN_TEST_STATUS": "1" if "checker-admission" in label else "0",
                                                                 "SKIPPED": str(int(listed) - int(ran))})
             if result.returncode != expected:
                 raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")

@@ -861,7 +861,9 @@ mod tests {
             .collect::<super::BTreeMap<_, _>>();
         pinned_concurrency_cases()
             .into_iter()
-            .filter(|(name, expect)| present.get(&Some(name.as_str())) != Some(&Some(expect.as_str())))
+            .filter(|(name, expect)| {
+                present.get(&Some(name.as_str())) != Some(&Some(expect.as_str()))
+            })
             .map(|(name, _)| name)
             .collect()
     }
@@ -884,7 +886,11 @@ mod tests {
         );
         let mut flipped = cases;
         if let Some(first) = flipped.first_mut() {
-            first["expect"] = Value::from(if first["expect"] == "accept" { "reject" } else { "accept" });
+            first["expect"] = Value::from(if first["expect"] == "accept" {
+                "reject"
+            } else {
+                "accept"
+            });
         }
         assert_eq!(missing_pinned_cases(&flipped).len(), 1);
     }
