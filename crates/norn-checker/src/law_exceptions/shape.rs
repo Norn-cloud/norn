@@ -326,8 +326,10 @@ pub fn applied_exceptions<T: PartialEq>(
 ) {
     let mut index = 0_usize;
     while let Some(slot) = applied.get_mut(index) {
-        *slot = matches!((matched.get(index), level.get(index)), (Some(true), Some(false)))
-            && ancestors_hold(law, ids, parents, matched, index);
+        *slot = matches!(
+            (matched.get(index), level.get(index)),
+            (Some(true), Some(false))
+        ) && ancestors_hold(law, ids, parents, matched, index);
         let Some(next) = index.checked_add(1) else {
             return;
         };
