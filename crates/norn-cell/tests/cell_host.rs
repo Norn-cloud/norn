@@ -128,6 +128,9 @@ fn law_cell_responder(command: &Command<LawCommand>) -> WireInput {
 trait LawEngine: SqlEngine + Debug + Sized + 'static {
     /// Whether the engine injects the faults armed on `faults`.
     const FAULTS: bool = false;
+    /// Whether the engine's storage commits itself and can fail that commit
+    /// on an armed commit fault (semantics 6).
+    const COMMIT_FAULTS: bool = false;
     fn open_file(
         path: &Path,
         options: StoreOptions,
@@ -152,6 +155,7 @@ impl LawEngine for NativeEngine {
 
 impl<S: LawEngine> LawEngine for FaultEngine<S> {
     const FAULTS: bool = true;
+    const COMMIT_FAULTS: bool = S::COMMIT_FAULTS;
 
     fn open_file(
         path: &Path,
@@ -328,6 +332,8 @@ fn validate_do_rows(rows: Vec<Vec<SqlValue>>) -> Result<Vec<Vec<SqlValue>>, Cell
 struct DoSubset<S>(S);
 
 impl<S: LawEngine> LawEngine for DoSubset<S> {
+    const COMMIT_FAULTS: bool = S::COMMIT_FAULTS;
+
     fn open_file(
         path: &Path,
         options: StoreOptions,
@@ -375,27 +381,30 @@ impl<S: SqlEngine> SqlEngine for DoSubset<S> {
 }
 
 /// A Durable Object storage the law driver opens over a native connection.
+/// Its commits fail on the driver's armed commit faults.
 trait OpenDo: DoStorage + Debug + Sized + 'static {
-    fn over(native: NativeEngine) -> Self;
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self;
 }
 
 impl OpenDo for DoStorageEmulator {
-    fn over(native: NativeEngine) -> Self {
-        Self::new(native)
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self {
+        Self::new(native).with_faults(faults.clone())
     }
 }
 
 impl<S: OpenDo> LawEngine for DoEngine<S> {
+    const COMMIT_FAULTS: bool = true;
+
     fn open_file(
         path: &Path,
         options: StoreOptions,
-        _faults: &FaultSwitch,
+        faults: &FaultSwitch,
     ) -> Result<Self, CellError> {
-        NativeEngine::open(path, options).map(|native| Self::new(S::over(native)))
+        NativeEngine::open(path, options).map(|native| Self::new(S::over(native, faults)))
     }
 
-    fn open_memory(_faults: &FaultSwitch) -> Result<Self, CellError> {
-        NativeEngine::open_in_memory().map(|native| Self::new(S::over(native)))
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
+        NativeEngine::open_in_memory().map(|native| Self::new(S::over(native, faults)))
     }
 }
 
@@ -414,14 +423,66 @@ struct MisreadsRollback(DoStorageEmulator);
 struct CommitsOnRollback(DoStorageEmulator);
 
 impl OpenDo for MisreadsRollback {
-    fn over(native: NativeEngine) -> Self {
-        Self(DoStorageEmulator::new(native))
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self {
+        Self(DoStorageEmulator::over(native, faults))
     }
 }
 
 impl OpenDo for CommitsOnRollback {
-    fn over(native: NativeEngine) -> Self {
-        Self(DoStorageEmulator::new(native))
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self {
+        Self(DoStorageEmulator::over(native, faults))
+    }
+}
+
+/// Mutant storage: when its own commit fails it reports success anyway, so
+/// the caller believes a rolled-back write committed (semantics 6).
+#[derive(Debug)]
+struct HidesFailedCommit(DoStorageEmulator);
+
+impl OpenDo for HidesFailedCommit {
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self {
+        Self(DoStorageEmulator::over(native, faults))
+    }
+}
+
+impl Transact for HidesFailedCommit {
+    type Thrown = Thrown;
+
+    fn transaction_sync<F: FnMut() -> Result<(), Thrown>>(
+        &self,
+        callback: &mut F,
+    ) -> Result<(), Thrown> {
+        match self.0.transaction_sync(callback) {
+            // The bug: the storage's own failure is reported as a commit.
+            Err(Thrown::Storage(_)) => Ok(()),
+            other => other,
+        }
+    }
+
+    fn rollback_marker(&self) -> Thrown {
+        self.0.rollback_marker()
+    }
+
+    fn is_rollback_marker(&self, thrown: &Thrown) -> bool {
+        self.0.is_rollback_marker(thrown)
+    }
+
+    fn callback_reused(&self) -> Thrown {
+        self.0.callback_reused()
+    }
+
+    fn engine_error(&self, thrown: &Thrown) -> CellError {
+        self.0.engine_error(thrown)
+    }
+}
+
+impl DoStorage for HidesFailedCommit {
+    fn exec(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.0.exec(sql, params)
+    }
+
+    fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.0.exec_batch(sql)
     }
 }
 
@@ -772,15 +833,14 @@ impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
 
 impl<const REOPEN: bool, S: LawEngine> SimulatedCell for LawSqlite<REOPEN, S> {
     const COMMITS_PERFORM_CLAIMS: bool = true;
-    /// Only a file store survives a crash: it reopens from the file.
-    const FAULT_KINDS: &'static [FaultKind] = if S::FAULTS {
-        if REOPEN {
-            &[FaultKind::IoError, FaultKind::Crash]
-        } else {
-            &[FaultKind::IoError]
-        }
-    } else {
-        &[]
+    /// Only a file store survives a crash: it reopens from the file. Only a
+    /// storage that commits itself can fail its commit.
+    const FAULT_KINDS: &'static [FaultKind] = match (S::FAULTS, REOPEN, S::COMMIT_FAULTS) {
+        (false, _, _) => &[],
+        (true, false, false) => &[FaultKind::IoError],
+        (true, true, false) => &[FaultKind::IoError, FaultKind::Crash],
+        (true, false, true) => &[FaultKind::IoError, FaultKind::CommitFails],
+        (true, true, true) => &[FaultKind::IoError, FaultKind::Crash, FaultKind::CommitFails],
     };
 
     fn sim_new() -> Self {
@@ -814,6 +874,7 @@ impl<const REOPEN: bool, S: LawEngine> SimulatedCell for LawSqlite<REOPEN, S> {
             kind: match plan.kind {
                 FaultKind::Crash => EngineFaultKind::Crash,
                 FaultKind::IoError => EngineFaultKind::Io,
+                FaultKind::CommitFails => EngineFaultKind::Commit,
             },
             transaction: u32::from(plan.transaction),
             at_statement: u32::from(plan.at_statement),
@@ -966,14 +1027,39 @@ fn cell_host_laws_hold_for_the_do_transaction_glue() {
 }
 
 /// Law 6 on the Durable Object transaction glue: a crash or I/O error at any
-/// statement or commit point inside `transactionSync` rolls everything back.
+/// statement or commit point inside `transactionSync`, or a failure of the
+/// storage's own commit (semantics 6), rolls everything back.
 #[test]
 fn cell_host_laws_hold_under_injected_crashes_for_the_do_transaction_glue() {
     let coverage = check_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine>>>(
         &Settings::new(file!()).cases(FAULT_REOPEN_CASES),
     );
     coverage.assert_covered(CELL_FAULT_LABELS);
-    coverage.assert_covered(&["cell:fault.crash", "cell:fault.io_error"]);
+    coverage.assert_covered(&[
+        "cell:fault.crash",
+        "cell:fault.io_error",
+        "cell:fault.commit_failed",
+    ]);
+}
+
+/// Semantics 6 can fail: a storage that reports a failed commit as success
+/// makes a rolled-back write look committed, and law 6 catches it on a
+/// commit fault.
+#[test]
+fn cell_host_mutant_do_storage_hiding_a_failed_commit_is_caught() {
+    let failure = run_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine<HidesFailedCommit>>>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(16),
+    )
+    .expect_err("a storage that hides a failed commit must fail the laws");
+    assert!(
+        failure.transitions.iter().any(|op| matches!(
+            op,
+            CellOp::Faulted(faulted) if faulted.plan.kind == FaultKind::CommitFails
+        )),
+        "{failure}"
+    );
 }
 
 /// Glue that does not recognise its rollback marker turns every typed

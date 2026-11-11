@@ -45,7 +45,9 @@
 //!    (every later perform fails until a newer generation replaces it). A
 //!    fault past an operation's last write transaction never fires. After a
 //!    [`FaultKind::Crash`] the host reopens from durable state, and
-//!    refinement (law 5) then holds against the unchanged model.
+//!    refinement (law 5) then holds against the unchanged model. A failed
+//!    storage commit ([`FaultKind::CommitFails`]) is held to the same law: the
+//!    operation fails with a host error and changes nothing.
 //!
 //! Hosts that inject faults also run in swarm mode: each case first draws
 //! which operation kinds it uses and how often, and a failure report prints
@@ -982,6 +984,12 @@ pub enum FaultKind {
     /// The faulted statement fails with an I/O error: its transaction rolls
     /// back and the host keeps its connection.
     IoError,
+    /// The storage's own commit of the faulted transaction fails after its
+    /// body succeeded (`at_statement` is ignored): the storage rolls the
+    /// transaction back and the operation fails with a host error. Only
+    /// hosts whose storage commits itself (a Durable Object's
+    /// `transactionSync`) list it.
+    CommitFails,
 }
 
 /// One storage fault, armed for one operation ([`CellOp::Faulted`]).
@@ -2134,12 +2142,14 @@ struct Swarm {
     inject: u32,
     io_error: u32,
     crash: u32,
+    commit_fails: u32,
 }
 
 impl Swarm {
     /// Each kind is enabled with probability 3/4 at weight 1 to 4; faults the
     /// host does not list stay disabled, and at least one cell operation
-    /// is enabled.
+    /// is enabled. Commit failures take the I/O-error weight: no extra draw,
+    /// so the mix of a host without them is unchanged.
     fn strategy(kinds: &'static [FaultKind]) -> BoxedStrategy<Self> {
         let weight =
             || proptest::option::weighted(0.75, 1_u32..5).prop_map(Option::unwrap_or_default);
@@ -2181,6 +2191,7 @@ impl Swarm {
                     inject,
                     io_error: enabled(FaultKind::IoError, io_error),
                     crash: enabled(FaultKind::Crash, crash),
+                    commit_fails: enabled(FaultKind::CommitFails, io_error),
                 }
             })
             .no_shrink()
@@ -2227,6 +2238,7 @@ impl Swarm {
         for (weight, kind) in [
             (self.io_error, FaultKind::IoError),
             (self.crash, FaultKind::Crash),
+            (self.commit_fails, FaultKind::CommitFails),
         ] {
             if weight > 0 {
                 options.push((weight, fault_strategy(model, kind)));
@@ -2476,6 +2488,7 @@ fn fault_fired<H: SimulatedCell>(host: &mut H, fault: ArmedFault) -> bool {
         match fault.plan.kind {
             FaultKind::Crash => "fault.crash",
             FaultKind::IoError => "fault.io_error",
+            FaultKind::CommitFails => "fault.commit_failed",
         }
     } else {
         "fault.unfired"
@@ -2797,7 +2810,8 @@ pub const CELL_HOST_LABELS: &[&str] = &[
 /// Coverage labels a healthy run with injected faults hits (law 6): a fault
 /// fired in a commit, in a perform's claim, and in its result record; a
 /// fault the operation never reached; and a perform refused after its result
-/// was lost. Per-kind labels are `cell:fault.io_error` and `cell:fault.crash`.
+/// was lost. Per-kind labels are `cell:fault.io_error`, `cell:fault.crash`
+/// and `cell:fault.commit_failed`.
 pub const CELL_FAULT_LABELS: &[&str] = &[
     "cell:fault.commit",
     "cell:fault.perform.claim",

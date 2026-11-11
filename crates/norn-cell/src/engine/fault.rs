@@ -13,6 +13,12 @@ pub enum EngineFaultKind {
     /// The faulted statement fails with an I/O error: its transaction rolls
     /// back and the engine stays usable.
     Io,
+    /// The storage's own COMMIT of the faulted transaction fails after its
+    /// body succeeded: the storage rolls it back and throws its own error.
+    /// No statement fails; only a storage that commits itself (the
+    /// `DoStorageEmulator` given the switch) fires it, through
+    /// [`FaultSwitch::take_commit_fault`].
+    Commit,
 }
 
 /// One scheduled fault: SQL statement `at_statement` (counting from 0) of
@@ -20,7 +26,8 @@ pub enum EngineFaultKind {
 /// [`FaultSwitch::arm`]. A faulted transaction never commits: when its
 /// closure would commit with fewer statements, the fault fires at the commit
 /// point instead. A closure that fails on its own (a refusal) rolls back
-/// without the fault firing.
+/// without the fault firing. An [`EngineFaultKind::Commit`] fault ignores
+/// `at_statement` and fails the storage's commit of that transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineFault {
     /// What the fault does.
@@ -69,6 +76,24 @@ impl FaultSwitch {
     pub fn fired(&self) -> bool {
         self.0.fired.get()
     }
+
+    /// Fires an armed [`EngineFaultKind::Commit`] fault when the storage is
+    /// about to commit its targeted transaction, and reports whether it did:
+    /// the storage then fails that commit.
+    #[must_use = "a fired commit fault must fail the commit"]
+    pub fn take_commit_fault(&self) -> bool {
+        let due = self.0.targeting.get()
+            && !self.0.fired.get()
+            && self
+                .0
+                .armed
+                .get()
+                .is_some_and(|fault| fault.kind == EngineFaultKind::Commit);
+        if due {
+            self.0.fired.set(true);
+        }
+        due
+    }
 }
 
 /// An engine that fails on the schedule of its [`FaultSwitch`] and otherwise
@@ -102,6 +127,7 @@ impl<S: SqlEngine> FaultEngine<S> {
         CellError::Engine(match kind {
             EngineFaultKind::Crash => "injected fault: host crashed".to_owned(),
             EngineFaultKind::Io => "injected fault: disk I/O error".to_owned(),
+            EngineFaultKind::Commit => "injected fault: COMMIT failed".to_owned(),
         })
     }
 
@@ -128,7 +154,7 @@ impl<S: SqlEngine> FaultEngine<S> {
         let Some(fault) = state.armed.get() else {
             return Ok(());
         };
-        if !state.targeting.get() || state.fired.get() {
+        if !state.targeting.get() || state.fired.get() || fault.kind == EngineFaultKind::Commit {
             return Ok(());
         }
         let index = state.statements.get();
@@ -181,6 +207,8 @@ impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
             // Never commit once the fault fired, even if the caller swallowed
             // the statement's error; otherwise this is the commit point.
             Ok(_) if state.fired.get() => Err(Self::error(fault.kind).into()),
+            // The storage fails its own commit (still targeted until it returns).
+            Ok(value) if fault.kind == EngineFaultKind::Commit => Ok(value),
             Ok(_) => Err(self.fire(fault.kind).into()),
         });
         drop(targeting);
@@ -259,7 +287,10 @@ const ROLLBACK_MARKER: &str = "norn:rollback";
 ///    opens and ends transactions (the native engine's authorizer denies it).
 /// 6. If the commit (or the rollback) itself fails, the transaction is rolled
 ///    back and `transactionSync` throws the storage's error, not the
-///    callback's value; the glue reports it as an engine error.
+///    callback's value; the glue reports it as an engine error. Given a
+///    [`FaultSwitch`] ([`DoStorageEmulator::with_faults`]), an armed
+///    [`EngineFaultKind::Commit`] fault fails the commit of its targeted
+///    transaction this way, after the callback succeeded.
 ///
 /// So the glue's caller sees its own typed error on a rollback (the callback
 /// threw the marker), and a [`CellError::Engine`] for a storage failure. The
@@ -271,6 +302,7 @@ const ROLLBACK_MARKER: &str = "norn:rollback";
 pub struct DoStorageEmulator {
     native: super::NativeEngine,
     in_transaction: std::cell::Cell<bool>,
+    faults: Option<FaultSwitch>,
 }
 
 #[cfg(feature = "native")]
@@ -281,7 +313,16 @@ impl DoStorageEmulator {
         Self {
             native,
             in_transaction: std::cell::Cell::new(false),
+            faults: None,
         }
+    }
+
+    /// The same emulator failing its commits on `faults`' armed
+    /// [`EngineFaultKind::Commit`] faults (semantics 6).
+    #[must_use]
+    pub fn with_faults(mut self, faults: FaultSwitch) -> Self {
+        self.faults = Some(faults);
+        self
     }
 }
 
@@ -307,8 +348,19 @@ impl super::Transact for DoStorageEmulator {
         self.in_transaction.set(true);
         let open = Open(&self.in_transaction);
         // Commit on Ok; on Err roll back and rethrow; a begin, commit or
-        // rollback failure becomes the storage's own throw.
-        let result = self.native.transaction(callback);
+        // rollback failure becomes the storage's own throw. An injected
+        // commit failure rolls back the same way and throws as the storage.
+        let result = self.native.transaction(|| {
+            callback()?;
+            if self
+                .faults
+                .as_ref()
+                .is_some_and(FaultSwitch::take_commit_fault)
+            {
+                return Err(Thrown::Storage("injected fault: COMMIT failed".to_owned()));
+            }
+            Ok(())
+        });
         drop(open);
         result
     }

@@ -97,7 +97,7 @@ fn decode(value: &JsValue) -> Result<SqlValue, CellError> {
     Err(CellError::Engine("unsupported DO SQL value".into()))
 }
 
-/// `storage.transactionSync`; the decision logic is [`run_transaction`].
+/// `storage.transactionSync`; the decision logic is `run_transaction`.
 impl Transact for WorkersEngine {
     type Thrown = JsValue;
 
