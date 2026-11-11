@@ -283,7 +283,10 @@ export interface components {
             /** @description The object type. */
             objectType: string;
         };
-        /** Map_of_RuntimeValue */
+        /**
+         * Map_of_RuntimeValue
+         * @description Action business arguments as exact JSON values. A field declared `nornType: decimal` travels as its exact decimal text (`"12.500"`, VAL-EXACT-1); a number token there refuses `action.invalid_input`. Other number tokens keep their digits exactly.
+         */
         NornActionInput: {
             [key: string]: unknown;
         };
