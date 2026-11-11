@@ -229,6 +229,28 @@ impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
     }
 }
 
+#[cfg(feature = "native")]
+impl super::NativeEngine {
+    /// [`super::NativeEngine::open`] with `PRAGMA synchronous = OFF`, for the
+    /// simulator's file stores only (test-only `fault-injection` feature;
+    /// production opens keep `FULL`). The simulator's crashes are injected by
+    /// [`FaultEngine`] (the transaction never commits, the connection is
+    /// dropped, the store reopens from the same file), so the harness needs
+    /// no fsync. Disk durability under power loss is out of scope here; it
+    /// belongs to the nightly differential on real runtimes (D79 D step 5).
+    ///
+    /// # Errors
+    /// SQLite open or configuration errors.
+    pub fn open_unsynced(
+        path: &std::path::Path,
+        options: crate::store::StoreOptions,
+    ) -> Result<Self, CellError> {
+        let engine = Self::open(path, options)?;
+        engine.conn.execute_batch("PRAGMA synchronous = OFF")?;
+        Ok(engine)
+    }
+}
+
 /// What a native `transactionSync` emulator and its callback throw.
 #[cfg(feature = "native")]
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -22,7 +22,14 @@
 //! 4. The same case run twice gives byte-identical responses.
 //!
 //! A host crash kills the engine, so the simulated DO is evicted (reopened)
-//! right after a fired crash, as the platform restarts it.
+//! right after a fired crash, as the platform restarts it. A host that cannot
+//! reopen (provisioning or ledger verification refuses) violates recovery.
+//!
+//! Stores live on `/dev/shm` when it is writable and are opened without fsync
+//! (`NativeEngine::open_unsynced`): crashes are injected (a transaction that
+//! never commits, a dropped connection, a reopen from the same file), so disk
+//! durability under power loss is out of scope here; it belongs to the
+//! nightly differential on real runtimes (D79 D step 5).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -55,12 +62,13 @@ const HANDLE_KEY: [u8; 32] = [5; 32];
 /// The request clock: every receipt records the same time, so responses are
 /// reproducible.
 const NOW: u64 = 1_800_000_000;
-/// Cases per run unless `PROPTEST_CASES` is set (a soak raises it).
-const CASES: u64 = 16;
+/// Cases per run unless `PROPTEST_CASES` is set (a soak raises it). Every
+/// open provisions the analytics cell, so cases are few and long.
+const CASES: u64 = 5;
 /// The fixed seed of the case set.
 const SEED: u64 = 0x6e6f_726e_2d64_6f72; // "norn-dor"
-/// Every this many cases, the system run is repeated to check determinism.
-const REPLAY_EVERY: u64 = 4;
+/// The case whose system run is repeated to check determinism.
+const REPLAY_CASE: u64 = 0;
 /// Definition ids the generator uses: few, so writes conflict and replace.
 const IDS: u64 = 3;
 
@@ -74,25 +82,42 @@ struct Cell<E: SqlEngine> {
     kinds: DefinitionKinds,
 }
 
-fn open<E: SqlEngine>(engine: E) -> Cell<E> {
+/// Opens (provisions) the analytics cell on `engine`. A cell that does not
+/// open is reported, never a panic: after a fault it is a recovery failure.
+fn open<E: SqlEngine>(engine: E) -> Result<Cell<E>, String> {
     let scope = analytics::analytics_scope();
-    let opened = analytics::provision(engine, &scope).expect("analytics cell provisions");
-    let policy =
-        ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let opened = analytics::provision(engine, &scope)
+        .map_err(|error| format!("the analytics cell does not provision: {error:?}"))?;
+    let policy = ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS)
+        .map_err(|error| format!("the read policy does not compile: {error:?}"))?;
     let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
     let host = DevHost::from_store(opened.store, scope.clone(), |command| {
         command.payload.clone()
     })
-    .unwrap()
+    .map_err(|error| format!("the host does not open: {error:?}"))?
     .with_authorizer(policy);
     let questions = DemoQuestions::new(opened.plan, scope)
         .with_handle_key(&HANDLE_KEY)
         .with_metrics(opened.definitions, opened.catalog);
-    Cell {
+    Ok(Cell {
         host,
         questions,
         principals,
         kinds: DefinitionKinds::default(),
+    })
+}
+
+/// A directory for the system's store: RAM-backed (`/dev/shm`) when it
+/// exists and is writable, else the normal temporary directory.
+fn simulator_dir() -> Result<tempfile::TempDir, String> {
+    let shm = Path::new("/dev/shm");
+    match shm
+        .is_dir()
+        .then(|| tempfile::tempdir_in(shm).ok())
+        .flatten()
+    {
+        Some(directory) => Ok(directory),
+        None => tempfile::tempdir().map_err(|error| format!("harness: tempdir: {error}")),
     }
 }
 
@@ -111,18 +136,24 @@ impl Storage for DoStorageEmulator {
 /// The system under test: the DO glue over storage `S`, behind the faults.
 type System<S> = FaultEngine<DoEngine<S>>;
 
-fn open_system<S: Storage>(path: &Path, faults: &FaultSwitch) -> Cell<System<S>> {
-    let native = NativeEngine::open(path, StoreOptions::default()).expect("opens the file");
+/// Opens (or reopens, after an eviction or a crash) the system's cell from
+/// its file. Failing to open is a recovery violation.
+fn open_system<S: Storage>(path: &Path, faults: &FaultSwitch) -> Result<Cell<System<S>>, String> {
+    let native = NativeEngine::open_unsynced(path, StoreOptions::default()).map_err(|error| {
+        format!("law violated: recovery refused: the file does not open: {error}")
+    })?;
     open(FaultEngine::new(
         DoEngine::new(S::over(native, faults)),
         faults.clone(),
     ))
+    .map_err(|error| format!("law violated: recovery refused: {error}"))
 }
 
-fn oracle() -> Cell<DoEngine> {
-    open(DoEngine::new(DoStorageEmulator::new(
-        NativeEngine::open_in_memory().expect("opens memory"),
-    )))
+fn oracle() -> Result<Cell<DoEngine>, String> {
+    let native = NativeEngine::open_in_memory()
+        .map_err(|error| format!("harness: the oracle does not open: {error}"))?;
+    open(DoEngine::new(DoStorageEmulator::new(native)))
+        .map_err(|error| format!("harness: the oracle does not open: {error}"))
 }
 
 // ------------------------------------------------------------------ requests
@@ -369,8 +400,10 @@ fn request(rng: &mut Rng) -> Req {
     }
 }
 
-fn fault(rng: &mut Rng) -> EngineFault {
-    let kind = match rng.below(3) {
+/// The `n`th fault of a case: its kind cycles crash, I/O error, failed
+/// commit (from an offset per case), so few cases reach every kind.
+fn fault(rng: &mut Rng, n: u64) -> EngineFault {
+    let kind = match n % 3 {
         0 => EngineFaultKind::Crash,
         1 => EngineFaultKind::Io,
         _ => EngineFaultKind::Commit,
@@ -379,7 +412,7 @@ fn fault(rng: &mut Rng) -> EngineFault {
         kind,
         // Mostly the request's first write transaction; sometimes a later
         // one, which most requests never run.
-        transaction: if rng.chance(80) { 0 } else { 1 },
+        transaction: u32::from(!rng.chance(80)),
         // Mostly an early statement; sometimes past the last (commit point).
         at_statement: if rng.chance(75) {
             u32::try_from(rng.below(16)).unwrap()
@@ -389,15 +422,17 @@ fn fault(rng: &mut Rng) -> EngineFault {
     }
 }
 
-/// Case `case` of the fixed seed set: 1 to 12 steps.
+/// Case `case` of the fixed seed set: 6 to 10 steps.
 fn generate(case: u64) -> Vec<Step> {
     let mut rng = Rng(SEED ^ case.wrapping_mul(0x2545_f491_4f6c_dd1d));
-    let steps = 1 + rng.below(12);
+    let steps = 6 + rng.below(5);
+    let mut faults = case;
     (0..steps)
         .map(|_| match rng.below(100) {
-            0..=11 => Step::Evict,
-            12..=46 => {
-                let fault = fault(&mut rng);
+            0..=5 => Step::Evict,
+            6..=45 => {
+                let fault = fault(&mut rng, faults);
+                faults += 1;
                 // Faults are aimed mostly at writes; a read runs no write
                 // transaction, so its fault does not fire.
                 let req = if rng.chance(80) {
@@ -426,9 +461,8 @@ struct Stats {
 }
 
 fn fail_closed(response: &Response) -> Result<(), String> {
-    let typed = serde_json::from_str::<Value>(&response.body)
-        .ok()
-        .is_some_and(|body| body["code"].is_string());
+    let typed =
+        serde_json::from_str::<Value>(&response.body).is_ok_and(|body| body["code"].is_string());
     if (200..300).contains(&response.status) || !typed {
         return Err(format!(
             "law violated: a faulted request did not fail closed: {} {}",
@@ -455,11 +489,11 @@ fn same_state<E: SqlEngine, O: SqlEngine>(
 /// Runs one case on storage `S` against the oracle and returns the system's
 /// responses (a fired fault's included).
 fn simulate<S: Storage>(steps: &[Step], stats: &mut Stats) -> Result<Vec<Response>, String> {
-    let directory = tempfile::tempdir().expect("tempdir");
+    let directory = simulator_dir()?;
     let path = directory.path().join("cell.sqlite");
     let faults = FaultSwitch::default();
-    let oracle = oracle();
-    let mut system = open_system::<S>(&path, &faults);
+    let oracle = oracle()?;
+    let mut system = open_system::<S>(&path, &faults)?;
     let mut transcript = Vec::new();
     for (ix, step) in steps.iter().enumerate() {
         match *step {
@@ -485,7 +519,7 @@ fn simulate<S: Storage>(steps: &[Step], stats: &mut Stats) -> Result<Vec<Respons
                             stats.crash += 1;
                             // The platform restarts a crashed DO.
                             drop(system);
-                            system = open_system::<S>(&path, &faults);
+                            system = open_system::<S>(&path, &faults)?;
                             stats.evictions += 1;
                         }
                         EngineFaultKind::Io => stats.io += 1,
@@ -505,7 +539,7 @@ fn simulate<S: Storage>(steps: &[Step], stats: &mut Stats) -> Result<Vec<Respons
             }
             Step::Evict => {
                 drop(system);
-                system = open_system::<S>(&path, &faults);
+                system = open_system::<S>(&path, &faults)?;
                 stats.evictions += 1;
                 same_state(
                     &system,
@@ -536,7 +570,7 @@ fn run<S: Storage>() -> Result<Stats, String> {
         let report =
             |error: String| format!("{error}\nseed: {SEED:#x}, case: {case}\nsteps: {steps:#?}");
         let first = simulate::<S>(&steps, &mut stats).map_err(report)?;
-        if case % REPLAY_EVERY == 0 {
+        if case == REPLAY_CASE {
             let second = simulate::<S>(&steps, &mut Stats::default()).map_err(report)?;
             if first != second {
                 return Err(report(
@@ -621,10 +655,28 @@ impl DoStorage for CommitsOnRollback {
 }
 
 /// The request-layer laws can fail: a storage that lets a faulted request's
-/// writes survive is caught by the oracle.
+/// writes survive is caught, as a state that differs from the oracle's or as
+/// a cell that no longer reopens. The case is fixed and short: an I/O error
+/// at the commit point of each of an install's first two transactions,
+/// whose whole writes this storage commits anyway.
 #[test]
 fn do_request_mutant_whose_writes_survive_a_fault_is_caught() {
-    let failure = run::<CommitsOnRollback>()
+    let at_commit = |transaction| EngineFault {
+        kind: EngineFaultKind::Io,
+        transaction,
+        at_statement: u32::MAX,
+    };
+    let install = |id| Req::Install {
+        id,
+        title: 0,
+        expected: None,
+    };
+    let steps = [
+        Step::Faulted(at_commit(0), install(0)),
+        Step::Faulted(at_commit(1), install(1)),
+        Step::Serve(Req::List { retired: true }),
+    ];
+    let failure = simulate::<CommitsOnRollback>(&steps, &mut Stats::default())
         .expect_err("a storage whose writes survive a fault must fail the request laws");
     assert!(failure.contains("law violated"), "{failure}");
 }

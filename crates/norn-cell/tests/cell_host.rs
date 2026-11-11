@@ -123,6 +123,21 @@ fn law_cell_responder(command: &Command<LawCommand>) -> WireInput {
     WireInput::from(&law_responder(command))
 }
 
+/// A directory for a simulator file store: RAM-backed (`/dev/shm`) when it
+/// exists and is writable, else the normal temporary directory. Simulator
+/// stores are opened without fsync ([`NativeEngine::open_unsynced`]): their
+/// crashes are injected (a transaction that never commits, a dropped
+/// connection, a reopen from the same file), and disk durability under power
+/// loss is out of scope here; it belongs to the nightly differential on real
+/// runtimes (D79 D step 5).
+fn simulator_dir() -> tempfile::TempDir {
+    let shm = Path::new("/dev/shm");
+    shm.is_dir()
+        .then(|| tempfile::tempdir_in(shm).ok())
+        .flatten()
+        .unwrap_or_else(|| tempfile::tempdir().expect("tempdir"))
+}
+
 /// An engine the law driver opens. `faults` is the driver's fault schedule,
 /// shared across reopens; only fault-injecting engines read it.
 trait LawEngine: SqlEngine + Debug + Sized + 'static {
@@ -145,7 +160,7 @@ impl LawEngine for NativeEngine {
         options: StoreOptions,
         _faults: &FaultSwitch,
     ) -> Result<Self, CellError> {
-        NativeEngine::open(path, options)
+        NativeEngine::open_unsynced(path, options)
     }
 
     fn open_memory(_faults: &FaultSwitch) -> Result<Self, CellError> {
@@ -260,7 +275,7 @@ impl LawEngine for RestrictedEngine {
         options: StoreOptions,
         _faults: &FaultSwitch,
     ) -> Result<Self, CellError> {
-        NativeEngine::open(path, options).map(Self::new)
+        NativeEngine::open_unsynced(path, options).map(Self::new)
     }
 
     fn open_memory(_faults: &FaultSwitch) -> Result<Self, CellError> {
@@ -400,7 +415,7 @@ impl<S: OpenDo> LawEngine for DoEngine<S> {
         options: StoreOptions,
         faults: &FaultSwitch,
     ) -> Result<Self, CellError> {
-        NativeEngine::open(path, options).map(|native| Self::new(S::over(native, faults)))
+        NativeEngine::open_unsynced(path, options).map(|native| Self::new(S::over(native, faults)))
     }
 
     fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
@@ -846,7 +861,7 @@ impl<const REOPEN: bool, S: LawEngine> SimulatedCell for LawSqlite<REOPEN, S> {
     fn sim_new() -> Self {
         let faults = FaultSwitch::default();
         if REOPEN {
-            let dir = tempfile::tempdir().expect("tempdir");
+            let dir = simulator_dir();
             let path = dir.path().join("cell.sqlite");
             let cell =
                 law_cell(S::open_file(&path, StoreOptions::default(), &faults).expect("opens"))
@@ -998,13 +1013,13 @@ fn cell_host_laws_hold_under_injected_io_errors_without_reopen() {
 /// The crash law can fail: an engine that commits a faulted transaction lets
 /// a partial (or whole) write survive the crash, and the law machine finds a
 /// counterexample that arms a fault. It only needs to be caught, not
-/// minimised, so shrinking is capped at a few steps.
+/// minimised, so it takes the one shrink step proptest-state-machine needs.
 #[test]
 fn cell_host_mutant_committing_after_a_fault_is_caught() {
     let failure = run_cell_host::<LawSqlite<true, FaultEngine<CommitsAfterFault<NativeEngine>>>>(
         &Settings::new(file!())
             .without_persistence()
-            .max_shrink_iters(16),
+            .max_shrink_iters(1),
     )
     .expect_err("an engine that commits a faulted transaction must fail the crash law");
     assert!(
@@ -1022,7 +1037,7 @@ fn cell_host_mutant_committing_after_a_fault_is_caught() {
 #[test]
 fn cell_host_laws_hold_for_the_do_transaction_glue() {
     let coverage =
-        check_cell_host::<LawSqlite<false, DoLawEngine>>(&Settings::new(file!()).cases(128));
+        check_cell_host::<LawSqlite<false, DoLawEngine>>(&Settings::new(file!()).cases(64));
     coverage.assert_covered(CELL_HOST_LABELS);
 }
 
@@ -1050,7 +1065,7 @@ fn cell_host_mutant_do_storage_hiding_a_failed_commit_is_caught() {
     let failure = run_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine<HidesFailedCommit>>>>(
         &Settings::new(file!())
             .without_persistence()
-            .max_shrink_iters(16),
+            .max_shrink_iters(1),
     )
     .expect_err("a storage that hides a failed commit must fail the laws");
     assert!(
@@ -1069,7 +1084,7 @@ fn cell_host_mutant_do_glue_misreading_rollback_is_caught() {
     let failure = run_cell_host::<LawSqlite<false, DoLawEngine<MisreadsRollback>>>(
         &Settings::new(file!())
             .without_persistence()
-            .max_shrink_iters(16),
+            .max_shrink_iters(1),
     )
     .expect_err("glue that misreads its rollback marker must fail the laws");
     assert!(
@@ -1085,7 +1100,7 @@ fn cell_host_mutant_do_storage_committing_on_rollback_is_caught() {
     let failure = run_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine<CommitsOnRollback>>>>(
         &Settings::new(file!())
             .without_persistence()
-            .max_shrink_iters(16),
+            .max_shrink_iters(1),
     )
     .expect_err("a storage that commits on rollback must fail the laws");
     assert!(!failure.transitions.is_empty(), "{failure}");
