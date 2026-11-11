@@ -743,13 +743,13 @@ fn cell_host_laws_hold_under_injected_io_errors_without_reopen() {
 /// The crash law can fail: an engine that commits a faulted transaction lets
 /// a partial (or whole) write survive the crash, and the law machine finds a
 /// counterexample that arms a fault. It only needs to be caught, not
-/// minimised, so shrinking is off.
+/// minimised, so shrinking is capped at a few steps.
 #[test]
 fn cell_host_mutant_committing_after_a_fault_is_caught() {
     let failure = run_cell_host::<LawSqlite<true, FaultEngine<CommitsAfterFault<NativeEngine>>>>(
         &Settings::new(file!())
             .without_persistence()
-            .max_shrink_iters(0),
+            .max_shrink_iters(16),
     )
     .expect_err("an engine that commits a faulted transaction must fail the crash law");
     assert!(

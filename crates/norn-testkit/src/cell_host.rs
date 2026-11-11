@@ -1120,8 +1120,8 @@ pub struct Faulted {
 /// The operation a [`Faulted`] transition arms its fault for.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FaultTarget {
-    /// The `commit` verb.
-    Commit(LawCommit),
+    /// The `commit` verb (boxed: a commit dwarfs the unit variant).
+    Commit(Box<LawCommit>),
     /// The `perform` verb.
     Perform,
 }
@@ -2265,7 +2265,12 @@ fn fault_strategy(model: &CellModel, kind: FaultKind) -> BoxedStrategy<CellOp> {
         prop_oneof![model.admissible_commit_strategy(), model.commit_strategy()],
     )
         .prop_map(move |(transaction, at_statement, commit)| {
-            faulted(transaction, at_statement, None, FaultTarget::Commit(commit))
+            faulted(
+                transaction,
+                at_statement,
+                None,
+                FaultTarget::Commit(Box::new(commit)),
+            )
         });
     let perform = (
         prop_oneof![Just(0_u8), Just(1_u8)],

@@ -86,9 +86,11 @@ impl Settings {
         self
     }
 
-    /// Caps shrinking at `iters` steps (0 disables it) when
-    /// `PROPTEST_MAX_SHRINK_ITERS` is unset. For mutant self-tests, which need
-    /// a counterexample, not a minimal one.
+    /// Caps shrinking at `iters` steps when `PROPTEST_MAX_SHRINK_ITERS` is
+    /// unset. For mutant self-tests, which need a counterexample, not a
+    /// minimal one. The cap is at least 1, from either source: a
+    /// `proptest-state-machine` sequence must take one shrink step before it
+    /// reports its failing value (with 0 it panics instead).
     #[must_use]
     pub const fn max_shrink_iters(mut self, iters: u32) -> Self {
         self.shrink_iters = Some(iters);
@@ -115,6 +117,7 @@ impl Settings {
         {
             config.max_shrink_iters = iters;
         }
+        config.max_shrink_iters = config.max_shrink_iters.max(1);
         config.source_file = Some(self.source_file);
         config.failure_persistence = if self.persist && config.failure_persistence.is_some() {
             Some(Box::new(FileFailurePersistence::WithSource(
