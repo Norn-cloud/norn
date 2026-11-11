@@ -26,7 +26,9 @@
 //!    completed, is a no-op); an observation id is ingested at most once.
 //!    A host that declares [`SimulatedCell::COMMITS_PERFORM_CLAIMS`] also
 //!    advances the total commit order with an empty claim commit before each
-//!    fresh execution.
+//!    fresh execution. Under an unreliable outside world
+//!    ([`SimulatedCell::NETWORK`], law 7) the same holds for results that
+//!    arrive late, out of order, twice, or never.
 //! 4. **Clock.** `clock` delivers only due timers, earliest first (ties by
 //!    id); rescheduling a delivered timer (even identically) makes its old
 //!    delivery unconsumable, because the delivery names the incarnation.
@@ -49,7 +51,22 @@
 //!    storage commit ([`FaultKind::CommitFails`]) is held to the same law: the
 //!    operation fails with a host error and changes nothing.
 //!
-//! Hosts that inject faults also run in swarm mode: each case first draws
+//! 7. **Responder faults.** For a host that declares
+//!    [`SimulatedCell::NETWORK`], the outside world is an explicit network
+//!    held by the model: [`CellOp::Dispatch`] claims the fresh outbox head
+//!    and puts its result in flight; [`CellOp::Deliver`] hands a result to
+//!    the host in order, out of order, or again (a duplicate); and
+//!    [`CellOp::Lose`] drops one in flight. Other operations interleave, so
+//!    results are delayed. A delivered result is recorded exactly when it
+//!    is for the current outbox head at its generation and no result is
+//!    recorded yet; recording is that generation's one execution. A
+//!    stale-generation, duplicate or late result is refused and changes
+//!    nothing. While a dispatched result is outstanding, `perform` fails
+//!    (the outcome is unknown) rather than execute again. Observations are
+//!    redelivered too (duplicate ids, late after consumption) and ingested
+//!    at most once.
+//!
+//! Hosts that inject faults or declare a network also run in swarm mode: each case first draws
 //! which operation kinds it uses and how often, and a failure report prints
 //! that mix with the seed.
 //!
@@ -1037,6 +1054,38 @@ pub trait SimulatedCell:
         false
     }
 
+    /// Whether the host splits `perform` into a dispatch and a later result
+    /// delivery, so the law machine can put an unreliable network between
+    /// the cell and its outside world (law 7). Such a host runs in swarm mode
+    /// and must also declare [`Self::COMMITS_PERFORM_CLAIMS`]: a dispatch is
+    /// a durable claim.
+    const NETWORK: bool = false;
+
+    /// Claims the fresh outbox head for external dispatch and returns it;
+    /// `None` when the outbox is empty or its head was already claimed or
+    /// has a recorded result. Called only on hosts that declare
+    /// [`Self::NETWORK`].
+    ///
+    /// # Errors
+    /// A host failure, as its message.
+    fn sim_dispatch(&mut self) -> Result<Option<Command<LawCommand>>, String> {
+        Ok(None)
+    }
+
+    /// Hands the host one result from the outside world for `command` (at
+    /// its generation) and returns whether the host recorded it. Called only
+    /// on hosts that declare [`Self::NETWORK`].
+    ///
+    /// # Errors
+    /// A host failure, as its message.
+    fn sim_deliver(
+        &mut self,
+        _command: &Command<LawCommand>,
+        _input: &LawInput,
+    ) -> Result<bool, String> {
+        Ok(false)
+    }
+
     /// A fresh, empty cell at the epoch whose outside world answers every
     /// command with [`law_responder`].
     fn sim_new() -> Self;
@@ -1109,6 +1158,36 @@ pub enum CellOp {
     /// A commit or perform under a storage fault (hosts that list
     /// [`SimulatedCell::FAULT_KINDS`] only).
     Faulted(Box<Faulted>),
+    /// The host claims its fresh outbox head and dispatches it; the outside
+    /// world's result goes in flight (hosts that declare
+    /// [`SimulatedCell::NETWORK`] only).
+    Dispatch,
+    /// The network hands the host a result (law 7).
+    Deliver(Box<Delivery>),
+    /// The network loses the in-flight result at this index (law 7).
+    Lose(u8),
+}
+
+/// One result the network hands the host ([`CellOp::Deliver`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Delivery {
+    /// The dispatched command, at the generation it was dispatched with.
+    pub command: Command<LawCommand>,
+    /// The outside world's result for it.
+    pub input: LawInput,
+    /// How the network delivers it.
+    pub route: Route,
+}
+
+/// How the network delivers a result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// The oldest result in flight.
+    InOrder,
+    /// A later result in flight, ahead of older ones.
+    OutOfOrder,
+    /// A copy of a result sent before, delivered or not.
+    Duplicate,
 }
 
 /// A faulted operation of the law machine ([`CellOp::Faulted`]).
@@ -1147,6 +1226,21 @@ enum Expect {
     /// The operation fails with a host error, executes nothing, and changes
     /// nothing the model does not.
     Failed,
+    /// The command a dispatch claims, if any.
+    Dispatch(Option<Command<LawCommand>>),
+    /// Whether a delivered result is recorded; if not, whether it was for a
+    /// stale generation; and whether it waited behind other operations.
+    Deliver {
+        recorded: bool,
+        stale: bool,
+        delayed: bool,
+    },
+    /// Whether an injected observation's id was seen before, and whether it
+    /// was already consumed.
+    Inject {
+        duplicate: bool,
+        late: bool,
+    },
     Nothing,
 }
 
@@ -1205,6 +1299,13 @@ pub struct CellModel {
     seen: BTreeSet<ObservationId>,
     ledger: Vec<LedgerEntry<LawEvent>>,
     executions: u64,
+    /// Results dispatched and not yet delivered or lost, oldest first, with
+    /// the operation count when each was sent (law 7).
+    in_flight: Vec<(Command<LawCommand>, LawInput, u64)>,
+    /// Every result ever dispatched, for duplicates.
+    sent: Vec<(Command<LawCommand>, LawInput)>,
+    /// Operations applied so far: the network's clock.
+    steps: u64,
 }
 
 impl Default for CellModel {
@@ -1226,6 +1327,9 @@ impl Default for CellModel {
             seen: BTreeSet::new(),
             ledger: Vec::new(),
             executions: 0,
+            in_flight: Vec::new(),
+            sent: Vec::new(),
+            steps: 0,
         }
     }
 }
@@ -1764,6 +1868,148 @@ impl CellModel {
         !self.outbox.is_empty() && !self.head_performed && !self.head_unknown
     }
 
+    /// A commit re-issuing a claimed head whose result is not recorded at its
+    /// next generation, so its outstanding result turns stale; `None`
+    /// otherwise.
+    fn reissue_head(&self) -> Option<LawCommit> {
+        let head = self.outbox.first().filter(|_| self.head_unknown)?;
+        let generation = self
+            .generations
+            .get(&head.id)
+            .map_or(head.generation.0, |known| known.0)
+            .saturating_add(1);
+        let command = Command {
+            generation: Generation(generation),
+            idempotency_key: IdempotencyKey(format!("{}/{generation}", head.id.0)),
+            ..head.clone()
+        };
+        Some(CellCommit {
+            effects: vec![Effect::Perform(command)],
+            ..CellCommit::empty()
+        })
+    }
+
+    /// A dispatch (law 7): the fresh head is claimed and its result sent.
+    fn dispatch(&mut self) -> Expect {
+        let Some(head) = self.outbox.first().filter(|_| self.fresh_head()).cloned() else {
+            return Expect::Dispatch(None);
+        };
+        if self.commits_perform_claims {
+            self.claim();
+        }
+        self.head_unknown = true;
+        let input = law_responder(&head);
+        self.in_flight
+            .push((head.clone(), input.clone(), self.steps));
+        self.sent.push((head.clone(), input));
+        Expect::Dispatch(Some(head))
+    }
+
+    /// A delivery (law 7): recorded exactly when it is the current head's
+    /// first result at that generation.
+    fn deliver(&mut self, delivery: &Delivery) -> Expect {
+        let mut delayed = false;
+        if delivery.route != Route::Duplicate
+            && let Some(ix) = self.in_flight.iter().position(|(command, input, _)| {
+                *command == delivery.command && *input == delivery.input
+            })
+        {
+            let (_, _, sent_at) = self.in_flight.remove(ix);
+            delayed = self.steps.saturating_sub(sent_at) > 1;
+        }
+        let current = self.outbox.first().is_some_and(|head| {
+            head.id == delivery.command.id && head.generation == delivery.command.generation
+        });
+        if current && !self.head_performed {
+            self.head_performed = true;
+            self.head_unknown = false;
+            self.executions = self.executions.saturating_add(1);
+            return Expect::Deliver {
+                recorded: true,
+                stale: false,
+                delayed,
+            };
+        }
+        let stale = self
+            .generations
+            .get(&delivery.command.id)
+            .is_some_and(|known| *known > delivery.command.generation);
+        Expect::Deliver {
+            recorded: false,
+            stale,
+            delayed,
+        }
+    }
+
+    /// An injected observation: ingested once, a seen id ignored.
+    fn inject(&mut self, id: u8, payload: u8) -> Expect {
+        let observed = law_observed(id, payload);
+        let duplicate = self.seen.contains(&observed.id);
+        let late = duplicate && !self.inbox.iter().any(|pending| pending.id == observed.id);
+        if !duplicate {
+            self.seen.insert(observed.id.clone());
+            self.inbox.push(observed);
+        }
+        Expect::Inject { duplicate, late }
+    }
+
+    /// The network's transitions (law 7) that the model's state admits,
+    /// weighted by `mix`.
+    fn network_strategy(&self, mix: &NetworkMix) -> Vec<(u32, BoxedStrategy<CellOp>)> {
+        let deliver = |(command, input): (Command<LawCommand>, LawInput), route| {
+            CellOp::Deliver(Box::new(Delivery {
+                command,
+                input,
+                route,
+            }))
+        };
+        let mut options = vec![(mix.dispatch, Just(CellOp::Dispatch).boxed())];
+        let flying: Vec<(Command<LawCommand>, LawInput)> = self
+            .in_flight
+            .iter()
+            .map(|(command, input, _)| (command.clone(), input.clone()))
+            .collect();
+        if let Some(oldest) = flying.first() {
+            options.push((
+                mix.deliver,
+                Just(deliver(oldest.clone(), Route::InOrder)).boxed(),
+            ));
+            let count = u8::try_from(flying.len()).unwrap_or(u8::MAX);
+            options.push((mix.lose, (0..count).prop_map(CellOp::Lose).boxed()));
+        }
+        if let Some(later) = flying.get(1..).filter(|later| !later.is_empty()) {
+            options.push((
+                mix.reorder,
+                proptest::sample::select(later.to_vec())
+                    .prop_map(move |message| deliver(message, Route::OutOfOrder))
+                    .boxed(),
+            ));
+        }
+        if !self.sent.is_empty() {
+            options.push((
+                mix.duplicate,
+                proptest::sample::select(self.sent.clone())
+                    .prop_map(move |message| deliver(message, Route::Duplicate))
+                    .boxed(),
+            ));
+        }
+        if let Some(reissue) = self.reissue_head() {
+            options.push((mix.reissue, Just(CellOp::Commit(reissue)).boxed()));
+        }
+        let seen: Vec<u8> = (0..=LAW_UNIVERSE)
+            .filter(|n| self.seen.contains(&law_observed(*n, 0).id))
+            .collect();
+        if !seen.is_empty() {
+            options.push((
+                mix.redeliver,
+                (proptest::sample::select(seen), any::<u8>())
+                    .prop_map(|(id, payload)| CellOp::Inject { id, payload })
+                    .boxed(),
+            ));
+        }
+        options
+    }
+
     /// The expectation for `target` under the armed `plan`, applying to the
     /// model only what survives the fault (law 6).
     fn faulted(&mut self, target: &FaultTarget, plan: FaultPlan) -> (Expect, Firing) {
@@ -1806,20 +2052,8 @@ impl CellModel {
                 .get(id)
                 .map_or(0, |known| known.0.saturating_add(1))
         };
-        if let Some(head) = self.outbox.first()
-            && self.head_unknown
-        {
-            let generation = next(&head.id);
-            let command = Command {
-                generation: Generation(generation),
-                idempotency_key: IdempotencyKey(format!("{}/{generation}", head.id.0)),
-                ..head.clone()
-            };
-            return Just(Some(CellCommit {
-                effects: vec![Effect::Perform(command)],
-                ..CellCommit::empty()
-            }))
-            .boxed();
+        if let Some(reissue) = self.reissue_head() {
+            return Just(Some(reissue)).boxed();
         }
         let consumes = self.outbox.first().map(|head| Consumed::Result {
             command: head.id.clone(),
@@ -2143,14 +2377,72 @@ struct Swarm {
     io_error: u32,
     crash: u32,
     commit_fails: u32,
+    /// The network's mix, for hosts that declare one (law 7).
+    network: Option<NetworkMix>,
+}
+
+/// The weights of the network's transitions in one case (law 7). Each is
+/// always enabled, at weight 1 to 4: the interleavings that reach a stale or
+/// duplicate result take several of them in a row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NetworkMix {
+    dispatch: u32,
+    deliver: u32,
+    reorder: u32,
+    duplicate: u32,
+    lose: u32,
+    reissue: u32,
+    redeliver: u32,
+}
+
+impl NetworkMix {
+    fn strategy() -> impl Strategy<Value = Self> {
+        let weight = || 1_u32..5;
+        (
+            weight(),
+            weight(),
+            weight(),
+            weight(),
+            weight(),
+            weight(),
+            weight(),
+        )
+            .prop_map(
+                |(dispatch, deliver, reorder, duplicate, lose, reissue, redeliver)| Self {
+                    dispatch,
+                    deliver,
+                    reorder,
+                    duplicate,
+                    lose,
+                    reissue,
+                    redeliver,
+                },
+            )
+    }
 }
 
 impl Swarm {
     /// Each kind is enabled with probability 3/4 at weight 1 to 4; faults the
     /// host does not list stay disabled, and at least one cell operation
     /// is enabled. Commit failures take the I/O-error weight: no extra draw,
-    /// so the mix of a host without them is unchanged.
-    fn strategy(kinds: &'static [FaultKind]) -> BoxedStrategy<Self> {
+    /// so the mix of a host without them is unchanged. The network's mix is
+    /// drawn after the rest, and only for a host that declares one.
+    fn strategy(kinds: &'static [FaultKind], network: bool) -> BoxedStrategy<Self> {
+        let base = Self::base(kinds);
+        if network {
+            (base, NetworkMix::strategy())
+                .prop_map(|(base, mix)| Self {
+                    network: Some(mix),
+                    ..base
+                })
+                .no_shrink()
+                .boxed()
+        } else {
+            base.no_shrink().boxed()
+        }
+    }
+
+    fn base(kinds: &'static [FaultKind]) -> impl Strategy<Value = Self> {
         let weight =
             || proptest::option::weighted(0.75, 1_u32..5).prop_map(Option::unwrap_or_default);
         let operations = (
@@ -2163,39 +2455,36 @@ impl Swarm {
             weight(),
         );
         let faults = (weight(), weight());
-        (operations, faults)
-            .prop_map(move |(operations, (io_error, crash))| {
-                let (commit, admissible_commit, perform, observe, clock, advance, inject) =
-                    operations;
-                let enabled = |kind: FaultKind, weight: u32| {
-                    if kinds.contains(&kind) { weight } else { 0 }
-                };
-                let operating = [
-                    commit,
-                    admissible_commit,
-                    perform,
-                    observe,
-                    clock,
-                    advance,
-                    inject,
-                ]
-                .iter()
-                .any(|weight| *weight > 0);
-                Self {
-                    commit: if operating { commit } else { 1 },
-                    admissible_commit,
-                    perform,
-                    observe,
-                    clock,
-                    advance,
-                    inject,
-                    io_error: enabled(FaultKind::IoError, io_error),
-                    crash: enabled(FaultKind::Crash, crash),
-                    commit_fails: enabled(FaultKind::CommitFails, io_error),
-                }
-            })
-            .no_shrink()
-            .boxed()
+        (operations, faults).prop_map(move |(operations, (io_error, crash))| {
+            let (commit, admissible_commit, perform, observe, clock, advance, inject) = operations;
+            let enabled = |kind: FaultKind, weight: u32| {
+                if kinds.contains(&kind) { weight } else { 0 }
+            };
+            let operating = [
+                commit,
+                admissible_commit,
+                perform,
+                observe,
+                clock,
+                advance,
+                inject,
+            ]
+            .iter()
+            .any(|weight| *weight > 0);
+            Self {
+                commit: if operating { commit } else { 1 },
+                admissible_commit,
+                perform,
+                observe,
+                clock,
+                advance,
+                inject,
+                io_error: enabled(FaultKind::IoError, io_error),
+                crash: enabled(FaultKind::Crash, crash),
+                commit_fails: enabled(FaultKind::CommitFails, io_error),
+                network: None,
+            }
+        })
     }
 
     fn transitions(&self, model: &CellModel) -> BoxedStrategy<CellOp> {
@@ -2243,6 +2532,9 @@ impl Swarm {
             if weight > 0 {
                 options.push((weight, fault_strategy(model, kind)));
             }
+        }
+        if let Some(mix) = &self.network {
+            options.extend(model.network_strategy(mix));
         }
         Union::new_weighted(options).boxed()
     }
@@ -2332,14 +2624,14 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
             commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
             ..CellModel::default()
         };
-        if H::FAULT_KINDS.is_empty() {
+        if H::FAULT_KINDS.is_empty() && !H::NETWORK {
             return Just(CellReference {
                 model,
                 ..CellReference::default()
             })
             .boxed();
         }
-        Swarm::strategy(H::FAULT_KINDS)
+        Swarm::strategy(H::FAULT_KINDS, H::NETWORK)
             .prop_map(move |swarm| CellReference {
                 model: model.clone(),
                 swarm: Some(swarm),
@@ -2368,6 +2660,7 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
         state.fault = None;
         state.prepared = None;
         let model = &mut state.model;
+        model.steps = model.steps.saturating_add(1);
         let expected = match op {
             CellOp::Commit(commit) => Expect::Commit(model.commit(commit)),
             CellOp::Perform => model.perform(),
@@ -2377,10 +2670,12 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 model.now = model.now.saturating_add(*millis);
                 Expect::Nothing
             }
-            CellOp::Inject { id, payload } => {
-                let observed = law_observed(*id, *payload);
-                if model.seen.insert(observed.id.clone()) {
-                    model.inbox.push(observed);
+            CellOp::Inject { id, payload } => model.inject(*id, *payload),
+            CellOp::Dispatch => model.dispatch(),
+            CellOp::Deliver(delivery) => model.deliver(delivery),
+            CellOp::Lose(ix) => {
+                if usize::from(*ix) < model.in_flight.len() {
+                    model.in_flight.remove(usize::from(*ix));
                 }
                 Expect::Nothing
             }
@@ -2588,7 +2883,21 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
             CellOp::Advance(_) => {
                 host.sim_advance_to(LogicalTime::from_millis(reference.model.now));
             }
-            CellOp::Inject { id, payload } => host.sim_inject(law_observed(id, payload)),
+            CellOp::Inject { id, payload } => {
+                host.sim_inject(law_observed(id, payload));
+                if let Expect::Inject { duplicate, late } = expected {
+                    match (duplicate, late) {
+                        (true, true) => coverage::hit_prefixed("cell", "observe.late_ignored"),
+                        (true, false) => {
+                            coverage::hit_prefixed("cell", "observe.duplicate_ignored");
+                        }
+                        (false, _) => {}
+                    }
+                }
+            }
+            CellOp::Dispatch | CellOp::Deliver(_) | CellOp::Lose(_) => {
+                apply_network(&mut host, &op, expected);
+            }
             CellOp::Faulted(faulted) => {
                 let Faulted {
                     prepare, target, ..
@@ -2606,6 +2915,60 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
             }
         }
         Self::refines(host, reference)
+    }
+}
+
+/// One network transition (law 7): a dispatch claims exactly what the model
+/// predicts, and a delivery is recorded exactly when the model records it.
+fn apply_network<H: SimulatedCell>(host: &mut H, op: &CellOp, expected: Expect) {
+    match op {
+        CellOp::Dispatch => {
+            let dispatched = host.sim_dispatch();
+            let label = if matches!(dispatched, Ok(Some(_))) {
+                "network.dispatched"
+            } else {
+                "network.dispatch_idle"
+            };
+            coverage::hit_prefixed("cell", label);
+            assert_eq!(
+                dispatched.map(Expect::Dispatch),
+                Ok(expected),
+                "law violated: dispatch claims a command other than the fresh head"
+            );
+        }
+        CellOp::Deliver(delivery) => {
+            let recorded = host.sim_deliver(&delivery.command, &delivery.input);
+            if let Expect::Deliver { stale, delayed, .. } = expected {
+                let outcome = match (&recorded, stale) {
+                    (Ok(true), _) => "network.delivered",
+                    (_, true) => "result.stale_refused",
+                    (_, false) => "network.duplicate_ignored",
+                };
+                coverage::hit_prefixed("cell", outcome);
+                if delayed {
+                    coverage::hit_prefixed("cell", "network.delayed");
+                }
+            }
+            match delivery.route {
+                Route::InOrder => {}
+                Route::OutOfOrder => coverage::hit_prefixed("cell", "network.out_of_order"),
+                Route::Duplicate => coverage::hit_prefixed("cell", "network.duplicate"),
+            }
+            let expected_recorded = matches!(expected, Expect::Deliver { recorded: true, .. });
+            assert_eq!(
+                recorded,
+                Ok(expected_recorded),
+                "law violated: a result is recorded only as the current head's first result at its generation\ndelivery: {delivery:?}"
+            );
+        }
+        CellOp::Lose(_) => coverage::hit_prefixed("cell", "network.dropped"),
+        CellOp::Commit(_)
+        | CellOp::Perform
+        | CellOp::Observe
+        | CellOp::Clock
+        | CellOp::Advance(_)
+        | CellOp::Inject { .. }
+        | CellOp::Faulted(_) => {}
     }
 }
 
@@ -2820,6 +3183,24 @@ pub const CELL_FAULT_LABELS: &[&str] = &[
     "cell:perform.outcome_unknown",
 ];
 
+/// Coverage labels a healthy run under responder faults hits (law 7): every
+/// network transition (dispatch, in-order, out-of-order, delayed and
+/// duplicated delivery, loss), a stale-generation result refused, a
+/// duplicate result ignored, and observations redelivered before and after
+/// their consumption.
+pub const CELL_NETWORK_LABELS: &[&str] = &[
+    "cell:network.dispatched",
+    "cell:network.delivered",
+    "cell:network.out_of_order",
+    "cell:network.delayed",
+    "cell:network.duplicate",
+    "cell:network.dropped",
+    "cell:network.duplicate_ignored",
+    "cell:result.stale_refused",
+    "cell:observe.duplicate_ignored",
+    "cell:observe.late_ignored",
+];
+
 /// Runs the `CellHost` laws against host `H` and returns the coverage, or the
 /// minimal counterexample. For a host that injects faults, the failure
 /// reason also names the case's transition mix and the run's seed.
@@ -2832,6 +3213,10 @@ pub fn run_cell_host<H: SimulatedCell>(settings: &Settings) -> Result<Coverage, 
         assert!(
             H::FAULT_KINDS.is_empty() || H::COMMITS_PERFORM_CLAIMS,
             "a host that injects faults must commit perform claims (law 6)"
+        );
+        assert!(
+            !H::NETWORK || H::COMMITS_PERFORM_CLAIMS,
+            "a host behind a network must commit perform claims (law 7)"
         );
     }
     let config = settings.config();

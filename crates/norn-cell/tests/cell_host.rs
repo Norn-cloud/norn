@@ -46,9 +46,9 @@ use norn_kernel::{
 };
 use norn_testkit::Settings;
 use norn_testkit::cell_host::{
-    CELL_FAULT_LABELS, CELL_HOST_LABELS, CellOp, FaultKind, FaultPlan, LawCommand, LawEvent,
-    LawInput, LedgerEntry, SimulatedCell, check_cell_host, check_link_override, law_responder,
-    override_object_types, run_cell_host,
+    CELL_FAULT_LABELS, CELL_HOST_LABELS, CELL_NETWORK_LABELS, CellOp, FaultKind, FaultPlan,
+    LawCommand, LawEvent, LawInput, LedgerEntry, SimulatedCell, check_cell_host,
+    check_link_override, law_responder, override_object_types, run_cell_host,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -711,8 +711,10 @@ fn law_cell<S: LawEngine>(engine: S) -> Result<LawCell<S>, CellError> {
 
 /// The SQL driver over the law vocabulary. With `REOPEN`, the store is a file
 /// closed and reopened after every operation that writes, verifying the ledger
-/// (which is also how it recovers from an injected crash).
-struct LawSqlite<const REOPEN: bool, S: LawEngine = DefaultEngine> {
+/// (which is also how it recovers from an injected crash). With `NETWORK`,
+/// the law machine dispatches commands and delivers their results through
+/// an unreliable network (law 7).
+struct LawSqlite<const REOPEN: bool, S: LawEngine = DefaultEngine, const NETWORK: bool = false> {
     cell: LawCell<S>,
     file: Option<(tempfile::TempDir, PathBuf)>,
     /// The fault schedule every engine of this driver shares.
@@ -721,7 +723,7 @@ struct LawSqlite<const REOPEN: bool, S: LawEngine = DefaultEngine> {
     fired: bool,
 }
 
-impl<const REOPEN: bool, S: LawEngine> LawSqlite<REOPEN, S> {
+impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> LawSqlite<REOPEN, S, NETWORK> {
     fn after_write(&mut self) {
         // The operation is over: its fault must not reach the reopen.
         if self.faults.disarm() {
@@ -738,7 +740,9 @@ impl<const REOPEN: bool, S: LawEngine> LawSqlite<REOPEN, S> {
     }
 }
 
-impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
+impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> CellHost
+    for LawSqlite<REOPEN, S, NETWORK>
+{
     type Event = LawEvent;
     type Command = LawCommand;
     type Input = LawInput;
@@ -846,8 +850,11 @@ impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
     }
 }
 
-impl<const REOPEN: bool, S: LawEngine> SimulatedCell for LawSqlite<REOPEN, S> {
+impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
+    for LawSqlite<REOPEN, S, NETWORK>
+{
     const COMMITS_PERFORM_CLAIMS: bool = true;
+    const NETWORK: bool = NETWORK;
     /// Only a file store survives a crash: it reopens from the file. Only a
     /// storage that commits itself can fail its commit.
     const FAULT_KINDS: &'static [FaultKind] = match (S::FAULTS, REOPEN, S::COMMIT_FAULTS) {
@@ -899,6 +906,29 @@ impl<const REOPEN: bool, S: LawEngine> SimulatedCell for LawSqlite<REOPEN, S> {
     fn sim_disarm_fault(&mut self) -> bool {
         let fired = self.faults.disarm();
         std::mem::take(&mut self.fired) || fired
+    }
+
+    fn sim_dispatch(&mut self) -> Result<Option<Command<LawCommand>>, String> {
+        let claimed = self.cell.claim_perform();
+        self.after_write();
+        match claimed.map_err(|error| error.to_string())? {
+            Some(PerformClaim::Fresh(command)) => Ok(Some(command)),
+            Some(PerformClaim::Recorded { .. } | PerformClaim::OutcomeUnknown(_)) | None => {
+                Ok(None)
+            }
+        }
+    }
+
+    fn sim_deliver(
+        &mut self,
+        command: &Command<LawCommand>,
+        input: &LawInput,
+    ) -> Result<bool, String> {
+        let recorded = self.cell.complete_perform(command, WireInput::from(input));
+        self.after_write();
+        recorded
+            .map(|recorded| recorded.is_some())
+            .map_err(|error| error.to_string())
     }
 
     fn sim_advance_to(&mut self, now: LogicalTime) {
@@ -1104,6 +1134,193 @@ fn cell_host_mutant_do_storage_committing_on_rollback_is_caught() {
     )
     .expect_err("a storage that commits on rollback must fail the laws");
     assert!(!failure.transitions.is_empty(), "{failure}");
+}
+
+/// Cases for the responder-fault tests (law 7): file stores, crashes
+/// included; `PROPTEST_CASES` raises it for a soak.
+const RESPONDER_CASES: u32 = 12;
+
+/// Law 7 on the SQLite driver: results duplicated, lost, delayed and
+/// reordered by the outside world, observations redelivered, with crashes,
+/// I/O errors and reopens in between.
+#[test]
+fn cell_host_laws_hold_under_responder_faults() {
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<NativeEngine>, true>>(
+        &Settings::new(file!()).cases(RESPONDER_CASES),
+    );
+    coverage.assert_covered(CELL_NETWORK_LABELS);
+    coverage.assert_covered(&["cell:fault.crash"]);
+}
+
+/// Law 7 on the Durable Object transaction glue, with its failed commits.
+#[test]
+fn cell_host_laws_hold_under_responder_faults_for_the_do_transaction_glue() {
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine>, true>>(
+        &Settings::new(file!()).cases(RESPONDER_CASES),
+    );
+    coverage.assert_covered(CELL_NETWORK_LABELS);
+    coverage.assert_covered(&["cell:fault.crash", "cell:fault.commit_failed"]);
+}
+
+/// A mutant behind the network: it executes a command again when a result
+/// is redelivered or duplicated.
+const DOUBLE_EXECUTION: u8 = 0;
+/// A mutant behind the network: it records a stale-generation result as the
+/// current generation's.
+const STALE_RESULT: u8 = 1;
+
+/// A deliberately broken host behind the law machine's network (law 7),
+/// over an in-memory store so it fails fast.
+struct ResponderMutant<const BUG: u8> {
+    inner: LawSqlite<false, NativeEngine, true>,
+    /// Executions the bug added.
+    again: u64,
+}
+
+impl<const BUG: u8> CellHost for ResponderMutant<BUG> {
+    type Event = LawEvent;
+    type Command = LawCommand;
+    type Input = LawInput;
+    type Error = CellError;
+
+    fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
+        self.inner.load(key)
+    }
+
+    fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
+        self.inner.load_link(key)
+    }
+
+    fn commit(
+        &mut self,
+        commit: CellCommit<LawEvent, LawCommand, LawInput>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.inner.commit(commit)
+    }
+
+    fn commit_owned_rows(
+        &mut self,
+        commit: CellCommit<LawEvent, LawCommand, LawInput>,
+        proof: OwnedRowsCommitProof,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.inner.commit_owned_rows(commit, proof)
+    }
+
+    fn perform(&mut self) -> Result<Option<Performed<LawInput>>, CellError> {
+        self.inner.perform()
+    }
+
+    fn observe(&mut self) -> Result<Option<Observed<LawInput>>, CellError> {
+        self.inner.observe()
+    }
+
+    fn clock(&mut self) -> Result<Option<DueTimer<LawInput>>, CellError> {
+        self.inner.clock()
+    }
+
+    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), CellError> {
+        self.inner.publish(receipt)
+    }
+}
+
+impl<const BUG: u8> SimulatedCell for ResponderMutant<BUG> {
+    const COMMITS_PERFORM_CLAIMS: bool = true;
+    const NETWORK: bool = true;
+
+    fn sim_new() -> Self {
+        Self {
+            inner: LawSqlite::sim_new(),
+            again: 0,
+        }
+    }
+
+    fn sim_dispatch(&mut self) -> Result<Option<Command<LawCommand>>, String> {
+        self.inner.sim_dispatch()
+    }
+
+    fn sim_deliver(
+        &mut self,
+        command: &Command<LawCommand>,
+        input: &LawInput,
+    ) -> Result<bool, String> {
+        if self.inner.sim_deliver(command, input)? {
+            return Ok(true);
+        }
+        if BUG == DOUBLE_EXECUTION {
+            // The bug: a redelivered or duplicated result executes the
+            // command again.
+            self.again = self.again.saturating_add(1);
+            return Ok(false);
+        }
+        // The bug: a stale-generation result is recorded as the current
+        // generation's.
+        match self.inner.sim_outbox().into_iter().next() {
+            Some(head) if head.id == command.id && head.generation != command.generation => {
+                self.inner.sim_deliver(&head, input)
+            }
+            Some(_) | None => Ok(false),
+        }
+    }
+
+    fn sim_advance_to(&mut self, now: LogicalTime) {
+        self.inner.sim_advance_to(now);
+    }
+
+    fn sim_inject(&mut self, observed: Observed<LawInput>) {
+        self.inner.sim_inject(observed);
+    }
+
+    fn sim_executions(&self) -> u64 {
+        self.inner.sim_executions().saturating_add(self.again)
+    }
+
+    fn sim_outbox(&self) -> Vec<Command<LawCommand>> {
+        self.inner.sim_outbox()
+    }
+
+    fn sim_timers(&self) -> Vec<DueTimer<LawInput>> {
+        self.inner.sim_timers()
+    }
+
+    fn sim_ledger(&self) -> Vec<LedgerEntry<LawEvent>> {
+        self.inner.sim_ledger()
+    }
+}
+
+/// Law 7 can fail: a host that executes a command again on a duplicated or
+/// redelivered result is caught.
+#[test]
+fn cell_host_mutant_executing_a_redelivered_result_again_is_caught() {
+    let failure = run_cell_host::<ResponderMutant<DOUBLE_EXECUTION>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(1),
+    )
+    .expect_err("a host that executes a command twice must fail the laws");
+    assert!(
+        failure
+            .transitions
+            .iter()
+            .any(|op| matches!(op, CellOp::Deliver(_))),
+        "{failure}"
+    );
+}
+
+/// Law 7 can fail: a host that records a stale-generation result is caught.
+#[test]
+fn cell_host_mutant_recording_a_stale_result_is_caught() {
+    let failure = run_cell_host::<ResponderMutant<STALE_RESULT>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(1),
+    )
+    .expect_err("a host that records a stale result must fail the laws");
+    assert!(
+        failure
+            .reason
+            .contains("law violated: a result is recorded only"),
+        "{failure}"
+    );
 }
 
 #[test]
