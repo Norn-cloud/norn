@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,933 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,934 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -14,7 +14,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
 | `boat.libclang_step_s` | 58 | s (single) | boat | 1 | 58 / 58 | ▁ | `959458e889` | [link](https://github.com/Norn-cloud/norn/pull/1250) |
-| `boat.starts.used_24h` | 514 | count (single) | local | 4 | 410 / 514 | ▁▁▇█ | none named | [link](https://github.com/Norn-cloud/norn/blob/main/scripts/metrics/boat_nightly.py) |
+| `boat.starts.used_24h` | 544 | count (single) | local | 5 | 410 / 544 | ▁▁▅▆█ | none named | [link](https://github.com/Norn-cloud/norn/blob/main/scripts/metrics/boat_nightly.py) |
 
 ## Checker test suite
 
