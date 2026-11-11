@@ -670,19 +670,38 @@ fn path_equation_findings_name_each_failing_equation() {
     );
 }
 
-proptest::proptest! {
-    #[test]
-    fn path_equation_functional_cycles_keep_the_shared_root(length in 0usize..32) {
+#[test]
+fn path_equation_functional_cycles_keep_the_shared_root() {
+    for length in 0usize..32 {
         let path = vec!["next"; length];
-        let concept = path_concept(&serde_json::json!([{"id":"cycle","left":[],"right":path}]), false).unwrap();
-        let theory = norn_checker::consistency::lower_path_equations(&[concept], &std::collections::BTreeSet::new()).unwrap();
-        let mut facts = vec![Fact { relation:"concept:paths.Node".into(), values:vec![Value::Const("0".into())] }];
+        let concept = path_concept(
+            &serde_json::json!([{"id":"cycle","left":[],"right":path}]),
+            false,
+        )
+        .unwrap();
+        let theory = norn_checker::consistency::lower_path_equations(
+            &[concept],
+            &std::collections::BTreeSet::new(),
+        )
+        .unwrap();
+        let mut facts = vec![Fact {
+            relation: "concept:paths.Node".into(),
+            values: vec![Value::Const("0".into())],
+        }];
         for index in 0..length {
-            facts.push(Fact { relation:"link:paths.Node:next".into(), values:vec![
-                Value::Const(index.to_string()), Value::Const(index.checked_add(1).unwrap().to_string())] });
+            facts.push(Fact {
+                relation: "link:paths.Node:next".into(),
+                values: vec![
+                    Value::Const(index.to_string()),
+                    Value::Const(index.checked_add(1).unwrap().to_string()),
+                ],
+            });
         }
-        let conflict = matches!(chase(&theory, &facts, ChaseBudget::default()), Ok(ChaseOutcome::Conflict(_)));
-        proptest::prop_assert_eq!(conflict, length > 0);
+        let conflict = matches!(
+            chase(&theory, &facts, ChaseBudget::default()),
+            Ok(ChaseOutcome::Conflict(_))
+        );
+        assert_eq!(conflict, length > 0, "length {length}");
     }
 }
 
