@@ -64,10 +64,8 @@ fn directory() -> PathBuf {
 }
 
 fn read<T: for<'de> Deserialize<'de>>(name: &str) -> T {
-    serde_json::from_str(
-        &std::fs::read_to_string(directory().join(name)).expect("catalog file"),
-    )
-    .expect("catalog JSON")
+    serde_json::from_str(&std::fs::read_to_string(directory().join(name)).expect("catalog file"))
+        .expect("catalog JSON")
 }
 
 /// One piece of a parsed simple MessageFormat 2 message.
@@ -281,9 +279,7 @@ fn english_prose(message: &str) -> String {
     }
     prose
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
-        .filter(|word| {
-            !word.chars().skip(1).any(|c| c.is_ascii_uppercase()) && !word.contains('-')
-        })
+        .filter(|word| !word.chars().skip(1).any(|c| c.is_ascii_uppercase()) && !word.contains('-'))
         .map(str::to_ascii_lowercase)
         .collect::<Vec<_>>()
         .join(" ")
@@ -293,12 +289,16 @@ fn says(prose: &str, term: &str) -> bool {
     let words: Vec<&str> = prose.split(' ').filter(|w| !w.is_empty()).collect();
     let term: Vec<&str> = term.split(' ').collect();
     words.windows(term.len()).any(|window| {
-        window.iter().zip(&term).enumerate().all(|(index, (word, term))| {
-            *word == *term
-                || (index + 1 == term.len()
-                    && (word.strip_suffix('s') == Some(term)
-                        || word.strip_suffix("es") == Some(term)))
-        })
+        window
+            .iter()
+            .zip(&term)
+            .enumerate()
+            .all(|(index, (word, term))| {
+                *word == *term
+                    || (index + 1 == term.len()
+                        && (word.strip_suffix('s') == Some(term)
+                            || word.strip_suffix("es") == Some(term)))
+            })
     })
 }
 
@@ -306,7 +306,11 @@ fn says(prose: &str, term: &str) -> bool {
 fn arabic_messages_use_the_glossary_terms() {
     let glossary: Glossary = read("glossary.ar-EG.json");
     assert_eq!(
-        (glossary.format.as_str(), glossary.source.as_str(), glossary.locale.as_str()),
+        (
+            glossary.format.as_str(),
+            glossary.source.as_str(),
+            glossary.locale.as_str()
+        ),
         ("norn.glossary/1", "en", "ar-EG")
     );
     let english = english();
@@ -328,7 +332,11 @@ fn arabic_messages_use_the_glossary_terms() {
             }
         }
     }
-    assert!(misses.is_empty(), "glossary terms not used:\n{}", misses.join("\n"));
+    assert!(
+        misses.is_empty(),
+        "glossary terms not used:\n{}",
+        misses.join("\n")
+    );
 }
 
 proptest! {
@@ -364,6 +372,7 @@ proptest! {
     #[test]
     fn non_variable_expressions_are_refused(body in "[a-z :|*]{1,8}") {
         prop_assume!(!body.starts_with('$'));
-        prop_assert!(parse(&format!("x {{{body}}} y")).is_err());
+        let message = format!("x {{{body}}} y");
+        prop_assert!(parse(&message).is_err());
     }
 }
