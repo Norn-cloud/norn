@@ -1,4 +1,4 @@
-//! MESSAGE-LOCALE-1: stable codes map to ICU MessageFormat 2 messages per
+//! MESSAGE-LOCALE-1: stable codes map to ICU `MessageFormat` 2 messages per
 //! locale (`conformance/messages/<locale>.json`). The code is the contract;
 //! a catalog only says it in a language. The English catalog is generated
 //! from the code registry (`NORN_BLESS=1` rewrites it); every other catalog
@@ -68,7 +68,7 @@ fn read<T: for<'de> Deserialize<'de>>(name: &str) -> T {
         .expect("catalog JSON")
 }
 
-/// One piece of a parsed simple MessageFormat 2 message.
+/// One piece of a parsed simple `MessageFormat` 2 message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Part {
     Text(String),
@@ -112,41 +112,53 @@ fn parse(message: &str) -> Result<Vec<Part>, String> {
     Ok(parts)
 }
 
-/// The registry's `{placeholder}` shape as MessageFormat 2: an identifier in
+/// The registry's `{placeholder}` shape as `MessageFormat` 2: an identifier in
 /// braces becomes the variable `{$name}`; every other brace, backslash and
 /// braced text stays literal, escaped.
 fn mf2(shape: &str) -> String {
-    let escape = |text: &str| {
-        text.replace('\\', "\\\\")
-            .replace('{', "\\{")
-            .replace('}', "\\}")
-    };
+    fn escaped(out: &mut String, c: char) {
+        if matches!(c, '\\' | '{' | '}') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
     let identifier = |body: &str| {
         body.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
             && body.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     };
     let mut out = String::new();
-    let mut rest = shape;
-    while let Some(open) = rest.find('{') {
-        let body_and_rest = &rest[open + 1..];
-        match body_and_rest.find(['{', '}']) {
-            Some(close) if body_and_rest[close..].starts_with('}') => {
-                let body = &body_and_rest[..close];
-                out.push_str(&escape(&rest[..open]));
-                if identifier(body) {
-                    out.push_str(&format!("{{${body}}}"));
-                } else {
-                    out.push_str(&escape(&rest[open..open + close + 2]));
-                }
-                rest = &body_and_rest[close + 1..];
+    let mut chars = shape.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '{' {
+            escaped(&mut out, c);
+            continue;
+        }
+        // A brace closed before another opens is a placeholder or braced text.
+        let mut body = String::new();
+        let mut closed = false;
+        while let Some(&next) = chars.peek() {
+            if next == '{' {
+                break;
             }
-            _ => {
-                out.push_str(&escape(&rest[..=open]));
-                rest = body_and_rest;
+            chars.next();
+            if next == '}' {
+                closed = true;
+                break;
+            }
+            body.push(next);
+        }
+        if closed && identifier(&body) {
+            out.push_str("{$");
+            out.push_str(&body);
+            out.push('}');
+        } else {
+            escaped(&mut out, '{');
+            body.chars().for_each(|c| escaped(&mut out, c));
+            if closed {
+                escaped(&mut out, '}');
             }
         }
     }
-    out.push_str(&escape(rest));
     out
 }
 
@@ -295,7 +307,7 @@ fn says(prose: &str, term: &str) -> bool {
             .enumerate()
             .all(|(index, (word, term))| {
                 *word == *term
-                    || (index + 1 == term.len()
+                    || (Some(index) == term.len().checked_sub(1)
                         && (word.strip_suffix('s') == Some(term)
                             || word.strip_suffix("es") == Some(term)))
             })
