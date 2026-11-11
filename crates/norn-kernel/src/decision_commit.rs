@@ -446,7 +446,9 @@ impl<'a> TypeCatalog<'a> {
     /// refused view. Returns whether the model was pinned.
     #[cfg(test)]
     pub(crate) fn refuse_effective_view_for_test(&self) -> bool {
-        self.effective_model.set(Ok(EffectiveModel::default())).is_ok()
+        self.effective_model
+            .set(Ok(EffectiveModel::default()))
+            .is_ok()
     }
 
     /// Why this catalog has no effective view: the bounded inheritance
