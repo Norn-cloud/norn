@@ -5,9 +5,11 @@ import type { ObjectCell } from "./object-cell.ts"
 /**
  * A stand-in for CELL-DO's action routes (`GET /v1/actions`, `POST /v1/actions/{id}`) that
  * implements the served contract (apps/studio/src/lib/actions.ts, norn_api::actions) over the
- * object stand-in's canon.Holding population: closed-schema validation with every violation
- * pointed at, exact decimals only as their text (VAL-EXACT-1, docs/spec/core/01-values-identity.md),
- * rule refusals without a pointer, idempotent replay, and commits that move the read snapshot.
+ * object stand-in's canon.Holding population: closed-schema validation, exact decimals only as
+ * their text (VAL-EXACT-1, docs/spec/core/01-values-identity.md), idempotent replay, and commits that
+ * move the read snapshot. It refuses exactly as the served route does: input the schema refuses is
+ * one 400 `action.invalid_input` with no field pointers, rule refusals carry no pointer, and an
+ * unknown action, absent target or hidden target is the one opaque 403.
  */
 
 interface Problem { code: string; message: string; pointer: string | null }
@@ -49,6 +51,12 @@ function check(schema: Schema, value: unknown, at: string, problems: Problem[]) 
   }
 }
 
+/** The served route's one opaque denial (norn_api::actions::action_denied). */
+const DENIED = { code: "authz.denied", category: "permission", message: "the action request is not authorized", explanation: "access to the requested action is denied" }
+
+/** The served route's input refusal to a caller without the refusal-detail grant: no field pointers. */
+const INVALID_INPUT = { format: "norn/refusal@2", retryable: false, reason: null, code: "action.invalid_input", category: "invalid", message: "the request is invalid", explanation: "diagnostic detail is unavailable under the caller's disclosure authority" }
+
 /** The exact decimal text grammar: optional `-`, no leading zeros, an optional fraction (captured), no exponent. */
 const DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.(\d+))?$/
 
@@ -77,7 +85,8 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     calls.push({ actionId, body })
     if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
     const action = ACTIONS.find((a) => a.actionId === actionId)
-    if (action === undefined) return route.fulfill({ status: 404, json: { code: "route.not_found", message: "No such route." } })
+    // An unknown action is the same opaque denial as an absent or hidden target.
+    if (action === undefined) return route.fulfill({ status: 403, json: DENIED })
     const { input, idempotencyKey } = JSON.parse(body) as { input: Record<string, unknown>; idempotencyKey: string }
     const inputText = JSON.stringify(input)
     const known = keys.get(idempotencyKey)
@@ -87,13 +96,13 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     }
     const problems: Problem[] = []
     check(action.inputSchema as unknown as Schema, input, "/input", problems)
-    if (problems.length > 0) return route.fulfill({ status: 422, json: { code: "action.input_invalid", category: "input", message: "The cell refused this input.", diagnostics: problems } })
+    if (problems.length > 0) return route.fulfill({ status: 400, json: INVALID_INPUT })
     const id = String(input["id"])
     const index = objects.rows.findIndex((row) => row.id === id)
     const existing = objects.rows[index]
     if (action.effect === "fire_transition") {
       // An absent or hidden target is the one opaque denial, like an unknown or ungranted action.
-      if (existing === undefined || existing.withheld) return route.fulfill({ status: 403, json: { code: "authz.denied", category: "permission", message: "the action request is not authorized", explanation: "access to the requested action is denied" } })
+      if (existing === undefined || existing.withheld) return route.fulfill({ status: 403, json: DENIED })
       if (existing.values["retired"] === "true") return route.fulfill({ status: 422, json: { code: "action.precondition_failed", category: "rule", message: "This holding is retired; it can't change any more.", diagnostics: [{ code: "action.precondition_failed", message: "The holding is retired.", pointer: null }] } })
     }
     const version = (existing?.version ?? 1) + (existing ? 1 : 0)

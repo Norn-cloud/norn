@@ -19,8 +19,11 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *              original commit; `receiptHash` is a keyed handle unless the reader holds Values
  *              over the whole cell.
  *        4xx Refusal@2 { code, category, message, explanation, diagnostics?: [{ code, message,
- *            span: { pointer } | null }] }: each pointer into the request body (`/input/qty`,
- *            `/idempotencyKey`); a rule, law or precondition refusal carries none.
+ *            span: { pointer } | null }] }: each pointer into the request body. Only a malformed
+ *            envelope carries one today (`/input` not an object, `/idempotencyKey`). Input the
+ *            action's schema refuses is one 400 `action.invalid_input` with no field pointers, so
+ *            Studio shows it on the form, not on a field; a rule, law or precondition refusal
+ *            carries none either.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
  *        Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
  *
