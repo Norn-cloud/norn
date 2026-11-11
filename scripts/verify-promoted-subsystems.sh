@@ -741,6 +741,18 @@ run_gate full kernel-l1-version-correspondence \
 run_gate full exact-arith-correspondence \
   "scripts/verify-exact-arith-aeneas.sh" command \
   scripts/verify-exact-arith-aeneas.sh
+run_gate full semantics-v1-lean \
+  "scripts/verify-semantics-lean.sh" command \
+  scripts/verify-semantics-lean.sh
+run_gate full norm-precedence-decision-correspondence \
+  "scripts/verify-norm-precedence-aeneas.sh" command \
+  scripts/verify-norm-precedence-aeneas.sh
+run_gate full checker-certificates-correspondence \
+  "scripts/verify-checker-certificates-aeneas.sh" command \
+  scripts/verify-checker-certificates-aeneas.sh
+run_gate full law-exceptions-correspondence \
+  "scripts/verify-law-exceptions-aeneas.sh" command \
+  scripts/verify-law-exceptions-aeneas.sh
 
 # Validate observed selectors only after every producing gate has run.
 run_gate full verification-executed-test-selectors \

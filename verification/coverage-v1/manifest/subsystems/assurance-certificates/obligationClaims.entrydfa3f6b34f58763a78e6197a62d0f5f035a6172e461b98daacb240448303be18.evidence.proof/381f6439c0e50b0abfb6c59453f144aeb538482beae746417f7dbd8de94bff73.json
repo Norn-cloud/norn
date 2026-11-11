@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/semantics-v1/NornSem/Meta/Precedence.lean",
+    "command": "scripts/verify-norm-precedence-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entrydfa3f6b34f58763a78e6197a62d0f5f035a6172e461b98daacb240448303be18.evidence.proof.entry381f6439c0e50b0abfb6c59453f144aeb538482beae746417f7dbd8de94bff73.selectors"
+    }
+  }
+}

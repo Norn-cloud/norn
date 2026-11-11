@@ -1,67 +1,16 @@
 //! Shape of a law's declared exception tree, and the tree fold over already
 //! evaluated conditions. Structural only: expression evaluation, budgets and
 //! commit-path semantics stay with their callers.
+//!
+//! The decisions live in `shape.rs`, over abstract identities, where they are
+//! proved against the Lean semantics (`verification/semantics-v1`, #718 U1).
+//! This module supplies the string-level declaration checks and identities.
 use norn_ir::LawException;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-/// Most exceptions one law (or one rule) may declare. Beyond it, admission is
-/// unknown, and unknown refuses.
-pub const MAX_LAW_EXCEPTIONS: usize = 64;
+mod shape;
 
-/// Stable exception-tree refusal codes.
-pub mod codes {
-    /// A blank or duplicate id, an id equal to the law id, a blank rationale
-    /// or an invalid source span.
-    pub const INVALID_DECLARATION: &str = "law.exception.invalid_declaration";
-    /// `overrides` names neither the law nor an exception of the same tree.
-    pub const DANGLING_OVERRIDE: &str = "law.exception.dangling_override";
-    /// Following `overrides` from an exception never reaches the law.
-    pub const CYCLE: &str = "law.exception.cycle";
-    /// The tree exceeds [`super::MAX_LAW_EXCEPTIONS`].
-    pub const LIMIT: &str = "law.exception.limit";
-    /// The law's response has no meaning under an exception (an invariant
-    /// identity is unconditional).
-    pub const UNSUPPORTED_RESPONSE: &str = "law.exception.unsupported_response";
-    /// A rule declares exceptions both on itself and on its embedded law.
-    pub const TWO_HOMES: &str = "law.exception.two_homes";
-}
-
-/// Why an exception tree is refused, naming the first offending declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExceptionTreeRefusal {
-    /// See [`codes::INVALID_DECLARATION`].
-    InvalidDeclaration(usize),
-    /// See [`codes::DANGLING_OVERRIDE`].
-    DanglingOverride(usize),
-    /// See [`codes::CYCLE`].
-    Cycle(usize),
-    /// See [`codes::LIMIT`].
-    Limit,
-}
-
-impl ExceptionTreeRefusal {
-    /// Stable locale-independent diagnostic identity.
-    #[must_use]
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::InvalidDeclaration(_) => codes::INVALID_DECLARATION,
-            Self::DanglingOverride(_) => codes::DANGLING_OVERRIDE,
-            Self::Cycle(_) => codes::CYCLE,
-            Self::Limit => codes::LIMIT,
-        }
-    }
-
-    /// Index of the offending exception, when one is named.
-    #[must_use]
-    pub const fn index(self) -> Option<usize> {
-        match self {
-            Self::InvalidDeclaration(index)
-            | Self::DanglingOverride(index)
-            | Self::Cycle(index) => Some(index),
-            Self::Limit => None,
-        }
-    }
-}
+pub use shape::{ExceptionTreeRefusal, MAX_LAW_EXCEPTIONS, codes};
 
 /// Check that `exceptions` form one tree rooted at `law_id`: bounded, unique
 /// nonblank ids distinct from the law, nonblank rationales, valid sources,
@@ -71,47 +20,25 @@ impl ExceptionTreeRefusal {
 /// # Errors
 /// The first refusal in declaration order.
 pub fn check_tree(law_id: &str, exceptions: &[LawException]) -> Result<(), ExceptionTreeRefusal> {
-    use ExceptionTreeRefusal as R;
-    if exceptions.len() > MAX_LAW_EXCEPTIONS {
-        return Err(R::Limit);
-    }
-    let mut ids = BTreeMap::new();
-    for (index, exception) in exceptions.iter().enumerate() {
-        if exception.id.trim().is_empty()
-            || exception.id == law_id
-            || exception.rationale.trim().is_empty()
-            || !crate::deontic::valid_source(&exception.source)
-            || ids.insert(exception.id.as_str(), index).is_some()
-        {
-            return Err(R::InvalidDeclaration(index));
-        }
-    }
-    for (index, exception) in exceptions.iter().enumerate() {
-        if exception.overrides != law_id && !ids.contains_key(exception.overrides.as_str()) {
-            return Err(R::DanglingOverride(index));
-        }
-    }
-    for (index, exception) in exceptions.iter().enumerate() {
-        // Each node has one parent, so a walk longer than the tree is a cycle.
-        let mut parent = exception.overrides.as_str();
-        let mut steps = 0_usize;
-        while parent != law_id {
-            steps = steps.saturating_add(1);
-            let next = ids.get(parent).and_then(|i| exceptions.get(*i));
-            let Some(node) = next.filter(|_| steps <= exceptions.len()) else {
-                return Err(R::Cycle(index));
-            };
-            parent = node.overrides.as_str();
-        }
-    }
-    Ok(())
+    let ids: Vec<&str> = exceptions.iter().map(|e| e.id.as_str()).collect();
+    let parents: Vec<&str> = exceptions.iter().map(|e| e.overrides.as_str()).collect();
+    let declared: Vec<bool> = exceptions
+        .iter()
+        .map(|e| {
+            !e.id.trim().is_empty()
+                && !e.rationale.trim().is_empty()
+                && crate::deontic::valid_source(&e.source)
+        })
+        .collect();
+    shape::check_shape(&law_id, &ids, &parents, &declared)
 }
 
 /// Fold an admitted tree over its evaluated conditions (`matched[i]` is the
 /// value of `exceptions[i].condition`). An exception applies when its
 /// condition holds and no exception overriding it applies. Returns whether the
-/// law is lifted (some exception overriding the law applies) and every applied
-/// exception id, sorted. Declaration order never affects the result.
+/// law is lifted (some exception overriding the law applies) and the ids of
+/// the applied exceptions whose ancestors' conditions all hold, sorted.
+/// Declaration order never affects the result.
 ///
 /// The caller must have passed [`check_tree`]; a `matched` of another length
 /// treats the missing conditions as false.
@@ -121,51 +48,117 @@ pub fn fold<'a>(
     exceptions: &'a [LawException],
     matched: &[bool],
 ) -> (bool, BTreeSet<&'a str>) {
-    let mut children: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-    for (index, exception) in exceptions.iter().enumerate() {
-        children
-            .entry(exception.overrides.as_str())
-            .or_default()
-            .push(index);
-    }
-    let mut applied = BTreeSet::new();
-    let lifted = lifts(law_id, exceptions, matched, &children, &mut applied, 0);
+    let ids: Vec<&str> = exceptions.iter().map(|e| e.id.as_str()).collect();
+    let parents: Vec<&str> = exceptions.iter().map(|e| e.overrides.as_str()).collect();
+    let mut level = vec![false; exceptions.len()];
+    let mut next = vec![false; exceptions.len()];
+    let lifted = shape::lifted(&law_id, &ids, &parents, matched, &mut level, &mut next);
+    let mut applied = vec![false; exceptions.len()];
+    shape::applied_exceptions(&law_id, &ids, &parents, matched, &level, &mut applied);
+    let applied = exceptions
+        .iter()
+        .zip(applied)
+        .filter_map(|(exception, applied)| applied.then_some(exception.id.as_str()))
+        .collect();
     (lifted, applied)
 }
 
-/// Whether some child of `node` applies; records every applied descendant.
-/// Siblings never short-circuit each other.
-fn lifts<'a>(
-    node: &str,
-    exceptions: &'a [LawException],
-    matched: &[bool],
-    children: &BTreeMap<&str, Vec<usize>>,
-    applied: &mut BTreeSet<&'a str>,
-    depth: usize,
-) -> bool {
-    let mut any = false;
-    if depth > exceptions.len() {
-        return any;
-    }
-    for &index in children.get(node).into_iter().flatten() {
-        let Some(exception) = exceptions.get(index) else {
-            continue;
-        };
-        if !matched.get(index).copied().unwrap_or(false) {
-            continue;
+#[cfg(test)]
+mod tests {
+    use super::shape;
+    use proptest::prelude::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// The recursive fold this module ran before the level fold (#718 U1),
+    /// kept as the differential oracle.
+    fn legacy_fold<'a>(
+        law: &str,
+        ids: &[&'a str],
+        parents: &[&'a str],
+        matched: &[bool],
+    ) -> (bool, BTreeSet<&'a str>) {
+        let mut children: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (index, parent) in parents.iter().enumerate() {
+            children.entry(*parent).or_default().push(index);
         }
-        let overridden = lifts(
-            exception.id.as_str(),
-            exceptions,
-            matched,
-            children,
-            applied,
-            depth.saturating_add(1),
-        );
-        if !overridden {
-            applied.insert(exception.id.as_str());
-            any = true;
+        let mut applied = BTreeSet::new();
+        let lifted = legacy_lifts(law, ids, matched, &children, &mut applied, 0);
+        (lifted, applied)
+    }
+
+    fn legacy_lifts<'a>(
+        node: &str,
+        ids: &[&'a str],
+        matched: &[bool],
+        children: &BTreeMap<&str, Vec<usize>>,
+        applied: &mut BTreeSet<&'a str>,
+        depth: usize,
+    ) -> bool {
+        let mut any = false;
+        if depth > ids.len() {
+            return any;
+        }
+        for &index in children.get(node).into_iter().flatten() {
+            let Some(id) = ids.get(index) else {
+                continue;
+            };
+            if !matched.get(index).copied().unwrap_or(false) {
+                continue;
+            }
+            let overridden =
+                legacy_lifts(id, ids, matched, children, applied, depth.saturating_add(1));
+            if !overridden {
+                applied.insert(*id);
+                any = true;
+            }
+        }
+        any
+    }
+
+    fn level_fold<'a>(
+        law: &str,
+        ids: &[&'a str],
+        parents: &[&'a str],
+        matched: &[bool],
+    ) -> (bool, BTreeSet<&'a str>) {
+        let mut level = vec![false; ids.len()];
+        let mut next = vec![false; ids.len()];
+        let lifted = shape::lifted(&law, ids, parents, matched, &mut level, &mut next);
+        let mut applied = vec![false; ids.len()];
+        shape::applied_exceptions(&law, ids, parents, matched, &level, &mut applied);
+        let applied = ids
+            .iter()
+            .zip(applied)
+            .filter_map(|(id, applied)| applied.then_some(*id))
+            .collect();
+        (lifted, applied)
+    }
+
+    const NAMES: [&str; 6] = ["law", "a", "b", "c", "d", "e"];
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4096))]
+
+        /// `lifted` equals the recursive fold on every input, including
+        /// cycles, duplicates, dangling targets and short `matched`; the
+        /// applied set equals it on every admitted tree.
+        #[test]
+        fn level_fold_matches_the_recursive_fold(
+            tree in proptest::collection::vec(
+                (proptest::sample::select(&NAMES[..]), proptest::sample::select(&NAMES[..])),
+                0..=6,
+            ),
+            matched in proptest::collection::vec(any::<bool>(), 0..=7),
+        ) {
+            let ids: Vec<&str> = tree.iter().map(|(id, _)| *id).collect();
+            let parents: Vec<&str> = tree.iter().map(|(_, parent)| *parent).collect();
+            let (legacy_lifted, legacy_applied) = legacy_fold("law", &ids, &parents, &matched);
+            let (lifted, applied) = level_fold("law", &ids, &parents, &matched);
+            prop_assert_eq!(lifted, legacy_lifted);
+            let declared = vec![true; ids.len()];
+            if shape::check_shape(&"law", &ids, &parents, &declared).is_ok() {
+                prop_assert_eq!(applied, legacy_applied);
+            }
         }
     }
-    any
 }

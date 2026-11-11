@@ -1221,6 +1221,66 @@
       "generatedArtifacts": []
     },
     {
+      "id": "semantics-v1-lean",
+      "profile": "full",
+      "command": "scripts/verify-semantics-lean.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "norm-precedence-decision-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-norm-precedence-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "checker-certificates-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-checker-certificates-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "law-exceptions-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-law-exceptions-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "verification-executed-test-selectors",
       "profile": "full",
       "command": "python3 scripts/validate-executed-test-selectors.py",
