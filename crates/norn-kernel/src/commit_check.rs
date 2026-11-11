@@ -41,6 +41,7 @@ const MAX_LINK_READ_TARGETS: usize = 1_000;
 /// Maximum aggregate target-key bytes bound to a complete link read.
 const MAX_LINK_READ_BYTES: usize = 262_144;
 use crate::commit_order::{CommitStage, CommitStages, run_stages};
+use crate::commit_versions::{CurrentVersion, first_conflict};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
 use crate::snapshot_observe::ObservationAuthorization;
 
@@ -1764,27 +1765,25 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             }
         }
     }
-    let expectations = commit
+    let reads: Vec<(&FactKey, u64)> = commit
         .reads
         .iter()
-        .map(|read| (&read.key, read.expected))
-        .chain(
-            commit
-                .writes
-                .iter()
-                .map(|write| (&write.key, write.expected)),
-        );
-    for (key, expected) in expectations {
-        let current = view
-            .version(&model.canonical(key))
-            .map_err(CommitError::Host)?;
-        if current != expected {
-            return Err(CommitError::Conflict {
-                key: key.clone(),
-                expected,
-                current,
-            });
-        }
+        .map(|read| (&read.key, read.expected.0))
+        .collect();
+    let writes: Vec<(&FactKey, u64)> = commit
+        .writes
+        .iter()
+        .map(|write| (&write.key, write.expected.0))
+        .collect();
+    if let Some((key, expected, current)) =
+        first_conflict(&mut ObjectVersions { model, view }, &reads, &writes)
+            .map_err(CommitError::Host)?
+    {
+        return Err(CommitError::Conflict {
+            key: key.clone(),
+            expected: FactVersion(expected),
+            current: FactVersion(current),
+        });
     }
     for write in &commit.writes {
         if !matches!(write.mutation, FactMutation::Put { .. }) {
@@ -1801,17 +1800,19 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    for write in &commit.links {
-        let current = view
-            .link_version(&model.canonical_link(&write.key))
-            .map_err(CommitError::Host)?;
-        if current != write.expected {
-            return Err(CommitError::LinkConflict {
-                key: Box::new(write.key.clone()),
-                expected: write.expected,
-                current,
-            });
-        }
+    let links: Vec<(&LinkKey, u64)> = commit
+        .links
+        .iter()
+        .map(|write| (&write.key, write.expected.0))
+        .collect();
+    if let Some((key, expected, current)) =
+        first_conflict(&mut LinkVersions { model, view }, &links, &[]).map_err(CommitError::Host)?
+    {
+        return Err(CommitError::LinkConflict {
+            key: Box::new(key.clone()),
+            expected: FactVersion(expected),
+            current: FactVersion(current),
+        });
     }
     for read in &commit.link_reads {
         let source = model.canonical(&read.source);
@@ -1849,6 +1850,30 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
     }
     crate::predicate_read::recheck_predicate_reads(&commit.predicate_reads, model, view)?;
     Ok(())
+}
+
+/// Each read or written object's current version, by canonical identity.
+struct ObjectVersions<'m, 'a, 'v, V: ?Sized> {
+    model: CommitModel<'m, 'a>,
+    view: &'v V,
+}
+
+impl<V: CommitView + ?Sized> CurrentVersion<&FactKey, V::Error> for ObjectVersions<'_, '_, '_, V> {
+    fn current(&mut self, key: &&FactKey) -> Result<u64, V::Error> {
+        Ok(self.view.version(&self.model.canonical(key))?.0)
+    }
+}
+
+/// Each written link's current version, by canonical identity.
+struct LinkVersions<'m, 'a, 'v, V: ?Sized> {
+    model: CommitModel<'m, 'a>,
+    view: &'v V,
+}
+
+impl<V: CommitView + ?Sized> CurrentVersion<&LinkKey, V::Error> for LinkVersions<'_, '_, '_, V> {
+    fn current(&mut self, key: &&LinkKey) -> Result<u64, V::Error> {
+        Ok(self.view.link_version(&self.model.canonical_link(key))?.0)
+    }
 }
 
 /// The canonical live links of every object the commit's links and deletes

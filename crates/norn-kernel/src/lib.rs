@@ -60,6 +60,7 @@ mod authz_action;
 pub mod cell_host;
 mod commit_check;
 mod commit_order;
+mod commit_versions;
 mod decider;
 pub mod decision_commit;
 mod effect;
