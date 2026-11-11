@@ -45,6 +45,8 @@ pub mod decision_output;
 pub mod defined_concept;
 pub mod definition_catalog;
 pub use defined_concept::DefinedConceptRoot;
+pub mod labels;
+pub use labels::{LabelCatalogRoot, LabelEntry, LabelReview, LabelTarget};
 pub mod decision_question;
 pub mod deontic;
 pub mod entitlement;
@@ -295,6 +297,9 @@ pub enum ArtifactKind {
     Law,
     /// Pure classification over existing base identities.
     DefinedConcept,
+    /// Localized labels for definitions; never part of a definition's
+    /// identity ([`labels`]).
+    Labels,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -336,6 +341,7 @@ pub const fn direct_artifact_write_allowed(
             | ArtifactKind::Mapping
             | ArtifactKind::Law
             | ArtifactKind::DefinedConcept
+            | ArtifactKind::Labels
     );
     let grants_runtime_authority = matches!(
         lifecycle,
@@ -1474,6 +1480,18 @@ define_payload_root!(
     }
 );
 
+define_payload_root!(
+    /// Localized presentation labels for definitions ([`labels`]).
+    #[schemars(with = "LabelCatalogRoot")]
+    LabelsPayload {
+        required {
+            labels_version => "labelsVersion" as IrVersion01,
+            entries => "entries" as Vec<LabelEntry>
+        }
+        optional {}
+    }
+);
+
 define_payload_root!(DerivedPayload {
     required {
         view_version => "viewVersion" as IrVersion01,
@@ -1514,6 +1532,7 @@ pub enum ArtifactPayload {
     Mapping(MappingPayload),
     Law(LawPayload),
     DefinedConcept(DefinedConceptPayload),
+    Labels(LabelsPayload),
 }
 
 /// The wire payload root must be a JSON object before it can select a closed kind root.
@@ -1567,6 +1586,7 @@ impl ArtifactPayload {
             ArtifactKind::DefinedConcept => {
                 Self::DefinedConcept(DefinedConceptPayload::from_json_object(object))
             }
+            ArtifactKind::Labels => Self::Labels(LabelsPayload::from_json_object(object)),
         }
     }
 
@@ -1589,6 +1609,7 @@ impl ArtifactPayload {
             Self::Mapping(_) => ArtifactKind::Mapping,
             Self::Law(_) => ArtifactKind::Law,
             Self::DefinedConcept(_) => ArtifactKind::DefinedConcept,
+            Self::Labels(_) => ArtifactKind::Labels,
         }
     }
 
@@ -1611,6 +1632,7 @@ impl ArtifactPayload {
             Self::Mapping(payload) => payload.to_json_value(),
             Self::Law(payload) => payload.to_json_value(),
             Self::DefinedConcept(payload) => payload.to_json_value(),
+            Self::Labels(payload) => payload.to_json_value(),
         }
     }
 
@@ -1633,6 +1655,7 @@ impl ArtifactPayload {
             Self::Mapping(payload) => payload.unknown_fields(),
             Self::Law(payload) => payload.unknown_fields(),
             Self::DefinedConcept(payload) => payload.unknown_fields(),
+            Self::Labels(payload) => payload.unknown_fields(),
         }
     }
 
@@ -1655,6 +1678,7 @@ impl ArtifactPayload {
             Self::Mapping(payload) => payload.has_invalid_extensions(),
             Self::Law(payload) => payload.has_invalid_extensions(),
             Self::DefinedConcept(payload) => payload.has_invalid_extensions(),
+            Self::Labels(payload) => payload.has_invalid_extensions(),
         }
     }
 
@@ -2159,6 +2183,7 @@ pub fn artifact_payload_schema(kind: &ArtifactKind) -> Schema {
         ArtifactKind::Mapping => schema_for!(MappingPayload),
         ArtifactKind::Law => schema_for!(LawPayload),
         ArtifactKind::DefinedConcept => schema_for!(DefinedConceptPayload),
+        ArtifactKind::Labels => schema_for!(LabelsPayload),
     }
 }
 

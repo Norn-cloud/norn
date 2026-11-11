@@ -68,6 +68,7 @@ pub mod incremental;
 mod inheritance;
 pub mod interfaces;
 pub mod jdm_profile;
+pub mod labels;
 pub mod layout;
 pub mod lifecycle_writes;
 pub mod lifecycles;

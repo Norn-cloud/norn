@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LabelsPayload",
+  "description": "Localized presentation labels for definitions ([`labels`]).",
+  "type": "object",
+  "properties": {
+    "entries": {
+      "description": "One entry per target, each target at most once.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LabelEntry"
+      }
+    },
+    "extensions": {
+      "description": "Reserved versioned extension slots, as on other artifact roots.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "labelsVersion": {
+      "description": "The form selector; always `0.1`.",
+      "$ref": "#/$defs/IrVersion01"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "labelsVersion",
+    "entries"
+  ],
+  "$defs": {
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LabelEntry": {
+      "description": "Labels for one target.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Longer human-readable description per BCP 47 tag.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocaleText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "description": "Short human-readable name per BCP 47 tag; at least one, none blank.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "review": {
+          "description": "Review state per BCP 47 tag; a tag that is not listed is reviewed.\nEvery listed tag must have a label.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/LabelReview"
+          }
+        },
+        "target": {
+          "description": "The labelled definition.",
+          "$ref": "#/$defs/LabelTarget"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "label"
+      ]
+    },
+    "LabelReview": {
+      "description": "Review state of one locale's label and description.",
+      "oneOf": [
+        {
+          "description": "Proposed (for example machine-translated) and not yet reviewed by a\nperson. Rendered, but listed for review.",
+          "type": "string",
+          "const": "needs_review"
+        },
+        {
+          "description": "Reviewed by a person. The default when a locale has no review entry.",
+          "type": "string",
+          "const": "reviewed"
+        }
+      ]
+    },
+    "LabelTarget": {
+      "description": "The canonical definition a label describes, by its language-neutral id.",
+      "oneOf": [
+        {
+          "description": "An object type or interface, by qualified name (`sales.Invoice`).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "objectType"
+            },
+            "objectType": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType"
+          ]
+        },
+        {
+          "description": "A property of an object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "objectType": {
+              "type": "string"
+            },
+            "property": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType",
+            "property"
+          ]
+        },
+        {
+          "description": "One declared value of an `enum` property (inline or through `ref`).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "enumValue"
+            },
+            "objectType": {
+              "type": "string"
+            },
+            "property": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType",
+            "property",
+            "value"
+          ]
+        },
+        {
+          "description": "An action, by `actionId`.",
+          "type": "object",
+          "properties": {
+            "actionId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "action"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "actionId"
+          ]
+        },
+        {
+          "description": "A rule, by `ruleId`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "rule"
+            },
+            "ruleId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "ruleId"
+          ]
+        },
+        {
+          "description": "A law, by `id`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "lawId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "lawId"
+          ]
+        },
+        {
+          "description": "A page of a widget UX contract.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "page"
+            },
+            "pageId": {
+              "type": "string"
+            },
+            "widgetId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "widgetId",
+            "pageId"
+          ]
+        }
+      ]
+    },
+    "LocaleText": {
+      "description": "Locale-keyed user-facing text.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

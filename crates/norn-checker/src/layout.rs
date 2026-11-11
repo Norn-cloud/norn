@@ -900,7 +900,8 @@ fn artifact_layout_ids(artifact: &ArtifactEnvelope) -> LayoutIds {
         | ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
-        | ArtifactPayload::DefinedConcept(_) => LayoutIds::default(),
+        | ArtifactPayload::DefinedConcept(_)
+        | ArtifactPayload::Labels(_) => LayoutIds::default(),
     }
 }
 

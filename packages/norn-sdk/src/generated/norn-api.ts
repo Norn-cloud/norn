@@ -546,7 +546,7 @@ export interface components {
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
          */
-        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"];
+        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"] | components["schemas"]["NornArtifactEnvelopeLabels"];
         /** NornArtifactEnvelopeAction */
         NornArtifactEnvelopeAction: components["schemas"]["NornArtifactEnvelopeCommon"] & {
             /** @enum {string} */
@@ -652,6 +652,18 @@ export interface components {
              * @enum {string}
              */
             kind: "entity";
+        };
+        /** NornArtifactEnvelopeLabels */
+        NornArtifactEnvelopeLabels: components["schemas"]["NornArtifactEnvelopeCommon"] & {
+            /** @enum {string} */
+            kind: "labels";
+            payload: components["schemas"]["NornIrLabelsPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "labels";
         };
         /** NornArtifactEnvelopeLaw */
         NornArtifactEnvelopeLaw: components["schemas"]["NornArtifactEnvelopeCommon"] & {
@@ -1670,7 +1682,7 @@ export interface components {
             required: boolean;
             version?: string | null;
         };
-        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept";
+        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept" | "labels";
         /** @enum {string} */
         NornIrArtifactLifecycle: "draft" | "proposed" | "approved" | "active" | "deprecated" | "superseded" | "rejected";
         NornIrArtifactProvenance: {
@@ -3978,6 +3990,91 @@ export interface components {
              */
             rule?: components["schemas"]["NornIrIdentityRule"];
         };
+        /** @description Labels for one target. */
+        NornIrLabelEntry: {
+            /** @description Longer human-readable description per BCP 47 tag. */
+            description?: components["schemas"]["NornIrLocaleText"] | null;
+            /** @description Short human-readable name per BCP 47 tag; at least one, none blank. */
+            label: components["schemas"]["NornIrLocaleText"];
+            review?: components["schemas"]["NornIrLabelEntryPropertyReview"];
+            /** @description The labelled definition. */
+            target: components["schemas"]["NornIrLabelTarget"];
+        };
+        /**
+         * @description Review state per BCP 47 tag; a tag that is not listed is reviewed.
+         *     Every listed tag must have a label.
+         */
+        NornIrLabelEntryPropertyReview: {
+            [key: string]: components["schemas"]["NornIrLabelReview"];
+        };
+        /**
+         * @description Review state of one locale's label and description.
+         * @enum {string}
+         */
+        NornIrLabelReview: "needs_review" | "reviewed";
+        /** @description The canonical definition a label describes, by its language-neutral id. */
+        NornIrLabelTarget: components["schemas"]["NornIrLabelTargetOneOf0"] | components["schemas"]["NornIrLabelTargetOneOf1"] | components["schemas"]["NornIrLabelTargetOneOf2"] | components["schemas"]["NornIrLabelTargetOneOf3"] | components["schemas"]["NornIrLabelTargetOneOf4"] | components["schemas"]["NornIrLabelTargetOneOf5"] | components["schemas"]["NornIrLabelTargetOneOf6"];
+        /** @description An object type or interface, by qualified name (`sales.Invoice`). */
+        NornIrLabelTargetOneOf0: {
+            /** @enum {string} */
+            kind: "objectType";
+            objectType: string;
+        };
+        /** @description A property of an object type or interface. */
+        NornIrLabelTargetOneOf1: {
+            /** @enum {string} */
+            kind: "property";
+            objectType: string;
+            property: string;
+        };
+        /** @description One declared value of an `enum` property (inline or through `ref`). */
+        NornIrLabelTargetOneOf2: {
+            /** @enum {string} */
+            kind: "enumValue";
+            objectType: string;
+            property: string;
+            value: string;
+        };
+        /** @description An action, by `actionId`. */
+        NornIrLabelTargetOneOf3: {
+            actionId: string;
+            /** @enum {string} */
+            kind: "action";
+        };
+        /** @description A rule, by `ruleId`. */
+        NornIrLabelTargetOneOf4: {
+            /** @enum {string} */
+            kind: "rule";
+            ruleId: string;
+        };
+        /** @description A law, by `id`. */
+        NornIrLabelTargetOneOf5: {
+            /** @enum {string} */
+            kind: "law";
+            lawId: string;
+        };
+        /** @description A page of a widget UX contract. */
+        NornIrLabelTargetOneOf6: {
+            /** @enum {string} */
+            kind: "page";
+            pageId: string;
+            widgetId: string;
+        };
+        /** @description Localized presentation labels for definitions ([`labels`]). */
+        NornIrLabelsPayload: {
+            /** @description One entry per target, each target at most once. */
+            entries: components["schemas"]["NornIrLabelEntry"][];
+            extensions?: components["schemas"]["NornIrLabelsPayloadPropertyExtensions"];
+            /**
+             * @description The form selector; always `0.1`.
+             * @enum {string}
+             */
+            labelsVersion: "0.1";
+        };
+        /** @description Reserved versioned extension slots, as on other artifact roots. */
+        NornIrLabelsPayloadPropertyExtensions: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
         /**
          * @description One declared exception. When its condition holds and no exception that
          *     overrides it applies, the node it overrides does not apply. It has no other
@@ -5459,7 +5556,7 @@ export interface components {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /** @description Artifact kinds a composition pack may contain (not `derived`). */
-        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy" | "defined_concept") | "source_schema" | "mapping" | "law";
+        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy" | "defined_concept") | "source_schema" | "mapping" | "law" | "labels";
         /** @description One exact artifact version in a composition pack. */
         NornIrPackArtifactRef: {
             artifactId: string;
