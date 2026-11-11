@@ -741,6 +741,9 @@ run_gate full kernel-l1-version-correspondence \
 run_gate full kernel-commit-order-correspondence \
   "scripts/verify-kernel-commit-aeneas.sh" command \
   scripts/verify-kernel-commit-aeneas.sh
+run_gate full kernel-binding-correspondence \
+  "scripts/verify-kernel-binding-aeneas.sh" command \
+  scripts/verify-kernel-binding-aeneas.sh
 
 # Validate observed selectors only after every producing gate has run.
 run_gate full verification-executed-test-selectors \
