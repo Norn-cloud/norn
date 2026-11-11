@@ -1,0 +1,7 @@
+{
+  "code": "agent.validation.invalid_decision_policy",
+  "message": "the decision policy cannot decide: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

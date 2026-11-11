@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import re
 import shlex
@@ -433,6 +432,34 @@ def validate_rust_toolchain_steps(path: Path, source: str) -> None:
     require(action_count > 0, f"{path.name}: workflow must contain a Rust toolchain action")
 
 
+# GitHub compiles a `script:` containing `${{ }}` into one format() expression: literal text has
+# every `'`, `{` and `}` doubled, each interpolation becomes `{N}` plus a `, <expr>` argument, and
+# the whole must stay under 21,000 characters or GitHub rejects the workflow file, silently
+# for workflow_run triggers (it stalled the merge queue once). Keep a margin.
+EXPRESSION_CAP = 20_500
+
+
+def actions_expression_length(script: str) -> int:
+    """Length of the format() expression GitHub builds from an interpolated script."""
+    parts = re.split(r"\$\{\{(.*?)\}\}", script, flags=re.S)
+    literal, expressions = "".join(parts[0::2]), [part.strip() for part in parts[1::2]]
+    escaped = len(literal) + literal.count("'") + literal.count("{") + literal.count("}")
+    placeholders = sum(len(f"{{{index}}}") for index in range(len(expressions)))
+    return len("format('')") + escaped + placeholders + sum(len(", ") + len(expression) for expression in expressions)
+
+
+def validate_expression_lengths(sources: dict[str, str]) -> None:
+    for path, text in sources.items():
+        for name, job in yaml.load(text, Loader=WorkflowLoader).get("jobs", {}).items():
+            for step in job.get("steps", []):
+                script = step.get("with", {}).get("script", "")
+                if "${{" in script:
+                    length = actions_expression_length(script)
+                    require(length <= EXPRESSION_CAP,
+                            f"{path}::{name}::{step.get('name', step.get('uses'))}: interpolated script is a "
+                            f"{length}-character expression, over the {EXPRESSION_CAP} cap (GitHub rejects 21,000)")
+
+
 def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW) -> None:
     source = formal_path.read_text(encoding="utf-8")
     validate_rust_toolchain_steps(formal_path, source)
@@ -443,6 +470,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
+    validate_expression_lengths({formal_path.name: source,
+                                 "trusted-merge-group.yml": (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")})
     require(workflow.get("on", workflow.get(True)) == {
         "pull_request": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
         "pull_request_target": None,
@@ -453,35 +482,55 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
         "cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
     }, "workflow must cancel only superseded PR and main runs")
-    require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot' && format('issue_comment bot {0}', github.event.comment.id) || github.event_name }}",
-            "run name must attribute READY to the triggering event and head, and mark bot comments")
-    validate_rights_contract(source)
+    require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
+            "run name must attribute READY to the triggering event and head")
     jobs = workflow["jobs"]
-    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy", "rights-capture", "rights-revocation"}, "workflow job inventory changed")
+    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
     check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     trusted = jobs["trusted-policy"]
     require(trusted.get("concurrency") == {
-        "group": "rights-authority-v4",
-        "cancel-in-progress": False, "queue": "max",
+        "group": "trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}",
+        "cancel-in-progress": True,
     }, "trusted-policy: superseded approvals and revocations must share a cancelling group")
     require(" ".join(trusted.get("if", "").split()) == "!cancelled() && ( "
             "github.event_name == 'pull_request_target' || "
             "(github.event_name == 'issue_comment' && github.event.issue.pull_request && "
-            "(contains(github.event.comment.body, '/approve-gates') || contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || "
-            "(github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))",
-            "trusted-policy: approval and rights creation, editing and deletion must re-evaluate")
-    # Complete reporter byte/execution pins are enforced by validate_rights_contract above.
+            "(contains(github.event.comment.body, '/approve-gates') || "
+            "(github.event.action == 'edited' && contains(github.event.changes.body.from, '/approve-gates')))))",
+            "trusted-policy: approval creation, editing and deletion must re-evaluate")
+    trusted_reporter = '''// If resolution failed there is no validated head: look it up again so
+// the failure still replaces any earlier success on that head.
+let sha = '${{ steps.pr.outputs.head_sha }}';
+if (!sha) {
+  const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
+  sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
+}
+await github.rest.repos.createCommitStatus({
+  owner: context.repo.owner,
+  repo: context.repo.repo,
+  sha,
+  state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
+  context: 'trusted-policy',
+  description: 'Base-owned policy over candidate data',
+  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+});'''
+    reporters = [step for step in trusted.get("steps", [])
+                 if step.get("name") == "Report trusted policy on the exact PR head"]
+    require(len(reporters) == 1 and reporters[0] == {
+        "name": "Report trusted policy on the exact PR head", "if": "always()",
+        "uses": "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
+        "with": {"retries": 3, "script": trusted_reporter + "\n"},
+    }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
     boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
         expected_runner = boat_runner if name in {"core", "plan", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
     cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
-                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop",
-                 "NORN_CI_HEAD": "${{ github.event.merge_group.head_sha || github.sha }}"}
+                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
         "core": cache_env,
         "plan": {},
@@ -550,7 +599,7 @@ rustup toolchain uninstall stable nightly-2025-03-01
 df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
 """}
-    nextest = {"uses": "taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32",
+    nextest = {"uses": "taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941",
                "with": {"tool": "nextest@0.9.150"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():
@@ -658,140 +707,17 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     contained = 'prune_target() {\n  local root target\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  rm -rf -- "$target"\n}\n'
     require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
             "bundle may prune only the cargo target dir, between tasks and when disk is low")
+    # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
+    # does a config whose match lists no tests.
+    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
+    require(runner.count(browser) == 1 and re.search(r"^phases=\(.* browser .*\)$", runner, re.MULTILINE) is not None,
+            "browser phase must run the Studio Playwright rows and refuse missing or empty tests")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,
             "full workspace tests must run")
     require("cargo test --locked --workspace --doc" in runner, "workspace doctests must run")
     require("test-shards" in runner, "test shards must be proved to cover the full test set")
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
-
-
-# A pull_request_target evaluation of a head that is no longer the PR head writes
-# nothing: every step after Resolve, the reporter included, carries this guard.
-SUPERSEDED_GUARD = "steps.pr.outputs.superseded != 'true'"
-
-
-def validate_rights_contract(source: str, merge_source: str | None = None) -> None:
-    """The API collector and binary invocation remain base-owned and head-bound."""
-    if merge_source is None:
-        merge_source = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text()
-    # Pin complete base-owned API programs, including append-only history reads
-    # and fail-closed publishers; substring matches cannot establish execution.
-    programs = {
-        'Resolve the pull request': ('ddaf2a910172cfbad41ea7aa5e247d3893e89c7682f173ec3925f64619026d67', ['script', 'retries'], False, None),
-        'Capture the saved rights payload': ('748661200b99a0ebf6859d5638816d6ba7b60af7fb1818d2aabe9d14ff46883d', ['script'], False, None),
-        'Persist the target rights ledger': ('8b60fe98a60613841c5a345cb5860f8879635d37bede68583d372720c24e30cd', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('acae005141be56809dfd78f692a0b26c1b3771de1eef3270345d5e3969c06fb4', ['script'], False, SUPERSEDED_GUARD),
-        'Report trusted policy on the exact PR head': ('223c0970b6a8f6493fcca9e8a3964528a23908cd6fa9db55c373a9db8b52985d', ['script', 'retries'], False, 'always() && ' + SUPERSEDED_GUARD),
-        'Record admin approvals of the queued heads': ('08604ce93544d22597399c5752f44ba8ee52718c74ad7c0d66e1512f0c6e9a0a', ['script'], False, None),
-        'Report trusted policy on the group head': ('ec9e3099f381b8c71706ab6b1bd0b6c56cc3a280d67f66c956988f30650199c2', ['script', 'retries'], False, 'always()'),
-    }
-    def api_step(step: dict) -> None:
-        digest, inputs, tolerated_failure, condition = programs[step["name"]]
-        allowed = {"name", "uses", "with"} | ({"continue-on-error"} if tolerated_failure else set()) | ({"if"} if condition else set())
-        if step["name"] in {"Resolve the pull request", "Capture the saved rights payload"}:
-            allowed.add("id")
-            require(step.get("id") == ("pr" if step["name"] == "Resolve the pull request" else "payload"),
-                    "trusted event output identity changed")
-        if step["name"] == "Persist the target rights ledger":
-            allowed.add("env")
-            require(step.get("env") == {"RIGHTS_EVENT": "${{ needs.rights-capture.outputs.payload }}"},
-                    "ledger must consume the captured event as data")
-        require(set(step) == allowed
-                and step.get("uses") == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
-                and step.get("continue-on-error", False) is tolerated_failure
-                and step.get("if") == condition
-                and set(step.get("with", {})) == set(inputs)
-                and ("retries" not in inputs or step["with"]["retries"] == 3)
-                and hashlib.sha256(step.get("with", {}).get("script", "").encode()).hexdigest() == digest,
-                f"trusted API program or execution changed: {step.get('name')}")
-    public = yaml.load(source, Loader=WorkflowLoader)
-    capture = public["jobs"].get("rights-capture", {})
-    expected_capture = {
-        "name": "Capture immutable rights event ${{ github.event.issue.pull_request && 'pull' || 'issue' }} ${{ (contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights')) && 'possible' || 'none' }}",
-        "if": "github.event_name == 'issue_comment' && github.event.comment.user.type != 'Bot'",
-        "permissions": {"contents": "read"}, "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
-        "outputs": {key: "${{ steps.payload.outputs." + key + " }}" for key in ("heads", "kind", "comment", "payload")},
-    }
-    require({k:v for k,v in capture.items() if k != "steps"} == expected_capture,
-            "saved run payload must be captured before API writes, including plain issues")
-    require(len(capture.get("steps", [])) == 2 and capture["steps"][1] == {
-        "name": "Rights event ${{ steps.payload.outputs.heads }} comment ${{ steps.payload.outputs.comment }}", "run": "true"},
-        "saved identity must be stamped before the authority queue")
-    api_step(capture["steps"][0])
-    ledger = public["jobs"].get("rights-revocation", {})
-    expected_ledger = {
-        "name": "Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}",
-        "needs": "rights-capture",
-        "if": "!cancelled() && needs.rights-capture.result == 'success' && needs.rights-capture.outputs.kind == 'pull' && needs.rights-capture.outputs.heads != 'none'",
-        "permissions": {"actions": "read", "contents": "read", "statuses": "write"},
-        "concurrency": {"group": "rights-authority-v4", "cancel-in-progress": False, "queue": "max"},
-        "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
-    }
-    require({k:v for k,v in ledger.items() if k != "steps"} == expected_ledger,
-            "target ledger must be base-owned and never superseded")
-    require(len(ledger.get("steps", [])) == 1, "missing immutable rights writer")
-    api_step(ledger["steps"][0])
-    for text, head in ((source, "${{ steps.pr.outputs.head_sha }}"),
-                       (merge_source, "${{ github.event.workflow_run.head_sha }}")):
-        workflow = yaml.load(text, Loader=WorkflowLoader)
-        job = workflow["jobs"]["trusted-policy"]
-        expected = ('python3 trusted/scripts/ci/validate-runner-policy.py --root candidate '
-                    '--maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" '
-                    '--rights-evidence "$RUNNER_TEMP/maintainer-approval.json" '
-                    f'--head "{head}" --repository "${{{{ github.repository }}}}"')
-        steps = job["steps"]
-        allowed_job = {"permissions", "if", "concurrency", "runs-on", "timeout-minutes", "steps"}
-        if text == source:
-            allowed_job |= {"name", "needs"}
-        require(set(job) == allowed_job, "trusted validation cannot override its execution environment")
-        checks = [step for step in steps if step.get("run", "").strip() == expected]
-        require(len(checks) == 1 and set(checks[0]) == ({"name", "run", "if"} if text == source else {"name", "run"})
-                and checks[0].get("if", SUPERSEDED_GUARD) == SUPERSEDED_GUARD
-                and not job.get("env") and not workflow.get("env")
-                and all(key not in scope.get("defaults", {}).get("run", {})
-                        for scope in (job, workflow) for key in ("shell", "working-directory")),
-                "trusted rights: missing or wrong exact-head evidence/binding command")
-        require(job.get("permissions", {}).get("actions") == "read", "trusted event reconciliation requires read-only Actions access")
-        is_pr = text == source
-        collector = "Record admin approvals of the exact PR head" if is_pr else "Record admin approvals of the queued heads"
-        reporter = "Report trusted policy on the exact PR head" if is_pr else "Report trusted policy on the group head"
-        for name in (collector, reporter, *(["Resolve the pull request"] if is_pr else [])):
-            matching = [step for step in steps if step.get("name") == name]
-            require(len(matching) == 1, f"missing trusted API step: {name}")
-            api_step(matching[0])
-        if is_pr:
-            require(job.get("needs") == "rights-revocation", "policy must await durable revocation recording")
-            require(steps[0].get("name") == "Resolve the pull request",
-                    "resolve the head before recording refusal so revocation still dequeues it")
-            require(steps[1] == {"name": "Require durable revocation recording", "if": SUPERSEDED_GUARD,
-                    "env": {"RESULT": "${{ needs.rights-revocation.result }}"},
-                    "run": 'test "$RESULT" = success || test "$RESULT" = skipped'},
-                    "failed/cancelled recording must fail policy before admission")
-            dequeue = "Remove a failing pull request from the merge queue"
-            require(steps[-1].get("name") == dequeue
-                    and steps[-1].get("if") == "failure() && steps.pr.outputs.head_sha != ''"
-                    and all(step.get("if") == SUPERSEDED_GUARD for step in steps[1:-2])
-                    and steps[-2].get("name") == "Report trusted policy on the exact PR head",
-                    "trusted-policy: a superseded evaluation must write nothing after Resolve")
-        scripts = "\n".join(step.get("with", {}).get("script", "") for step in steps)
-        compact = re.sub(r"\s+", "", scripts)
-        for contract in ("rights-authority-v4", "github.rest.git.createCommit", "force:false",
-                         "rights-checkpoint/target/", "rights-checkpoint/publication/",
-                         "Rights capture incomplete after bounded wait", "Rights authority queue deadline exceeded"):
-            require(contract in scripts, f"trusted authority contract missing: {contract}")
-        require(job.get("concurrency") == {"group": "rights-authority-v4", "cancel-in-progress": False, "queue": "max"},
-                "all rights authority must serialize without cancelling active or queued work")
-    condition = yaml.load(source, Loader=WorkflowLoader)["jobs"]["trusted-policy"]["if"]
-    for command in ("/ack-rights", "/revoke-rights"):
-        require(f"contains(github.event.comment.body, '{command}')" in condition
-                and f"contains(github.event.changes.body.from, '{command}')" in condition,
-                "trusted rights: edits/deletions must re-evaluate rights evidence")
-    runner = CORE_RUNNER.read_text()
-    require('cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn' in runner,
-            "provenance must bind the event candidate")
-    require('--distribution --base-root "$PWD" --source-root "$PWD" --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn' in runner,
-            "distribution must retain an independent immutable source binding")
 
 
 def validate_timeout_budgets(

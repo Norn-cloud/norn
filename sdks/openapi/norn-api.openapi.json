@@ -9,9 +9,486 @@
     },
     "version": "0.1.0"
   },
-  "paths": {},
+  "paths": {
+    "/v1/questions/{question}/answer": {
+      "get": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "Evaluate using the native exact engine; analytical freshness labels are preserved.\n# Errors\nDenied scope/authority, unavailable trusted inputs, or typed compute refusal.",
+        "operationId": "get_answer",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "question",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The exact answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornQuestionAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: over a resource bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/questions/{question}/trace": {
+      "get": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.\n# Errors\nNonexact/stale results, historical tracing, changed pins or unavailable evidence refuse.",
+        "operationId": "get_numeric_trace",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lineageRef",
+            "in": "query",
+            "description": "The `lineageRef` handle a complete exact answer returned (keyed, D53).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "description": "Canonical bucket key from that result.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "question",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The numeric trace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornNumericTrace"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: over a resource bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/questions:evaluate": {
+      "post": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "F2b: admit an ad-hoc question against the cell's declared metrics and\nanswer it once, under the same row gates and D53 redaction as a named\nquestion. Nothing is installed.\n# Errors\nAny ungranted metric or type, or an undeclared metric from a caller who\ncannot read every declared metric (one opaque 403, before admission); an\ninadmissible question, including an undeclared metric from a caller who\ncan (422 `question.refused` with diagnostics); a bound (413); or a\ncompute refusal.",
+        "operationId": "evaluate_question",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The exact answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornQuestionAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: over a resource bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/questions:trace": {
+      "post": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "F2b: trace one bucket of an ad-hoc question's current exact answer, by the\nkeyed handle that answer returned. Authorized and admitted as `:evaluate`.\n# Errors\nAs [`evaluate_question`], and as [`get_numeric_trace`] for the trace.",
+        "operationId": "trace_ad_hoc",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdHocTraceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The numeric trace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornNumericTrace"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: over a resource bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "components": {
     "schemas": {
+      "AdHocTraceRequest": {
+        "type": "object",
+        "description": "`POST /v1/questions:trace`: one bucket of an ad-hoc question's answer.",
+        "required": [
+          "question",
+          "lineageRef",
+          "bucket"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "description": "Canonical bucket key from that answer."
+          },
+          "lineageRef": {
+            "type": "string",
+            "description": "The `lineageRef` handle that answer returned."
+          },
+          "question": {
+            "type": "object",
+            "description": "The same `QuestionIR` the answer was evaluated from."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvaluateRequest": {
+        "type": "object",
+        "description": "`POST /v1/questions:evaluate`: one ad-hoc question to admit and answer.",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "object",
+            "description": "The `QuestionIR` to admit against the cell's declared metrics. It is\nevaluated once and never installed."
+          }
+        },
+        "additionalProperties": false
+      },
       "LayoutSidecar": {
         "type": "object",
         "title": "LayoutSidecar",
@@ -37,6 +514,187 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornActionActionDerivedValue": {
+        "type": "object",
+        "description": "One field produced by an ordered action input derivation.",
+        "required": [
+          "field",
+          "value"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The derived field."
+          },
+          "value": {
+            "description": "The exact runtime value written to the effective input. Preserve source\ntext and use an exact-number JSON parser; JavaScript `JSON.parse` may\nlose precision."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionActionPreconditionOutcome": {
+        "type": "object",
+        "description": "The successful outcome of one action precondition.",
+        "required": [
+          "expression",
+          "satisfied"
+        ],
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "The expression evaluated."
+          },
+          "satisfied": {
+            "type": "boolean",
+            "description": "Whether it held (successful records contain only `true`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionCallRecord": {
+        "type": "object",
+        "title": "ActionCallRecord",
+        "description": "The idempotency record of a committed call (the values of its\n[`ACTION_CALL_TYPE`] object).",
+        "required": [
+          "actionId",
+          "object",
+          "input",
+          "actor",
+          "turn",
+          "transition",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "actionArtifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action artifact that was admitted when the call committed. Missing\nonly on records written before action attribution was recorded."
+          },
+          "actionId": {
+            "type": "string",
+            "description": "The action."
+          },
+          "actionVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action artifact version that was admitted when the call committed.\nMissing only on records written before action attribution was recorded."
+          },
+          "actor": {
+            "type": "string",
+            "description": "The actor."
+          },
+          "derivedValues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionDerivedValue"
+            },
+            "description": "The values produced by each derivation, in declaration order."
+          },
+          "effectKind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effect program that committed this call. Missing in legacy records\nwritten before effect attribution and interpreted as `fire_transition`."
+          },
+          "effectiveInput": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The final input after ordered derivations. Legacy records use `input`.\nPreserve source text and use an exact-number JSON parser for its values;\nJavaScript `JSON.parse` may lose precision.",
+            "additionalProperties": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            }
+          },
+          "from": {
+            "type": "string",
+            "description": "The state it left."
+          },
+          "input": {
+            "type": "object",
+            "description": "The call's input.",
+            "additionalProperties": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            }
+          },
+          "object": {
+            "$ref": "#/components/schemas/NornActionFactKey",
+            "description": "The target object."
+          },
+          "preconditionOutcomes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionPreconditionOutcome"
+            },
+            "description": "Successful precondition results, in declaration order."
+          },
+          "rowOperations": {
+            "type": "array",
+            "items": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            },
+            "description": "Normalized row operations committed by a parent-and-rows action."
+          },
+          "ruleBinding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "TXN-RULE-1: exact writer closure, action, scope and world identity."
+          },
+          "to": {
+            "type": "string",
+            "description": "The state it entered."
+          },
+          "transition": {
+            "type": "string",
+            "description": "The fired transition."
+          },
+          "turn": {
+            "type": "string",
+            "description": "The turn the call committed in."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionFactKey": {
+        "type": "object",
+        "description": "Identity of one ontology object in a cell: its type and identity key.",
+        "required": [
+          "objectType",
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The object's identity key value."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionInput": {
+        "type": "object",
+        "title": "Map_of_RuntimeValue",
+        "additionalProperties": {
+          "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+        }
+      },
+      "NornActionObjectTypeName": {
+        "type": "string",
+        "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+        "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
       },
       "NornArtifactEnvelope": {
         "oneOf": [
@@ -763,22 +1421,22 @@
           "span": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerDiagnosticSpan",
                 "description": "Source location in the artifact JSON, when known."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "tier": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerTier",
                 "description": "The checker tier that emitted this finding, when its code is registered."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -799,11 +1457,11 @@
           "source": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerSourceSpan",
                 "description": "Byte range in the original source text, when available."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -1602,21 +2260,25 @@
         "type": "object",
         "description": "Where one object version came from: the source record, its document and the\nmapping that produced it. Describes the JSON of\n`norn_cell::source_provenance::InstanceSourceProvenance`; it grants no authority.",
         "required": [
-          "bundleDigest",
           "sourceRecordRef",
           "documentRef",
-          "documentDigest",
           "mappingPin",
           "fieldProvenance"
         ],
         "properties": {
           "bundleDigest": {
-            "type": "string",
-            "description": "Content address of the recomputed mapping bundle."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Content address of the recomputed mapping bundle; omitted in a numeric trace\nwhen the caller may not read the contributing values."
           },
           "documentDigest": {
-            "type": "string",
-            "description": "Digest of the source document payload."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Digest of the source document payload; omitted in a numeric trace when the\ncaller may not read the contributing values."
           },
           "documentRef": {
             "$ref": "#/components/schemas/NornIrSourceRecordRef",
@@ -1894,6 +2556,63 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrActionAggregateInput": {
+        "type": "object",
+        "description": "One bounded aggregate an action's preconditions read by `name`.",
+        "required": [
+          "name",
+          "objectType",
+          "aggregate",
+          "maxItems"
+        ],
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/NornIrAggregateFunction",
+            "description": "What is computed over the matched objects."
+          },
+          "filter": {
+            "$ref": "#/components/schemas/NornIrActionAggregateInputPropertyFilter"
+          },
+          "maxItems": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Most objects the fold may match; one more refuses the action.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The precondition environment member holding the result. Unique among\nthe action's aggregates and slice entries."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The type whose stored objects are folded.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrAggregateWindow"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional window over one date or timestamp property."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrActionAggregateInputPropertyFilter": {
+        "type": "object",
+        "description": "Equality filter: each scalar property must equal the named input\nfield. An empty filter matches every object of the type.",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
       },
       "NornIrActionCommand": {
         "type": "object",
@@ -2275,6 +2994,12 @@
           "actionId": {
             "type": "string"
           },
+          "aggregates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrActionAggregateInput"
+            }
+          },
           "commands": {
             "type": "array",
             "items": {
@@ -2597,6 +3322,90 @@
         "x-enumDescriptions": [
           "The declared time dimension."
         ]
+      },
+      "NornIrAggregateFunction": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrAggregateFunctionOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrAggregateFunctionOneOf1"
+          }
+        ],
+        "description": "The fold computed over the matched objects."
+      },
+      "NornIrAggregateFunctionOneOf0": {
+        "type": "object",
+        "description": "The exact sum of a non-nullable decimal or integer property, held at\nthe property's declared scale. An empty match set sums to zero.",
+        "required": [
+          "kind",
+          "property"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sum"
+            ]
+          },
+          "property": {
+            "type": "string",
+            "description": "The summed property.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrAggregateFunctionOneOf1": {
+        "type": "object",
+        "description": "The number of matched objects.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "count"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrAggregateWindow": {
+        "type": "object",
+        "description": "A window over one date or timestamp property. Both edges and their\ninclusivity are declared; there is no default edge semantics.",
+        "required": [
+          "property",
+          "start",
+          "end",
+          "startInclusive",
+          "endInclusive"
+        ],
+        "properties": {
+          "end": {
+            "type": "string",
+            "description": "The input field holding the end edge."
+          },
+          "endInclusive": {
+            "type": "boolean",
+            "description": "Whether an object exactly at `end` matches."
+          },
+          "property": {
+            "type": "string",
+            "description": "The date or timestamp property the window ranges over.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "start": {
+            "type": "string",
+            "description": "The input field holding the start edge."
+          },
+          "startInclusive": {
+            "type": "boolean",
+            "description": "Whether an object exactly at `start` matches."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrApiKeyFormat": {
         "oneOf": [
@@ -8754,8 +9563,7 @@
             "items": {}
           },
           {
-            "type": "object",
-            "additionalProperties": {}
+            "$ref": "#/components/schemas/NornIrJsonValueAnyOf5"
           }
         ]
       },
@@ -9428,7 +10236,6 @@
             }
           },
           "settings": {
-            "$ref": "#/components/schemas/NornIrLayoutJsonValue",
             "description": "Optional editor settings preserved as exact JSON."
           },
           "viewport": {
@@ -9511,31 +10318,6 @@
         "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
         "enum": [
           "0.1"
-        ]
-      },
-      "NornIrLayoutJsonValue": {
-        "anyOf": [
-          {
-            "type": "null"
-          },
-          {
-            "type": "boolean"
-          },
-          {
-            "type": "number",
-            "format": "double"
-          },
-          {
-            "type": "string"
-          },
-          {
-            "type": "array",
-            "items": {}
-          },
-          {
-            "type": "object",
-            "additionalProperties": {}
-          }
         ]
       },
       "NornIrLayoutLayoutViewport": {
@@ -10872,7 +11654,6 @@
             "description": "Relative property path. To-many filters are existential predicates."
           },
           "value": {
-            "$ref": "#/components/schemas/NornIrJsonValue",
             "description": "Exact runtime literal checked against the effective property contract."
           }
         },
@@ -11422,6 +12203,10 @@
               "$ref": "#/components/schemas/NornIrKeySpec"
             },
             "description": "Declared keys. Each is unique among the type's live objects within one\ntenant scope and world, enforced at commit. Omitted when empty: every\nobject always has its kernel-assigned object id, and a type need not\ndeclare a business key."
+          },
+          "immutable": {
+            "type": "boolean",
+            "description": "FA-IMM-1: existing instances are append-only; subtypes inherit this flag."
           },
           "implements": {
             "type": "array",
@@ -12769,6 +13554,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrPropertyTypeOneOf10"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf11"
           }
         ],
         "description": "The value kind of a property, tagged by `kind`."
@@ -12888,6 +13676,31 @@
       },
       "NornIrPropertyTypeOneOf10": {
         "type": "object",
+        "description": "Opaque JSON (an extension payload), optionally described by a JSON\nSchema document the checker does not interpret.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "json-ext"
+            ]
+          },
+          "schema": {
+            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf10PropertySchema"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyTypeOneOf10PropertySchema": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrPropertyTypeOneOf11": {
+        "type": "object",
         "description": "The shared property type (local or registry) with this name.",
         "required": [
           "kind",
@@ -12959,6 +13772,27 @@
       },
       "NornIrPropertyTypeOneOf3": {
         "type": "object",
+        "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+        "required": [
+          "kind",
+          "group"
+        ],
+        "properties": {
+          "group": {
+            "type": "string",
+            "description": "Same-name members in one interface bind identically."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "decimal-binding"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyTypeOneOf4": {
+        "type": "object",
         "description": "`true` or `false`.",
         "required": [
           "kind"
@@ -12973,7 +13807,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf4": {
+      "NornIrPropertyTypeOneOf5": {
         "type": "object",
         "description": "An instant in time with an explicit timezone policy.",
         "required": [
@@ -13002,7 +13836,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf5": {
+      "NornIrPropertyTypeOneOf6": {
         "type": "object",
         "description": "An ISO 8601 calendar date (`YYYY-MM-DD`) with no time and no zone.",
         "required": [
@@ -13018,7 +13852,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf6": {
+      "NornIrPropertyTypeOneOf7": {
         "type": "object",
         "description": "An exact elapsed duration (fixed-length units only; calendar periods\nsuch as months are not durations).",
         "required": [
@@ -13034,7 +13868,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf7": {
+      "NornIrPropertyTypeOneOf8": {
         "type": "object",
         "description": "One of a closed set of string values.",
         "required": [
@@ -13058,7 +13892,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf8": {
+      "NornIrPropertyTypeOneOf9": {
         "type": "object",
         "description": "A closed structured value. Every member is present; nullability of\nthe containing property applies to the whole record.",
         "required": [
@@ -13080,31 +13914,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "NornIrPropertyTypeOneOf9": {
-        "type": "object",
-        "description": "Opaque JSON (an extension payload), optionally described by a JSON\nSchema document the checker does not interpret.",
-        "required": [
-          "kind"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "json-ext"
-            ]
-          },
-          "schema": {
-            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf9PropertySchema"
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrPropertyTypeOneOf9PropertySchema": {
-        "type": "object",
-        "additionalProperties": {
-          "$ref": "#/components/schemas/NornIrJsonValue"
-        }
       },
       "NornIrProposalActor": {
         "type": "string",
@@ -13523,7 +14332,7 @@
             "type": "object",
             "description": "Typed operands; disclosure authority is required before projection.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/NornIrJsonValue"
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
             }
           }
         },
@@ -13596,6 +14405,25 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrRequirementCalendarPin": {
+        "type": "object",
+        "description": "Exact pinned calendar identity.",
+        "required": [
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Calendar artifact identity."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact calendar version."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRequirementDeonticModality": {
         "type": "string",
@@ -14344,21 +15172,49 @@
           "sameCommit": {
             "type": "string",
             "pattern": "\\S"
+          },
+          "within": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a `within` requirement; other timings never read it.",
+            "pattern": "\\S"
           }
         },
         "additionalProperties": false
       },
       "NornIrRequirementRequirementTiming": {
-        "type": "string",
-        "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
-        "enum": [
-          "every_committed_state",
-          "same_commit"
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Condition and response are evaluated at every applicable committed state.",
+            "enum": [
+              "every_committed_state"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit.",
+            "enum": [
+              "same_commit"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "LAW-WITHIN-1: a committed trigger transition opens an activation that a\nlater satisfying commit must discharge before `law.timing`'s deadline.",
+            "required": [
+              "within"
+            ],
+            "properties": {
+              "within": {
+                "$ref": "#/components/schemas/NornIrRequirementWithinTiming"
+              }
+            },
+            "additionalProperties": false
+          }
         ],
-        "x-enumDescriptions": [
-          "Condition and response are evaluated at every applicable committed state.",
-          "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit."
-        ]
+        "description": "Closed safety fragment plus one event-activated deadline form. No fairness,\nunbounded progress or wall-clock reads."
       },
       "NornIrRequirementRequirementWording": {
         "type": "object",
@@ -14367,6 +15223,17 @@
           "$ref": "#/components/schemas/NornIrRequirementLocalizedRequirement"
         },
         "minProperties": 1
+      },
+      "NornIrRequirementRetriggerPolicy": {
+        "type": "string",
+        "enum": [
+          "keep_first",
+          "restart"
+        ],
+        "x-enumDescriptions": [
+          "A trigger while open is recorded as ignored; the first deadline stands.",
+          "A trigger while open restarts the window from the triggering commit."
+        ]
       },
       "NornIrRequirementRuleByteRange": {
         "type": "object",
@@ -14478,6 +15345,60 @@
           },
           "requirement": {
             "$ref": "#/components/schemas/NornIrRequirementStructuredRequirement"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRequirementWithinTiming": {
+        "type": "object",
+        "description": "Activation policy for `within`; the duration stays in `law.timing`.",
+        "required": [
+          "trigger",
+          "retrigger",
+          "accountable"
+        ],
+        "properties": {
+          "accountable": {
+            "type": "string",
+            "description": "Principal or role answerable for discharge; grants no authority."
+          },
+          "calendar": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRequirementCalendarPin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Business calendar for the deadline. No calendar is admitted yet: refuses."
+          },
+          "cancel": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRequirementZenExpression"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional committed-state predicate that closes an open activation unpaid."
+          },
+          "retrigger": {
+            "type": "string",
+            "description": "What a trigger does while an activation is already open.",
+            "enum": [
+              "keep_first",
+              "restart"
+            ],
+            "x-enumDescriptions": [
+              "A trigger while open is recorded as ignored; the first deadline stands.",
+              "A trigger while open restarts the window from the triggering commit."
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "description": "Lifecycle transition identity on the subject that opens an activation.\nAdmission (norn-checker) checks it is nonblank; resolving it against the\nsubject's lifecycle is catalog admission (TARGET)."
           }
         },
         "additionalProperties": false
@@ -15754,8 +16675,7 @@
               {
                 "properties": {
                   "value": {
-                    "type": "number",
-                    "format": "double"
+                    "$ref": "#/components/schemas/NornIrDecimalLiteral"
                   },
                   "valueType": {
                     "enum": [
@@ -15858,7 +16778,7 @@
       },
       "NornIrSettingValueType": {
         "type": "string",
-        "description": "The JSON type of a setting's `value`.",
+        "description": "The setting value kind; numbers use exact decimal-string literals.",
         "enum": [
           "text",
           "number",
@@ -15913,6 +16833,9 @@
       "NornIrSliceKey": {
         "oneOf": [
           {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf0"
+          },
+          {
             "type": "string",
             "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
             "enum": [
@@ -15941,15 +16864,100 @@
             ]
           },
           {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf4"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5"
           },
           {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf6"
           }
         ],
         "description": "Where a [`SliceDeclaration`]'s key comes from."
       },
-      "NornIrSliceKeyOneOf4": {
+      "NornIrSliceKeyOneOf0": {
+        "type": "object",
+        "description": "A unique effective parameter selected from an earlier authorized link list.",
+        "required": [
+          "parameter"
+        ],
+        "properties": {
+          "parameter": {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf0PropertyParameter"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf0PropertyParameter": {
+        "type": "object",
+        "required": [
+          "from",
+          "settingKey",
+          "effectiveAt",
+          "precedence"
+        ],
+        "properties": {
+          "defaultFrom": {
+            "type": "string",
+            "description": "Earlier single-object slice holding an explicit default setting."
+          },
+          "effectiveAt": {
+            "type": "string",
+            "description": "Action input field carrying the declared effective timestamp.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "from": {
+            "type": "string",
+            "description": "Earlier list slice containing the candidate setting facts."
+          },
+          "precedence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems"
+            },
+            "description": "Explicit scope precedence, highest first."
+          },
+          "settingKey": {
+            "type": "string",
+            "description": "Stable parameter key."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems": {
+        "type": "object",
+        "properties": {
+          "businessUnitId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orgId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspaceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf5": {
         "type": "object",
         "description": "A text property of an earlier slice entry (a link by key).",
         "required": [
@@ -15957,12 +16965,12 @@
         ],
         "properties": {
           "property": {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf4PropertyProperty"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5PropertyProperty"
           }
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf4PropertyProperty": {
+      "NornIrSliceKeyOneOf5PropertyProperty": {
         "type": "object",
         "required": [
           "from",
@@ -15981,7 +16989,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf5": {
+      "NornIrSliceKeyOneOf6": {
         "type": "object",
         "description": "Every target of link `link`, declared on the type of earlier\nsingle-object entry `from`, loaded as a list ordered by target key\nand bounded by the limit profile's slice records (#3079).",
         "required": [
@@ -15989,12 +16997,12 @@
         ],
         "properties": {
           "link": {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5PropertyLink"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf6PropertyLink"
           }
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf5PropertyLink": {
+      "NornIrSliceKeyOneOf6PropertyLink": {
         "type": "object",
         "required": [
           "from",
@@ -16751,6 +17759,10 @@
               "type": "string"
             },
             "description": "The source states, non-empty and distinct; none is `to`."
+          },
+          "guardRefusalCode": {
+            "type": "string",
+            "description": "GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.\nOmission inherits a parent's diagnostic; guard evidence is retained."
           },
           "guards": {
             "type": "array",
@@ -19650,7 +20662,7 @@
           },
           "hash": {
             "type": "string",
-            "description": "The last event hash."
+            "description": "The last event hash for a reader with whole-world Values (D53);\notherwise a keyed handle of it, stable per revision: compare it only for equality."
           },
           "seq": {
             "type": "integer",
@@ -19758,6 +20770,167 @@
         },
         "additionalProperties": false
       },
+      "NornNumericContribution": {
+        "type": "object",
+        "description": "One original numeric member; enrichment does not enter this list.",
+        "required": [
+          "fact",
+          "amounts",
+          "receiptHash",
+          "factDigest",
+          "source",
+          "commitSeq",
+          "recordedAtMs",
+          "restricted",
+          "values"
+        ],
+        "properties": {
+          "amounts": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
+            },
+            "description": "Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values."
+          },
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Writer's immutable commit position.",
+            "minimum": 0
+          },
+          "fact": {
+            "$ref": "#/components/schemas/NornIrFactRef"
+          },
+          "factDigest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full incarnation digest, disclosed with canonical values."
+          },
+          "receiptHash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Emitting receipt identity; no export capability. Null when any member of\nthe bucket is restricted; a keyed handle (D53) for a reader without whole-world Values."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Receipt-authenticated knowledge time.",
+            "minimum": 0
+          },
+          "restricted": {
+            "type": "boolean",
+            "description": "Canonical property content was withheld."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "object",
+                "description": "Authenticated source bundle was resolved.",
+                "required": [
+                  "provenance",
+                  "status"
+                ],
+                "properties": {
+                  "provenance": {
+                    "$ref": "#/components/schemas/NornInstanceSourceProvenance",
+                    "description": "Original semantic source edges."
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "resolved"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Source disclosure was denied.",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "restricted"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "No retained source bundle exists.",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "unavailable"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            ],
+            "description": "A source grant never follows from membership or canonical-value disclosure."
+          },
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Complete canonical values, only under their own grant.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornNumericTrace": {
+        "type": "object",
+        "description": "LINEAGE-SUM-1: exact numeric membership with independently disclosed evidence.",
+        "required": [
+          "result",
+          "bucket",
+          "contributions"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "description": "Canonical selected bucket key."
+          },
+          "contributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornNumericContribution"
+            },
+            "description": "Ordered original fact incarnations."
+          },
+          "result": {
+            "$ref": "#/components/schemas/NornQueryResult",
+            "description": "Revalidated exact result at its original frontier."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornObjectPage": {
         "type": "object",
         "description": "One bounded page of a concept's authoritative objects.",
@@ -19859,7 +21032,10 @@
         ],
         "properties": {
           "amounts": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": [
                 "number",
@@ -19867,7 +21043,11 @@
               ],
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
             },
-            "description": "Operand contributions, in `totals` order; null means a predicate excluded the operand."
+            "description": "Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values."
+          },
+          "restricted": {
+            "type": "boolean",
+            "description": "The reader holds no Values grant on this member; absent when false."
           },
           "version": {
             "type": "integer",
@@ -19928,7 +21108,7 @@
           },
           "exclusions": {
             "type": "object",
-            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.",
+            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.\nFor a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.",
             "additionalProperties": {
               "type": "string"
             },
@@ -19952,7 +21132,7 @@
           },
           "lineageRef": {
             "type": "string",
-            "description": "Content-addressed membership and source lineage."
+            "description": "Opaque handle to this result's membership and source lineage, for its\ntrace: keyed by the cell (D53), never a content hash of the rows."
           },
           "mappingPin": {
             "type": "string",
@@ -20052,20 +21232,24 @@
               "type": "string"
             }
           },
+          "suppressed": {
+            "type": "boolean",
+            "description": "DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket\nhas fewer members than the server's declared minimum, so `totals` is\nempty and `value` null; membership stays. Absent when false."
+          },
           "totals": {
             "type": "array",
             "items": {
               "type": "number",
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
             },
-            "description": "One sum, or numerator then denominator."
+            "description": "One sum, or numerator then denominator; empty when the bucket is `suppressed`."
           },
           "value": {
             "type": [
               "number",
               "null"
             ],
-            "description": "The bucket's value; null means a zero-denominator ratio is unavailable. An exact decimal as a raw JSON number token; read its text, not a binary float."
+            "description": "The bucket's value; null means a zero-denominator ratio is unavailable, or the bucket is `suppressed` (DATA-VALUES-1). An exact decimal as a raw JSON number token; read its text, not a binary float."
           }
         },
         "additionalProperties": false
@@ -20098,6 +21282,19 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornQuestionAnswer": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornQueryResult",
+            "description": "Current answer."
+          },
+          {
+            "$ref": "#/components/schemas/NornHistoricalQuestionResult",
+            "description": "Historical answer."
+          }
+        ],
+        "description": "Current or authenticated historical answer, matching the native service envelope."
       },
       "NornWorld": {
         "oneOf": [
@@ -20176,6 +21373,13 @@
             "type": "string",
             "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
           },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefusalDiagnostic"
+            },
+            "description": "Checker findings for an inadmissible submission (a question or a\ndefinition), each pointing into the submitted document. Absent when\nempty. Only ever produced after the caller is authorized for\neverything the submission reads, so no finding describes an\nungranted resource."
+          },
           "explanation": {
             "type": "string",
             "description": "Why, and what would make the request admissible."
@@ -20217,12 +21421,60 @@
           "internal"
         ]
       },
+      "RefusalDiagnostic": {
+        "type": "object",
+        "description": "One checker finding in a refusal.",
+        "required": [
+          "code",
+          "severity",
+          "message",
+          "span"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable registered checker code: the rule that refused."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message; the code is the contract."
+          },
+          "severity": {
+            "type": "string",
+            "description": "`error`, `warning` or `info`; any error refuses."
+          },
+          "span": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefusalSpan",
+                "description": "Where in the submitted document, when the check can say."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "RefusalFormat": {
         "type": "string",
         "description": "Version of the public refusal projection, independent of stored receipt formats.",
         "enum": [
           "norn/refusal@2"
         ]
+      },
+      "RefusalSpan": {
+        "type": "object",
+        "description": "A location in the submitted document.",
+        "required": [
+          "pointer"
+        ],
+        "properties": {
+          "pointer": {
+            "type": "string",
+            "description": "RFC 6901 JSON pointer into the submitted document."
+          }
+        }
       }
     }
   }

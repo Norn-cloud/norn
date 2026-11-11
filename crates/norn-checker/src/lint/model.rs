@@ -104,8 +104,9 @@ impl<'a> LintSet<'a> {
     /// The effective object types of the combined layer. Effective views are
     /// only derived from a model the entity model check accepts (as
     /// [`EffectiveCatalog`](crate::EffectiveCatalog) requires); for a model
-    /// with errors the map is empty and callers fall back to the declared
-    /// definitions.
+    /// with errors, including a refused inheritance classification budget,
+    /// the map is empty and lint rules fall back to the declared definitions.
+    /// Lint never reports a type as unknown for want of an effective view.
     fn effective_types(&self) -> BTreeMap<String, EffectiveObjectType> {
         let catalog: Vec<PropertyTypeDef> = self
             .layer
@@ -130,10 +131,16 @@ impl<'a> LintSet<'a> {
         {
             return BTreeMap::new();
         }
-        effective_object_types(&model, &context)
-            .into_values()
-            .map(|(effective, _links)| (effective.name.as_str().to_owned(), effective))
-            .collect()
+        // A budget refusal is already an error finding of the model check
+        // above (so we returned the declared-definition fallback); it is
+        // handled explicitly here too rather than read as an empty view.
+        match effective_object_types(&model, &context) {
+            Ok(effective) => effective
+                .into_values()
+                .map(|(effective, _links)| (effective.name.as_str().to_owned(), effective))
+                .collect(),
+            Err(_refused) => BTreeMap::new(),
+        }
     }
 
     fn push(&mut self, artifact: &'a ArtifactEnvelope, origin: Origin) {

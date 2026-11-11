@@ -1,0 +1,165 @@
+use dashmap::RwLock;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+#[cfg(not(feature = "no-clock"))]
+use web_time::Instant;
+
+use crate::internal::{
+   CRelIndexRead, CRelIndexReadAll, CRelIndexWrite, Freezable, RelIndexMerge, RelIndexRead, RelIndexReadAll,
+   RelIndexWrite,
+};
+
+pub struct CRelNoIndex<V> {
+   // TODO remove pub
+   pub vec: Vec<RwLock<Vec<V>>>,
+   // vec: [RwLock<Vec<V>>; 32],
+   frozen: bool,
+}
+
+impl<V> Default for CRelNoIndex<V> {
+   #[inline]
+   fn default() -> Self {
+      let threads = rayon::current_num_threads().max(1);
+      let mut vec = Vec::with_capacity(threads);
+      for _ in 0..threads {
+         vec.push(RwLock::new(vec![]));
+      }
+      Self { vec, frozen: false }
+
+      // Self { vec: array_init::array_init(|_| RwLock::new(vec![])), frozen: false }
+   }
+}
+
+impl<V> CRelNoIndex<V> {
+   pub fn hash_usize(&self, _key: &()) -> usize {
+      0
+   }
+}
+
+impl<V> Freezable for CRelNoIndex<V> {
+   fn freeze(&mut self) {
+      self.frozen = true;
+   }
+   fn unfreeze(&mut self) {
+      self.frozen = false;
+   }
+}
+
+impl<'a, V: 'a> RelIndexRead<'a> for CRelNoIndex<V> {
+   type Key = ();
+   type Value = &'a V;
+
+   type IteratorType = std::iter::FlatMap<
+      std::slice::Iter<'a, RwLock<Vec<V>>>,
+      std::slice::Iter<'a, V>,
+      fn(&RwLock<Vec<V>>) -> std::slice::Iter<V>,
+   >;
+
+   fn index_get(&'a self, _key: &Self::Key) -> Option<Self::IteratorType> {
+      assert!(self.frozen);
+      let res: Self::IteratorType = self.vec.iter().flat_map(|v| {
+         let data = unsafe { &*v.data_ptr() };
+         data.iter()
+      });
+      Some(res)
+   }
+
+   #[inline(always)]
+   fn len_estimate(&self) -> usize {
+      1
+   }
+
+   fn is_empty(&'a self) -> bool {
+      false
+   }
+}
+
+impl<'a, V: 'a + Sync + Send> CRelIndexRead<'a> for CRelNoIndex<V> {
+   type Key = ();
+   type Value = &'a V;
+
+   type IteratorType =
+      rayon::iter::FlatMap<rayon::slice::Iter<'a, RwLock<Vec<V>>>, fn(&RwLock<Vec<V>>) -> rayon::slice::Iter<V>>;
+
+   fn c_index_get(&'a self, _key: &Self::Key) -> Option<Self::IteratorType> {
+      assert!(self.frozen);
+      let res: Self::IteratorType = self.vec.par_iter().flat_map(|v| {
+         let data = unsafe { &*v.data_ptr() };
+         data.par_iter()
+      });
+      Some(res)
+   }
+}
+
+impl<V> RelIndexWrite for CRelNoIndex<V> {
+   type Key = ();
+   type Value = V;
+
+   fn index_insert(&mut self, _key: Self::Key, value: Self::Value) {
+      // not necessary because we have a mut reference
+      // assert!(!ind.frozen);
+      let shard_idx = rayon::current_thread_index().unwrap_or(0) % self.vec.len();
+      self.vec[shard_idx].get_mut().push(value);
+   }
+}
+
+impl<V> RelIndexMerge for CRelNoIndex<V> {
+   fn move_index_contents(from: &mut Self, to: &mut Self) {
+      #[cfg(not(feature = "no-clock"))]
+      let before = Instant::now();
+      assert_eq!(from.len_estimate(), to.len_estimate());
+      // not necessary because we have a mut reference
+      // assert!(!from.frozen);
+      // assert!(!to.frozen);
+
+      from.vec.iter_mut().zip(to.vec.iter_mut()).for_each(|(from, to)| {
+         let from = from.get_mut();
+         let to = to.get_mut();
+
+         if from.len() > to.len() {
+            std::mem::swap(from, to);
+         }
+         to.append(from);
+      });
+      #[cfg(not(feature = "no-clock"))]
+      unsafe {
+         crate::internal::MOVE_NO_INDEX_CONTENTS_TOTAL_TIME += before.elapsed();
+      }
+   }
+}
+
+impl<V> CRelIndexWrite for CRelNoIndex<V> {
+   type Key = ();
+   type Value = V;
+
+   fn index_insert(&self, _key: Self::Key, value: Self::Value) {
+      assert!(!self.frozen);
+      let shard_idx = rayon::current_thread_index().unwrap_or(0) % self.vec.len();
+      self.vec[shard_idx].write().push(value);
+   }
+}
+
+impl<'a, V: 'a> RelIndexReadAll<'a> for CRelNoIndex<V> {
+   type Key = &'a ();
+   type Value = &'a V;
+
+   type ValueIteratorType = <Self as RelIndexRead<'a>>::IteratorType;
+
+   type AllIteratorType = std::iter::Once<(&'a (), Self::ValueIteratorType)>;
+
+   fn iter_all(&'a self) -> Self::AllIteratorType {
+      std::iter::once((&(), self.index_get(&()).unwrap()))
+   }
+}
+
+impl<'a, V: 'a + Sync + Send> CRelIndexReadAll<'a> for CRelNoIndex<V> {
+   type Key = &'a ();
+   type Value = &'a V;
+
+   type ValueIteratorType = <Self as CRelIndexRead<'a>>::IteratorType;
+
+   type AllIteratorType = rayon::iter::Once<(&'a (), Self::ValueIteratorType)>;
+
+   fn c_iter_all(&'a self) -> Self::AllIteratorType {
+      rayon::iter::once((&(), self.c_index_get(&()).unwrap()))
+   }
+}

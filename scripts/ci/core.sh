@@ -4,7 +4,7 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features wasm clippy doc guards integration formal provenance)
+phases=(cheap test doctest features wasm clippy doc guards integration browser formal provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -69,7 +69,7 @@ use_jsonschema() {
   python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
 }
 run_phase() {
-  if [[ $1 != cheap && $1 != test-shards && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
+  if [[ $1 != cheap && $1 != test-shards && $1 != browser && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
       use_jsonschema
@@ -83,9 +83,11 @@ run_phase() {
       python3 scripts/ci/frontier.py self-test
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
+      python3 scripts/ci/test_implementation_receipts.py
+      python3 scripts/test_record_new_files.py
       python3 scripts/test_demo_scenarios.py
       cargo xtask ci policy
-      cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
+      cargo xtask ci provenance
       ;;
     test)
       select_shard "${2:-all}"
@@ -150,7 +152,7 @@ PY
       cargo test --locked -p norn-canonical -p norn-ir -p norn-checker --features serde_json/arbitrary_precision
       ;;
     wasm)
-      cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-authz -p norn-kernel -p norn-projections -p norn-decisions -p norn-api
+      cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
       ;;
@@ -194,6 +196,42 @@ PY
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
       git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts
       ;;
+    browser)
+      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the
+      # checker WASM package built into apps/studio/src/checker. Without a config there is
+      # nothing to run; browser tests without a config are a broken setup, never a skip.
+      if ! compgen -G 'apps/studio/playwright.config.*' > /dev/null; then
+        if compgen -G 'apps/studio/e2e/*.e2e.ts' > /dev/null; then
+          printf 'browser: apps/studio/e2e has browser tests but no playwright.config\n' >&2
+          exit 1
+        fi
+        printf '::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\n'
+        return 0
+      fi
+      # The checker package needs the wasm32 target. CI's pinned toolchain step installs it;
+      # a hand run on a plain toolchain fails here, not deep inside the WASM build.
+      local wasm_lib
+      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=''
+      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then
+        printf 'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\n' "$(rustc --version 2> /dev/null || echo 'no rustc')" >&2
+        exit 1
+      fi
+      cargo install --locked wasm-bindgen-cli --version 0.2.129
+      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
+      (
+        cd apps/studio
+        bun install --frozen-lockfile --ignore-scripts --backend copyfile
+        bun run build
+        # "No tests found" must fail: a broken testDir or testMatch is never a pass.
+        listed=$(bunx playwright test --list | sed -n 's/^Total: \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p')
+        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\n' >&2; exit 1; }
+        # A suite of only skipped rows must fail too: require at least one executed test.
+        report="$upstream/playwright.json"
+        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json
+        ran=$(python3 -c 'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))' "$report")
+        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\n' >&2; exit 1; }
+      )
+      ;;
     formal)
       export CI=true
       use_jsonschema
@@ -204,10 +242,10 @@ PY
       ;;
     provenance)
       export CI=true
-      cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
+      cargo xtask ci provenance
       mkdir -p "$upstream/distribution"
       git archive HEAD | tar -x -C "$upstream/distribution"
-      cargo xtask ci provenance --root "$upstream/distribution" --distribution --base-root "$PWD" --source-root "$PWD" --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
+      cargo xtask ci provenance --root "$upstream/distribution" --distribution --base-root "$PWD"
       ;;
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
@@ -242,6 +280,8 @@ weights = {
     "phase/doctest": 6, "phase/features": 239, "phase/wasm": 97,
     "phase/clippy": 75, "phase/doc": 60, "phase/guards": 369,
     "phase/integration": 827, "phase/provenance": 17, "phase/test-shards": 5,
+    # Estimate until the first Studio browser rows run in CI (#1113).
+    "phase/browser": 600,
 }
 # Cold test tasks spent 163–193 seconds compiling, before nextest's runtime.
 # Charge that once per bundle; later shards reuse the same test binaries.
@@ -389,7 +429,9 @@ else:
 parts = rest if "norn-cell" in reached else 1
 selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
                   if set(re.findall(r"binary_id\(([^:]+)::", expression)) & reached]
-done({"mode": "affected", "shard": selected_heavy + [f"rest-{i}" for i in range(1, parts + 1)], "phase": ["guards", "provenance", "clippy"],
+# Studio changes already plan in full; a checker change reaches the Studio's WASM package.
+browser = ["browser"] if "norn-checker-wasm" in reached else []
+done({"mode": "affected", "shard": selected_heavy + [f"rest-{i}" for i in range(1, parts + 1)], "phase": ["guards", "provenance", "clippy"] + browser,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )

@@ -123,6 +123,12 @@ const fn rule(name: &'static str, ring: Ring, allowed_norn: &'static [&'static s
 pub const CRATES: &[CrateRule] = &[
     r0("norn-graph", &[], &["rust_decimal"]),
     r0("norn-canonical", &[], &[]),
+    // Shared data/validator only; no executor.
+    r0(
+        "norn-datalog",
+        &["norn-canonical", "norn-graph", "norn-ir"],
+        &["serde"],
+    ),
     r0(
         "norn-ir",
         &["norn-canonical"],
@@ -133,10 +139,25 @@ pub const CRATES: &[CrateRule] = &[
         &["norn-ir"],
         &["zen-expression", "chrono", "chrono-tz"],
     ),
+    // Bounded inheritance classification: Ascent (vendored, clock-free profile)
+    // at runtime; norn-datalog and quote only at build time.
     r0(
         "norn-checker",
-        &["norn-ir", "norn-expr", "norn-canonical", "norn-graph"],
-        &["serde_json", "sha2", "regex-lite", "serde_path_to_error"],
+        &[
+            "norn-ir",
+            "norn-expr",
+            "norn-canonical",
+            "norn-graph",
+            "norn-datalog",
+        ],
+        &[
+            "serde_json",
+            "sha2",
+            "regex-lite",
+            "serde_path_to_error",
+            "ascent",
+            "quote",
+        ],
     ),
     r0(
         "norn-decisions",
@@ -160,10 +181,33 @@ pub const CRATES: &[CrateRule] = &[
         ],
         &["serde", "thiserror"],
     ),
+    r0(
+        "norn-builtins",
+        &["norn-ir", "norn-kernel"],
+        &["serde", "serde_json"],
+    ),
     rule(
         "norn-cell",
         Ring::One,
-        &["norn-kernel", "norn-checker", "norn-projections", "norn-ir"],
+        &[
+            "norn-kernel",
+            "norn-builtins",
+            "norn-checker",
+            "norn-projections",
+            "norn-ir",
+        ],
+    ),
+    rule(
+        "norn-cell-do",
+        Ring::One,
+        &[
+            "norn-api",
+            "norn-cell",
+            "norn-checker",
+            "norn-ir",
+            "norn-kernel",
+            "norn-projections",
+        ],
     ),
     rule("norn-dataplane", Ring::One, &["norn-ir"]),
     rule(

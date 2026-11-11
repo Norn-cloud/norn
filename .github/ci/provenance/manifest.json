@@ -16,7 +16,16 @@
       "license": "MIT",
       "evidence": {
         "path": "apps/studio/src/components/ui/provenance.json",
-        "sha256": "8c70c6591a8d4677eaed13470fbc17ecb473f39e27ec6b838b5ab991e47c4920"
+        "sha256": "173c33669988a7a9299ca004641e4a6b5983a4cfff64a30771424e941ace4623"
+      }
+    },
+    {
+      "id": "software.ascent",
+      "revision": "e52c84b4419c56976413de1cbf15d56c8c136a5c",
+      "license": "MIT",
+      "evidence": {
+        "path": "third_party/ascent/PATCHES.md",
+        "sha256": "b82c6afe31f12d59c49f45bccdff7e420ec8f4f5d34f37507d6a48a07060ec5f"
       }
     }
   ]

@@ -10,6 +10,7 @@
 //! | `_norn_perform_claim` | one durable claim per command generation, committed before external dispatch | commit |
 //! | `_norn_timer` | one pending timer and its incarnation (the scheduling commit); the `clock` queue, whose earliest `due` is the host alarm | commit |
 //! | `_norn_run` | one `perform` execution and its outcome, and the commit that consumed it | perform; commit |
+//! | `_norn_flow_run` | one admitted flow run: its flow, generation, current lifecycle state and version, and its start and last-write commits (RUN-LEDGER-1, `flow_run`) | commit |
 //! | `_norn_inbox` | one ingested observation (the `observe` queue) and the commit that consumed it | ingest; commit |
 //! | `_norn_version` | the highest version ever assigned to an object id within its type hierarchy (keyed by root type), so versions never repeat across delete, recreate, or a change of subtype | commit |
 //! | `_norn_link_version` | one link row `(link table, source, target)` ever written: its link id, its endpoint types as last written, and its version, bumped by every add or remove, so it never repeats across remove and re-add (#3013) | commit |

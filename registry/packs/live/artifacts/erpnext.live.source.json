@@ -1,0 +1,107 @@
+{
+  "artifactId": "erpnext.live.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "ERPNext Item reads",
+  "namespace": "erpnext",
+  "payload": {
+    "adapter": {
+      "name": "norn-source-pull",
+      "version": "1"
+    },
+    "constraints": [
+      {
+        "dataset": "Item",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "Item",
+        "kind": "document",
+        "nativeName": "Item"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "Item",
+        "name": "name",
+        "nativeType": "Text",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "norn_ref",
+        "nativeType": "Text",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "code",
+        "nativeType": "Text",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "label",
+        "nativeType": "Text",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "uom",
+        "nativeType": "Text",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-04T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "c4d0f7c5f7bf2b24b90e442b1a735e2cba947a007e45eebfab242698deae1890",
+      "uri": "fixtures/connectors/frappe.connector.json"
+    },
+    "source": {
+      "instance": "live",
+      "system": "erpnext",
+      "version": "erpnext-live/1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/live/artifacts/erpnext.live.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

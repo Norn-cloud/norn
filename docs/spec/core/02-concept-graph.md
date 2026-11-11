@@ -94,10 +94,12 @@ refuse with `core.graph.catalog_write` at ordinary checker admission.
 
 Present: `crates/norn-ir/src/entity_v2/`, `definition_catalog.rs`, `crates/norn-checker/src/entity_model/`, `interfaces.rs`, `crates/norn-kernel/src/decision_commit.rs`; typed builders in `tools/norn-ts/src/builder/`. Main has effective interfaces, links, flat lifecycles and read-only catalog substrate. General defined concepts, full containment-law closure and coordinated graph migration are gaps. #227 is an open lane C application of these contracts, not new graph semantics; #316 adds structured requirements, not graph authority.
 
-## Work breakdown (each PR ≤400 lines)
+## Work breakdown (one coherent unit per PR)
 
 1. Name graph-role/facet projections using existing entity/member IDs; GRAPH-CATALOG conformance, no new root kind (CI + core laws).
 2. Add pure defined-concept schema/admission and cycle diagnostics; depends on 03 expression typing.
 3. Evaluate authoritative classification and dependency capture; GRAPH-CLASSIFY plus incomplete-input refusals.
 4. Complete graph-wide required-link/owned-draft validation in 04 commit; GRAPH-DRAFT/STATE negatives.
 5. Connect effective member origins to 05 B2 law instantiation; GRAPH-DIAMOND, then lane C #227 core-aligned definitions.
+
+**VAL-DECIMAL-BIND-1:** An interface `decimal-binding` member obtains its exact unit and scale solely from the implementing type's concrete Decimal declaration, and same-group members require identical units/scales; missing bindings refuse `core.values.unit_binding_required`, mismatches refuse `core.values.unit_mismatch`, with no scalar or sibling-unit fallback.
