@@ -361,11 +361,12 @@ impl<E: SqlEngine> CellStore<E> {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::expect_used, reason = "test fixtures")]
 mod label_identity {
     use super::*;
     use proptest::prelude::*;
 
-    fn envelope(id: &str, kind: &str, payload: serde_json::Value) -> ArtifactEnvelope {
+    fn envelope(id: &str, kind: &str, payload: &serde_json::Value) -> ArtifactEnvelope {
         serde_json::from_value(serde_json::json!({
             "irVersion": "0.1", "artifactId": id, "kind": kind, "namespace": "t", "name": id,
             "version": "1.0.0", "lifecycle": "active", "scope": {}, "dependencies": [],
@@ -383,12 +384,12 @@ mod label_identity {
             at in 0usize..3,
         ) {
             let definitions = vec![
-                envelope("t.a", "rule", serde_json::json!({ "ruleId": "t.a" })),
-                envelope("t.b", "rule", serde_json::json!({ "ruleId": "t.b" })),
+                envelope("t.a", "rule", &serde_json::json!({ "ruleId": "t.a" })),
+                envelope("t.b", "rule", &serde_json::json!({ "ruleId": "t.b" })),
             ];
             let mut labelled = definitions.clone();
             for (index, text) in texts.iter().enumerate() {
-                let catalog = envelope(&format!("t.labels{index}"), "labels", serde_json::json!({
+                let catalog = envelope(&format!("t.labels{index}"), "labels", &serde_json::json!({
                     "labelsVersion": "0.1",
                     "entries": [{ "target": { "kind": "rule", "ruleId": "t.a" }, "label": { "ar": text } }],
                 }));
