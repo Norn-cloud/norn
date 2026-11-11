@@ -200,3 +200,202 @@ impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
         self.inner.read_cache_revision()
     }
 }
+
+/// What a native `transactionSync` emulator and its callback throw.
+#[cfg(feature = "native")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Thrown {
+    /// Thrown by the callback, rethrown unchanged after the rollback.
+    Callback(String),
+    /// Thrown by the storage itself: a refused nested `transactionSync`, or a
+    /// failed begin, commit or rollback.
+    Storage(String),
+}
+
+#[cfg(feature = "native")]
+impl From<CellError> for Thrown {
+    fn from(error: CellError) -> Self {
+        Self::Storage(error.to_string())
+    }
+}
+
+/// A native Durable Object storage: `sql.exec` plus `transactionSync`.
+#[cfg(feature = "native")]
+pub trait DoStorage: super::Transact {
+    /// `storage.sql.exec`: runs `sql` and returns its rows.
+    ///
+    /// # Errors
+    /// Backend or host-subset errors.
+    fn exec(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError>;
+
+    /// `storage.sql.exec` of several schema statements without bindings.
+    ///
+    /// # Errors
+    /// Backend or host-subset errors.
+    fn exec_batch(&self, sql: &str) -> Result<(), CellError>;
+}
+
+/// The rollback marker [`DoStorageEmulator`]'s glue throws (as the Workers
+/// host does).
+#[cfg(feature = "native")]
+const ROLLBACK_MARKER: &str = "norn:rollback";
+
+/// A native emulator of Durable Object storage over rusqlite, for running the
+/// host laws on the Durable Object transaction glue ([`super::run_transaction`])
+/// natively. Its assumed `transactionSync` semantics, which the Workers engine
+/// relies on:
+///
+/// 1. The callback runs synchronously, exactly once, inside one SQLite
+///    transaction; every `sql.exec` it makes joins that transaction.
+/// 2. If the callback throws (returns `Err`), everything it wrote is rolled
+///    back and `transactionSync` rethrows the callback's value unchanged.
+/// 3. If the callback returns normally, the transaction commits and
+///    `transactionSync` returns normally.
+/// 4. A `transactionSync` inside another one is refused by the storage with
+///    its own thrown value ([`Thrown::Storage`]), before any SQL; the glue
+///    refuses nesting before reaching the storage, so this is defensive.
+/// 5. Transaction-control SQL (`BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`,
+///    `RELEASE`) is refused inside or outside a transaction: only the storage
+///    opens and ends transactions (the native engine's authorizer denies it).
+/// 6. If the commit (or the rollback) itself fails, the transaction is rolled
+///    back and `transactionSync` throws the storage's error, not the
+///    callback's value; the glue reports it as an engine error.
+///
+/// So the glue's caller sees its own typed error on a rollback (the callback
+/// threw the marker), and a [`CellError::Engine`] for a storage failure. The
+/// emulator does not model Workers specifics outside the transaction (JS
+/// values, output gates, multi-statement `exec` cursors): `exec` runs one
+/// statement and returns its rows, `exec_batch` runs schema batches.
+#[cfg(feature = "native")]
+#[derive(Debug)]
+pub struct DoStorageEmulator {
+    native: super::NativeEngine,
+    in_transaction: std::cell::Cell<bool>,
+}
+
+#[cfg(feature = "native")]
+impl DoStorageEmulator {
+    /// The emulator over `native`.
+    #[must_use]
+    pub const fn new(native: super::NativeEngine) -> Self {
+        Self {
+            native,
+            in_transaction: std::cell::Cell::new(false),
+        }
+    }
+}
+
+#[cfg(feature = "native")]
+impl super::Transact for DoStorageEmulator {
+    type Thrown = Thrown;
+
+    fn transaction_sync<F: FnMut() -> Result<(), Thrown>>(
+        &self,
+        callback: &mut F,
+    ) -> Result<(), Thrown> {
+        struct Open<'a>(&'a std::cell::Cell<bool>);
+        impl Drop for Open<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        if self.in_transaction.get() {
+            return Err(Thrown::Storage(
+                "transactionSync cannot be nested".to_owned(),
+            ));
+        }
+        self.in_transaction.set(true);
+        let open = Open(&self.in_transaction);
+        // Commit on Ok; on Err roll back and rethrow; a begin, commit or
+        // rollback failure becomes the storage's own throw.
+        let result = self.native.transaction(callback);
+        drop(open);
+        result
+    }
+
+    fn rollback_marker(&self) -> Thrown {
+        Thrown::Callback(ROLLBACK_MARKER.to_owned())
+    }
+
+    fn is_rollback_marker(&self, thrown: &Thrown) -> bool {
+        matches!(thrown, Thrown::Callback(value) if value == ROLLBACK_MARKER)
+    }
+
+    fn callback_reused(&self) -> Thrown {
+        Thrown::Callback("transaction callback reused".to_owned())
+    }
+
+    fn engine_error(&self, thrown: &Thrown) -> CellError {
+        CellError::Engine(format!("DO SQLite: {thrown:?}"))
+    }
+}
+
+#[cfg(feature = "native")]
+impl DoStorage for DoStorageEmulator {
+    fn exec(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.native.query(sql, params)
+    }
+
+    fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.native.execute_batch(sql)
+    }
+}
+
+/// The Durable Object engine natively: the Workers engine's transaction glue
+/// ([`super::run_transaction`]) over a [`DoStorage`], by default the
+/// [`DoStorageEmulator`]. SQL goes straight to `sql.exec`, as on Workers.
+#[cfg(feature = "native")]
+#[derive(Debug)]
+pub struct DoEngine<S = DoStorageEmulator> {
+    storage: S,
+    active: std::cell::Cell<bool>,
+}
+
+#[cfg(feature = "native")]
+impl<S: DoStorage> DoEngine<S> {
+    /// The engine over `storage`.
+    #[must_use]
+    pub const fn new(storage: S) -> Self {
+        Self {
+            storage,
+            active: std::cell::Cell::new(false),
+        }
+    }
+
+    /// The storage under the glue.
+    #[must_use]
+    pub const fn storage(&self) -> &S {
+        &self.storage
+    }
+}
+
+#[cfg(feature = "native")]
+impl<S: DoStorage> SqlEngine for DoEngine<S> {
+    /// As on Workers.
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        &["_cf_*", "__cf_*", "_litestream_*", "__miniflare_*"]
+    }
+
+    /// As on Workers: one connection, every read path synchronous.
+    fn read_isolation(&self) -> ReadIsolation {
+        ReadIsolation::ExclusiveSynchronous
+    }
+
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.query(sql, params).map(|_| ())
+    }
+
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        super::validate_bindings(sql, params)?;
+        self.storage.exec(sql, params)
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        super::validate_bindings(sql, &[])?;
+        self.storage.exec_batch(sql)
+    }
+
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        super::run_transaction(&self.storage, &self.active, f)
+    }
+}

@@ -14,6 +14,9 @@
 //! - Under injected crashes and I/O errors ([`FaultEngine`], law 6), commits
 //!   and performs stay atomic and the reopened file refines the model; a
 //!   mutant engine that commits a faulted transaction is caught.
+//! - The same laws hold natively on the Durable Object transaction glue
+//!   (`DoEngine` over the `transactionSync` emulator, DO SQL subset), with
+//!   and without faults; mutant glue and storage are caught.
 //! - Deterministic fixtures: commit and enqueue are atomic (a refused commit
 //!   writes nothing); a timer is delivered when due, consumed once, and a
 //!   stale incarnation is refused; a performed result is recorded once and
@@ -28,9 +31,9 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use norn_cell::engine::{
-    DefaultEngine, EngineFault, EngineFaultKind, FaultEngine, FaultSwitch, MAX_PARAMETERS,
-    MAX_SAFE_INTEGER, MAX_STATEMENT_BYTES, NativeEngine, SqlEngine, SqlValue, validate_bindings,
-    validate_value,
+    DefaultEngine, DoEngine, DoStorage, DoStorageEmulator, EngineFault, EngineFaultKind,
+    FaultEngine, FaultSwitch, MAX_PARAMETERS, MAX_SAFE_INTEGER, MAX_STATEMENT_BYTES, NativeEngine,
+    SqlEngine, SqlValue, Thrown, Transact, validate_bindings, validate_value,
 };
 use norn_cell::{CellError, CellStore, JournalMode, Model, PerformClaim, SqliteCell, StoreOptions};
 use norn_kernel::cell_host::JsonObject;
@@ -272,25 +275,7 @@ impl SqlEngine for RestrictedEngine {
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
         validate_do_sql(sql, params)?;
-        let rows = self.native.query(sql, params)?;
-        for row in &rows {
-            let bytes = row.iter().try_fold(0_usize, |total, value| {
-                validate_value(value)?;
-                let size = match value {
-                    SqlValue::Null => 0,
-                    SqlValue::Integer(_) | SqlValue::Real(_) => 8,
-                    SqlValue::Text(text) => text.len(),
-                    SqlValue::Blob(blob) => blob.len(),
-                };
-                total
-                    .checked_add(size)
-                    .ok_or(CellError::OutOfRange("SQL result row bytes"))
-            })?;
-            if bytes > MAX_RESULT_ROW_BYTES {
-                return Err(CellError::OutOfRange("SQL result row bytes"));
-            }
-        }
-        Ok(rows)
+        validate_do_rows(self.native.query(sql, params)?)
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
@@ -312,6 +297,215 @@ impl SqlEngine for RestrictedEngine {
         let result = self.native.transaction(f);
         drop(reset);
         result
+    }
+}
+
+/// Result rows a DO SQLite host can return: exact integers, bounded row bytes.
+fn validate_do_rows(rows: Vec<Vec<SqlValue>>) -> Result<Vec<Vec<SqlValue>>, CellError> {
+    for row in &rows {
+        let bytes = row.iter().try_fold(0_usize, |total, value| {
+            validate_value(value)?;
+            let size = match value {
+                SqlValue::Null => 0,
+                SqlValue::Integer(_) | SqlValue::Real(_) => 8,
+                SqlValue::Text(text) => text.len(),
+                SqlValue::Blob(blob) => blob.len(),
+            };
+            total
+                .checked_add(size)
+                .ok_or(CellError::OutOfRange("SQL result row bytes"))
+        })?;
+        if bytes > MAX_RESULT_ROW_BYTES {
+            return Err(CellError::OutOfRange("SQL result row bytes"));
+        }
+    }
+    Ok(rows)
+}
+
+/// The DO SQL subset over an engine with its own transaction glue: SQL is
+/// validated as by [`RestrictedEngine`], transactions are the engine's own.
+#[derive(Debug)]
+struct DoSubset<S>(S);
+
+impl<S: LawEngine> LawEngine for DoSubset<S> {
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        S::open_file(path, options, faults).map(Self)
+    }
+
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
+        S::open_memory(faults).map(Self)
+    }
+}
+
+impl<S: SqlEngine> SqlEngine for DoSubset<S> {
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        self.0.platform_table_globs()
+    }
+
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.0.read_isolation()
+    }
+
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.0.read_cache_revision()
+    }
+
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        validate_do_sql(sql, params)?;
+        self.0.execute(sql, params)
+    }
+
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        validate_do_sql(sql, params)?;
+        validate_do_rows(self.0.query(sql, params)?)
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        validate_do_sql(sql, &[])?;
+        self.0.execute_batch(sql)
+    }
+
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.0.transaction(f)
+    }
+}
+
+/// A Durable Object storage the law driver opens over a native connection.
+trait OpenDo: DoStorage + Debug + Sized + 'static {
+    fn over(native: NativeEngine) -> Self;
+}
+
+impl OpenDo for DoStorageEmulator {
+    fn over(native: NativeEngine) -> Self {
+        Self::new(native)
+    }
+}
+
+impl<S: OpenDo> LawEngine for DoEngine<S> {
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        _faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        NativeEngine::open(path, options).map(|native| Self::new(S::over(native)))
+    }
+
+    fn open_memory(_faults: &FaultSwitch) -> Result<Self, CellError> {
+        NativeEngine::open_in_memory().map(|native| Self::new(S::over(native)))
+    }
+}
+
+/// The Durable Object engine natively: the Workers transaction glue over the
+/// `transactionSync` emulator, restricted to the DO SQL subset.
+type DoLawEngine<S = DoStorageEmulator> = DoSubset<DoEngine<S>>;
+
+/// Mutant glue input: it never recognises its own rollback marker, so every
+/// rolled-back refusal is reported as an engine error.
+#[derive(Debug)]
+struct MisreadsRollback(DoStorageEmulator);
+
+/// Mutant storage: it ignores the rollback marker, commits what the callback
+/// wrote, and only then rethrows.
+#[derive(Debug)]
+struct CommitsOnRollback(DoStorageEmulator);
+
+impl OpenDo for MisreadsRollback {
+    fn over(native: NativeEngine) -> Self {
+        Self(DoStorageEmulator::new(native))
+    }
+}
+
+impl OpenDo for CommitsOnRollback {
+    fn over(native: NativeEngine) -> Self {
+        Self(DoStorageEmulator::new(native))
+    }
+}
+
+impl Transact for MisreadsRollback {
+    type Thrown = Thrown;
+
+    fn transaction_sync<F: FnMut() -> Result<(), Thrown>>(
+        &self,
+        callback: &mut F,
+    ) -> Result<(), Thrown> {
+        self.0.transaction_sync(callback)
+    }
+
+    fn rollback_marker(&self) -> Thrown {
+        self.0.rollback_marker()
+    }
+
+    fn is_rollback_marker(&self, _thrown: &Thrown) -> bool {
+        // The bug.
+        false
+    }
+
+    fn callback_reused(&self) -> Thrown {
+        self.0.callback_reused()
+    }
+
+    fn engine_error(&self, thrown: &Thrown) -> CellError {
+        self.0.engine_error(thrown)
+    }
+}
+
+impl Transact for CommitsOnRollback {
+    type Thrown = Thrown;
+
+    fn transaction_sync<F: FnMut() -> Result<(), Thrown>>(
+        &self,
+        callback: &mut F,
+    ) -> Result<(), Thrown> {
+        let mut swallowed = None;
+        // The bug: a throw does not stop the commit.
+        let mut commit_anyway = || {
+            callback().or_else(|thrown| {
+                swallowed = Some(thrown);
+                Ok(())
+            })
+        };
+        let result = self.0.transaction_sync(&mut commit_anyway);
+        swallowed.map_or(result, Err)
+    }
+
+    fn rollback_marker(&self) -> Thrown {
+        self.0.rollback_marker()
+    }
+
+    fn is_rollback_marker(&self, thrown: &Thrown) -> bool {
+        self.0.is_rollback_marker(thrown)
+    }
+
+    fn callback_reused(&self) -> Thrown {
+        self.0.callback_reused()
+    }
+
+    fn engine_error(&self, thrown: &Thrown) -> CellError {
+        self.0.engine_error(thrown)
+    }
+}
+
+impl DoStorage for MisreadsRollback {
+    fn exec(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.0.exec(sql, params)
+    }
+
+    fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.0.exec_batch(sql)
+    }
+}
+
+impl DoStorage for CommitsOnRollback {
+    fn exec(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.0.exec(sql, params)
+    }
+
+    fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.0.exec_batch(sql)
     }
 }
 
@@ -760,6 +954,55 @@ fn cell_host_mutant_committing_after_a_fault_is_caught() {
         "{failure}"
     );
     assert!(failure.reason.contains("swarm:"), "{failure}");
+}
+
+/// The host laws on the Durable Object transaction glue, run natively
+/// (`DoEngine` over the `transactionSync` emulator, DO SQL subset).
+#[test]
+fn cell_host_laws_hold_for_the_do_transaction_glue() {
+    let coverage =
+        check_cell_host::<LawSqlite<false, DoLawEngine>>(&Settings::new(file!()).cases(128));
+    coverage.assert_covered(CELL_HOST_LABELS);
+}
+
+/// Law 6 on the Durable Object transaction glue: a crash or I/O error at any
+/// statement or commit point inside `transactionSync` rolls everything back.
+#[test]
+fn cell_host_laws_hold_under_injected_crashes_for_the_do_transaction_glue() {
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine>>>(
+        &Settings::new(file!()).cases(FAULT_REOPEN_CASES),
+    );
+    coverage.assert_covered(CELL_FAULT_LABELS);
+    coverage.assert_covered(&["cell:fault.crash", "cell:fault.io_error"]);
+}
+
+/// Glue that does not recognise its rollback marker turns every typed
+/// refusal into an engine error, and the commit law catches it.
+#[test]
+fn cell_host_mutant_do_glue_misreading_rollback_is_caught() {
+    let failure = run_cell_host::<LawSqlite<false, DoLawEngine<MisreadsRollback>>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(16),
+    )
+    .expect_err("glue that misreads its rollback marker must fail the laws");
+    assert!(
+        failure.reason.contains("commit outcome differs"),
+        "{failure}"
+    );
+}
+
+/// A storage that commits despite the rollback marker lets a faulted (or
+/// refused) transaction's writes survive, and the laws catch it.
+#[test]
+fn cell_host_mutant_do_storage_committing_on_rollback_is_caught() {
+    let failure = run_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine<CommitsOnRollback>>>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(16),
+    )
+    .expect_err("a storage that commits on rollback must fail the laws");
+    assert!(!failure.transitions.is_empty(), "{failure}");
 }
 
 #[test]
