@@ -7,11 +7,11 @@
 
 use norn_cell::export::Exporter;
 use norn_cell::{CellStore, Model, SqliteCell, StoreOptions, engine::NativeEngine};
-use std::collections::BTreeMap;
 use norn_ir::{RuntimeValue, cell_id::CellId};
 use norn_kernel::read_envelope::{Completeness, ReadRequirement, ReadSemantics};
 use norn_kernel::{CellHost as _, FactKey, authz::CommitBinding};
 use norn_testkit::proptest::prelude::*;
+use std::collections::BTreeMap;
 
 fn binding() -> CommitBinding {
     CommitBinding {
@@ -38,15 +38,20 @@ fn model() -> Model {
 }
 fn host() -> SqliteCell<(), (), RuntimeValue> {
     let cell = CellId::try_from("00000000000000000000000000000001".to_owned()).expect("id");
-    let store =
-        CellStore::from_engine_bound(NativeEngine::open_in_memory().expect("engine"), model(), &cell)
-            .expect("store");
+    let store = CellStore::from_engine_bound(
+        NativeEngine::open_in_memory().expect("engine"),
+        model(),
+        &cell,
+    )
+    .expect("store");
     SqliteCell::new(store, "demo/dev", |_| RuntimeValue::Null).expect("host")
 }
 fn host_over(store: CellStore) -> SqliteCell<(), (), RuntimeValue> {
     SqliteCell::new(store, "demo/dev", |_| RuntimeValue::Null).expect("host")
 }
-fn dump(host: &SqliteCell<(), (), RuntimeValue>) -> std::collections::BTreeMap<String, Vec<String>> {
+fn dump(
+    host: &SqliteCell<(), (), RuntimeValue>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
     host.store().read().dump().expect("dump")
 }
 
@@ -197,20 +202,37 @@ async fn cell_local_read_envelope_tokens_do_not_cross_cells_and_survive_restore(
     let mut sibling = host_over(CellStore::open_in_memory(model()).expect("sibling"));
     let key = norn_testkit::cell_host::law_key(1);
     let authority = binding_for(&key);
-    source.commit(norn_kernel::CellCommit::empty()).expect("commit");
-    sibling.commit(norn_kernel::CellCommit::empty()).expect("commit");
+    source
+        .commit(norn_kernel::CellCommit::empty())
+        .expect("commit");
+    sibling
+        .commit(norn_kernel::CellCommit::empty())
+        .expect("commit");
     let token = source.read_envelope(&key, &authority).expect("read").token;
     let sibling_token = sibling.read_envelope(&key, &authority).expect("read").token;
-    assert_eq!(token.context.frontier.revision, sibling_token.context.frontier.revision);
-    assert_eq!(token.context.authority_pin, sibling_token.context.authority_pin);
-    assert_ne!(token.context.frontier.cell, sibling_token.context.frontier.cell);
+    assert_eq!(
+        token.context.frontier.revision,
+        sibling_token.context.frontier.revision
+    );
+    assert_eq!(
+        token.context.authority_pin,
+        sibling_token.context.authority_pin
+    );
+    assert_ne!(
+        token.context.frontier.cell,
+        sibling_token.context.frontier.cell
+    );
     for requirement in [ReadRequirement::Exact, ReadRequirement::AllowStale] {
         assert!(token.validate(&sibling_token.context, requirement).is_err());
         assert!(sibling_token.validate(&token.context, requirement).is_err());
     }
 
     let mut exporter = Exporter::local(&dir.path().join("export")).expect("exporter");
-    let record = source.store().export_record(1).expect("read").expect("record");
+    let record = source
+        .store()
+        .export_record(1)
+        .expect("read")
+        .expect("record");
     exporter.append(&record).await.expect("export");
     drop(source);
     let target = dir.path().join("restored.sqlite");
@@ -234,7 +256,10 @@ async fn cell_local_read_envelope_tokens_do_not_cross_cells_and_survive_restore(
     .expect("restore");
     let restored =
         host_over(CellStore::open(&target, model(), StoreOptions::default()).expect("restored"));
-    let restored_token = restored.read_envelope(&key, &authority).expect("read").token;
+    let restored_token = restored
+        .read_envelope(&key, &authority)
+        .expect("read")
+        .token;
     assert_eq!(restored_token.context.frontier.cell, source_id);
     token
         .validate(&restored_token.context, ReadRequirement::Exact)
@@ -245,5 +270,9 @@ async fn cell_local_read_envelope_tokens_do_not_cross_cells_and_survive_restore(
         .read_envelope(&key, &other_authority)
         .expect("read")
         .token;
-    assert!(token.validate(&reauthorized.context, ReadRequirement::AllowStale).is_err());
+    assert!(
+        token
+            .validate(&reauthorized.context, ReadRequirement::AllowStale)
+            .is_err()
+    );
 }
