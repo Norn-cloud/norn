@@ -1,17 +1,11 @@
 {
-  "sha256": "2d01ea2f5532685a0640213bc4b7a16279613073d679c1ba072b1245a1e42c66",
-  "origin": "derived",
-  "category": "generated",
+  "sha256": "ae4aba6bc1bfee41125c8b3e830c1d60aef5e8910e2d4afd9548fb27d7c95f62",
+  "origin": "authored",
+  "category": "synthetic-fixture",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [
-    "registry/packs/ubl/source.read.json",
-    "crates/norn-formats/src/bin/norn-format-read.rs",
-    "crates/norn-formats/src/pack.rs",
-    "crates/norn-formats/src/xsd.rs",
-    "crates/norn-formats/src/xsd_projection.rs"
-  ],
+  "parents": [],
   "rights_evidence": [
     {
       "path": "NOTICE",

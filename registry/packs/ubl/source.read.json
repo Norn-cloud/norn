@@ -42,12 +42,8 @@
       }
     ]
   },
-  "module": {
-    "path": "source.ts",
-    "export": "Source",
-    "id": "ubl.invoice.source",
-    "title": "OASIS UBL 2.3 Invoice (structure read from the pinned XSDs)",
-    "version": "0.1.0",
+  "projection": {
+    "contract": "artifacts/ubl.invoice.source.json",
     "select": [
       "{urn:oasis:names:specification:ubl:schema:xsd:Invoice-2}InvoiceType"
     ],

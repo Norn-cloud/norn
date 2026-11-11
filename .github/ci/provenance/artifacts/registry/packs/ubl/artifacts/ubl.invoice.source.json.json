@@ -1,14 +1,12 @@
 {
-  "sha256": "4263d7e864744e7bb7b309468ac8d840a51192191a13ee199d55763dad67759f",
+  "sha256": "c1f91a227e5e6197e6e85072224502c8b36053de09c136cc27bdf63fa2488891",
   "origin": "derived",
-  "category": "generated",
+  "category": "synthetic-golden",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/ubl/records.ts",
-    "registry/packs/ubl/source.ts",
-    "registry/packs/ubl/ubl.pack.ts"
+    "registry/packs/ubl/source.ts"
   ],
   "rights_evidence": [
     {

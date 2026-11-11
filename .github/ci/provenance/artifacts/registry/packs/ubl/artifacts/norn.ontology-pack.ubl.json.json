@@ -6,8 +6,6 @@
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/ubl/records.ts",
-    "registry/packs/ubl/source.ts",
     "registry/packs/ubl/ubl.pack.ts"
   ],
   "rights_evidence": [

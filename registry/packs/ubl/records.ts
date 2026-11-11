@@ -10,7 +10,7 @@ export const Mapping = Norn.mapping({
   id: "ubl.invoice.mapping",
   title: "UBL 2.3 Invoice to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "ubl.invoice.source", version: "0.1.0", sha256: "db10d6cea0ccd8b1c41f6c5810a3e71b4fb8d6d3c40de57d41edf1185c1760d0"},
+  source: {schemaId: "ubl.invoice.source", version: "0.1.0", sha256: "8750751d5db261525a358ae714a568071d6e414b3cea32520ebdfc9e52be6a5a"},
   sourceContract: {kind: "generic"},
   interfaces: [Agent, Claim],
   maps: [

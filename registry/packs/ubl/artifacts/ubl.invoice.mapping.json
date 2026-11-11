@@ -166,7 +166,7 @@
     ],
     "source": {
       "schemaId": "ubl.invoice.source",
-      "sha256": "db10d6cea0ccd8b1c41f6c5810a3e71b4fb8d6d3c40de57d41edf1185c1760d0",
+      "sha256": "8750751d5db261525a358ae714a568071d6e414b3cea32520ebdfc9e52be6a5a",
       "version": "0.1.0"
     }
   },
