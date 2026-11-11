@@ -3494,7 +3494,15 @@ mod identity_history_tests {
                 &target,
                 current.clone(),
                 "s",
-                &BTreeMap::from([("scope".into(), "s".into())]),
+                // CELL-ID-RESTORE: restore names the source's logical identity.
+                &BTreeMap::from([
+                    ("scope".into(), "s".into()),
+                    ("cell_id".into(), records[0].bindings["cell_id"].clone()),
+                    (
+                        "cell_identity_format".into(),
+                        crate::cell_identity::FORMAT.into(),
+                    ),
+                ]),
                 StoreOptions::default(),
             )
             .await

@@ -354,8 +354,8 @@ fn file_dump(path: &std::path::Path) -> BTreeMap<String, Vec<String>> {
 async fn cell_identity_restore_refuses_other_identities_and_preserves_state() {
     let dir = tempfile::tempdir().expect("directory");
     let source_path = dir.path().join("source.sqlite");
-    let mut source =
-        CellStore::open_bound(&source_path, model(), StoreOptions::default(), &a()).expect("source");
+    let mut source = CellStore::open_bound(&source_path, model(), StoreOptions::default(), &a())
+        .expect("source");
     let sibling = CellStore::open_in_memory(model()).expect("same-scope sibling");
     source.bind("scope", "org_demo/dev").expect("scope");
     let sibling_id = sibling.cell_id().expect("id").expect("bound");
