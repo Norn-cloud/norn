@@ -72,18 +72,18 @@ test("a risky action never calls straight from editing: a confirm comes first", 
   }
 })
 
-test("keys: a retry re-sends the same call with the same key; an edit always means a new key", () => {
+test("keys: one key never carries two bodies, a retry re-sends exactly the last call, and an edit always moves the key", () => {
   for (const seed of SEEDS) {
-    let last: { key: string; input: string } | null = null
-    let edited = false
-    for (const { msg, cmds } of session(seed).steps) {
-      if (msg.kind === "edit" || msg.kind === "again") edited = true
+    const bodies = new Map<string, string>()
+    let last: Extract<Cmd, { kind: "call" }> | null = null
+    for (const { before, msg, after, cmds } of session(seed).steps) {
+      if (msg.kind === "edit" && before.phase.kind !== "done" && before.phase.kind !== "undoing" && before.phase.kind !== "undo-failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
       for (const c of calls(cmds)) {
         if (c.actionId !== "learning.triage_episode") continue
-        if (last !== null && !edited) expect(c).toMatchObject(last)
-        if (last !== null && edited) expect(c.key).not.toBe(last.key)
-        last = { key: c.key, input: c.input }
-        edited = false
+        if (bodies.has(c.key)) expect(c.input).toBe(bodies.get(c.key)!)
+        bodies.set(c.key, c.input)
+        if (msg.kind === "retry") expect(c).toEqual(last!)
+        last = c
       }
     }
   }

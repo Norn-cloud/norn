@@ -35,10 +35,10 @@ export type Phase =
 export interface State {
   readonly target: Target
   readonly phase: Phase
-  /** The draft's idempotency key: kept across a retry, replaced by any edit. */
+  /** The draft's idempotency key: replaced by any edit, even one made while a call is on its way. */
   readonly key: string
-  /** The encoded input last sent, so a retry sends exactly the same call. */
-  readonly sent: string | null
+  /** The call last sent, input and key, so a retry sends exactly that call again: never its body under a new key, or a new body under its key. */
+  readonly sent: { readonly input: string; readonly key: string } | null
 }
 
 export type Msg =
@@ -70,7 +70,9 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
   const { phase } = state
   switch (msg.kind) {
     case "edit": {
-      if (inFlight(state) || phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
+      // After a commit the draft is gone; while a call is out, only the key moves on (the call keeps its own).
+      if (phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
+      if (phase.kind === "sending") return [{ ...state, key: msg.key }, []]
       // A refusal stays visible while the user fixes the fields it names; a confirm or an outage clears.
       const next: Phase = phase.kind === "confirm" || phase.kind === "failed" ? { kind: "editing" } : phase
       return [{ ...state, phase: next, key: msg.key }, []]
@@ -78,12 +80,12 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
     case "submit": {
       if (inFlight(state) || phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
       if (state.target.risky && phase.kind !== "confirm") return [{ ...state, phase: { kind: "confirm" } }, []]
-      return [{ ...state, phase: { kind: "sending" }, sent: msg.input }, [call(state.target.actionId, msg.input, state.key)]]
+      return [{ ...state, phase: { kind: "sending" }, sent: { input: msg.input, key: state.key } }, [call(state.target.actionId, msg.input, state.key)]]
     }
     case "back":
       return phase.kind === "confirm" ? [{ ...state, phase: { kind: "editing" } }, []] : [state, []]
     case "retry":
-      if (phase.kind === "failed" && state.sent !== null) return [{ ...state, phase: { kind: "sending" } }, [call(state.target.actionId, state.sent, state.key)]]
+      if (phase.kind === "failed" && state.sent !== null) return [{ ...state, phase: { kind: "sending" } }, [call(state.target.actionId, state.sent.input, state.sent.key)]]
       // Undo keeps its own key across a retry, like any call.
       if (phase.kind === "undo-failed") return [{ ...state, phase: { kind: "undoing", receipt: phase.receipt, undo: phase.undo } }, [call(phase.undo.actionId, phase.undo.input, state.key)]]
       return [state, []]
