@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-365 records across 96 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+402 records across 116 metrics. Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -19,6 +19,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
+| `checker.test.cut2_changed_four_serial_s` | 14.6 | s (total) | boat | 2 | 14.6 / 29 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 | `checker.test.cut2_four_serial_s` | 14.6 | s (total) | boat | 2 | 14.6 / 29 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1231) |
 | `checker.test.cut_delta_s` | -30 *est.* | s (single) | boat | 2 | -30 / -5 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1231) |
 | `checker.test.nextest_exec_s` | 62.5 | s (single) | boat | 3 | 61 / 67.4 | █▁▃ | `20e8feb4b0` | [link](https://github.com/Norn-cloud/norn/pull/1216) |
@@ -27,25 +28,43 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
-| `fork.cow.create.f100.p50` | 0.32 | ms (p50) | boat | 1 | 0.32 / 0.32 | ▁ | none named | thread |
-| `fork.cow.create.f100.p99` | 0.66 | ms (p99) | boat | 1 | 0.66 / 0.66 | ▁ | none named | thread |
-| `fork.cow.create.f20.p50` | 0.37 | ms (p50) | boat | 1 | 0.37 / 0.37 | ▁ | none named | thread |
-| `fork.cow.create.f20.p99` | 12.5 | ms (p99) | boat | 1 | 12.5 / 12.5 | ▁ | none named | thread |
-| `fork.cow.gc.collect_live.f100` | 15 | ms (single) | boat | 1 | 15 / 15 | ▁ | none named | thread |
-| `fork.cow.gc.discard_collect.f100` | 2.9 | ms (single) | boat | 1 | 2.9 / 2.9 | ▁ | none named | thread |
-| `fork.cow.gc.pages_freed.f100` | 931 | count (single) | boat | 1 | 931 / 931 | ▁ | none named | thread |
-| `fork.cow.pages_per_fork.f100` | 9.3 | count (mean) | boat | 1 | 9.3 / 9.3 | ▁ | none named | thread |
-| `fork.cow.pages_per_fork.f20` | 10.6 | count (mean) | boat | 1 | 10.6 / 10.6 | ▁ | none named | thread |
-| `fork.cow.read.fork.f100.p50` | 9.7 | us (p50) | boat | 1 | 9.7 / 9.7 | ▁ | none named | thread |
-| `fork.cow.read.fork.f20.p50` | 9.7 | us (p50) | boat | 1 | 9.7 / 9.7 | ▁ | none named | thread |
-| `fork.cow.read.main.f100.p50` | 9.9 | us (p50) | boat | 1 | 9.9 / 9.9 | ▁ | none named | thread |
-| `fork.cow.read.main.f20.p50` | 9.7 | us (p50) | boat | 1 | 9.7 / 9.7 | ▁ | none named | thread |
-| `fork.cow.storage_vs_full.f100` | 0.19 | percent (single) | boat | 1 | 0.19 / 0.19 | ▁ | none named | thread |
-| `fork.cow.storage_vs_full.f20` | 0.22 | percent (single) | boat | 1 | 0.22 / 0.22 | ▁ | none named | thread |
-| `fork.full_copy.create.f100.p50` | 10.5 | ms (p50) | boat | 1 | 10.5 / 10.5 | ▁ | none named | thread |
-| `fork.full_copy.create.f100.p99` | 1,630 | ms (p99) | boat | 1 | 1,630 / 1,630 | ▁ | none named | thread |
-| `fork.full_copy.create.f20.p50` | 3.6 | ms (p50) | boat | 1 | 3.6 / 3.6 | ▁ | none named | thread |
-| `fork.full_copy.create.f20.p99` | 11.9 | ms (p99) | boat | 1 | 11.9 / 11.9 | ▁ | none named | thread |
+| `fork.cow.create.f100.p50` | 0.3249 | ms (p50) | boat | 2 | 0.32 / 0.3249 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f100.p99` | 0.4791 | ms (p99) | boat | 2 | 0.4791 / 0.66 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f1000.p50` | 0.3116 | ms (p50) | boat | 1 | 0.3116 / 0.3116 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f1000.p99` | 0.4699 | ms (p99) | boat | 1 | 0.4699 / 0.4699 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f20.p50` | 0.332 | ms (p50) | boat | 2 | 0.332 / 0.37 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.create.f20.p99` | 0.6948 | ms (p99) | boat | 2 | 0.6948 / 12.5 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.collect_live.f100` | 10.63 | ms (single) | boat | 2 | 10.63 / 15 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.collect_live.f1000` | 129.4 | ms (single) | boat | 1 | 129.4 / 129.4 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.collect_live.f20` | 2.635 | ms (single) | boat | 1 | 2.635 / 2.635 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.discard_collect.f100` | 2.695 | ms (single) | boat | 2 | 2.695 / 2.9 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.discard_collect.f1000` | 12.24 | ms (single) | boat | 1 | 12.24 / 12.24 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.discard_collect.f20` | 1.834 | ms (single) | boat | 1 | 1.834 / 1.834 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.pages_freed.f100` | 931 | count (single) | boat | 2 | 931 / 931 | ▁▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.pages_freed.f1000` | 9,031 | count (single) | boat | 1 | 9,031 / 9,031 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.gc.pages_freed.f20` | 211 | count (single) | boat | 1 | 211 / 211 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.pages_per_fork.f100` | 9.31 | count (mean) | boat | 2 | 9.3 / 9.31 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.pages_per_fork.f1000` | 9.031 | count (mean) | boat | 1 | 9.031 / 9.031 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.pages_per_fork.f20` | 10.55 | count (mean) | boat | 2 | 10.55 / 10.6 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f100.p50` | 10.44 | us (p50) | boat | 2 | 9.7 / 10.44 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f100.p99` | 20.92 | us (p99) | boat | 1 | 20.92 / 20.92 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f1000.p50` | 10.37 | us (p50) | boat | 1 | 10.37 / 10.37 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f1000.p99` | 24.61 | us (p99) | boat | 1 | 24.61 / 24.61 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f20.p50` | 10.32 | us (p50) | boat | 2 | 9.7 / 10.32 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.fork.f20.p99` | 20.36 | us (p99) | boat | 1 | 20.36 / 20.36 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f100.p50` | 9.86 | us (p50) | boat | 2 | 9.86 / 9.9 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f100.p99` | 18.46 | us (p99) | boat | 1 | 18.46 / 18.46 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f1000.p50` | 10.26 | us (p50) | boat | 1 | 10.26 / 10.26 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f1000.p99` | 22.32 | us (p99) | boat | 1 | 22.32 / 22.32 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f20.p50` | 9.89 | us (p50) | boat | 2 | 9.7 / 9.89 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.read.main.f20.p99` | 18.35 | us (p99) | boat | 1 | 18.35 / 18.35 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.storage_vs_full.f100` | 0.1934 | percent (single) | boat | 2 | 0.19 / 0.1934 | ▁█ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.storage_vs_full.f1000` | 0.1876 | percent (single) | boat | 1 | 0.1876 / 0.1876 | ▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.cow.storage_vs_full.f20` | 0.2192 | percent (single) | boat | 2 | 0.2192 / 0.22 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.full_copy.create.f100.p50` | 4.971 | ms (p50) | boat | 2 | 4.971 / 10.5 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.full_copy.create.f100.p99` | 15.01 | ms (p99) | boat | 2 | 15.01 / 1,630 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.full_copy.create.f20.p50` | 3.145 | ms (p50) | boat | 2 | 3.145 / 3.6 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
+| `fork.full_copy.create.f20.p99` | 4.181 | ms (p99) | boat | 2 | 4.181 / 11.9 | █▁ | `8aca98c592` | [link](https://github.com/Norn-cloud/norn/pull/1226#issuecomment-6799825849) |
 | `fork.proto.create.durable.f100.p50` | 45 | ms (p50) | boat | 1 | 45 / 45 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
 | `fork.proto.create.durable.f100.p99` | 107 | ms (p99) | boat | 1 | 107 / 107 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
 | `fork.proto.create.durable.f1000.p50` | 61 | ms (p50) | boat | 1 | 61 / 61 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
@@ -88,7 +107,8 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
 | `proof.gate.checker_certificates.s` | 210 | s (single) | boat | 2 | 210 / 345 | █▁ | `bf2905c1cd` | [link](https://github.com/Norn-cloud/norn/pull/1234) |
-| `proof.gate.exact_arith.s` | 1,596 | s (single) | boat | 4 | 647 / 1,596 | ▁▄▄█ | `b9ea6a8ab6` | [link](https://github.com/Norn-cloud/norn/pull/1221) |
+| `proof.gate.exact-arith-correspondence.s` | 2,721 | s (single) | boat | 3 | 1,596 / 2,721 | ▁▁█ | `b9ea6a8ab6` | [link](https://github.com/Norn-cloud/norn/pull/1221) |
+| `proof.gate.exact_arith.s` | 1,039 | s (single) | boat | 3 | 647 / 1,058 | ▁██ | `79d8c106b9` | thread |
 | `proof.gate.kernel_binding.s` | 236 | s (single) | boat | 1 | 236 / 236 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_commit.s` | 301 | s (single) | boat | 1 | 301 / 301 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_decider.s` | 214 | s (single) | boat | 1 | 214 / 214 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
@@ -105,7 +125,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 |---|---:|---|---|---:|---|---|---|---|
 | `sim.dst.do_glue_s` | 6.8 | s (single) | boat | 1 | 6.8 / 6.8 | ▁ | `73f3b52e1f` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 | `sim.dst.request_layer_s` | 15.9 | s (single) | boat | 1 | 15.9 / 15.9 | ▁ | `73f3b52e1f` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
-| `sim.dst.serial_total_s` | 34.7 | s (total) | boat | 3 | 33.4 / 121 | ▁█▁ | `1d665da8fd` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
+| `sim.dst.serial_total_s` | 34.7 | s (total) | boat | 5 | 33.4 / 121 | ▁▁█▁▁ | `1d665da8fd` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 
 ## Test counts
 
@@ -140,28 +160,47 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 What limits each metric's latest value, in the measurer's words.
 
 - `boat.starts.used_24h`: Account-wide: every project on this Boat account, not only Norn. Rolling 24-hour window from `boat limits --json` (410 used, 430 remaining of 840), including 1 start by this lane's pipeline smoke test. Not tied to a commit.
+- `checker.test.cut2_changed_four_serial_s`: same VM and session as the 6cbc5766c3 measurement
 - `checker.test.cut2_four_serial_s`: The four tests cut 2 changed most, run serially on one VM. measured_at is when the PR body stated it. The head sha is #1231's head; the body does not restate it.
 - `checker.test.cut_delta_s`: Author's net estimate: the serial four-test delta (14.4 s) plus two tests from a parallel run that was about 16% slower. Whole-suite wall time is unusable for this: untouched tests varied by up to 41 s (incremental 68 s, then 109 s).
 - `checker.test.nextest_exec_s`: Noisy: about half the crate's test time is two long property tests (incremental about 52–55 s, three_systems about 9–11 s) that the cut does not touch. 4 tests fail on base and head alike (they need CI's prepare_inputs). measured_at is when the PR body stated it.
-- `fork.cow.create.f100.p50`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.create.f100.p99`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub. Fork p99 is a CPU tail on 4 vCPUs.
-- `fork.cow.create.f20.p50`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.create.f20.p99`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub. Fork p99 is a CPU tail on 4 vCPUs.
-- `fork.cow.gc.collect_live.f100`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.gc.discard_collect.f100`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.gc.pages_freed.f100`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.pages_per_fork.f100`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub. Includes the fork's pin record.
-- `fork.cow.pages_per_fork.f20`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub. Includes the fork's pin record.
-- `fork.cow.read.fork.f100.p50`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.read.fork.f20.p50`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.read.main.f100.p50`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.read.main.f20.p50`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.storage_vs_full.f100`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.cow.storage_vs_full.f20`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub.
-- `fork.full_copy.create.f100.p50`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub. Reference copying engine.
-- `fork.full_copy.create.f100.p99`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub. Reference copying engine. Source gives 1.63 s.
-- `fork.full_copy.create.f20.p50`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub. Reference copying engine.
-- `fork.full_copy.create.f20.p99`: U3 copy-on-write page store (norn-pages) under the real CellStore, BENCH-FORK-1 workload, first posted run. No commit named: it ran after local, unpushed 19e05062d64a on feat/pages-u3. VM type not stated. In-memory page tier only. Single run. Source is a coordinator-thread message, not on GitHub. Reference copying engine.
+- `fork.cow.create.f100.p50`: In-memory tier; one run. Fork latency is opening/configuring the fork's SQLite connection and cloning store caches; the page-store root copy is O(1). p99 is a CPU tail on 4 vCPU.
+- `fork.cow.create.f100.p99`: In-memory tier; one run. Fork latency is opening/configuring the fork's SQLite connection and cloning store caches; the page-store root copy is O(1). p99 is a CPU tail on 4 vCPU.
+- `fork.cow.create.f1000.p50`: In-memory tier; one run. Fork latency is opening/configuring the fork's SQLite connection and cloning store caches; the page-store root copy is O(1). p99 is a CPU tail on 4 vCPU.
+- `fork.cow.create.f1000.p99`: In-memory tier; one run. Fork latency is opening/configuring the fork's SQLite connection and cloning store caches; the page-store root copy is O(1). p99 is a CPU tail on 4 vCPU.
+- `fork.cow.create.f20.p50`: In-memory tier; one run. Fork latency is opening/configuring the fork's SQLite connection and cloning store caches; the page-store root copy is O(1). p99 is a CPU tail on 4 vCPU.
+- `fork.cow.create.f20.p99`: In-memory tier; one run. Fork latency is opening/configuring the fork's SQLite connection and cloning store caches; the page-store root copy is O(1). p99 is a CPU tail on 4 vCPU.
+- `fork.cow.gc.collect_live.f100`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.gc.collect_live.f1000`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.gc.collect_live.f20`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.gc.discard_collect.f100`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.gc.discard_collect.f1000`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.gc.discard_collect.f20`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.gc.pages_freed.f100`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.gc.pages_freed.f1000`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.gc.pages_freed.f20`: In-memory mark-and-sweep over live roots; one run; marking skips shared subtrees, so cost scales with distinct pages.
+- `fork.cow.pages_per_fork.f100`: In-memory tier; one run. ~1.8-2.1 pages per commit (fact table, index, ledger, receipt, header) plus ~1 page per fork for its pin record; forks write distinct values so dedupe cannot hide growth.
+- `fork.cow.pages_per_fork.f1000`: In-memory tier; one run. ~1.8-2.1 pages per commit (fact table, index, ledger, receipt, header) plus ~1 page per fork for its pin record; forks write distinct values so dedupe cannot hide growth.
+- `fork.cow.pages_per_fork.f20`: In-memory tier; one run. ~1.8-2.1 pages per commit (fact table, index, ledger, receipt, header) plus ~1 page per fork for its pin record; forks write distinct values so dedupe cannot hide growth.
+- `fork.cow.read.fork.f100.p50`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.fork.f100.p99`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.fork.f1000.p50`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.fork.f1000.p99`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.fork.f20.p50`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.fork.f20.p99`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.main.f100.p50`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.main.f100.p99`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.main.f1000.p50`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.main.f1000.p99`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.main.f20.p50`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.read.main.f20.p99`: In-memory tier, all pages resident: CPU-bound point loads (2,000 per sample set); one run. Cold reads from object storage not measured.
+- `fork.cow.storage_vs_full.f100`: In-memory tier; one run. ~1.8-2.1 pages per commit (fact table, index, ledger, receipt, header) plus ~1 page per fork for its pin record; forks write distinct values so dedupe cannot hide growth.
+- `fork.cow.storage_vs_full.f1000`: In-memory tier; one run. ~1.8-2.1 pages per commit (fact table, index, ledger, receipt, header) plus ~1 page per fork for its pin record; forks write distinct values so dedupe cannot hide growth.
+- `fork.cow.storage_vs_full.f20`: In-memory tier; one run. ~1.8-2.1 pages per commit (fact table, index, ledger, receipt, header) plus ~1 page per fork for its pin record; forks write distinct values so dedupe cannot hide growth.
+- `fork.full_copy.create.f100.p50`: Copying reference engine (SQLite online backup of an 18.8 MiB in-memory cell); one run; full-copy p99 is sensitive to memory pressure.
+- `fork.full_copy.create.f100.p99`: Copying reference engine (SQLite online backup of an 18.8 MiB in-memory cell); one run; full-copy p99 is sensitive to memory pressure.
+- `fork.full_copy.create.f20.p50`: Copying reference engine (SQLite online backup of an 18.8 MiB in-memory cell); one run; full-copy p99 is sensitive to memory pressure.
+- `fork.full_copy.create.f20.p99`: Copying reference engine (SQLite online backup of an 18.8 MiB in-memory cell); one run; full-copy p99 is sensitive to memory pressure.
 - `fork.proto.create.durable.f100.p50`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. Limited by this VM disk's fdatasync (36–126 ms p50 by probe): 'Durable fork latency on this VM is the fsync floor, not the design.' One sync covers about 16 concurrent forks.
 - `fork.proto.create.durable.f100.p99`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. Limited by this VM disk's fdatasync (36–126 ms p50 by probe): 'Durable fork latency on this VM is the fsync floor, not the design.' One sync covers about 16 concurrent forks.
 - `fork.proto.create.durable.f1000.p50`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. Limited by this VM disk's fdatasync (36–126 ms p50 by probe): 'Durable fork latency on this VM is the fsync floor, not the design.' One sync covers about 16 concurrent forks.
@@ -199,7 +238,8 @@ What limits each metric's latest value, in the measurer's words.
 - `fork.proto.storage_vs_full.f1000`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
 - `fork.proto.storage_vs_full.f20`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
 - `proof.gate.checker_certificates.s`: With 17 native_decide refutation vectors added, yet faster than the 345 s run; no explanation given. measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
-- `proof.gate.exact_arith.s`: corrects record 31bd5961 (2721 s), which wrongly included the post-gate canary venv/pip install; this is the gate script alone from file mtimes (+-1 s): ~434 s setup+extraction+proofs+vectors, ~1162 s for 18 mutants (42-151 s each); single sample
+- `proof.gate.exact-arith-correspondence.s`: single sample; wall clock of the gate script only (Mathlib cache fetch excluded); earlier heads with the same mutant set ran 1039-1058 s on the same snapshot, slowdown unattributed
+- `proof.gate.exact_arith.s`: Larger scope than the 1058 s run yet faster; no explanation given. The sha is the branch head the lane named. VM type not restated. Cold or warm tool caches not stated. One run. Source is a coordinator-thread message, not on GitHub.
 - `proof.gate.kernel_binding.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_commit.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_decider.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
@@ -211,7 +251,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.verus.kernel_l1_version.s`: One small file (1 verified item). No commit stated; measured_at is when the comment was posted. One run.
 - `sim.dst.do_glue_s`: The plain DO glue law test (64 cases), from the serial run of the set. One run.
 - `sim.dst.request_layer_s`: The DO request-layer simulator test, from the serial run of the set. One run.
-- `sim.dst.serial_total_s`: Same serial set on the combined frozen head, which includes 23 newer main commits (one changes norn-cell-do/src/server.rs). VM type not restated for this run. One run; measured_at is when the PR body stated it.
+- `sim.dst.serial_total_s`: debug build, nextest --test-threads 1, one default Boat VM; same 11 tests as at 73f3b52e1f
 - `tests.rust.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-api.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-authz.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
