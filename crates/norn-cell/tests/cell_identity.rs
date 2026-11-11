@@ -480,3 +480,218 @@ async fn cell_identity_restore_then_reopen_under_another_identity_writes_nothing
     ));
     assert_eq!(file_dump(&target), restored_state);
 }
+
+/// A host whose SQLite excludes `lower`, `hex` and `randomblob`, the functions
+/// the default identity source calls. `fail` refuses the n-th storage boundary.
+struct NoIdentityFunctions {
+    inner: NativeEngine,
+    step: std::rc::Rc<std::cell::Cell<usize>>,
+    fail: Option<usize>,
+}
+
+impl NoIdentityFunctions {
+    fn open(path: &std::path::Path, fail: Option<usize>) -> Self {
+        Self {
+            inner: NativeEngine::open(path, StoreOptions::default()).expect("engine"),
+            step: std::rc::Rc::default(),
+            fail,
+        }
+    }
+
+    fn admit(&self, sql: &str) -> Result<(), CellError> {
+        let step = self.step.get().saturating_add(1);
+        self.step.set(step);
+        if self.fail == Some(step) {
+            return Err(CellError::Engine("storage fault".to_owned()));
+        }
+        let sql = sql.to_ascii_lowercase();
+        for name in ["randomblob", "hex", "lower"] {
+            let called = sql.match_indices(name).any(|(at, _)| {
+                let (before, rest) = sql.split_at(at);
+                !before.ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                    && rest
+                        .strip_prefix(name)
+                        .is_some_and(|tail| tail.trim_start().starts_with('('))
+            });
+            if called {
+                return Err(CellError::Engine(format!("no such function: {name}")));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl norn_cell::engine::SqlEngine for NoIdentityFunctions {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn execute(&self, sql: &str, params: &[norn_cell::engine::SqlValue]) -> Result<(), CellError> {
+        self.admit(sql)?;
+        self.inner.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, CellError> {
+        self.admit(sql)?;
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.admit(sql)?;
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.admit("")?;
+        self.inner.transaction(f)
+    }
+}
+
+const SCOPE: &str = "org_demo/dev";
+
+fn provision_input() -> norn_cell::InstalledDefinitionInput {
+    norn_cell::InstalledDefinitionInput {
+        canonical_set: "[]".to_owned(),
+        registry: Vec::new(),
+        receipt_sha256: "synthetic".to_owned(),
+        admission_receipt: None,
+        readmission: None,
+        diff: serde_json::json!({}),
+        installed_at: 1,
+        layout: None,
+    }
+}
+
+fn provision(
+    engine: NoIdentityFunctions,
+    scope: &str,
+    source: impl FnMut(&NoIdentityFunctions) -> Result<CellId, CellError>,
+) -> Result<CellStore<NoIdentityFunctions>, CellError> {
+    CellStore::provision_definitions_with_identity_source(
+        engine,
+        model(),
+        &provision_input(),
+        scope,
+        source,
+    )
+}
+
+/// Storage boundaries one successful fresh provisioning crosses.
+fn provision_steps() -> usize {
+    let dir = tempfile::tempdir().expect("directory");
+    let engine = NoIdentityFunctions::open(&dir.path().join("count.sqlite"), None);
+    let steps = std::rc::Rc::clone(&engine.step);
+    provision(engine, SCOPE, |_| Ok(a())).expect("count provisioning");
+    steps.get()
+}
+
+/// CELL-ID-1 on a host without the SQL identity functions: provisioning binds
+/// the injected identity exactly once, atomically under any storage fault or
+/// source failure; retries never consult a source; mismatches still refuse.
+#[test]
+fn provisioning_binds_an_injected_identity_where_sql_identity_functions_are_excluded() {
+    use norn_testkit::proptest::prelude::*;
+    let steps = provision_steps();
+    let ids = "[0-9a-f]{32}".prop_map(|value| id(&value));
+    let strategy = (
+        ids.clone(),
+        ids,
+        prop::option::of(any::<prop::sample::Index>()),
+        any::<bool>(),
+    );
+    norn_testkit::check_property(
+        &norn_testkit::Settings::new(file!()).cases(48),
+        &strategy,
+        |(first, other, fault, source_fails)| {
+            prop_assume!(first != other);
+            let dir = tempfile::tempdir().expect("directory");
+            let path = dir.path().join("tenant.sqlite");
+            let open = || NoIdentityFunctions::open(&path, None);
+            let fresh = || CellStore::engine_is_fresh(&open()).expect("fresh check");
+
+            let default =
+                CellStore::provision_definitions(open(), model(), &provision_input(), SCOPE);
+            prop_assert!(
+                matches!(&default, Err(CellError::Engine(m)) if m == "no such function: randomblob"),
+                "default source on this host: {:?}",
+                default.as_ref().err()
+            );
+            prop_assert!(fresh());
+            // A storage fault leaves either a fresh engine or, past the commit
+            // point (a lost reply), the complete provisioned cell; never a part.
+            let mut committed = false;
+            if let Some(index) = fault {
+                let fail = index.index(steps).saturating_add(1);
+                let engine = NoIdentityFunctions::open(&path, Some(fail));
+                prop_assert!(provision(engine, SCOPE, |_| Ok(first.clone())).is_err());
+                committed = !fresh();
+            }
+            if source_fails && !committed {
+                let refused = provision(open(), SCOPE, |_| {
+                    Err(CellError::Engine("identity service unavailable".to_owned()))
+                });
+                prop_assert!(
+                    matches!(&refused, Err(CellError::Engine(m)) if m == "identity service unavailable")
+                );
+                prop_assert!(fresh());
+            }
+
+            let mut calls = 0;
+            let store = provision(open(), SCOPE, |_| {
+                calls += 1;
+                Ok(first.clone())
+            })?;
+            prop_assert_eq!(calls, usize::from(!committed));
+            prop_assert_eq!(store.cell_id()?, Some(first.clone()));
+            let record = store.export_record(1)?.expect("provisioning record");
+            prop_assert_eq!(
+                record.bindings.get("cell_id"),
+                Some(&String::from(first.clone()))
+            );
+            drop(store);
+
+            let retried = provision(open(), SCOPE, |_| {
+                calls += 1;
+                Ok(other.clone())
+            })?;
+            prop_assert_eq!(
+                calls,
+                usize::from(!committed),
+                "a retry never consults the identity source"
+            );
+            prop_assert_eq!(retried.cell_id()?, Some(first.clone()));
+            prop_assert_eq!(retried.read().receipts()?.len(), 1);
+            prop_assert!(
+                matches!(
+                    retried.require_cell_id(&other),
+                    Err(CellError::BindingMismatch { .. })
+                ),
+                "another expected identity must refuse"
+            );
+            drop(retried);
+            let default_retry =
+                CellStore::provision_definitions(open(), model(), &provision_input(), SCOPE)?;
+            prop_assert_eq!(default_retry.cell_id()?, Some(first.clone()));
+            drop(default_retry);
+
+            let changed = provision(open(), "other/dev", |_| {
+                calls += 1;
+                Ok(other.clone())
+            });
+            prop_assert!(matches!(changed, Err(CellError::IdempotencyConflict(_))));
+            prop_assert_eq!(calls, usize::from(!committed));
+            prop_assert!(
+                matches!(
+                    CellStore::from_engine_bound(open(), model(), &other),
+                    Err(CellError::BindingMismatch { .. })
+                ),
+                "a bound reopen under another identity must refuse"
+            );
+            prop_assert_eq!(
+                CellStore::from_engine_bound(open(), model(), &first)?.cell_id()?,
+                Some(first)
+            );
+            Ok(())
+        },
+    );
+}

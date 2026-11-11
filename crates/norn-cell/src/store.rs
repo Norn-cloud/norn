@@ -1764,11 +1764,15 @@ struct DefinitionPreflight {
     migration: crate::migration::MigrationPlan,
 }
 
+/// CELL-ID-1: the identity a fresh provisioning binds; never invoked on a retry.
+type ProvisionIdentity<'a> =
+    RefCell<dyn FnMut() -> Result<norn_ir::cell_id::CellId, CellError> + 'a>;
+
 /// ID-NORMALIZED-RETAINED: only verified-prefix callers select retained input.
 #[derive(Clone, Copy)]
 enum CommitOrigin<'a> {
     Current,
-    Provisioning(&'a str),
+    Provisioning(&'a str, &'a ProvisionIdentity<'a>),
     Retained(&'a crate::export::ExportRecord),
 }
 
@@ -2031,6 +2035,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// Atomically initialize, bind and install a tenant's first admitted set.
     /// An identical request reopens the initial revision without writing.
     ///
+    /// A fresh engine's logical identity comes from SQLite's `lower`, `hex`,
+    /// and `randomblob` functions. Hosts excluding these functions must use
+    /// [`Self::provision_definitions_with_identity_source`].
+    ///
     /// # Errors
     /// Store failures roll back all schema and data. A changed request, scope,
     /// or invalid retained history refuses. Identical retries reopen the current model.
@@ -2039,6 +2047,31 @@ impl<E: SqlEngine> CellStore<E> {
         model: Model,
         input: &InstalledDefinitionInput,
         scope: &str,
+    ) -> Result<Self, CellError> {
+        Self::provision_definitions_with_identity_source(
+            conn,
+            model,
+            input,
+            scope,
+            crate::cell_identity::generate,
+        )
+    }
+
+    /// [`Self::provision_definitions`] with an injectable identity source.
+    /// CELL-ID-1: `source` is called only when the engine is fresh, inside the
+    /// provisioning transaction; a retry reopens the bound identity without
+    /// calling it. Callers that expect one identity check it with
+    /// [`Self::require_cell_id`].
+    ///
+    /// # Errors
+    /// As [`Self::provision_definitions`], plus an identity source failure,
+    /// which rolls the provisioning back.
+    pub fn provision_definitions_with_identity_source(
+        conn: E,
+        model: Model,
+        input: &InstalledDefinitionInput,
+        scope: &str,
+        mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
     ) -> Result<Self, CellError> {
         let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
         let mut store = Self::unverified(conn, model);
@@ -2064,12 +2097,13 @@ impl<E: SqlEngine> CellStore<E> {
             expected_version: Some(0),
             retained: None,
         };
+        let fresh_identity = RefCell::new(|| source(&store.conn));
         store
             .commit_guarded_inner(
                 &batch,
                 Some(installation),
                 None,
-                CommitOrigin::Provisioning(&identity),
+                CommitOrigin::Provisioning(&identity, &fresh_identity),
                 |_reader| Ok::<(), CellError>(()),
                 &mut |_point| Ok(()),
             )
@@ -2751,9 +2785,14 @@ impl<E: SqlEngine> CellStore<E> {
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
         let result = self.conn.transaction(|| -> Result<_, GuardedError<X>> {
             probe(CommitPoint::Begun)?;
-            if let CommitOrigin::Provisioning(identity) = origin {
+            if let CommitOrigin::Provisioning(identity, fresh_identity) = origin {
                 if Self::engine_is_fresh(&self.conn)? {
-                    Self::init_schema(&self.conn, &self.model, &mut crate::cell_identity::generate)?;
+                    Self::init_schema(&self.conn, &self.model, &mut |_| {
+                        let mut source = fresh_identity.try_borrow_mut().map_err(|error| {
+                            CellError::Engine(format!("cell identity source re-entered: {error}"))
+                        })?;
+                        (*source)()
+                    })?;
                     for (key, value) in [("binding:scope", batch.scope.as_str()), ("binding:provision", identity)] {
                         self.conn.execute(
                             &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
@@ -2795,7 +2834,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(_) => None },
+                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
                 )?;
                 crate::migration::apply_model_migration(
                     &self.conn,
