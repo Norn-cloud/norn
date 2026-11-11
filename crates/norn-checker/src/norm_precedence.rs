@@ -2,11 +2,19 @@
 //! exhaust the actual definition domains and preserve conditions/exceptions.
 //! This module checks that model; it does not issue permissions or prove that
 //! obligations have been fulfilled. Only declared priority edges resolve conflicts.
+//!
+//! U3 (#718): admission is one whole-set decision made by the proved core in
+//! [`decision`]. The closure, the topological order and each context's
+//! resolution are untrusted search the core re-checks; conflict cores and
+//! corrections come from the untrusted explainer in
+//! [`crate::consistency::diagnosis`] only after the core refuses.
 use norn_ir::deontic::DeonticModality;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+mod decision;
+
 /// One definition norm grounded over one common finite action/subject universe.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct GroundedNorm {
     /// Exact definition rule identity, used to explain every result.
     pub id: String,
@@ -248,6 +256,19 @@ pub enum ConstitutionLayer {
     Preference,
 }
 
+impl ConstitutionLayer {
+    /// The proved core's rank: a smaller rank is a higher layer, as `Ord` orders them.
+    fn rank(self) -> u8 {
+        match self {
+            Self::Religious => 0,
+            Self::Legal => 1,
+            Self::Industry => 2,
+            Self::Company => 3,
+            Self::Preference => 4,
+        }
+    }
+}
+
 /// Diagnostic-only result for a supplied grounding of one action/subject.
 /// This is not source lowering, admission, fulfilment or Datalog evidence.
 pub struct DeclaredOrderReport {
@@ -354,25 +375,105 @@ pub fn check_norm_precedence(
     contexts: usize,
     max_calls: usize,
 ) -> Result<Vec<NormContext>, NormRefusal> {
-    let report = diagnose_declared_order(
-        norms, origins, layers, edges, protected, contexts, max_calls,
-    )?;
-    if !report.diagnosis.cores.is_empty() {
-        return Err(NormRefusal::Conflict(report.diagnosis.cores));
+    validate_order(norms, origins, layers, edges, protected, contexts)?;
+    let (core, reach) = decision_inputs(norms, layers, edges, protected, contexts);
+    if !decision::admits(&core, edges, &reach, contexts) {
+        let report = diagnose_declared_order(
+            norms, origins, layers, edges, protected, contexts, max_calls,
+        )?;
+        return Err(refusal(report.diagnosis));
     }
-    let all: BTreeSet<_> = (0..norms.len()).collect();
+    require_decision_budget(max_calls)?;
     let mut declared: BTreeMap<usize, Vec<(usize, PriorityReason)>> = BTreeMap::new();
-    for (high, low) in order_closure(edges, &all) {
-        if let (Some(a), Some(b)) = (norms.get(high), norms.get(low))
-            && opposed(a.modality, b.modality)
-        {
-            declared
-                .entry(high)
-                .or_default()
-                .push((low, PriorityReason::Declared));
+    for (high, row) in reach.iter().enumerate() {
+        for (low, reaches) in row.iter().enumerate() {
+            if let (true, Some(a), Some(b)) = (*reaches, norms.get(high), norms.get(low))
+                && opposed(a.modality, b.modality)
+            {
+                declared
+                    .entry(high)
+                    .or_default()
+                    .push((low, PriorityReason::Declared));
+            }
         }
     }
-    resolve_contexts(norms, contexts, &declared).map_err(NormRefusal::Grounding)
+    let resolved = resolve_contexts(norms, contexts, &declared).map_err(NormRefusal::Grounding)?;
+    for (context, result) in resolved.iter().enumerate() {
+        let defeats: Vec<_> = result.defeats.iter().map(|d| (d.winner, d.loser)).collect();
+        if !decision::resolution_holds(
+            &core,
+            &reach,
+            context,
+            &result.survivors,
+            &result.obligations,
+            result.conflicts.len(),
+            &defeats,
+        ) {
+            return Err(NormRefusal::Diagnosis(
+                crate::consistency::diagnosis::Unknown::InconsistentOracle,
+            ));
+        }
+    }
+    Ok(resolved)
+}
+
+/// The proved core's inputs: one decision norm per grounded norm, with its
+/// layer rank, protection and per-context activity, and the untrusted closure
+/// of the declared edges as a square certificate.
+fn decision_inputs(
+    norms: &[GroundedNorm],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
+    contexts: usize,
+) -> (Vec<decision::Norm>, Vec<Vec<bool>>) {
+    let core = norms
+        .iter()
+        .zip(layers)
+        .enumerate()
+        .map(|(index, (norm, layer))| decision::Norm {
+            modality: match norm.modality {
+                DeonticModality::Obligation => decision::Modality::Obligation,
+                DeonticModality::Permission => decision::Modality::Permission,
+                DeonticModality::Prohibition => decision::Modality::Prohibition,
+            },
+            layer: layer.rank(),
+            protected: protected.contains(&index),
+            active: (0..contexts)
+                .map(|c| norm.applicable.contains(&c) && !norm.excepted.contains(&c))
+                .collect(),
+        })
+        .collect();
+    let all: BTreeSet<_> = (0..norms.len()).collect();
+    let closure = order_closure(edges, &all);
+    let reach = (0..norms.len())
+        .map(|high| {
+            (0..norms.len())
+                .map(|low| closure.contains(&(high, low)))
+                .collect()
+        })
+        .collect();
+    (core, reach)
+}
+
+/// The former whole-set query and its independent recheck took two calls; an
+/// admitted order still needs that much budget, so callers see the same refusals.
+fn require_decision_budget(max_calls: usize) -> Result<(), NormRefusal> {
+    if max_calls < 2 {
+        return Err(NormRefusal::Diagnosis(
+            crate::consistency::diagnosis::Unknown::Budget,
+        ));
+    }
+    Ok(())
+}
+
+/// The core refused; the explainer must agree, or the refusal stays unknown.
+fn refusal(diagnosis: crate::consistency::diagnosis::Diagnosis) -> NormRefusal {
+    if diagnosis.cores.is_empty() {
+        NormRefusal::Diagnosis(crate::consistency::diagnosis::Unknown::InconsistentOracle)
+    } else {
+        NormRefusal::Conflict(diagnosis.cores)
+    }
 }
 
 /// LAW-RETAIN-1 / OVERLAY-MONOTONE-1: diagnose cross-layer clashes, even when
@@ -419,6 +520,22 @@ pub(crate) fn diagnose_candidate_order(
     contexts: usize,
     max_calls: usize,
 ) -> Result<DeclaredOrderReport, NormRefusal> {
+    validate_order(norms, origins, layers, edges, protected, contexts)?;
+    let audit = crate::deontic::installed_protection(protected, edges);
+    let (core, reach) = decision_inputs(norms, layers, edges, &audit, contexts);
+    if decision::admits(&core, edges, &reach, contexts) {
+        require_decision_budget(max_calls)?;
+        // Nothing to explain: no core, and the empty relaxation is the only one.
+        return Ok(DeclaredOrderReport {
+            diagnosis: crate::consistency::diagnosis::Diagnosis {
+                cores: BTreeSet::new(),
+                corrections: BTreeSet::from([BTreeSet::new()]),
+                calls: 0,
+                max_calls,
+            },
+            diagnostics: Vec::new(),
+        });
+    }
     let editable = (0..norms.len())
         .filter(|i| !protected.contains(i))
         .collect();
@@ -431,23 +548,24 @@ pub(crate) fn diagnose_candidate_order(
         contexts,
         (max_calls, Some(&editable)),
     )?;
-    if !report.diagnosis.cores.is_empty() {
-        let repairs: Vec<Vec<_>> = report
-            .diagnosis
-            .corrections
-            .iter()
-            .map(|repair| {
-                repair
-                    .iter()
-                    .filter_map(|i| norms.get(*i).map(|n| n.id.as_str()))
-                    .collect()
-            })
-            .collect();
-        for diagnostic in &mut report.diagnostics {
-            if diagnostic.is_error() {
-                use std::fmt::Write;
-                write!(diagnostic.message, " Irreducible conflict sets and independently rechecked candidate-only relaxation proposals: {repairs:?}. Protected installed laws cannot be edited. Query budget: {}/{}. Concrete edits require ordinary admission.", report.diagnosis.calls, report.diagnosis.max_calls).map_err(|_| NormRefusal::InvalidBinding)?;
-            }
+    if report.diagnosis.cores.is_empty() {
+        return Err(refusal(report.diagnosis));
+    }
+    let repairs: Vec<Vec<_>> = report
+        .diagnosis
+        .corrections
+        .iter()
+        .map(|repair| {
+            repair
+                .iter()
+                .filter_map(|i| norms.get(*i).map(|n| n.id.as_str()))
+                .collect()
+        })
+        .collect();
+    for diagnostic in &mut report.diagnostics {
+        if diagnostic.is_error() {
+            use std::fmt::Write;
+            write!(diagnostic.message, " Irreducible conflict sets and independently rechecked candidate-only relaxation proposals: {repairs:?}. Protected installed laws cannot be edited. Query budget: {}/{}. Concrete edits require ordinary admission.", report.diagnosis.calls, report.diagnosis.max_calls).map_err(|_| NormRefusal::InvalidBinding)?;
         }
     }
     Ok(report)
@@ -463,7 +581,56 @@ fn diagnose_order(
     budget: (usize, Option<&BTreeSet<usize>>),
 ) -> Result<DeclaredOrderReport, NormRefusal> {
     use crate::consistency::{diagnosis, report::core_findings};
-    if norms.len() > diagnosis::MAX_DECLARATIONS || edges.len() > 4096 {
+    validate_order(norms, origins, layers, edges, protected, contexts)?;
+    let all: BTreeSet<_> = (0..norms.len()).collect();
+    let conflicts = if budget.1.is_none() {
+        order_conflicts(norms, layers, edges, protected, contexts, &all)
+    } else {
+        Vec::new()
+    };
+    let mut oracle = OrderOracle {
+        edges,
+        conflicts,
+        dynamic: budget.1.map(|_| SubsetOrder {
+            norms,
+            layers,
+            protected,
+            contexts,
+        }),
+    };
+    let diagnosis = if let Some(editable) = budget.1 {
+        diagnosis::diagnose_subsets(&mut oracle, norms.len(), editable, budget.0)
+    } else {
+        diagnosis::diagnose(&mut oracle, norms.len(), &BTreeSet::new(), budget.0)
+    }
+    .map_err(NormRefusal::Diagnosis)?;
+    let mut diagnostics = Vec::new();
+    for core in &diagnosis.cores {
+        let ids: Vec<_> = core
+            .iter()
+            .map(|i| norms.get(*i).map_or("", |n| n.id.as_str()))
+            .collect();
+        let located: Vec<_> = core.iter().filter_map(|i| origins.get(*i)).collect();
+        diagnostics.extend(core_findings("consistency.normative.conflict", &crate::DiagnosticSeverity::Error,
+            &format!("Declared-order/layer conflict among rules: {}. Grounding is conditional; this is not admission or fulfilment evidence.", ids.join(", ")), &located));
+    }
+    diagnostics.extend(legacy_notes(norms, contexts, origins, &diagnosis));
+    Ok(DeclaredOrderReport {
+        diagnosis,
+        diagnostics,
+    })
+}
+
+/// Limits, grounding and exact source bindings, checked before any decision.
+fn validate_order(
+    norms: &[GroundedNorm],
+    origins: &[crate::consistency::RuleOrigin],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
+    contexts: usize,
+) -> Result<(), NormRefusal> {
+    if norms.len() > crate::consistency::diagnosis::MAX_DECLARATIONS || edges.len() > 4096 {
         return Err(NormRefusal::Limit);
     }
     validate(norms, contexts).map_err(NormRefusal::Grounding)?;
@@ -485,43 +652,7 @@ fn diagnose_order(
     {
         return Err(NormRefusal::InvalidBinding);
     }
-    let all: BTreeSet<_> = (0..norms.len()).collect();
-    let conflicts = if budget.1.is_none() {
-        order_conflicts(norms, layers, edges, protected, contexts, &all)
-    } else {
-        Vec::new()
-    };
-    let mut oracle = OrderOracle {
-        edges,
-        conflicts,
-        dynamic: budget.1.map(|_| SubsetOrder {
-            norms,
-            layers,
-            protected,
-            contexts,
-        }),
-    };
-    let diagnosis = if let Some(editable) = budget.1 {
-        diagnose_subsets(&mut oracle, norms.len(), editable, budget.0)
-    } else {
-        diagnosis::diagnose(&mut oracle, norms.len(), &BTreeSet::new(), budget.0)
-    }
-    .map_err(NormRefusal::Diagnosis)?;
-    let mut diagnostics = Vec::new();
-    for core in &diagnosis.cores {
-        let ids: Vec<_> = core
-            .iter()
-            .map(|i| norms.get(*i).map_or("", |n| n.id.as_str()))
-            .collect();
-        let located: Vec<_> = core.iter().filter_map(|i| origins.get(*i)).collect();
-        diagnostics.extend(core_findings("consistency.normative.conflict", &crate::DiagnosticSeverity::Error,
-            &format!("Declared-order/layer conflict among rules: {}. Grounding is conditional; this is not admission or fulfilment evidence.", ids.join(", ")), &located));
-    }
-    diagnostics.extend(legacy_notes(norms, contexts, origins, &diagnosis));
-    Ok(DeclaredOrderReport {
-        diagnosis,
-        diagnostics,
-    })
+    Ok(())
 }
 
 fn legacy_notes(
@@ -589,222 +720,245 @@ fn order_conflicts(
     conflicts
 }
 
-// Declaration removal can erase a priority path, so this oracle is not
-// monotone. Enumerate subsets rather than pruning by monotone hitting sets.
-fn diagnose_subsets(
-    oracle: &mut impl crate::consistency::diagnosis::Oracle<Unknown = std::convert::Infallible>,
-    declarations: usize,
-    editable: &BTreeSet<usize>,
-    max_calls: usize,
-) -> Result<
-    crate::consistency::diagnosis::Diagnosis,
-    crate::consistency::diagnosis::Unknown<std::convert::Infallible>,
-> {
-    use crate::consistency::diagnosis::{Diagnosis, Unknown, Verdict};
-    let all: BTreeSet<_> = (0..declarations).collect();
-    let calls = std::cell::Cell::new(0_usize);
-    let mut unsat = |active: &BTreeSet<usize>| {
-        if calls.get() >= max_calls {
-            return Err(Unknown::Budget);
-        }
-        calls.set(calls.get().saturating_add(1));
-        Ok(matches!(oracle.check(active), Verdict::Unsat))
-    };
-    let mut cores = BTreeSet::new();
-    let mut corrections = BTreeSet::new();
-    if unsat(&all)? {
-        // Non-monotone diagnosis visits every subset, including inherited rules.
-        // The full-set query is included in that count. At least one minimal
-        // core must also be independently revalidated after enumeration.
-        let minimum_calls = u32::try_from(declarations)
-            .ok()
-            .and_then(|n| 1_usize.checked_shl(n))
-            .and_then(|count| count.checked_add(1));
-        if minimum_calls.is_none_or(|count| count > max_calls) {
-            return Err(Unknown::Budget);
-        }
-        let mut pending = vec![all.clone()];
-        let mut checked = BTreeMap::from([(all.clone(), true)]);
-        while let Some(active) = pending.pop() {
-            for member in &active {
-                let mut subset = active.clone();
-                subset.remove(member);
-                if let std::collections::btree_map::Entry::Vacant(entry) =
-                    checked.entry(subset.clone())
-                {
-                    entry.insert(unsat(&subset)?);
-                    pending.push(subset);
-                }
-            }
-        }
-        for (active, conflict) in &checked {
-            if *conflict {
-                if !checked
-                    .iter()
-                    .any(|(subset, bad)| *bad && subset != active && subset.is_subset(active))
-                {
-                    cores.insert(active.clone());
-                }
-            } else {
-                let repair: BTreeSet<_> = all.difference(active).copied().collect();
-                if repair.is_subset(editable)
-                    && !checked
-                        .iter()
-                        .any(|(kept, bad)| !bad && kept != active && active.is_subset(kept))
-                {
-                    corrections.insert(repair);
-                }
-            }
-        }
-    } else {
-        corrections.insert(BTreeSet::new());
-    }
-    // Independent checks consume the same ceiling as subset recomputation.
-    crate::consistency::diagnosis::require_validation_budget(
-        &cores,
-        &corrections,
-        max_calls.saturating_sub(calls.get()),
-    )?;
-    for core in &cores {
-        if !unsat(core)? {
-            return Err(Unknown::InconsistentOracle);
-        }
-        for member in core {
-            let mut subset = core.clone();
-            subset.remove(member);
-            if unsat(&subset)? {
-                return Err(Unknown::InconsistentOracle);
-            }
-        }
-    }
-    for repair in &corrections {
-        let kept: BTreeSet<_> = all.difference(repair).copied().collect();
-        if unsat(&kept)? {
-            return Err(Unknown::InconsistentOracle);
-        }
-        for member in repair {
-            let mut restored = kept.clone();
-            restored.insert(*member);
-            if !unsat(&restored)? {
-                return Err(Unknown::InconsistentOracle);
-            }
-        }
-    }
-    Ok(Diagnosis {
-        cores,
-        corrections,
-        calls: calls.get(),
-        max_calls,
-    })
-}
-
 #[cfg(test)]
 mod admission_tests {
     use super::*;
+    use proptest::prelude::*;
 
-    struct CountingOracle {
-        calls: usize,
+    const LAYERS: [ConstitutionLayer; 3] = [
+        ConstitutionLayer::Legal,
+        ConstitutionLayer::Company,
+        ConstitutionLayer::Preference,
+    ];
+    const GRADES: [DeonticModality; 3] = [
+        DeonticModality::Obligation,
+        DeonticModality::Permission,
+        DeonticModality::Prohibition,
+    ];
+
+    /// A small grounding: per norm (grade, layer, applicable bits, excepted
+    /// bits), the declared edges, the protected set and the context count.
+    type Grounding = (
+        Vec<GroundedNorm>,
+        Vec<ConstitutionLayer>,
+        Vec<(usize, usize)>,
+        BTreeSet<usize>,
+        usize,
+    );
+
+    fn grounding() -> impl Strategy<Value = Grounding> {
+        (1_usize..=5, 1_usize..=3).prop_flat_map(|(n, contexts)| {
+            (
+                proptest::collection::vec((0_usize..3, 0_usize..3, 0_u8..8, 0_u8..8), n),
+                proptest::collection::btree_set((0..n, 0..n), 0..=n.saturating_mul(2)),
+                proptest::collection::btree_set(0..n, 0..=n),
+                Just(contexts),
+            )
+                .prop_map(|(rows, edges, protected, contexts)| {
+                    let mut norms = Vec::new();
+                    let mut layers = Vec::new();
+                    for (index, (grade, layer, applicable, excepted)) in
+                        rows.into_iter().enumerate()
+                    {
+                        let bits = |mask: u8| -> BTreeSet<usize> {
+                            (0..contexts).filter(|c| mask >> c & 1 == 1).collect()
+                        };
+                        let applicable = bits(applicable);
+                        let excepted = bits(excepted).intersection(&applicable).copied().collect();
+                        norms.push(GroundedNorm {
+                            id: format!("rule.{index}"),
+                            modality: GRADES[grade],
+                            authority: ("board".into(), "1".into()),
+                            authority_level: None,
+                            enacted: 0,
+                            applicable,
+                            excepted,
+                        });
+                        layers.push(LAYERS[layer]);
+                    }
+                    (
+                        norms,
+                        layers,
+                        edges.into_iter().collect(),
+                        protected,
+                        contexts,
+                    )
+                })
+        })
     }
 
-    impl crate::consistency::diagnosis::Oracle for CountingOracle {
-        type Unknown = std::convert::Infallible;
+    fn origins(norms: &[GroundedNorm]) -> Vec<crate::consistency::RuleOrigin> {
+        (0..norms.len())
+            .map(|i| crate::consistency::RuleOrigin {
+                artifact_id: Some("rules".into()),
+                pointer: format!("/{i}"),
+            })
+            .collect()
+    }
 
-        fn check(
-            &mut self,
-            active: &BTreeSet<usize>,
-        ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
-            use crate::consistency::diagnosis::Verdict;
-            self.calls = self.calls.saturating_add(1);
-            if active.contains(&1) && (active.contains(&0) || active.contains(&2)) {
-                Verdict::Unsat
+    /// The former decision: the explainer oracle's whole-set query.
+    fn oracle_admits(
+        (norms, layers, edges, protected, contexts): &Grounding,
+        candidate: bool,
+    ) -> bool {
+        use crate::consistency::diagnosis::{Oracle, Verdict};
+        let all: BTreeSet<_> = (0..norms.len()).collect();
+        let mut oracle = OrderOracle {
+            edges,
+            conflicts: if candidate {
+                Vec::new()
             } else {
-                Verdict::Sat
+                order_conflicts(norms, layers, edges, protected, *contexts, &all)
+            },
+            dynamic: candidate.then_some(SubsetOrder {
+                norms,
+                layers,
+                protected,
+                contexts: *contexts,
+            }),
+        };
+        matches!(oracle.check(&all), Verdict::Sat)
+    }
+
+    mod witnesses {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../verification/semantics-v1/Checker/NormPrecedence/witnesses.rs"
+        ));
+    }
+
+    /// The gate's pinned mutant witnesses, as the core and the oracle see them.
+    fn witness(w: &witnesses::Witness) -> (Grounding, Vec<decision::Norm>, Vec<Vec<bool>>) {
+        const RANKS: [ConstitutionLayer; 5] = [
+            ConstitutionLayer::Religious,
+            ConstitutionLayer::Legal,
+            ConstitutionLayer::Industry,
+            ConstitutionLayer::Company,
+            ConstitutionLayer::Preference,
+        ];
+        let mut norms = Vec::new();
+        let mut core = Vec::new();
+        let mut layers = Vec::new();
+        let mut protected = BTreeSet::new();
+        for (index, &(grade, layer, guarded, active)) in w.norms.iter().enumerate() {
+            norms.push(GroundedNorm {
+                id: format!("rule.{index}"),
+                modality: GRADES[usize::from(grade)],
+                authority: ("board".into(), "1".into()),
+                authority_level: None,
+                enacted: 0,
+                applicable: (0..w.contexts).filter(|c| active[*c]).collect(),
+                excepted: BTreeSet::new(),
+            });
+            core.push(decision::Norm {
+                modality: [
+                    decision::Modality::Obligation,
+                    decision::Modality::Permission,
+                    decision::Modality::Prohibition,
+                ][usize::from(grade)],
+                layer,
+                protected: guarded,
+                active: active.to_vec(),
+            });
+            layers.push(RANKS[usize::from(layer)]);
+            if guarded {
+                protected.insert(index);
             }
         }
+        let reach = w.reach.iter().map(|row| row.to_vec()).collect();
+        (
+            (norms, layers, w.edges.to_vec(), protected, w.contexts),
+            core,
+            reach,
+        )
     }
 
+    /// Every pinned witness carries the oracle's verdict, and the unmutated
+    /// core agrees with it; the gate requires each mutant to disagree.
     #[test]
-    fn impossible_subset_search_stops_after_full_set_query() {
-        use crate::consistency::diagnosis::Unknown;
-        for declarations in [12, 13, 32, 64, 65] {
-            let mut oracle = CountingOracle { calls: 0 };
+    fn witnesses_match_the_oracle() {
+        fn set<T: Ord + Clone>(items: &[T]) -> BTreeSet<T> {
+            items.iter().cloned().collect()
+        }
+        for w in witnesses::WITNESSES {
+            let (g, core, reach) = witness(w);
+            let admitted = decision::admits(&core, w.edges, &reach, w.contexts);
+            let Some(r) = &w.resolution else {
+                assert_eq!(oracle_admits(&g, false), w.expected, "{}", w.mutant);
+                assert_eq!(admitted, w.expected, "{}", w.mutant);
+                continue;
+            };
+            assert!(admitted, "{}", w.mutant);
+            let (norms, layers, edges, protected, contexts) = &g;
+            let resolved = check_norm_precedence(
+                norms,
+                &origins(norms),
+                layers,
+                edges,
+                protected,
+                *contexts,
+                4096,
+            )
+            .expect("an admitted witness resolves");
+            let truth = &resolved[r.context];
+            let defeats: Vec<_> = truth.defeats.iter().map(|d| (d.winner, d.loser)).collect();
+            let same = set(&truth.survivors) == set(r.survivors)
+                && set(&truth.obligations) == set(r.obligations)
+                && truth.conflicts.len() == r.conflicts
+                && set(&defeats) == set(r.defeats);
+            assert_eq!(same, w.expected, "{}", w.mutant);
             assert_eq!(
-                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 4096),
-                Err(Unknown::Budget)
+                decision::resolution_holds(
+                    &core,
+                    &reach,
+                    r.context,
+                    r.survivors,
+                    r.obligations,
+                    r.conflicts,
+                    r.defeats
+                ),
+                w.expected,
+                "{}",
+                w.mutant
             );
-            assert_eq!(oracle.calls, 1);
         }
     }
 
-    struct SatCountingOracle {
-        calls: usize,
-    }
-
-    impl crate::consistency::diagnosis::Oracle for SatCountingOracle {
-        type Unknown = std::convert::Infallible;
-
-        fn check(
-            &mut self,
-            _active: &BTreeSet<usize>,
-        ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
-            self.calls = self.calls.saturating_add(1);
-            crate::consistency::diagnosis::Verdict::Sat
+    proptest! {
+        /// U3 is behaviour-preserving: the proved core admits exactly what the
+        /// whole-set oracle query admitted, on both admission paths, and an
+        /// admitted order resolves with every context certified.
+        #[test]
+        fn core_decides_exactly_as_the_whole_set_query(g in grounding()) {
+            let (norms, layers, edges, protected, contexts) = &g;
+            let (core, reach) = decision_inputs(norms, layers, edges, protected, *contexts);
+            let admitted = decision::admits(&core, edges, &reach, *contexts);
+            prop_assert_eq!(admitted, oracle_admits(&g, false));
+            let audit = crate::deontic::installed_protection(protected, edges);
+            let (candidate, _) = decision_inputs(norms, layers, edges, &audit, *contexts);
+            prop_assert_eq!(decision::admits(&candidate, edges, &reach, *contexts), oracle_admits(&g, true));
+            let checked = check_norm_precedence(norms, &origins(norms), layers, edges, protected, *contexts, 4096);
+            if admitted {
+                prop_assert!(checked.is_ok());
+            } else {
+                prop_assert!(matches!(checked, Err(NormRefusal::Conflict(_))));
+            }
         }
-    }
 
-    #[test]
-    fn satisfiable_sets_keep_two_call_fast_path_regardless_of_subset_count() {
-        use crate::consistency::diagnosis::Unknown;
-        for declarations in [13, 64, 65] {
-            let mut oracle = SatCountingOracle { calls: 0 };
-            let result = diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 4096)
-                .expect("SAT needs no subset enumeration");
-            assert!(result.cores.is_empty());
-            assert_eq!(result.corrections, BTreeSet::from([BTreeSet::new()]));
-            assert_eq!(result.calls, 2);
-            assert_eq!(oracle.calls, 2);
-            let mut oracle = SatCountingOracle { calls: 0 };
-            assert_eq!(
-                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 2)
-                    .expect("exact SAT budget")
-                    .calls,
-                2
-            );
-            assert_eq!(oracle.calls, 2);
-            let mut oracle = SatCountingOracle { calls: 0 };
-            assert_eq!(
-                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 1),
-                Err(Unknown::Budget)
-            );
-            assert_eq!(oracle.calls, 1);
+        /// The closure certificate is exact: with any one entry of the true
+        /// closure flipped, nothing is admitted.
+        #[test]
+        fn any_wrong_closure_entry_refuses(
+            g in grounding(),
+            high in any::<proptest::sample::Index>(),
+            low in any::<proptest::sample::Index>(),
+        ) {
+            let (norms, layers, edges, protected, contexts) = &g;
+            let (core, mut reach) = decision_inputs(norms, layers, edges, protected, *contexts);
+            let entry = &mut reach[high.index(norms.len())][low.index(norms.len())];
+            *entry = !*entry;
+            prop_assert!(!decision::admits(&core, edges, &reach, *contexts));
         }
-    }
-
-    #[test]
-    fn twelve_declarations_search_and_recheck_overlapping_cores() {
-        use crate::consistency::diagnosis::Unknown;
-        let editable = (0..12).collect();
-        let mut oracle = CountingOracle { calls: 0 };
-        // 4096 subsets, two three-query core checks, two repair/restoration
-        // checks (two and three queries): the exact complete budget is 4107.
-        let result = diagnose_subsets(&mut oracle, 12, &editable, 4107).expect("fits");
-        assert_eq!(result.calls, 4107);
-        assert_eq!(oracle.calls, result.calls);
-        assert_eq!(
-            result.cores,
-            BTreeSet::from([BTreeSet::from([0, 1]), BTreeSet::from([1, 2])])
-        );
-        assert_eq!(
-            result.corrections,
-            BTreeSet::from([BTreeSet::from([1]), BTreeSet::from([0, 2])])
-        );
-        let mut oracle = CountingOracle { calls: 0 };
-        assert_eq!(
-            diagnose_subsets(&mut oracle, 12, &editable, result.calls - 1),
-            Err(Unknown::Budget)
-        );
-        // Refuse the known-incomplete validation batch before querying it.
-        assert_eq!(oracle.calls, 4096);
     }
 
     #[test]

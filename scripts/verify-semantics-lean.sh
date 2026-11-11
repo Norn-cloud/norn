@@ -19,8 +19,19 @@ proof_files=(
   verification/semantics-v1/NornSem/Obligation.lean
   verification/semantics-v1/NornSem/Value.lean
 )
-test "$(cd "$repo_root" && find verification/semantics-v1 -name '*.lean' | LC_ALL=C sort)" = \
-  "$(printf '%s\n' "${proof_files[@]}")"
+# The coverage manifest binds exactly these sources to this gate; other gates
+# own the rest of the directory (for example NornSem/Norm.lean).
+test "$(python3 - "$repo_root" <<'PYGATE'
+import json
+import sys
+from pathlib import Path
+
+index = json.loads((Path(sys.argv[1]) / "verification/coverage-v1/manifest/index.json").read_text())
+gates = index["leanCompositeGates"]
+print("\n".join(sorted(p for p, g in gates.items() if g == "scripts/verify-semantics-lean.sh")))
+PYGATE
+)" = "$(printf '%s\n' "${proof_files[@]}" | LC_ALL=C sort)"
+for file in "${proof_files[@]}"; do test -f "$repo_root/$file"; done
 
 test "$(git -C "$aeneas_root" rev-parse HEAD)" = 74a460a2f80ecea481bbdf1a08f881633c3bb097
 test "$(tr -d '\r\n' < "$lean_root/lean-toolchain")" = leanprover/lean4:v4.31.0

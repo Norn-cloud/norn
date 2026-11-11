@@ -9,7 +9,14 @@
     "verification/semantics-v1/NornSem/Exact.lean": "scripts/verify-semantics-lean.sh",
     "verification/semantics-v1/NornSem/Value.lean": "scripts/verify-semantics-lean.sh",
     "verification/semantics-v1/NornSem/Law.lean": "scripts/verify-semantics-lean.sh",
-    "verification/semantics-v1/NornSem/Obligation.lean": "scripts/verify-semantics-lean.sh"
+    "verification/semantics-v1/NornSem/Obligation.lean": "scripts/verify-semantics-lean.sh",
+    "verification/semantics-v1/NornSem/Norm.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/NornSem/Meta/Precedence.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/Loops.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/Admits.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/AdmitsSound.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/Resolution.lean": "scripts/verify-norm-precedence-aeneas.sh",
+    "verification/semantics-v1/Checker/NormPrecedence/DecisionProof.lean": "scripts/verify-norm-precedence-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [
