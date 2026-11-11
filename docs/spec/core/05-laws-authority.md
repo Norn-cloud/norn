@@ -155,46 +155,6 @@ Named scenarios: invariant refusal retains a declaration pin through the API;
 unauthorized projections are independent of arbitrary secret operands;
 a pre-change checker receipt verifies against its original hash.
 
-## Read-only explain (#517)
-
-**EXPLAIN-CLOSURE-1:** `norn explain <action|law|concept> <id> --defs <path>`
-projects the existing admitted catalog and conservative whole-set writer closure.
-Every declaration retains its version and semantic digest. Direct writes and
-bounded read slices remain separate from the conservative writer inventory.
-In a project, `norn explain <action|law|concept> <id>` compiles the
-project's sources and calls the same checker entry point; refusals carry the
-authoring source line. An explanation is neither a permission grant nor proof. Server consumers must
-supply a complete definition set already authorized for disclosure.
-
-**EXPLAIN-ORIGIN-1:** canonical inheritance paths terminate at the authored
-subject; containment paths retain each pinned containing pack. Authored source
-paths remain attached to laws. Mapping writers without checked interpretation
-preservation remain explicit unknown obligations, never inferred law origins.
-
-**EXPLAIN-UNKNOWN-1:** the production induction generator supplies the displayed
-obligations. Every unknown identifies its writer or footprint and required
-checked evidence. Runtime invariant enforcement is displayed separately from
-proof status. Source-only explanations have unknown proof status and infer no
-solver assumptions.
-
-**EXPLAIN-WORDING-1:** optional `--wording <path> --locale <BCP47>` binds reviewed
-structured wording to the complete law and a wording digest. Locale-map lookup
-refuses unavailable locales; there is no language fallback or EN/AR-only enum
-in the command interface. Without wording input, the report omits rendered
-wording and retains all other explanation fields.
-
-**DIAG-ADVICE-1:** every registered code supplies exactly one nonblank `fix` or
-`no_fix` reason. The build joins the code records with `conformance/diagnostic-guidance.json` into the existing registry. Registration rejects missing, conflicting, duplicate, orphaned and blank guidance.
-**DIAG-PROJECTION-2:** diagnostic advice is emitted by the new projection only;
-historical diagnostics and receipt hashes retain their original serialization.
-
-Named scenarios: incomplete law names uncovered writer; inherited concept
-reaches authored law; containing packs retain pins; runtime enforcement remains
-separate from proof; Arabic and data-only French render through the locale map;
-missing locale refuses; reordering inputs preserves the explanation; historical
-receipt verification remains unchanged; oversized writer identities refuse
-before goal generation through the existing goal-byte preflight.
-
 ### Conditional linear certificate kernel (#711)
 
 **CONS-LINEAR-1:** the mathematical coefficient checker verifies every affine
@@ -318,6 +278,47 @@ Named scenarios: undeclared superior/posterior/specialis ties refuse; explicit
 transitive edges resolve; removing an edge refuses; cross-layer wins and protected
 defeats refuse; numeric-rank removal leaves declared results unchanged; exhaustive
 three-rule groundings and generated catalog permutations preserve exact survivors.
+
+## Read-only explain (#517)
+
+**EXPLAIN-CLOSURE-1:** `norn explain <action|law|concept> <id> --defs <path>`
+projects the existing admitted catalog and conservative whole-set writer closure.
+Every declaration retains its version and semantic digest. Direct writes and
+bounded read slices remain separate from the conservative writer inventory.
+In a project, `norn explain <action|law|concept> <id>` compiles the
+project's sources and calls the same checker entry point; refusals carry the
+authoring source line. An explanation is neither a permission grant nor proof. Server consumers must
+supply a complete definition set already authorized for disclosure.
+
+**EXPLAIN-ORIGIN-1:** canonical inheritance paths terminate at the authored
+subject; containment paths retain each pinned containing pack. Authored source
+paths remain attached to laws. Mapping writers without checked interpretation
+preservation remain explicit unknown obligations, never inferred law origins.
+
+**EXPLAIN-UNKNOWN-1:** the production induction generator supplies the displayed
+obligations. Every unknown identifies its writer or footprint and required
+checked evidence. Runtime invariant enforcement is displayed separately from
+proof status. Source-only explanations have unknown proof status and infer no
+solver assumptions.
+
+**EXPLAIN-WORDING-1:** optional `--wording <path> --locale <BCP47>` binds reviewed
+structured wording to the complete law and a wording digest. Locale-map lookup
+refuses unavailable locales; there is no language fallback or EN/AR-only enum
+in the command interface. Without wording input, the report omits rendered
+wording and retains all other explanation fields.
+
+**DIAG-ADVICE-1:** every registered code supplies exactly one nonblank `fix` or
+`no_fix` reason. The build joins the code records with `conformance/diagnostic-guidance.json` into the existing registry. Registration rejects missing, conflicting, duplicate, orphaned and blank guidance.
+**DIAG-PROJECTION-2:** diagnostic advice is emitted by the new projection only;
+historical diagnostics and receipt hashes retain their original serialization.
+
+Named scenarios: incomplete law names uncovered writer; inherited concept
+reaches authored law; containing packs retain pins; runtime enforcement remains
+separate from proof; Arabic and data-only French render through the locale map;
+missing locale refuses; reordering inputs preserves the explanation; historical
+receipt verification remains unchanged; oversized writer identities refuse
+before goal generation through the existing goal-byte preflight.
+
 ## Generated bounded creation profile (#565)
 
 **PROOF-QUINT-1:** the checker reconstructs the admitted Challenge before lowering
