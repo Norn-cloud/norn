@@ -15,13 +15,13 @@ use norn_ir::RuntimeValue;
 use serde_json::{Value, json};
 
 /// The admitted action identity.
-pub const MELT_ACTION: &str = "constitution.melt.convert";
+pub(crate) const MELT_ACTION: &str = "constitution.melt.convert";
 /// The object type it writes.
-pub const MELT: &str = "constitution.Melt";
+pub(crate) const MELT: &str = "constitution.Melt";
 /// The admitted writer derives the loss, so the fine-mass law always holds.
-pub const DERIVES_LOSS: &str = "withLoss";
+pub(crate) const DERIVES_LOSS: &str = "withLoss";
 /// The admitted writer keeps the default loss of 0: any real loss breaks the law.
-pub const OMITS_LOSS: &str = "withoutLoss";
+pub(crate) const OMITS_LOSS: &str = "withoutLoss";
 
 /// Base and candidate artifacts of the fixture's `set`, in admission order.
 fn documents(set: &str) -> Vec<Value> {
@@ -44,7 +44,7 @@ fn documents(set: &str) -> Vec<Value> {
 /// A provisioned in-memory store for `org_demo/dev` whose installed,
 /// receipt-verified definitions are the fixture's `set`. `prepare` registers the
 /// kernel's own action types in the model (the API's `prepare_action_model`).
-pub fn melt_store<P, X>(set: &str, prepare: P) -> CellStore<NativeEngine>
+pub(crate) fn melt_store<P, X>(set: &str, prepare: P) -> CellStore<NativeEngine>
 where
     P: FnOnce(&Model) -> Result<Model, X>,
     X: std::fmt::Debug,
@@ -117,7 +117,7 @@ where
 
 /// A request body for one melt. Exact decimals travel as their text (VAL-EXACT-1).
 #[must_use]
-pub fn melt_body(id: &str, input: &str, output: &str, key: &str) -> String {
+pub(crate) fn melt_body(id: &str, input: &str, output: &str, key: &str) -> String {
     format!(
         r#"{{"input":{{"id":"{id}","input_fine_g":"{input}","output_fine_g":"{output}"}},"idempotencyKey":"{key}"}}"#
     )

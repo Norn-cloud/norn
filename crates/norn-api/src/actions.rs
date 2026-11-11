@@ -236,7 +236,7 @@ pub fn call_action<E: SqlEngine>(
     let floor = cell.store().read().clock_floor().map_err(Refusal::host)?;
     let now = now.max(LogicalTime::from_millis(floor));
     cell.advance_to(now);
-    let call = norn_kernel::ActionCall {
+    let kernel_call = norn_kernel::ActionCall {
         action,
         action_artifact_id: &artifact.artifact_id,
         action_version: &artifact.version,
@@ -258,7 +258,7 @@ pub fn call_action<E: SqlEngine>(
     let outcome = norn_kernel::commit_action(
         &mut *cell,
         &catalog,
-        &call,
+        &kernel_call,
         &KernelAuthorizer(host.authorizer.as_ref()),
     )
     .map_err(|error| {
@@ -273,6 +273,20 @@ pub fn call_action<E: SqlEngine>(
         )
     })?;
     let store = cell.store();
+    let raw_hash = world_values(host, disclosure, store, actor);
+    caller_receipt(store, action_id, request, outcome, raw_hash, key)
+}
+
+/// The caller's view of `outcome`: the receipt it committed or replayed,
+/// its hash raw only when `raw_hash` (whole-world Values), else keyed.
+fn caller_receipt<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    action_id: &str,
+    request: &ActionRequest,
+    outcome: ActionOutcome,
+    raw_hash: bool,
+    key: &[u8],
+) -> Result<ActionReceipt, Refusal> {
     let (outcome, record, receipt) = match outcome {
         ActionOutcome::Committed { receipt, record } => {
             let receipt = store
@@ -288,7 +302,7 @@ pub fn call_action<E: SqlEngine>(
         }
     };
     let version = written_version(&receipt, &record)?;
-    let receipt_hash = if world_values(host, disclosure, store, actor) {
+    let receipt_hash = if raw_hash {
         receipt.hash.clone()
     } else {
         keyed_receipt_handle(key, &receipt.hash)
