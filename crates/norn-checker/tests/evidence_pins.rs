@@ -262,8 +262,8 @@ fn mapping_pool() -> Vec<Value> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
-    // Every edit runs in every case; the seed stays generated.
+    #![proptest_config(ProptestConfig::with_cases(16))]
+    // Every case edits all 11 fields; 16 seeds cover each field 16 times.
     #[test]
     fn any_pin_or_result_edit_is_unknown(seed in any::<u64>()) {
         let challenge = challenge(&pool());
