@@ -138,7 +138,12 @@ export function lowerCatalog(def: LabelsDef, options: EnvelopeOptions): { readon
   const entries = [
     ...Object.entries(def.types ?? {}).flatMap(([objectType, labels]) => labelEntries(
       { kind: "objectType", objectType },
-      { ...labels, propertyLabels: labels.properties, valueLabels: labels.values, needsReview: labels.needsReview ?? review },
+      {
+        ...labels,
+        ...(labels.properties === undefined ? {} : { propertyLabels: labels.properties }),
+        ...(labels.values === undefined ? {} : { valueLabels: labels.values }),
+        needsReview: labels.needsReview ?? review,
+      },
     )),
     ...Object.entries(def.actions ?? {}).flatMap(([actionId, labels]) => labelEntries(
       { kind: "action", actionId },
