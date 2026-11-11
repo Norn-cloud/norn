@@ -81,8 +81,11 @@ impl CellPolicy {
                 .clone(),
         )
         .unwrap();
-        let projection =
-            norn_projections::project_cedar_schema(&types, &interfaces, &[action.clone()]);
+        let projection = norn_projections::project_cedar_schema(
+            &types,
+            &interfaces,
+            std::slice::from_ref(&action),
+        );
         let host = norn_projections::project_host_access_schema(&types);
         let schema =
             AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
@@ -135,7 +138,7 @@ impl CellPolicy {
         }
     }
 
-    fn read(&self, actor: &str, target: &FactKey) -> Result<(), ActionDenial> {
+    fn decide_read(&self, actor: &str, target: &FactKey) -> Result<(), ActionDenial> {
         match self.pdp.decide(&Self::request(actor, "norn.read", target)) {
             PdpDecision::Allow => Ok(()),
             PdpDecision::Deny(_) => Err(ActionDenial::Invisible),
@@ -157,13 +160,13 @@ impl Authorizer for CellPolicy {
         .authorize(request)
     }
     fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        self.read(request.actor, request.target)
+        self.decide_read(request.actor, request.target)
     }
     fn action_read_type(
         &self,
         request: &ActionReadTypeAuthzRequest<'_>,
     ) -> Result<(), ActionDenial> {
-        self.read(
+        self.decide_read(
             request.actor,
             &FactKey::new(request.object_type.as_str(), "collection"),
         )
