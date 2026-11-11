@@ -467,11 +467,19 @@ impl ActionCallRecord {
     }
 
     fn binds_same_call(&self, other: &Self) -> bool {
-        self.action_id == other.action_id
-            && self.object == other.object
-            && self.input == other.input
-            && self.actor == other.actor
-            && self.rule_binding == other.rule_binding
+        crate::replay_decision::same_call(&self.call_identity(), &other.call_identity())
+    }
+
+    const fn call_identity(
+        &self,
+    ) -> crate::replay_decision::CallIdentity<&String, &FactKey, &JsonObject, &Option<String>> {
+        crate::replay_decision::CallIdentity {
+            action: &self.action_id,
+            object: &self.object,
+            input: &self.input,
+            actor: &self.actor,
+            rule_binding: &self.rule_binding,
+        }
     }
 
     fn binds_same_generated_call(
@@ -1303,20 +1311,11 @@ fn resolve_receipt_effect<H: CellHost + ?Sized>(
         Err(error) => return Err(error.into_refusal().map_or_else(host_failure, refuse)),
     };
     // The host authenticates; the kernel re-checks the pins it can see.
-    if binding.manifest() != &declaration.manifest_digest {
-        return Err(refuse(ReceiptRefusal::BindingMismatch));
-    }
     // RUN-BIND-1: a receipt resolves only the run it was dispatched under.
-    if binding.run().id != target.key {
-        return Err(refuse(ReceiptRefusal::RunMismatch));
-    }
-    let run_generation = binding.run().generation;
+    binding
+        .check_commit(&declaration.manifest_digest, &target.key)
+        .map_err(refuse)?;
     let (digest, result, acceptance) = binding.into_parts();
-    if acceptance.record.generation.0 != run_generation
-        || acceptance.state.generation.0 != run_generation
-    {
-        return Err(refuse(ReceiptRefusal::RunMismatch));
-    }
     if acceptance.requires_cell_lane || acceptance.destination.is_some() {
         // Predicate pins and written destinations need their own fences.
         return Err(refuse(ReceiptRefusal::EffectUnsupported));
@@ -6402,21 +6401,26 @@ fn check_action_preconditions<X>(
     Ok(outcomes)
 }
 
+impl crate::replay_decision::RecordedCall for ActionCallRecord {
+    fn same_call(&self, call: &Self) -> bool {
+        self.binds_same_call(call)
+    }
+}
+
 /// The replay of an already committed call under the same key, or `None`
-/// when no call was committed under it.
+/// when no call was committed under it. The decision is
+/// [`crate::replay_decision::decide_replay`]; this only decodes the record.
 fn replay<X>(
     recorded: &FactState,
     call: &ActionCallRecord,
     key: &str,
 ) -> Result<Option<ActionOutcome>, ActionRefusal<X>> {
-    let Some(values) = &recorded.values else {
-        return Ok(None);
-    };
-    match ActionCallRecord::from_values(values) {
-        Some(record) if record.binds_same_call(call) => {
-            Ok(Some(ActionOutcome::Replayed { record }))
-        }
-        _ => Err(ActionRefusal::IdempotencyConflict {
+    use crate::replay_decision::{ReplayDecision, decide_replay};
+    let stored = recorded.values.as_ref().map(ActionCallRecord::from_values);
+    match decide_replay(stored, call) {
+        ReplayDecision::Fresh => Ok(None),
+        ReplayDecision::Replay(record) => Ok(Some(ActionOutcome::Replayed { record })),
+        ReplayDecision::Conflict => Err(ActionRefusal::IdempotencyConflict {
             key: key.to_owned(),
         }),
     }
