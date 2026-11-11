@@ -6,7 +6,8 @@
     "verification/kernel-l1/Audit.lean": "scripts/verify-kernel-l1-lean.sh",
     "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh",
     "verification/kernel-proof-v1/Commit/Reference.lean": "scripts/verify-kernel-commit-aeneas.sh",
-    "verification/kernel-proof-v1/Commit/OrderProof.lean": "scripts/verify-kernel-commit-aeneas.sh"
+    "verification/kernel-proof-v1/Commit/OrderProof.lean": "scripts/verify-kernel-commit-aeneas.sh",
+    "verification/kernel-proof-v1/Commit/CasProof.lean": "scripts/verify-kernel-commit-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [

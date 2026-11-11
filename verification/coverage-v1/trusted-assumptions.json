@@ -52,8 +52,8 @@
     {
       "id": "TRUST-KERNEL-COMMIT-STAGE-DISPATCH",
       "owner": "Norn kernel maintainers",
-      "boundary": "LocalStages::run in crates/norn-kernel/src/commit_check.rs, which maps each CommitStage to its stage body, the stage bodies themselves, and the profile and owned-rows wrappers around check_commit_local",
-      "justification": "scripts/verify-kernel-commit-aeneas.sh proves the extracted run_stages driver for every implementation of CommitStages, so the order and short-circuit are proved; which Rust check runs for each stage, and what it decides, is ordinary reviewed code until its own unit lands (#718 P8).",
+      "boundary": "LocalStages::run in crates/norn-kernel/src/commit_check.rs, which maps each CommitStage to its stage body; the read, write and link expectation lists check_versions builds and the ObjectVersions and LinkVersions host lookups it passes to first_conflict; the remaining stage bodies; and the profile and owned-rows wrappers around check_commit_local",
+      "justification": "scripts/verify-kernel-commit-aeneas.sh proves the extracted run_stages driver for every implementation of CommitStages, and the extracted first_conflict scan for every CurrentVersion lookup, so the stage order, the short-circuit and the compare-and-swap decision are proved; which Rust check runs for each stage, which keys reach the scan and what the host returns is ordinary reviewed code until its own unit lands (#718 P8).",
       "blastRadius": "A stage arm calling the wrong check, or a stage body deciding wrongly, would refuse or admit a commit at a stage the written order does not name, while the driver theorem still holds.",
       "falsificationTest": "Kernel and cell tests plus the DST simulator exercise every refusal kind through check_commit; the later K-A units replace stage bodies with extracted decision cores."
     }

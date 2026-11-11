@@ -47,6 +47,23 @@ def admission {m : Type → Type} [Monad m] {σ E : Type}
       | .error e => pure (.error e, s1)
       | .ok () => admission run rest s1
 
+/-- Compare-and-swap (K1, K3): read the current version of each expectation in
+order and report the first that differs from the version the turn read, as
+(key, expected, current). A host read failure ends the scan with that failure.
+Nothing after the first conflict or failure is read. Admission scans the
+commit's reads, then its writes: `firstConflict current (reads ++ writes)`. -/
+def firstConflict {m : Type → Type} [Monad m] {σ K E : Type}
+    (current : σ → K → m (Except E Nat × σ)) :
+    List (K × Nat) → σ → m (Except E (Option (K × Nat × Nat)) × σ)
+  | [], s => pure (.ok none, s)
+  | (key, expected) :: rest, s => do
+      let (r, s1) ← current s key
+      match r with
+      | .error e => pure (.error e, s1)
+      | .ok found =>
+        if found = expected then firstConflict current rest s1
+        else pure (.ok (some (key, expected, found)), s1)
+
 /-- Every stage runs at most once. -/
 theorem commitOrder_nodup : commitOrder.Nodup := by decide
 
