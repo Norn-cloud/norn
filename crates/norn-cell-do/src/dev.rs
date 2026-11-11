@@ -928,10 +928,10 @@ mod tests {
         // The file is replaced, never reused: a descriptor opened on the old
         // world-readable file does not see the new token.
         std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let mut stale = File::open(&token).unwrap();
+        let mut earlier_reader = File::open(&token).unwrap();
         write_private(&token, "secret\n").unwrap();
         let mut seen = String::new();
-        std::io::Read::read_to_string(&mut stale, &mut seen).unwrap();
+        std::io::Read::read_to_string(&mut earlier_reader, &mut seen).unwrap();
         assert_eq!(seen, "b\n");
         assert_eq!(std::fs::read_to_string(&token).unwrap(), "secret\n");
         // A symlinked token is refused and its target left alone.
