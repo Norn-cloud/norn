@@ -12,6 +12,7 @@ import type { ObjectTypeDef } from "./entity.ts"
 import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
 import type { ObjectSchema } from "./schema.ts"
 import type { SliceDecl } from "./rule.ts"
+import type { Localized } from "./labels.ts"
 
 /** One ordered, deterministic ZEN transformation of the action input. */
 export interface ActionInputDerivation {
@@ -68,7 +69,7 @@ export type UpsertWriteMode =
   | { readonly kind: "create_only" }
   | { readonly kind: "draft_only"; readonly lifecycle: string; readonly state: string }
 
-export interface ActionDef {
+export interface ActionDef extends Localized {
   readonly dependencies?: ReadonlyArray<DependencyPin>
   readonly _tag: "Action"
   /** `actionId`; the artifact is `<id>.action` in the id's first namespace segment. */

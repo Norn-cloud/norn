@@ -3,6 +3,7 @@ import { type Json, toJson } from "../canonical.ts"
 import { type EnvelopeOptions, envelope } from "./envelope.ts"
 import * as X from "./expr.ts"
 import type { ValueSchema } from "./schema.ts"
+import type { Localized } from "./labels.ts"
 
 export type LawModality = { readonly kind: "always" | "never" | "eventually" } | { readonly kind: "until"; readonly predicate: string }
 export type LawTiming = { readonly kind: "within"; readonly millis: string } | { readonly kind: "before_deadline"; readonly property: string }
@@ -42,7 +43,7 @@ export interface LawIR {
   /** Omit when empty: an explicit `[]` is refused, so a law without exceptions keeps its bytes. */
   readonly exceptions?: ReadonlyArray<LawException>
 }
-export interface LawDef {
+export interface LawDef extends Localized {
   readonly _tag: "Law"
   readonly id: string
   readonly title: string
