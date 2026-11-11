@@ -328,20 +328,39 @@ class Probes(unittest.TestCase):
         self.assertIn("FAIL broken run exited 3", lines)
         lines = 'ENV {"vcpu": 4, "cpu_model": "x"}\n' + lines
 
-        class Args:
-            snapshot, type = "snap", "default"
-        rows, notes = boat_nightly.records_from(lines, SHA, "2026-11-11T12:23:59Z", "bx_abcdefgh", Args)
+        rows, notes = boat_nightly.records_from(lines, SHA, "2026-11-11T12:23:59Z", "bx_abcdefgh", "snap", "default")
         rows.append(boat_nightly.starts_record({"starts": {"day": {"used": 410, "limit": 840}}}, "2026-11-11T15:28:26Z"))
         self.assertEqual(len(notes), 2)
         self.assertEqual(sorted(r["metric"] for r in rows), ["boat.starts.used_24h", "fork.cow.create.f20.p50",
                                                             "proof.gate.all.s", "proof.gate.kani_ledger_a.s"])
         schema = record.load_schema()
         for row in rows:
-            row = record.complete(row, "2026-11-11T16:00:00Z")
+            row = record.complete(row)
             self.assertEqual(record.record_errors(row, schema), [], row["metric"])
         fork = next(r for r in rows if r["metric"].startswith("fork."))
         self.assertEqual(fork["workload"], {"bench": "b", "forks": 20, "boat_snapshot": "snap", "boat_sandbox": "bx_abcdefgh"})
         self.assertEqual((fork["env"]["runner"], fork["env"]["vcpu"]), ("boat", 4))
+
+
+    def test_prepare_timeout_fails_the_probe(self):
+        import run_probes
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ok = run_probes.run_probe({"name": "slow", "prepare": "sleep 5", "run": "true", "timeout_s": 1,
+                                       "caveats": "c"}, HERE)
+        self.assertFalse(ok)
+        self.assertIn("FAIL slow prepare exceeded 1 s", out.getvalue())
+
+    def test_shipped_probes_are_well_formed(self):
+        probes = json.loads((HERE / "probes.json").read_text())
+        self.assertTrue(probes["snapshot"])
+        names = [p["name"] for p in probes["probes"]]
+        self.assertEqual(len(names), len(set(names)))
+        for probe in probes["probes"]:
+            self.assertTrue(probe["run"] and probe["caveats"] and probe["requires"], probe["name"])
+            for spec in (probe.get("timed"), probe.get("parse")):
+                if spec:
+                    self.assertIn(spec["unit"], record.load_schema()["properties"]["unit"]["enum"])
 
 
 if __name__ == "__main__":

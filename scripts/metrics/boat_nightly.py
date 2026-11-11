@@ -5,9 +5,10 @@ Runs from a machine with an authenticated `boat` CLI and a clone of this reposit
 can push the metrics branch (the controller; schedule it with cron, see --help). It:
 
 1. fetches origin/main and exports that exact commit (tracked files only);
-2. `boat run --type default` from a Norn toolchain snapshot, pushing the export and running
-   `scripts/metrics/run_probes.py` (CARGO_INCREMENTAL=0); `boat run` deletes the VM when the
-   command ends, and this script then checks `boat info <id>` reports it gone;
+2. one `boat run --type default` per snapshot the probes name (probes.json), pushing the export
+   and running `scripts/metrics/run_probes.py` (CARGO_INCREMENTAL=0, CI's pinned toolchain);
+   `boat run` deletes the VM when the command ends, and this script then checks `boat info <id>`
+   reports it gone, deleting it with --yes if not;
 3. turns each METRIC line into a record (runner boat, the VM's own ENV line, the commit
    measured) and appends them with record.py, refreshing the trend view.
 
@@ -45,7 +46,6 @@ import record  # noqa: E402
 import report  # noqa: E402
 
 REPOSITORY = "Norn-cloud/norn"
-SNAPSHOT = "norn-ci-main-a8c384a14d-v1"
 SANDBOX = re.compile(r"\bbx_[a-z0-9]{6,}\b")
 
 
@@ -54,7 +54,9 @@ def boat(args: argparse.Namespace, *rest: str, **kwargs) -> subprocess.Completed
 
 
 def export(repo: Path, sha: str, into: Path) -> Path:
-    tree = into / "norn"
+    # Its own directory name: a snapshot may hold an older ~/norn checkout, and `boat run
+    # --push` merges into an existing directory of the same name.
+    tree = into / "norn-measured"
     tree.mkdir()
     archive = into / "src.tar"
     record.git(repo, "archive", "--format=tar", "-o", str(archive), sha)
@@ -68,7 +70,8 @@ def export(repo: Path, sha: str, into: Path) -> Path:
     return tree
 
 
-def records_from(output: str, sha: str, date: str, sandbox: str | None, args) -> tuple[list[dict], list[str]]:
+def records_from(output: str, sha: str, date: str, sandbox: str | None, snapshot: str,
+                 vm_type: str) -> tuple[list[dict], list[str]]:
     env, rows, notes = {}, [], []
     for line in output.splitlines():
         kind, _, payload = line.partition(" ")
@@ -80,14 +83,14 @@ def records_from(output: str, sha: str, date: str, sandbox: str | None, args) ->
             notes.append(line)
     records = []
     for row in rows:
-        workload = {**row.get("workload", {}), "boat_snapshot": args.snapshot}
+        workload = {**row.get("workload", {}), "boat_snapshot": snapshot}
         if sandbox:
             workload["boat_sandbox"] = sandbox
         item = {
             "metric": row["metric"], "value": row["value"], "unit": row["unit"], "statistic": row["statistic"],
             "commit": {"sha": sha, "date": date, "ref": "main"}, "measured_at": row["measured_at"],
             "measured_by": {"name": f"metrics-nightly-boat/{row['probe']}"},
-            "env": {**env, "runner": "boat", "vm_type": args.type},
+            "env": {**env, "runner": "boat", "vm_type": vm_type},
             "workload": workload, "caveats": row["caveats"], "estimate": False,
             "source": {"url": f"https://github.com/{REPOSITORY}/commit/{sha}"},
         }
@@ -113,13 +116,47 @@ def starts_record(limits: dict, at: str) -> dict:
     }
 
 
+def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
+            names: list[str]) -> tuple[list[dict], list[str], int]:
+    """One `boat run` from `snapshot` for the probes `names`; boat deletes the VM when it ends."""
+    with tempfile.TemporaryDirectory(prefix="norn-metrics-") as scratch:
+        tree = export(repo, sha, Path(scratch))
+        # The probe runner and list are this script's own copies, so the cron's main
+        # checkout decides what is measured whatever ref is exported.
+        tools = tree / "scripts" / "metrics"
+        tools.mkdir(parents=True, exist_ok=True)
+        for name in ("run_probes.py", "record.py", "record.schema.json"):
+            shutil.copyfile(HERE / name, tools / name)
+        shutil.copyfile(args.probes, tools / "probes.json")
+        command = ["python3", "scripts/metrics/run_probes.py"]
+        for name in names:
+            command += ["--only", name]
+        ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
+                   "--no-env", "--push", str(tree), "-e", "CARGO_INCREMENTAL=0",
+                   "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
+                   capture_output=True)
+    sys.stderr.write(ran.stderr[-4000:])
+    sandbox = next(iter(SANDBOX.findall(ran.stdout + ran.stderr)), None)
+    if sandbox:
+        info = boat(args, "info", sandbox, "--json", capture_output=True)
+        gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
+        if not gone:
+            boat(args, "delete", sandbox, "--yes")
+            info = boat(args, "info", sandbox, "--json", capture_output=True)
+            gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
+        print(f"sandbox {sandbox} ({snapshot}): {'deleted (boat info: not_found)' if gone else 'STILL PRESENT'}",
+              file=sys.stderr)
+    records, notes = records_from(ran.stdout, sha, date, sandbox, snapshot, args.type)
+    return records, notes, ran.returncode
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     parser.add_argument("--repo", default=".", help="clone of Norn-cloud/norn that can push the metrics branch")
     parser.add_argument("--remote", default="origin")
     parser.add_argument("--ref", default="main")
-    parser.add_argument("--snapshot", default=SNAPSHOT, help="Boat snapshot with the pinned Rust/Bun toolchain")
+    parser.add_argument("--snapshot", help="override probes.json's default snapshot (a probe's own wins)")
     parser.add_argument("--type", default="default", choices=["small", "default"])
     parser.add_argument("--timeout", type=int, default=6600, help="seconds before boat stops the command")
     parser.add_argument("--boat", default="boat", help="the boat CLI; it must run on this machine, because "
@@ -140,37 +177,21 @@ def main(argv: list[str] | None = None) -> int:
     if not limits.get("canStart") or limits["starts"]["day"]["remaining"] < 1:
         print(f"boat cannot start a VM now: {limits.get('startBlockedReason') or 'no starts left'}", file=sys.stderr)
         return 1
-    with tempfile.TemporaryDirectory(prefix="norn-metrics-") as scratch:
-        tree = export(repo, sha, Path(scratch))
-        # The probe runner and list are this script's own copies, so the cron's main
-        # checkout decides what is measured whatever ref is exported.
-        tools = tree / "scripts" / "metrics"
-        tools.mkdir(parents=True, exist_ok=True)
-        for name in ("run_probes.py", "record.py", "record.schema.json"):
-            shutil.copyfile(HERE / name, tools / name)
-        shutil.copyfile(args.probes, tools / "probes.json")
-        command = ["python3", "scripts/metrics/run_probes.py"]
-        for name in args.only or []:
-            command += ["--only", name]
-        ran = boat(args, "run", "--from", args.snapshot, "--type", args.type, "--timeout", str(args.timeout),
-                   "--no-env", "--push", str(tree), "-e", "CARGO_INCREMENTAL=0",
-                   "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
-                   capture_output=True)
-    output = ran.stdout
-    sys.stderr.write(ran.stderr[-4000:])
-    sandbox = next(iter(SANDBOX.findall(ran.stdout + ran.stderr)), None)
-    if sandbox:
-        info = boat(args, "info", sandbox, "--json", capture_output=True)
-        gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
-        print(f"sandbox {sandbox}: {'deleted (boat info: not_found)' if gone else 'STILL PRESENT, delete it'}",
-              file=sys.stderr)
-        if not gone:
-            boat(args, "delete", sandbox, "--yes")
-    records, notes = records_from(output, sha, date, sandbox, args)
+    probes = json.loads(Path(args.probes).read_text(encoding="utf-8"))
+    groups: dict[str, list[str]] = {}
+    for probe in probes["probes"]:
+        if not args.only or probe["name"] in args.only:
+            groups.setdefault(probe.get("snapshot", args.snapshot or probes["snapshot"]), []).append(probe["name"])
+    records, notes, failed = [], [], False
+    for snapshot, names in groups.items():
+        found, seen, code = measure(args, repo, sha, date, rust, snapshot, names)
+        records += found
+        notes += seen
+        failed = failed or code != 0
     for note in notes:
         print(note, file=sys.stderr)
     if not records:
-        print(f"no probe measured anything (boat run exited {ran.returncode})", file=sys.stderr)
+        print("no probe measured anything", file=sys.stderr)
     records.append(starts_record(limits, starts_at))
     if args.dry_run:
         for item in records:
@@ -181,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
                                       remote=args.remote, views=report.render_files,
                                       message=f"metrics: nightly Boat probes of main {sha[:12]}")
         print(f"recorded {len(fresh)} measurement(s) of {sha[:12]} in {commit}")
-    return 0 if ran.returncode == 0 and not any(n.startswith("FAIL") for n in notes) else 1
+    return 0 if not failed and not any(n.startswith("FAIL") for n in notes) else 1
 
 
 if __name__ == "__main__":
