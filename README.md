@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-362 records across 97 metrics. Each series runs in the order of the
+363 records across 98 metrics. Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -95,6 +95,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `proof.gate.kernel_commit.s` | 301 | s (single) | boat | 1 | 301 / 301 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_decider.s` | 214 | s (single) | boat | 1 | 214 / 214 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_ka.s` | 170 | s (single) | boat | 1 | 170 / 170 | ▁ | `c920cf7c87` | [link](https://github.com/Norn-cloud/norn/pull/1228) |
+| `proof.gate.kernel_l1.s` | 9 | s (single) | boat | 1 | 9 / 9 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.norm_precedence.s` | 202 | s (single) | boat | 1 | 202 / 202 | ▁ | `b5d3afdd03` | [link](https://github.com/Norn-cloud/norn/pull/1235) |
 | `proof.gate.semantics_lean.s` | 229 | s (single) | boat | 2 | 229 / 505 | █▁ | none named | [link](https://github.com/Norn-cloud/norn/pull/1232) |
 | `proof.verus.kernel_build.s` | 269 | s (single) | boat | 1 | 269 / 269 | ▁ | none named | [link](https://github.com/Norn-cloud/norn/issues/717#issuecomment-6795178248) |
@@ -207,6 +208,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.gate.kernel_commit.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_decider.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_ka.s`: K-A gate on the tree of this head. measured_at is the head's commit time; the run time was not stated. No durations were stated for the K-B and K-C gates. Cold or warm tool caches not stated. One run.
+- `proof.gate.kernel_l1.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.norm_precedence.s`: The source states 3m22s. measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
 - `proof.gate.semantics_lean.s`: U0 NornSem Lean gate. No commit stated for this run; measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
 - `proof.verus.kernel_build.s`: Build only: the crate verifies nothing until it opts in. The source states 4 min 29 s. No commit stated; measured_at is when the comment was posted. One run.
