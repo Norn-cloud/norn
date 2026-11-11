@@ -151,6 +151,7 @@ export function toFlow(graph: Graph, tools: readonly FnRef[], meta: { readonly i
     if ((node.config.question ?? "").length > DECISION_BOUNDS.maxQuestion) problems.push({ code: "canvas.decision.question_too_long", message: `The question is ${(node.config.question ?? "").length} characters; the cell takes at most ${DECISION_BOUNDS.maxQuestion}`, node: node.id })
     if (options.length > DECISION_BOUNDS.maxOptions) problems.push({ code: "canvas.decision.too_many_options", message: `${options.length} options; a decision offers at most ${DECISION_BOUNDS.maxOptions}`, node: node.id })
     const expires = expiresOf(node)
+    if (expires === 0) problems.push({ code: "canvas.decision.expiry_too_short", message: "A decision waits at least one millisecond; the cell refuses an expiry of 0", node: node.id })
     if (expires !== undefined && expires > DECISION_BOUNDS.maxExpiresInMs) problems.push({ code: "canvas.decision.expiry_too_long", message: "A decision expires within seven days at most", node: node.id })
     for (const option of options) if (!effectOf(option)?.ref) problems.push({ code: "canvas.decision.option_without_effect", message: `Option ${option.id} (${option.label}) does not say what it starts: an action or a tool binding`, node: node.id })
     const continues = graph.edges.some(({ source, sourcePort }) => source === node.id && sourcePort === "next")

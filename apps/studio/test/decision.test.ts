@@ -56,6 +56,9 @@ test("the canvas lowers decisions with RUNS' built-in handle, not a copy of it",
 test("the canvas names the bounds the cell enforces: question length, option count, expiry", () => {
   const long: Graph = { ...graph, nodes: graph.nodes.map((one) => one.id === "chase" ? { ...one, config: { ...one.config, question: "q".repeat(501), expiresInMs: String(8 * 24 * 3_600_000) } } : one) }
   expect(lower(long, tools, meta, scope).problems.map(({ code }) => code).sort()).toEqual(["canvas.decision.expiry_too_long", "canvas.decision.question_too_long"])
+  // The cell refuses expiresInMs 0 (decision.expires_in_ms), so the canvas does too.
+  const instant: Graph = { ...graph, nodes: graph.nodes.map((one) => one.id === "chase" ? { ...one, config: { ...one.config, expiresInMs: "0" } } : one) }
+  expect(lower(instant, tools, meta, scope).problems.map(({ code }) => code)).toEqual(["canvas.decision.expiry_too_short"])
 })
 
 test("the decider's tree: question, options with the agent's pick and their tools, and the follow-up", () => {
