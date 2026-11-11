@@ -2255,6 +2255,7 @@ dependencies = [
  "duckdb",
  "js-sys",
  "norn-builtins",
+ "norn-cell",
  "norn-checker",
  "norn-ir",
  "norn-kernel",

@@ -495,7 +495,8 @@ const COVERAGE_LEDGER: &str = "verification/coverage-v1/manifest/subsystems/quan
 
 fn policy_fixture() -> Fixture {
     let mut fixture = Fixture::new();
-    fixture.add(".github/workflows/core.yml", b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
+    // A pull_request workflow cancels its superseded PR runs and nothing else.
+    fixture.add(".github/workflows/core.yml", b"on: pull_request\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
     for path in [
         "scripts/ci/core.sh",
         "scripts/ci/contract_diff.py",
@@ -608,6 +609,29 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
         errors
             .iter()
             .any(|error| error.contains("workflow inventory differs")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn policy_requires_pull_request_workflows_to_cancel_only_superseded_pr_runs() {
+    let mut fixture = policy_fixture();
+    let path = ".github/workflows/core.yml";
+    let record = fixture
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("workflow record");
+    fixture.write(
+        path,
+        b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n",
+    );
+    fixture.records[record]["sha256"] = fixture.reference(path)["sha256"].clone();
+    fixture.save();
+    let errors = norn_skeleton_guard::ci::run(fixture.root(), fixture.root());
+    assert!(
+        errors.iter().any(|error| error
+            == ".github/workflows/core.yml: a pull_request workflow needs a workflow-level concurrency mapping that cancels its superseded PR runs"),
         "{errors:?}"
     );
 }
