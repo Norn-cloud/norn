@@ -89,6 +89,24 @@ pub enum CellError {
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,
+    /// WORLD-ISOLATE-1: a fork never claims, dispatches or records a
+    /// performed command.
+    #[error("core.world.perform_forbidden")]
+    WorldPerformForbidden,
+    /// FORK-SIMULATE-1: only a fork records simulated results.
+    #[error("core.world.simulation_forbidden")]
+    WorldSimulationForbidden,
+    /// FORK-PIN-1: a fork is created only at its parent's verified head.
+    #[error("core.world.fork_stale_base: pinned at commit {expected}, head is commit {head}")]
+    ForkStaleBase {
+        /// The commit count the caller pinned.
+        expected: u64,
+        /// The parent's verified commit count.
+        head: u64,
+    },
+    /// FORK-PIN-1: a fork's world is never `main`, empty or its parent's.
+    #[error("core.world.fork_invalid_world")]
+    ForkInvalidWorld,
 
     /// Missing or mismatched independent historical value proof.
     #[error("historical value proof refused: {0}")]

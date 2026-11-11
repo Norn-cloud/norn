@@ -38,6 +38,7 @@ pub mod error;
 pub mod export;
 mod export_journal;
 pub mod flow_run;
+pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
@@ -68,6 +69,7 @@ pub mod transparency;
 mod write;
 
 pub use error::CellError;
+pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};

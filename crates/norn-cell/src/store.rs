@@ -1749,6 +1749,8 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
+    /// FORK-PIN-1: the durable pin of a forked store, loaded at open.
+    pub(crate) fork: Option<crate::fork::ForkPin>,
 }
 
 #[derive(Clone, Copy)]
@@ -2148,7 +2150,22 @@ impl<E: SqlEngine> CellStore<E> {
             source_disputes: RefCell::default(),
             mapping_plans: RefCell::default(),
             quantity_boundary: Cell::new(None),
+            fork: None,
         }
+    }
+
+    /// FORK-PIN-1: a fork over `engine`, whose contents equal this store's
+    /// at its verified head plus `pin`. Verification state is inherited:
+    /// the [`crate::fork::ForkEngine`] contract guarantees equal contents.
+    pub(crate) fn forked(&self, engine: E, pin: crate::fork::ForkPin) -> Self {
+        let mut store = Self::unverified(engine, self.model.clone());
+        store.verified.replace(self.verified.borrow().clone());
+        store.quantity_boundary.set(self.quantity_boundary.get());
+        store
+            .transparency
+            .replace(self.transparency.borrow().clone());
+        store.fork = Some(pin);
+        store
     }
 
     fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
@@ -2212,7 +2229,7 @@ impl<E: SqlEngine> CellStore<E> {
     fn init(conn: E, model: Model) -> Result<Self, CellError> {
         model.validate_identity_profile()?;
         conn.transaction(|| Self::init_schema(&conn, &model))?;
-        let store = Self::unverified(conn, model);
+        let mut store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
@@ -2231,6 +2248,7 @@ impl<E: SqlEngine> CellStore<E> {
         store
             .transparency
             .replace(crate::transparency::load(&store.conn)?);
+        store.fork = crate::fork::load_pin(&store.conn)?;
         Ok(store)
     }
 
@@ -2703,6 +2721,13 @@ impl<E: SqlEngine> CellStore<E> {
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
+        if batch
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, EffectRow::ClaimPerform { .. }))
+        {
+            self.refuse_perform_in_fork()?;
+        }
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
         let result = self.conn.transaction(|| -> Result<_, GuardedError<X>> {
             probe(CommitPoint::Begun)?;
@@ -3071,9 +3096,21 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     ///
-    /// SQL engine errors.
+    /// `core.world.perform_forbidden` in a fork (WORLD-ISOLATE-1); SQL engine
+    /// errors otherwise.
     pub fn record_performed(
         &mut self,
+        command_id: &str,
+        generation: u64,
+        outcome: &Value,
+    ) -> Result<bool, CellError> {
+        self.refuse_perform_in_fork()?;
+        self.record_head_result(command_id, generation, outcome)
+    }
+
+    /// Record `outcome` as the head command's result when it has none.
+    pub(crate) fn record_head_result(
+        &self,
         command_id: &str,
         generation: u64,
         outcome: &Value,

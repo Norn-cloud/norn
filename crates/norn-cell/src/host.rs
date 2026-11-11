@@ -1457,6 +1457,44 @@ where
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
+    /// FORK-SIMULATE-1: in a fork, record `fixture`'s answer as the outbox
+    /// head command's simulated result, with no claim and no dispatch, and
+    /// return it for a commit to consume. A head that already has a result
+    /// returns `None` and writes nothing; [`CellHost::perform`] redelivers it.
+    ///
+    /// # Errors
+    ///
+    /// `core.world.simulation_forbidden` outside a fork; store or decode
+    /// errors.
+    pub fn simulate_perform(
+        &mut self,
+        fixture: impl FnOnce(&Command<C>) -> I,
+    ) -> Result<Option<Performed<I>>, CellError> {
+        if self.store.fork_pin().is_none() {
+            return Err(CellError::WorldSimulationForbidden);
+        }
+        let Some(head) = self.store.read().head_command()? else {
+            return Ok(None);
+        };
+        if head.result.is_some() {
+            return Ok(None);
+        }
+        let command: Command<C> = from_runtime(&head.command.command)?;
+        let input = fixture(&command);
+        if !self.store.record_simulated(
+            &command.id.0,
+            command.generation.0,
+            &to_runtime(&input)?,
+        )? {
+            return Ok(None);
+        }
+        Ok(Some(Performed {
+            command: command.id.clone(),
+            generation: command.generation,
+            input,
+        }))
+    }
+
     /// Admit one domain-neutral proposal and its ordered partition postings.
     /// All fact/link and quantity fences share one store transaction. Failure in
     /// any partition publishes nothing. The trusted caller supplies authorization.

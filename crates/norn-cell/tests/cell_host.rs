@@ -17,6 +17,8 @@
 //!   survives a reopen without re-executing.
 //! - Reopening the file recovers the ledger hash chain identically, and the
 //!   same scenario run twice produces byte-identical stores.
+//! - Forks (Core 08, FORK-PIN-1, WORLD-ISOLATE-1): WORLD-FORK, and the
+//!   FORK-NONINTERFERE property against main run alone.
 
 mod common;
 
@@ -40,8 +42,9 @@ use norn_kernel::{
 use norn_testkit::Settings;
 use norn_testkit::cell_host::{
     CELL_HOST_LABELS, LawCommand, LawEvent, LawInput, LedgerEntry, SimulatedCell, check_cell_host,
-    check_link_override, law_responder, override_object_types,
+    check_link_override, law_command, law_key, law_responder, law_values, override_object_types,
 };
+use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -2568,4 +2571,423 @@ fn predicate_reads_agree_across_hosts_and_refuse_interfaces_on_both() {
     memory
         .commit(pinned_concrete(&from_memory))
         .expect("memory commits an unchanged read");
+}
+
+// ------------------------------------------------------------------ forks
+
+/// WORLD-FORK (#624): a fork of a cell with a pending payment refuses to
+/// perform it before any claim, evaluates a simulated fixture result instead,
+/// and main is unchanged and still performs for real.
+#[test]
+fn world_fork_refuses_perform_and_evaluates_a_simulated_result() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let mut main = open(&path);
+    main.commit(place()).expect("commits");
+    let before = main.store().image().expect("image");
+    let base = main.store().verified_head().expect("head");
+
+    let escaped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let counter = std::sync::Arc::clone(&escaped);
+    let store = main.store().fork("what-if", &base).expect("forks");
+    let mut fork: OrderCell = SqliteCell::new(store, "org_demo/dev", move |command| {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        charge_responder(command)
+    })
+    .expect("serves the fork");
+    let pin = fork.store().fork_pin().expect("pinned").clone();
+    assert_eq!(
+        (pin.world.as_str(), pin.parent.as_str(), &pin.base),
+        ("what-if", "main", &base)
+    );
+
+    let forked = fork.store().image().expect("image");
+    assert!(matches!(
+        fork.perform(),
+        Err(CellError::WorldPerformForbidden)
+    ));
+    assert_eq!(fork.store().image().expect("image"), forked, "no claim");
+    let pending = fork.pending_commands().expect("outbox");
+    assert_eq!(pending.len(), 1, "the payment stays pending, undispatched");
+
+    let simulated = fork
+        .simulate_perform(|command| OrderInput::Charged {
+            order: command.payload.order.clone(),
+            ok: false,
+        })
+        .expect("simulates")
+        .expect("the head has no result");
+    assert_eq!(fork.perform().expect("redelivers"), Some(simulated.clone()));
+    fork.commit(
+        CellCommit {
+            events: vec![OrderEvent::Charged {
+                order: "O-1".to_owned(),
+                ok: false,
+            }],
+            ..CellCommit::empty()
+        }
+        .consuming(Consumed::Result {
+            command: simulated.command,
+            generation: simulated.generation,
+        }),
+    )
+    .expect("the fork evaluates the fixture result");
+    assert_eq!(fork.perform().expect("consumed"), None);
+    assert_eq!(escaped.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    assert_eq!(
+        main.store().image().expect("image"),
+        before,
+        "main unchanged"
+    );
+    assert!(matches!(
+        main.simulate_perform(charge_responder),
+        Err(CellError::WorldSimulationForbidden)
+    ));
+    assert_eq!(main.executions().expect("runs"), 0);
+    drop(main);
+    let mut main = open(&path);
+    assert_eq!(main.store().image().expect("image"), before);
+    assert!(main.perform().expect("performs").is_some());
+    assert_eq!(main.executions().expect("runs"), 1);
+}
+
+/// How many fork slots a trace uses.
+const FORK_SLOTS: u8 = 3;
+
+/// One generated write: put `value` on law object `key`, recording `value` as
+/// an event and, with `enqueue`, a command.
+#[derive(Debug, Clone, Copy)]
+struct ForkPut {
+    key: u8,
+    value: u8,
+    enqueue: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ForkOp {
+    Main(ForkPut),
+    MainPerform,
+    MainSimulate,
+    Create { slot: u8, from: Option<u8> },
+    CreateStale { from: Option<u8> },
+    CreateInvalid { from: Option<u8>, own: bool },
+    Commit(u8, ForkPut),
+    Perform(u8),
+    Simulate(u8, u8),
+    Discard(u8),
+}
+
+fn fork_put() -> impl Strategy<Value = ForkPut> {
+    (
+        0..norn_testkit::cell_host::LAW_UNIVERSE,
+        any::<u8>(),
+        any::<bool>(),
+    )
+        .prop_map(|(key, value, enqueue)| ForkPut {
+            key,
+            value,
+            enqueue,
+        })
+}
+
+fn fork_op() -> impl Strategy<Value = ForkOp> {
+    let slot = 0..FORK_SLOTS;
+    let from = proptest::option::of(0..FORK_SLOTS);
+    prop_oneof![
+        4 => fork_put().prop_map(ForkOp::Main),
+        2 => Just(ForkOp::MainPerform),
+        1 => Just(ForkOp::MainSimulate),
+        3 => (slot.clone(), from.clone()).prop_map(|(slot, from)| ForkOp::Create { slot, from }),
+        1 => from.clone().prop_map(|from| ForkOp::CreateStale { from }),
+        1 => (from, any::<bool>()).prop_map(|(from, own)| ForkOp::CreateInvalid { from, own }),
+        4 => (slot.clone(), fork_put()).prop_map(|(slot, put)| ForkOp::Commit(slot, put)),
+        2 => slot.clone().prop_map(ForkOp::Perform),
+        2 => (slot.clone(), any::<u8>()).prop_map(|(slot, value)| ForkOp::Simulate(slot, value)),
+        1 => slot.prop_map(ForkOp::Discard),
+    ]
+}
+
+type LawNative = LawCell<NativeEngine>;
+
+/// Commit `write`; the outcome, formatted for comparison.
+fn put(cell: &mut LawNative, write: ForkPut) -> String {
+    let key = law_key(write.key);
+    let expected = cell.load(&key).expect("loads").version;
+    let generation = cell.store().verified_head().expect("head").commits;
+    let effects = if write.enqueue {
+        vec![Effect::Perform(law_command(
+            write.key,
+            generation,
+            write.value,
+        ))]
+    } else {
+        Vec::new()
+    };
+    let outcome = cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key,
+            expected,
+            mutation: FactMutation::Put {
+                values: law_values(write.value),
+            },
+        }],
+        events: vec![write.value],
+        effects,
+        ..CellCommit::empty()
+    });
+    format!("{outcome:?}")
+}
+
+fn consume(cell: &mut LawNative, performed: &Performed<WireInput>) {
+    cell.commit(CellCommit::empty().consuming(Consumed::Result {
+        command: performed.command.clone(),
+        generation: performed.generation,
+    }))
+    .expect("consumes the delivered result");
+}
+
+/// Perform main's head command, and consume what it delivers.
+fn perform_main(cell: &mut LawNative) -> String {
+    let performed = cell.perform().expect("main performs");
+    if let Some(performed) = &performed {
+        consume(cell, performed);
+    }
+    format!("{performed:?}")
+}
+
+/// The instance one operation may change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Touched {
+    Nothing,
+    Main,
+    Fork(u8),
+}
+
+impl Touched {
+    /// Whether this may change the instance keyed `instance` (`None` is main).
+    fn reaches(self, instance: Option<u8>) -> bool {
+        match (self, instance) {
+            (Self::Main, None) => true,
+            (Self::Fork(slot), Some(other)) => slot == other,
+            (Self::Nothing | Self::Fork(_), None) | (Self::Nothing | Self::Main, Some(_)) => false,
+        }
+    }
+}
+
+struct ForkTrace {
+    main: LawNative,
+    /// Main run alone: the same main operations, no fork operations (t∖F).
+    alone: LawNative,
+    forks: std::collections::BTreeMap<u8, LawNative>,
+    executed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    alone_executed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    escaped: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+fn counting_cell(
+    store: CellStore<NativeEngine>,
+    counter: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+) -> LawNative {
+    let counter = std::sync::Arc::clone(counter);
+    SqliteCell::new(store, "law", move |command| {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        law_cell_responder(command)
+    })
+    .expect("serves the cell")
+}
+
+impl ForkTrace {
+    fn new() -> Self {
+        let executed = std::sync::Arc::default();
+        let alone_executed = std::sync::Arc::default();
+        let store = || {
+            CellStore::from_engine(NativeEngine::open_in_memory().expect("opens"), law_model())
+                .expect("opens store")
+        };
+        Self {
+            main: counting_cell(store(), &executed),
+            alone: counting_cell(store(), &alone_executed),
+            forks: std::collections::BTreeMap::new(),
+            executed,
+            alone_executed,
+            escaped: std::sync::Arc::default(),
+        }
+    }
+
+    fn parent(&self, from: Option<u8>) -> &LawNative {
+        from.and_then(|slot| self.forks.get(&slot))
+            .unwrap_or(&self.main)
+    }
+
+    fn images(&self) -> std::collections::BTreeMap<Option<u8>, norn_cell::StoreImage> {
+        let mut images = std::collections::BTreeMap::from([(
+            None,
+            self.main.store().image().expect("main image"),
+        )]);
+        for (slot, fork) in &self.forks {
+            images.insert(Some(*slot), fork.store().image().expect("fork image"));
+        }
+        images
+    }
+
+    /// Apply `op`; return the instance it may change.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per generated operation, each with its expected refusal"
+    )]
+    fn apply(&mut self, op: ForkOp) -> Touched {
+        match op {
+            ForkOp::Main(write) => {
+                assert_eq!(put(&mut self.main, write), put(&mut self.alone, write));
+                Touched::Main
+            }
+            ForkOp::MainPerform => {
+                assert_eq!(perform_main(&mut self.main), perform_main(&mut self.alone));
+                Touched::Main
+            }
+            ForkOp::MainSimulate => {
+                assert!(matches!(
+                    self.main.simulate_perform(|_| WireInput::Result(0)),
+                    Err(CellError::WorldSimulationForbidden)
+                ));
+                Touched::Nothing
+            }
+            ForkOp::Create { slot, from } => {
+                if self.forks.contains_key(&slot) {
+                    return Touched::Nothing;
+                }
+                let parent = self.parent(from);
+                let parent_world = parent
+                    .store()
+                    .fork_pin()
+                    .map_or_else(|| "main".to_owned(), |pin| pin.world.clone());
+                let base = parent.store().verified_head().expect("head");
+                let world = format!("fork-{slot}");
+                let store = parent.store().fork(&world, &base).expect("forks");
+                // L4 at creation: the fork reads exactly what its parent holds.
+                assert_eq!(
+                    store.image().expect("image").without_fork_pin(),
+                    parent.store().image().expect("image").without_fork_pin()
+                );
+                assert_eq!(
+                    store
+                        .fork_pin()
+                        .map(|pin| (&pin.world, &pin.parent, &pin.base)),
+                    Some((&world, &parent_world, &base))
+                );
+                let fork = counting_cell(store, &self.escaped);
+                self.forks.insert(slot, fork);
+                Touched::Fork(slot)
+            }
+            ForkOp::CreateStale { from } => {
+                let parent = self.parent(from);
+                let mut base = parent.store().verified_head().expect("head");
+                base.commits = base.commits.saturating_add(1);
+                assert!(matches!(
+                    parent.store().fork("stale", &base),
+                    Err(CellError::ForkStaleBase { .. })
+                ));
+                Touched::Nothing
+            }
+            ForkOp::CreateInvalid { from, own } => {
+                let parent = self.parent(from);
+                let world = match (own, parent.store().fork_pin()) {
+                    (true, Some(pin)) => pin.world.clone(),
+                    (false, _) => String::new(),
+                    (true, None) => "main".to_owned(),
+                };
+                let base = parent.store().verified_head().expect("head");
+                assert!(matches!(
+                    parent.store().fork(&world, &base),
+                    Err(CellError::ForkInvalidWorld)
+                ));
+                Touched::Nothing
+            }
+            ForkOp::Commit(slot, write) => {
+                let Some(fork) = self.forks.get_mut(&slot) else {
+                    return Touched::Nothing;
+                };
+                // Fork commits are ordinary commits of the fork's own state.
+                put(fork, write);
+                Touched::Fork(slot)
+            }
+            ForkOp::Perform(slot) => {
+                let Some(fork) = self.forks.get_mut(&slot) else {
+                    return Touched::Nothing;
+                };
+                let pending = !fork.pending_commands().expect("outbox").is_empty();
+                let before = fork.store().image().expect("image");
+                match fork.perform() {
+                    Err(CellError::WorldPerformForbidden) => {
+                        assert!(pending, "refused with nothing to perform");
+                        assert_eq!(fork.store().image().expect("image"), before);
+                    }
+                    // Only a simulated result is ever delivered in a fork.
+                    Ok(Some(performed)) => consume(fork, &performed),
+                    Ok(None) => assert!(
+                        !pending,
+                        "a pending command was neither refused nor delivered"
+                    ),
+                    Err(other) => panic!("fork perform failed: {other}"),
+                }
+                Touched::Fork(slot)
+            }
+            ForkOp::Simulate(slot, value) => {
+                let Some(fork) = self.forks.get_mut(&slot) else {
+                    return Touched::Nothing;
+                };
+                if let Some(performed) = fork
+                    .simulate_perform(|_| WireInput::Result(value))
+                    .expect("a fork simulates")
+                {
+                    consume(fork, &performed);
+                }
+                Touched::Fork(slot)
+            }
+            ForkOp::Discard(slot) => {
+                self.forks.remove(&slot);
+                Touched::Nothing
+            }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// FORK-NONINTERFERE and WORLD-ISOLATE-1 (Core 08, FORK-ISOLATE 1–2),
+    /// sampled over generated traces against the copying reference fork:
+    /// main equals main run alone after every operation (non-interference);
+    /// no fork ever reaches the outside world (no escape); and every operation
+    /// changes only the instance it targets, so a fork is a snapshot of its
+    /// base plus its own commits (L2), and a new fork reads exactly its
+    /// parent (L4).
+    #[test]
+    fn forks_never_interfere_with_main_or_each_other(
+        ops in proptest::collection::vec(fork_op(), 1..40)
+    ) {
+        let mut trace = ForkTrace::new();
+        let mut images = trace.images();
+        for op in ops {
+            let target = trace.apply(op);
+            let after = trace.images();
+            for (instance, image) in &after {
+                if !target.reaches(*instance) && let Some(before) = images.get(instance) {
+                    prop_assert_eq!(image, before, "{:?} changed {:?}", op, instance);
+                }
+            }
+            prop_assert_eq!(
+                &after[&None],
+                &trace.alone.store().image().expect("image"),
+                "main diverged from main alone after {:?}", op
+            );
+            prop_assert_eq!(
+                trace.executed.load(std::sync::atomic::Ordering::SeqCst),
+                trace.alone_executed.load(std::sync::atomic::Ordering::SeqCst)
+            );
+            prop_assert_eq!(trace.escaped.load(std::sync::atomic::Ordering::SeqCst), 0);
+            images = after;
+        }
+    }
 }
