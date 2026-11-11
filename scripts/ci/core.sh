@@ -150,6 +150,9 @@ PY
       cargo test --locked -p norn-canonical -p norn-checker
       cargo test --locked -p norn-canonical -p norn-checker --features norn-canonical/preserve-order-probe
       cargo test --locked -p norn-canonical -p norn-ir -p norn-checker --features serde_json/arbitrary_precision
+      # The workspace never enables the optional DuckDB backend, so a change
+      # that breaks it compiles everywhere else; check it here (#513).
+      cargo check --locked -p norn-cell --features duckdb
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
