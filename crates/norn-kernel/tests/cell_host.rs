@@ -738,6 +738,7 @@ fn cell_host_wire_shape_and_default_lane() {
         effects: vec![Effect::CancelTimer(law_timer_id(0))],
         links: vec![],
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     let json = serde_json::to_value(&commit).unwrap();
     assert_eq!(

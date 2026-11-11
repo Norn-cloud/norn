@@ -1,0 +1,7 @@
+{
+  "code": "cli.project.exists",
+  "message": "Target is not an empty directory; choose a new directory.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

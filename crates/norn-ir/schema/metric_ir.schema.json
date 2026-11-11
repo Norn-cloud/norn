@@ -638,8 +638,7 @@
           "$ref": "#/$defs/DimensionPath"
         },
         "value": {
-          "description": "Exact runtime literal checked against the effective property contract.",
-          "$ref": "#/$defs/JsonValue"
+          "description": "Exact runtime literal checked against the effective property contract."
         }
       },
       "additionalProperties": false,

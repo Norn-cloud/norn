@@ -2,18 +2,20 @@
 @import "tw-animate-css";
 @import "./components/ui/shadcn.css";
 @import "@fontsource-variable/inter";
+@source "../node_modules/streamdown/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Norn Studio theme: a grey canvas with one white page card, zinc neutrals and
- * one blue accent; flat surfaces (a hairline, and one soft shadow only where a
- * thing floats). Chrome is rounded and roomy; data (tables, figures) is dense,
- * 13px and tabular.
+ * Norn Studio theme: monochrome. Near-black or soft-grey canvas, hairline separators,
+ * plain numerals; type does the hierarchy. Colour is reserved for the Norn knot logo,
+ * for meaning (destructive, warning, success, all muted) and for the one primary
+ * add/create action (--action). Links are foreground, underlined. Chrome is rounded
+ * and roomy; data (tables, figures) is dense and tabular.
  */
 :root {
   --radius: 0.75rem;
-  --canvas: #f4f5f7;
+  --canvas: #f3f4f6;
   --background: #ffffff;
   --foreground: #0a0a0a;
   --card: #ffffff;
@@ -22,74 +24,128 @@
   --popover-foreground: #0a0a0a;
   --primary: #0a0a0a;
   --primary-foreground: #ffffff;
-  --secondary: #f1f2f4;
+  --secondary: #f3f4f6;
   --secondary-foreground: #0a0a0a;
-  --muted: #f1f2f4;
-  --muted-foreground: #4b5563;
-  --accent: #f1f2f4;
+  --muted: #f3f4f6;
+  --muted-foreground: #5b6270;
+  --accent: #eceef1;
   --accent-foreground: #0a0a0a;
   --surface-subtle: #f9fafb;
-  --destructive: #ff3b30;
-  --success: #1f7a4d;
-  --warning: #ff9500;
+  /* Muted semantic colours, each AA as text on white and on the canvas. */
+  --destructive: #b83228;
+  --destructive-foreground: #ffffff;
+  --success: #2a7048;
+  --warning: #8f5a0c;
   --border: #e5e7eb;
   --input: #e5e7eb;
-  --ring: #2563eb;
-  --link: #2563eb;
-  --chart-1: #2563eb;
-  --chart-2: #4b5563;
-  --chart-3: #1f7a4d;
-  --chart-4: #ff9500;
-  --chart-5: #a1a1aa;
+  --ring: #6b7280;
+  /* Links read as foreground; the underline (or arrow) marks them. */
+  --link: var(--foreground);
+  /* The one restrained colour: the primary add/create action, as a solid round button. */
+  --action: #2f5fe3;
+  --action-foreground: #ffffff;
+  --chart-1: #0a0a0a;
+  --chart-2: #6b7280;
+  --chart-3: #9ca3af;
+  --chart-4: #c4c8cf;
+  --chart-5: #d9dce1;
   --sidebar: var(--canvas);
   --sidebar-foreground: #0a0a0a;
   --sidebar-primary: #0a0a0a;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e9eaed;
+  --sidebar-accent: #e8eaee;
   --sidebar-accent-foreground: #0a0a0a;
   --sidebar-border: #e5e7eb;
-  --sidebar-ring: #2563eb;
+  --sidebar-ring: #6b7280;
   --elevation-1: 0 1px 2px 0 rgb(10 10 10 / 0.06), 0 1px 3px -1px rgb(10 10 10 / 0.05);
+  /*
+   * Depth model for things that float on a canvas (canvas nodes, the question tree, floating toolbars):
+   * a tight contact shadow plus a large, very faint ambient one, a hairline border and a top highlight.
+   * Hover lifts (deeper ambient); selection is an accent ring, never a heavier border.
+   */
+  --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
+  --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
+  --elevation-float: 0 1px 2px rgb(15 23 42 / 0.06), 0 8px 24px -8px rgb(15 23 42 / 0.16);
+  --node-border: rgb(15 23 42 / 0.09);
+  --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --node-radius: 14px;
+  --node-ring: color-mix(in oklab, var(--ring) 55%, transparent);
+  --canvas-surface: #fafafa;
+  --canvas-dot: rgb(15 23 42 / 0.09);
+  --edge: #8a929e;
+  --edge-active: var(--ring);
+  /* One tint per kind of thing on a canvas; chips mix it into a pale fill, so it stays a hint, not a theme. */
+  --tint-state: #64748b;
+  --tint-tool: #2563eb;
+  --tint-ask: #c2410c;
+  --tint-route: #0f766e;
+  --tint-wait: #7c5e10;
+  --tint-outcome: #15803d;
+  --tint-agent: #4338ca;
+  --tint-law: #be123c;
+  --tint-start: #334155;
 }
 
 .dark {
-  --canvas: #0e0e10;
-  --background: #1c1c1e;
-  --foreground: #f5f5f7;
-  --card: #252529;
-  --card-foreground: #f5f5f7;
-  --popover: #2e2e33;
-  --popover-foreground: #f5f5f7;
-  --primary: #f5f5f7;
-  --primary-foreground: #111111;
-  --secondary: #2a2a2e;
-  --secondary-foreground: #f5f5f7;
-  --muted: #28282c;
-  --muted-foreground: #a5a5ad;
-  --accent: #333338;
-  --accent-foreground: #f5f5f7;
-  --surface-subtle: #2a2a2e;
-  --destructive: #ff453a;
-  --success: #30d158;
-  --warning: #ff9f0a;
-  --border: #38383d;
-  --input: #45454c;
-  --ring: #4aa3f0;
-  --link: #4aa3f0;
-  --chart-1: #4aa3f0;
-  --chart-2: #a5a5ad;
-  --chart-3: #30d158;
-  --chart-4: #ff9f0a;
-  --chart-5: #71717a;
+  --canvas: #0a0a0a;
+  --background: #111111;
+  --foreground: #fafafa;
+  --card: #161616;
+  --card-foreground: #fafafa;
+  --popover: #1a1a1a;
+  --popover-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #0a0a0a;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #fafafa;
+  --muted: #1a1a1a;
+  --muted-foreground: #8a8a8a;
+  --accent: #1f1f1f;
+  --accent-foreground: #fafafa;
+  --surface-subtle: #141414;
+  --destructive: #e5675e;
+  --destructive-foreground: #0a0a0a;
+  --success: #52b788;
+  --warning: #d4a24c;
+  --border: rgb(255 255 255 / 0.08);
+  --input: rgb(255 255 255 / 0.12);
+  --ring: #8a8a8a;
+  --link: var(--foreground);
+  --action: #3b6cf0;
+  --action-foreground: #ffffff;
+  --chart-1: #fafafa;
+  --chart-2: #8a8a8a;
+  --chart-3: #5f5f5f;
+  --chart-4: #404040;
+  --chart-5: #2a2a2a;
   --sidebar: var(--canvas);
-  --sidebar-foreground: #f5f5f7;
-  --sidebar-primary: #f5f5f7;
-  --sidebar-primary-foreground: #111111;
-  --sidebar-accent: #333338;
-  --sidebar-accent-foreground: #f5f5f7;
-  --sidebar-border: #38383d;
-  --sidebar-ring: #4aa3f0;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #fafafa;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #1c1c1c;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: rgb(255 255 255 / 0.08);
+  --sidebar-ring: #8a8a8a;
   --elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 6px -1px rgb(0 0 0 / 0.35);
+  --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
+  --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
+  --elevation-float: 0 1px 2px rgb(0 0 0 / 0.5), 0 10px 28px -8px rgb(0 0 0 / 0.65);
+  --node-border: rgb(255 255 255 / 0.09);
+  --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --node-ring: color-mix(in oklab, var(--ring) 65%, transparent);
+  --canvas-surface: #151517;
+  --canvas-dot: rgb(255 255 255 / 0.08);
+  --edge: #73737d;
+  --edge-active: var(--ring);
+  --tint-state: #94a3b8;
+  --tint-tool: #60a5fa;
+  --tint-ask: #fb923c;
+  --tint-route: #2dd4bf;
+  --tint-wait: #facc15;
+  --tint-outcome: #4ade80;
+  --tint-agent: #a5b4fc;
+  --tint-law: #fb7185;
+  --tint-start: #cbd5e1;
 }
 
 @theme inline {
@@ -101,9 +157,17 @@
   --color-canvas: var(--canvas);
   --color-surface-subtle: var(--surface-subtle);
   --color-link: var(--link);
+  --color-action: var(--action);
+  --color-action-foreground: var(--action-foreground);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --shadow-elevation: var(--elevation-1);
+  --shadow-node: var(--elevation-node);
+  --shadow-node-hover: var(--elevation-node-hover);
+  --shadow-float: var(--elevation-float);
+  --radius-node: var(--node-radius);
+  --color-node-border: var(--node-border);
+  --color-canvas-surface: var(--canvas-surface);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --text-meta: 0.8125rem;
   --text-panel: 0.9375rem;
@@ -124,6 +188,7 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -152,7 +217,13 @@
 
 @layer base {
   * { @apply border-border outline-ring/50; }
-  html { @apply font-sans; font-size: 16px; }
-  body { @apply bg-canvas text-foreground antialiased; font-size: 0.875rem; line-height: 1.45; }
+  /* 90% root: the whole UI (rem type, spacing, icons) renders as at 90% browser zoom. No CSS zoom, which breaks React Flow's pointer maths. */
+  html { @apply font-sans; font-size: 90%; }
+  body { @apply bg-canvas text-foreground antialiased; font-size: 0.875rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
   h1, h2, h3 { letter-spacing: -0.02em; }
 }
+
+/* Shiki's dual themes: each token carries both colours; the page's scheme picks one. */
+.code pre { background: transparent !important; }
+.code span { color: var(--shiki-light); }
+.dark .code span { color: var(--shiki-dark); }

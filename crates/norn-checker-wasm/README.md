@@ -21,12 +21,28 @@ profile, source, and evaluation failures. Invalid artifacts are findings.
 | `checkExpression(expr, envArtifactsJson, expectedType, selfType?)` | `check_expression_json` | `{format: "norn-checker-abi/expression@1", profile: "norn-zen/6", ok, inferred, diagnostics: [{code, message, span}], environment}` |
 | `evaluateExpression(expr, inputJson, profile?)` | `evaluate_expression_json` | `{format: "norn-checker-abi/evaluation@1", ok, profile: "norn-zen/6", unitsUsed, value | error}` — bounded `norn-expr` evaluation over explicit WidgetIR inputs |
 | `functionContract(manifestJson, invocationJson?, receiptJson?)` | `function_contract_json` | `{format: "norn-checker-abi/function@1", admitted, manifest: {digest, executionProfile}, invocation: {digest, inputIdentity, dependencyToken, actionKey}, receipt: {digest, resultIdentity}, diagnostics}` — the Function contract (T1-FN-1) admitted, with its Norn1 identities; finding pointers are prefixed `/manifest`, `/invocation`, `/receipt` |
+| `checkAgent(agentJson, contextJson)` | `check_agent_json` | `{format: "norn-checker-abi/agent@1", admitted, diagnostics}` — an agent definition payload (D58) admitted against `contextJson`; `diagnostics` is the `norn-checker/diagnostics@1` document with `agent.validation.*` codes and pointers into the payload |
+| `toolPort(schemaJson)` | `tool_port_json` | `{format: "norn-checker-abi/tool-port@1", ok, port \| refusal: {code, path, message}}` — a gateway tool's JSON Schema as a Norn port type (`{kind: string\|enum\|integer\|number\|boolean\|date\|datetime\|list\|map\|nullable\|record, …}`), or the first unsupported subschema by JSON Pointer |
+| `toolEdge(sourceSchemaJson, targetSchemaJson)` | `tool_edge_json` | `{format: "norn-checker-abi/tool-edge@1", ok, refusal?: {code, path, expected, found} \| {code, path, message, side}}` — whether a source port may feed a target port |
 | `version()` | `version_json` | `{abi: "norn-checker-abi/1", crateVersion, checkerVersion, diagnosticsFormat, receiptFormat, exprProfile}` |
 
 - `artifactsJson` / `envArtifactsJson`: a JSON array of artifact envelopes.
 - `contextJson`: `null` or `{base?, registry?, tenant?: {tenantId, namespace}, limits?}`
   (unknown members are rejected); `base` is the installed layer, `limits`
   defaults to `norn.limits/1`.
+- `agentJson`: the raw JSON text of an agent payload `{name, title, model,
+  prompt, tools, budgets: {maxRuns, maxToolCalls, maxCostUsd}, laws,
+  decisionPolicy: {approve, laws?, deciderRoles}}`. Members are closed and
+  numbers are read exactly; `maxCostUsd` may be a number or a plain decimal
+  string. The caps are `norn_checker::agent::MAX_*` (prompt 32 KiB, 10,000
+  runs, 1,000 tool calls, 1,000 USD).
+- `contextJson` for `checkAgent` (host-supplied only): `{models, bindings:
+  [{id, connector, manifestDigest}], laws, limits?}` — the model allowlist,
+  the org's tool bindings resolved to installed connectors and their
+  manifests by digest (`sha256:<64 hex>`), and the admitted law ids. Unknown
+  members, a blank id or connector, a malformed digest, or a duplicate id
+  throw. `limits` defaults to `norn.limits/1`; its slice byte bound caps the
+  payload text (it has no agent caps, so those are constants).
 - `expectedType`: `bool`, `text`, `integer`, `number`, `date`, `duration`,
   `json`, an object type name (e.g. `retail.Sku`), `list<T>`, or `T?`.
 - `selfType`: the object type `self` is bound to (optional).

@@ -35,8 +35,9 @@ use norn_kernel::{
     CommitVersions, CommitView, Consumed, DueTimer, Effect, FactKey, FactMutation, FactState,
     FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget, LinkState,
     LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
-    OwnedRowsCommitProof, Performed, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
-    check_commit, check_commit_identifiers, check_commit_observed, check_commit_owned_rows,
+    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember, TimerId,
+    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_identifiers,
+    check_commit_observed, check_commit_owned_rows,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -133,6 +134,18 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     #[must_use]
     pub const fn store(&self) -> &CellStore<S> {
         &self.store
+    }
+
+    /// Capture pinned mapping evidence while the cell owns its store.
+    ///
+    /// # Errors
+    /// Invalid framing/pins or the existing atomic inbox capture failure.
+    pub fn inject_mapping_bundle(
+        &mut self,
+        raw: &Observed<Value>,
+        input: &crate::mapping_bundle::MappingInput,
+    ) -> Result<(String, bool), CellError> {
+        self.store.inject_mapping_bundle(raw, input)
     }
 
     /// Begin a private rebuild in this native host's world and tenant scope.
@@ -522,6 +535,84 @@ fn version_of<S: SqlEngine>(
         .map(FactVersion)
 }
 
+/// The slice profile's canonical byte ceiling, the read bound for a predicate
+/// no caller narrowed.
+fn slice_bytes() -> u64 {
+    norn_ir::ResourceLimitProfile::norn_limits_v1()
+        .slice
+        .max_canonical_bytes
+}
+
+/// The live objects of `predicate`'s type that match it, in key order, at
+/// most `limit` ([`norn_kernel::predicate_read`]). The cell has no property
+/// index for arbitrary predicates, so it examines at most the slice
+/// profile's record count of objects of the type, and at most `max_bytes`
+/// of stored candidate bytes; a larger type is an incomplete enumeration
+/// (`None`), which fails the read closed.
+fn predicate_objects<S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    predicate: &PredicateQuery,
+    limit: usize,
+    max_bytes: u64,
+) -> Result<Option<Vec<PredicateObject>>, CellError> {
+    let scan_cap = usize::try_from(
+        norn_ir::ResourceLimitProfile::norn_limits_v1()
+            .slice
+            .max_records,
+    )
+    .unwrap_or(usize::MAX);
+    // Interfaces have no stored table chain; a predicate over one is
+    // unsupported on every host.
+    if !reader
+        .model()
+        .object_types()
+        .any(|defined| defined.name == predicate.object_type)
+    {
+        return Ok(None);
+    }
+    // Candidate bytes are charged before each object is decoded, matching
+    // or not: the scan stops at the byte bound instead of loading every
+    // candidate first.
+    let mut limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    limits.max_candidate_bytes_per_commit = max_bytes;
+    let mut budget = DecodeBudget::new(&limits);
+    let Some(records) = reader.list_after_with_budget(
+        MAIN_WORLD,
+        predicate.object_type.as_str(),
+        scan_cap.saturating_add(1),
+        &mut budget,
+    )?
+    else {
+        return Ok(None);
+    };
+    if records.len() > scan_cap {
+        return Ok(None);
+    }
+    let candidates: Vec<(FactKey, FactVersion, JsonObject)> = records
+        .into_iter()
+        .map(|record| {
+            let values = record
+                .values
+                .into_iter()
+                // A stored null is an absent property.
+                .filter(|(_, value)| !value.is_null())
+                .collect::<JsonObject>();
+            (
+                FactKey::new(record.object_type, record.id),
+                FactVersion(record.version),
+                values,
+            )
+        })
+        .collect();
+    Ok(Some(norn_kernel::predicate_read::select_members(
+        predicate,
+        candidates
+            .iter()
+            .map(|(key, version, values)| (key, *version, values)),
+        limit,
+    )))
+}
+
 /// The committed state of link `key` as the kernel sees it.
 fn link_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
@@ -559,7 +650,7 @@ fn link_state<S: SqlEngine>(
 }
 
 /// What the kernel's admission check reads, inside the commit transaction.
-struct GuardView<'r, 'c, S: SqlEngine>(&'r StoreReader<'c, S>);
+pub(crate) struct GuardView<'r, 'c, S: SqlEngine>(pub(crate) &'r StoreReader<'c, S>);
 
 impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
     type Error = CellError;
@@ -624,6 +715,23 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
             .collect();
         links.sort();
         Ok(links)
+    }
+
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, CellError> {
+        let Some(objects) = predicate_objects(self.0, predicate, limit, slice_bytes())? else {
+            return Ok(None);
+        };
+        // OBS-EVIDENCE-1: a governed read never consumes a disputed source
+        // subject, so a disputed current match refuses the commit rather
+        // than being compared as an ordinary member.
+        for object in &objects {
+            self.0.refuse_disputed_subject(&object.key)?;
+        }
+        Ok(Some(objects.iter().map(PredicateObject::member).collect()))
     }
 
     fn has_link_target(
@@ -820,9 +928,7 @@ where
             command,
             generation,
         }) = &commit.consumes
-            && let Some(pending) = self.store.read().head_command()?
-            && pending.command.command_id == command.0
-            && pending.command.generation == generation.0
+            && let Some(pending) = self.store.read().pending_result(&command.0, generation.0)?
             && pending
                 .command
                 .command
@@ -1064,6 +1170,31 @@ where
     C: DeserializeOwned,
     I: DeserializeOwned,
 {
+    /// PARKED-1: redeliver the recorded, unconsumed results of parked
+    /// commands, oldest first, decoded from the store (never from memory).
+    /// After a crash between [`Self::complete_parked`] and the consuming
+    /// commit, this is how the result is delivered again; `perform` never
+    /// returns a parked command.
+    ///
+    /// # Errors
+    ///
+    /// Engine or decode errors.
+    pub fn parked_results(&self) -> Result<Vec<Performed<I>>, CellError> {
+        self.store
+            .read()
+            .parked_commands()?
+            .into_iter()
+            .filter_map(|pending| {
+                let result = pending.result?;
+                Some(from_runtime(&result).map(|input| Performed {
+                    command: CommandId(pending.command.command_id.clone()),
+                    generation: Generation(pending.command.generation),
+                    input,
+                }))
+            })
+            .collect()
+    }
+
     /// The pending commands, oldest first.
     ///
     /// # Errors
@@ -1111,6 +1242,11 @@ where
         let reader = self.store.read();
         let mut events: BTreeMap<u64, Vec<E>> = BTreeMap::new();
         for entry in reader.ledger(0)? {
+            // A run start is the store's bookkeeping event (RUN-LEDGER-1); it
+            // stays in the hash-chained ledger but is not an `E` to decode.
+            if crate::flow_run::is_run_start(&entry.event) {
+                continue;
+            }
             events
                 .entry(entry.commit_seq)
                 .or_default()
@@ -1265,6 +1401,35 @@ where
             input,
         }))
     }
+
+    /// PARKED-1: record the result the cell itself produced for a parked
+    /// command (for `norn.decision@1`, the receipt it issued), out of FIFO
+    /// order. Returns `None` without writing when the command is not a
+    /// pending parked command at `generation`, or already has a result, so a
+    /// parked command completes at most once. A commit consuming the returned
+    /// delivery applies it, exactly once, under the ordinary delivery fence.
+    ///
+    /// # Errors
+    ///
+    /// Serialization or SQLite errors.
+    pub fn complete_parked(
+        &mut self,
+        command: &CommandId,
+        generation: Generation,
+        input: I,
+    ) -> Result<Option<Performed<I>>, CellError> {
+        if !self
+            .store
+            .record_parked(&command.0, generation.0, &to_runtime(&input)?)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(Performed {
+            command: command.clone(),
+            generation,
+            input,
+        }))
+    }
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
@@ -1294,6 +1459,7 @@ where
             &[],
             &[],
             None,
+            None,
         )
     }
 
@@ -1310,7 +1476,24 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], None)
+        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], None, None)
+    }
+
+    /// Commit a kernel-prepared turn that creates a flow's run object, and
+    /// record the run in the run ledger in the same transaction
+    /// (RUN-LEDGER-1). The commit must create `start.run_id` as a
+    /// `start.object_type` object; otherwise the store refuses
+    /// `run.start_invalid` and nothing commits. A run id already started in
+    /// this world refuses `run.exists`.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied.
+    pub fn commit_run_start(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        start: &crate::flow_run::RunStart,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, Some(start))
     }
 
     pub(crate) fn commit_observed_evidence(
@@ -1336,6 +1519,7 @@ where
             &references,
             &[],
             mapped_bundle,
+            None,
         )
     }
 
@@ -1354,6 +1538,7 @@ where
         references: &[norn_kernel::FactExpectation],
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
         mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
+        run_start: Option<&crate::flow_run::RunStart>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1418,6 +1603,10 @@ where
             }
         }
         let mut batch = self.batch(&commit).map_err(CommitError::Host)?;
+        if let Some(start) = run_start {
+            // RUN-LEDGER-1: the store records the run in this commit's transaction.
+            batch.events.push(start.event().map_err(CommitError::Host)?);
+        }
         // Only the non-serializable, kernel-bound proof reaches this path.
         // Persist additive occurrence inputs so export/restore replays the
         // same classification without trusting a serialized subtraction.
@@ -1460,6 +1649,14 @@ where
                     return Err(CommitError::Host(CellError::MappingBundleMismatch));
                 }
                 if reader
+                    .mapping_link_plan(bundle, &commit)
+                    .map_err(CommitError::Host)?
+                    .links
+                    != commit.links
+                {
+                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
+                }
+                if reader
                     .mapping_conflict(bundle)
                     .map_err(CommitError::Host)?
                     .is_some()
@@ -1496,6 +1693,19 @@ where
                     for target in &read.targets {
                         reader
                             .refuse_disputed_subject(&target.key.target)
+                            .map_err(CommitError::Host)?;
+                    }
+                }
+                for member in commit.predicate_reads.iter().flat_map(|read| &read.members) {
+                    // A member of no stored type holds no subject to dispute;
+                    // the kernel's shape check refuses it.
+                    if reader
+                        .model()
+                        .object_types()
+                        .any(|defined| defined.name == member.key.object_type)
+                    {
+                        reader
+                            .refuse_disputed_subject(&member.key)
                             .map_err(CommitError::Host)?;
                     }
                 }
@@ -1679,6 +1889,23 @@ where
         link_state(&self.store.read(), key)
     }
 
+    fn read_predicate(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+    ) -> Result<Option<Vec<PredicateObject>>, CellError> {
+        let reader = self.store.read();
+        let objects =
+            predicate_objects(&reader, predicate, max_members.saturating_add(1), max_bytes)?;
+        if let Some(objects) = &objects {
+            for object in objects {
+                reader.refuse_disputed_subject(&object.key)?;
+            }
+        }
+        Ok(objects)
+    }
+
     fn read_link_targets(
         &self,
         source: &FactKey,
@@ -1724,7 +1951,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None)
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, None)
     }
 
     fn commit_action_references(
@@ -1745,6 +1972,7 @@ where
             proof.reference_reads(),
             proof.property_reads(),
             None,
+            None,
         )
     }
 
@@ -1762,7 +1990,22 @@ where
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[], None)
+        let quantity = proof
+            .quantity()
+            .map(|(request, key)| (request.clone(), key.to_owned()));
+        self.commit_with_authorization(
+            commit,
+            None,
+            Some(proof),
+            quantity
+                .as_ref()
+                .map(|(request, key)| (std::slice::from_ref(request), key.as_str())),
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+        )
     }
 
     fn commit_observed(

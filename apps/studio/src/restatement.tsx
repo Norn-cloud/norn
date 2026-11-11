@@ -2,10 +2,10 @@ import { useQuery } from "@tanstack/react-query"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
+import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { day, headline } from "./lib/format.ts"
 import { restated, sameAnswer } from "./lib/restatement.ts"
-import { recordedTransport, type Answer } from "./lib/transport.ts"
+import { transport, type Answer } from "./lib/transport.ts"
 import { CorrectionsStatus } from "./restatement-status.tsx"
 
 const changes = (count: number) => `${count} committed ${count === 1 ? "change" : "changes"}`
@@ -29,7 +29,7 @@ function Reading({ title, when, bucket, note }: { readonly title: string; readon
 const read = (answer: Answer) => `Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`
 
 export function RestatementCard() {
-  const restatement = useQuery({ queryKey: ["restatement"], queryFn: recordedTransport.restatement })
+  const restatement = useQuery({ queryKey: ["restatement"], queryFn: transport.restatement })
   if (restatement.isPending) return <CorrectionsStatus />
   if (restatement.isError) return <CorrectionsStatus error={restatement.error} />
   const { answer, corrected, asOf } = restatement.data
@@ -69,8 +69,8 @@ export function RestatementCard() {
                 {change.records.map(({ id, published: was, corrected: is }) => (
                   <TableRow key={id}>
                     <TableCell className="font-mono text-xs">{id}</TableCell>
-                    <TableCell className="text-right tabular-nums">{was ? `${fraction(was.amounts)} (version ${was.version})` : "not counted"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{is ? `${fraction(is.amounts)} (version ${is.version})` : "not counted"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{was ? `${contribution(was.amounts)} (version ${was.version})` : "not counted"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{is ? `${contribution(is.amounts)} (version ${is.version})` : "not counted"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

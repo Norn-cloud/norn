@@ -26,3 +26,24 @@ export const levelWords = (level: Level): string => ({
 
 /** A property name in words: `input_fine_g` → `input fine g`. */
 export const field = (name: string): string => name.replaceAll("_", " ")
+
+/** How many cases the checker's declared bounds enabled, as the server recorded them; `undefined` when the bounds name none. */
+export function cases(boundsJson: string): number | undefined {
+  const bounds = JSON.parse(boundsJson) as { declaredBoundsProfile?: { enabledCases?: unknown } }
+  const count = bounds.declaredBoundsProfile?.enabledCases
+  return typeof count === "number" ? count : undefined
+}
+
+/** A hash that names one guarantee document (`#guarantee-original`). */
+export function targetsGuarantee(hash: string): boolean {
+  return hash.startsWith("guarantee-")
+}
+
+/**
+ * The technical details' open state once the hash moves: a guarantee link
+ * opens them; any other hash (Back to the page, an unrelated anchor) keeps
+ * what the reader chose.
+ */
+export function openAfterHash(open: boolean, hash: string): boolean {
+  return open || targetsGuarantee(hash)
+}

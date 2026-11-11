@@ -20,6 +20,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.20"
 
 [dev-dependencies]
+schemars = { version = "1.2.1", features = ["derive"] }
 # Test support only (T6-PSM-1): the proptest-state-machine Decider harness.
 # The dev-dependency cycle (norn-testkit depends on this crate) is fine for
 # integration tests and never reaches a normal or wasm32 build.

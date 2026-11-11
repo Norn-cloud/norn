@@ -178,6 +178,15 @@ impl Decimal {
         self.0.is_integer()
     }
 
+    /// The exact sum, or `None` when it cannot be held without rounding.
+    #[must_use]
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        let sum = self.0.checked_add(other.0)?;
+        // The 96-bit mantissa can force a rescale on overflow; an exact sum
+        // subtracts back to its operand.
+        (sum.checked_sub(other.0) == Some(self.0)).then_some(Self(sum))
+    }
+
     /// The value as an `i64`, when it is an integer in range.
     #[must_use]
     pub fn to_i64(&self) -> Option<i64> {
@@ -596,9 +605,9 @@ impl JsonSchema for Decimal {
     }
 }
 
-/// The schema of a runtime value is the schema of any JSON value: the same
-/// subschema the definition IR's [`JsonValue`] has, so schemas that switch
-/// from IR values to runtime values are unchanged.
+/// Runtime JSON preserves exact numeric tokens. A binary-number schema would
+/// invite a lossy SDK conversion, so clients must decode this opaque JSON value
+/// from retained source text with an exact-number parser.
 impl JsonSchema for RuntimeValue {
     fn schema_name() -> Cow<'static, str> {
         "RuntimeValue".into()
@@ -608,8 +617,10 @@ impl JsonSchema for RuntimeValue {
         true
     }
 
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        generator.subschema_for::<JsonValue>()
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({
+            "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+        })
     }
 }
 

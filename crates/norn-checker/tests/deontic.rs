@@ -162,6 +162,17 @@ fn requirement_env() -> norn_expr::ZenTypeEnv {
 }
 
 #[test]
+fn law_contained_pack_requirement_refuses_unsupported_scope() {
+    use norn_checker::deontic::{RequirementRefusal, check_requirement};
+    let mut requirement = requirement();
+    requirement.norm.law.scope.root = norn_ir::LawRoot::Pack("toy.unknown".to_owned());
+    assert_eq!(
+        check_requirement(&requirement, &requirement_env()),
+        Err(RequirementRefusal::InvalidBinding)
+    );
+}
+
+#[test]
 fn structured_safety_preserves_grades_timing_sources_and_precedence() {
     use norn_checker::deontic::check_requirement;
     use norn_checker::norm_precedence::{ConstitutionLayer, GroundedNorm, check_norm_precedence};
@@ -1210,4 +1221,275 @@ fn normative_subject_names_cannot_be_installed_twice() {
             .any(|d| d.code.as_str() == "object_type.validation.shadows_base"),
         "{findings:?}"
     );
+}
+
+/// An admissible LAW-WITHIN-1 requirement: paid within 30 days of `post`.
+#[allow(clippy::expect_used, reason = "test-only LAW-WITHIN-1 fixture")]
+fn within_requirement() -> norn_ir::deontic::StructuredRequirement {
+    use norn_ir::deontic::{RequirementTiming, RetriggerPolicy, WithinTiming};
+    let mut r = requirement();
+    r.norm.law.modality = LawModality::Eventually {};
+    r.norm.law.timing = Some(norn_ir::LawTiming::Within {
+        millis: "2592000000".into(),
+    });
+    r.norm.law.condition = None;
+    r.norm.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("input.active".into()),
+    };
+    r.timing = RequirementTiming::Within(WithinTiming {
+        trigger: "post".into(),
+        retrigger: RetriggerPolicy::KeepFirst,
+        cancel: Some(norn_ir::ZenExpression("input.quantity < 0".into())),
+        accountable: "receivables".into(),
+        calendar: None,
+    });
+    for w in r.wording.0.values_mut() {
+        w.terms.within = Some("within".into());
+    }
+    r
+}
+
+/// Replace the `within` window with raw decimal text.
+fn set_millis(r: &mut norn_ir::deontic::StructuredRequirement, millis: &str) {
+    r.norm.law.timing = Some(norn_ir::LawTiming::Within {
+        millis: millis.into(),
+    });
+}
+
+/// LAW-WITHIN-1 admits its exact shape, round-trips and renders the window.
+#[test]
+fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
+    use norn_checker::deontic::RequirementRefusal as R;
+    use norn_ir::deontic::StructuredRequirement;
+    let env = requirement_env();
+    let ok = within_requirement();
+    check_requirement(&ok, &env).expect("structural within obligation");
+    let wire = serde_json::to_value(&ok).expect("wire");
+    assert_eq!(wire["timing"]["within"]["retrigger"], "keep_first");
+    let decoded: StructuredRequirement = serde_json::from_value(wire).expect("typed");
+    assert_eq!(decoded, ok);
+    let view = norn_ir::requirement_display::RequirementView {
+        requirement: ok,
+        locale: "en".into(),
+    };
+    let rendered = norn_checker::deontic::render_requirement(&view)
+        .expect("rendered")
+        .remove(4)
+        .text;
+    assert!(rendered.contains("2592000000 ms; post"), "{rendered}");
+    let mut missing = within_requirement();
+    if let Some(w) = missing.wording.0.values_mut().last() {
+        w.terms.within = None;
+    }
+    assert_eq!(
+        check_requirement(&missing, &env),
+        Err(R::Wording("law.wording.incomplete_locale"))
+    );
+    let view = norn_ir::requirement_display::RequirementView {
+        requirement: missing,
+        locale: "en".into(),
+    };
+    assert_eq!(
+        norn_checker::deontic::render_requirement(&view).err(),
+        Some("law.wording.incomplete_locale")
+    );
+    // Lowering never drops the activation policy; theorem lowering stays closed.
+    let ok = within_requirement();
+    assert_eq!(
+        norn_checker::deontic::lower_requirement(&ok),
+        Err(LawLoweringRefusal::ActivationTiming)
+    );
+    assert_eq!(
+        norn_checker::deontic::lower_theorem_candidate(&ok.norm),
+        Err(LawLoweringRefusal::UnsupportedProofFragment)
+    );
+}
+
+type WithinCase = (
+    fn(&mut norn_ir::deontic::StructuredRequirement),
+    norn_checker::deontic::RequirementRefusal,
+);
+
+/// Every variation of the LAW-WITHIN-1 shape refuses with a typed reason.
+#[allow(clippy::too_many_lines, reason = "one table row per refusal case")]
+#[test]
+fn within_refuses_every_variation_with_a_typed_reason() {
+    use norn_checker::deontic::RequirementRefusal as R;
+    use norn_ir::deontic::{CalendarPin, RequirementTiming};
+    let env = requirement_env();
+    let cases: [WithinCase; 22] = [
+        (
+            |r| set_millis(r, &((1u64 << 63) + 1).to_string()),
+            R::InvalidDuration,
+        ),
+        (|r| set_millis(r, &u64::MAX.to_string()), R::InvalidDuration),
+        (
+            |r| r.norm.modality = DeonticModality::Prohibition,
+            R::ModalityMismatch,
+        ),
+        (
+            |r| {
+                r.norm.exceptions.push(norn_ir::deontic::RuleException {
+                    id: "waived".into(),
+                    condition: norn_ir::ZenExpression("input.active".into()),
+                    source: r.norm.source.clone(),
+                });
+            },
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| {
+                r.norm
+                    .law
+                    .scope
+                    .lifecycle_states
+                    .push(norn_ir::LawStateScope {
+                        object_type: r.norm.law.subject.clone(),
+                        property: "status".into(),
+                        states: vec!["posted".into()],
+                    });
+            },
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| r.norm.law.scope.commitments.push("billing".into()),
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| {
+                r.norm.law.response = norn_ir::LawResponse::Action {
+                    artifact_id: "pay".into(),
+                }
+            },
+            R::UnsupportedResponse,
+        ),
+        (
+            |r| {
+                r.norm.law.response = norn_ir::LawResponse::Transition {
+                    object_type: "t".into(),
+                    property: "status".into(),
+                    transition_id: "pay".into(),
+                }
+            },
+            R::UnsupportedResponse,
+        ),
+        (|r| set_millis(r, "0"), R::InvalidDuration),
+        (|r| set_millis(r, "030"), R::InvalidDuration),
+        (
+            |r| set_millis(r, "18446744073709551616"),
+            R::InvalidDuration,
+        ),
+        (
+            |r| r.norm.modality = DeonticModality::Permission,
+            R::ModalityMismatch,
+        ),
+        (|r| r.norm.law.timing = None, R::UnsupportedTiming),
+        (
+            |r| r.norm.law.modality = LawModality::Always {},
+            R::UnsupportedTiming,
+        ),
+        (
+            |r| r.timing = RequirementTiming::SameCommit,
+            R::UnsupportedTiming,
+        ),
+        (
+            |r| r.norm.law.condition = Some(norn_ir::ZenExpression("input.active".into())),
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| r.norm.defeated_by.push("other".into()),
+            R::UnsupportedActivation,
+        ),
+        (
+            |r| {
+                r.norm.law.response = norn_ir::LawResponse::Invariant {
+                    object_type: "t".into(),
+                    invariant_id: "i".into(),
+                }
+            },
+            R::UnsupportedResponse,
+        ),
+        (
+            |r| {
+                if let RequirementTiming::Within(w) = &mut r.timing {
+                    w.calendar = Some(CalendarPin {
+                        id: "c".into(),
+                        version: "1".into(),
+                    });
+                }
+            },
+            R::UnsupportedCalendar,
+        ),
+        (
+            |r| {
+                if let RequirementTiming::Within(w) = &mut r.timing {
+                    w.trigger = " ".into();
+                }
+            },
+            R::InvalidBinding,
+        ),
+        (
+            |r| {
+                if let RequirementTiming::Within(w) = &mut r.timing {
+                    w.accountable = String::new();
+                }
+            },
+            R::InvalidBinding,
+        ),
+        (
+            |r| {
+                if let RequirementTiming::Within(w) = &mut r.timing {
+                    w.cancel = Some(norn_ir::ZenExpression("input.quantity".into()));
+                }
+            },
+            R::PredicateType,
+        ),
+    ];
+    // The cap itself is admitted: 2^63 − 1 + 2^63 = u64::MAX never overflows.
+    let mut boundary = within_requirement();
+    set_millis(
+        &mut boundary,
+        &norn_checker::deontic::MAX_WITHIN_MILLIS.to_string(),
+    );
+    check_requirement(&boundary, &env).expect("largest admitted window");
+    assert!(norn_checker::deontic::lower_requirement(&requirement()).is_ok());
+    for (index, (mutate, refusal)) in cases.into_iter().enumerate() {
+        let mut r = within_requirement();
+        mutate(&mut r);
+        assert_eq!(check_requirement(&r, &env), Err(refusal), "case {index}");
+    }
+}
+
+/// Activation identity is a canonical digest of the whole key, and recorded
+/// events decode strictly.
+#[test]
+fn activation_identity_is_canonical_and_events_are_closed() {
+    use norn_ir::deontic::{ActivationEvent, ActivationKey};
+    let key = ActivationKey {
+        law_id: "a:b".into(),
+        law_digest: "0".repeat(64),
+        origin: "billing.app".into(),
+        subject_id: "c".into(),
+        trigger_seq: 7,
+    };
+    let id = key.id().expect("canonical");
+    assert_eq!((id.len(), key.id().expect("canonical")), (64, id.clone()));
+    // Moving a separator between fields must change the identity.
+    let shifted = ActivationKey {
+        law_id: "a".into(),
+        subject_id: "b:c".into(),
+        ..key.clone()
+    };
+    let other_origin = ActivationKey {
+        origin: "other.app".into(),
+        ..key
+    };
+    for other in [shifted, other_origin] {
+        assert_ne!(other.id().expect("canonical"), id);
+    }
+    let event = json!({"kind":"retrigger_ignored","activationId":id,"atSeq":8});
+    assert!(serde_json::from_value::<ActivationEvent>(event.clone()).is_ok());
+    let mut extra = event;
+    extra["silentPass"] = json!(true);
+    assert!(serde_json::from_value::<ActivationEvent>(extra).is_err());
 }

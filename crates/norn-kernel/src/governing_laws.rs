@@ -186,7 +186,7 @@ fn law_failure(
     invariant: Option<Box<BoundInvariantFailure>>,
 ) -> Result<LawFailure, LawEvaluationError> {
     Ok(LawFailure {
-        refuses_native: law.severity == LawSeverity::Error,
+        refuses_native: true,
         outcome,
         rule_ref: pin(artifact, law)?,
         severity: match law.severity {
@@ -241,6 +241,8 @@ pub(crate) fn invariant_failure(
     }
     Ok(None)
 }
+
+/// LAW-COMMIT-1 / OBS-EVIDENCE-1: display severity never relaxes governing authority.
 pub(crate) fn classify(
     catalog: &TypeCatalog<'_>,
     rule_ref: &DataQualityRuleRef,
@@ -259,10 +261,7 @@ pub(crate) fn classify(
             }) && invariant_binding(catalog, subject, &law).is_ok()
         };
         if catalog.object_type_names().iter().any(governs) {
-            return match law.severity {
-                LawSeverity::Error => DataQualityRuleClassification::Integrity,
-                LawSeverity::Warning => DataQualityRuleClassification::Quality,
-            };
+            return DataQualityRuleClassification::Integrity;
         }
     }
     DataQualityRuleClassification::Unverified

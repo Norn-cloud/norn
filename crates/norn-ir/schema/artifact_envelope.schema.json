@@ -520,6 +520,58 @@
         "legProperty"
       ]
     },
+    "ActionAggregateInput": {
+      "description": "One bounded aggregate an action's preconditions read by `name`.",
+      "type": "object",
+      "properties": {
+        "aggregate": {
+          "description": "What is computed over the matched objects.",
+          "$ref": "#/$defs/AggregateFunction"
+        },
+        "filter": {
+          "description": "Equality filter: each scalar property must equal the named input\nfield. An empty filter matches every object of the type.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "string"
+            }
+          }
+        },
+        "maxItems": {
+          "description": "Most objects the fold may match; one more refuses the action.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "description": "The precondition environment member holding the result. Unique among\nthe action's aggregates and slice entries.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The type whose stored objects are folded.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "window": {
+          "description": "Optional window over one date or timestamp property.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AggregateWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "objectType",
+        "aggregate",
+        "maxItems"
+      ]
+    },
     "ActionCommand": {
       "description": "One declarative outbound command produced by an action call.",
       "type": "object",
@@ -871,6 +923,12 @@
         "actionId": {
           "type": "string"
         },
+        "aggregates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAggregateInput"
+          }
+        },
         "commands": {
           "type": "array",
           "items": {
@@ -1159,6 +1217,78 @@
       "required": [
         "entityKind",
         "change"
+      ]
+    },
+    "AggregateFunction": {
+      "description": "The fold computed over the matched objects.",
+      "oneOf": [
+        {
+          "description": "The exact sum of a non-nullable decimal or integer property, held at\nthe property's declared scale. An empty match set sums to zero.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sum"
+            },
+            "property": {
+              "description": "The summed property.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property"
+          ]
+        },
+        {
+          "description": "The number of matched objects.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "count"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "AggregateWindow": {
+      "description": "A window over one date or timestamp property. Both edges and their\ninclusivity are declared; there is no default edge semantics.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "The input field holding the end edge.",
+          "type": "string"
+        },
+        "endInclusive": {
+          "description": "Whether an object exactly at `end` matches.",
+          "type": "boolean"
+        },
+        "property": {
+          "description": "The date or timestamp property the window ranges over.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "start": {
+          "description": "The input field holding the start edge.",
+          "type": "string"
+        },
+        "startInclusive": {
+          "description": "Whether an object exactly at `start` matches.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "start",
+        "end",
+        "startInclusive",
+        "endInclusive"
       ]
     },
     "ApiKeyFormat": {
@@ -7431,6 +7561,10 @@
             "$ref": "#/$defs/KeySpec"
           }
         },
+        "immutable": {
+          "description": "FA-IMM-1: existing instances are append-only; subtypes inherit this flag.",
+          "type": "boolean"
+        },
         "implements": {
           "description": "Interfaces the type implements, in addition to those its supertypes\nimplement. Omitted when empty.",
           "type": "array",
@@ -8724,6 +8858,25 @@
           "required": [
             "kind",
             "scale"
+          ]
+        },
+        {
+          "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+          "type": "object",
+          "properties": {
+            "group": {
+              "description": "Same-name members in one interface bind identically.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal-binding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group"
           ]
         },
         {
@@ -10226,8 +10379,7 @@
         {
           "properties": {
             "value": {
-              "type": "number",
-              "format": "double"
+              "$ref": "#/$defs/DecimalLiteral"
             },
             "valueType": {
               "const": "number"
@@ -10321,7 +10473,7 @@
       ]
     },
     "SettingValueType": {
-      "description": "The JSON type of a setting's `value`.",
+      "description": "The setting value kind; numbers use exact decimal-string literals.",
       "type": "string",
       "enum": [
         "text",
@@ -10376,6 +10528,84 @@
     "SliceKey": {
       "description": "Where a [`SliceDeclaration`]'s key comes from.",
       "oneOf": [
+        {
+          "description": "A unique effective parameter selected from an earlier authorized link list.",
+          "type": "object",
+          "properties": {
+            "parameter": {
+              "type": "object",
+              "properties": {
+                "defaultFrom": {
+                  "description": "Earlier single-object slice holding an explicit default setting.",
+                  "type": "string"
+                },
+                "effectiveAt": {
+                  "description": "Action input field carrying the declared effective timestamp.",
+                  "$ref": "#/$defs/PropertyId"
+                },
+                "from": {
+                  "description": "Earlier list slice containing the candidate setting facts.",
+                  "type": "string"
+                },
+                "precedence": {
+                  "description": "Explicit scope precedence, highest first.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "businessUnitId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "environmentId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "orgId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tenantId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "workspaceId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "settingKey": {
+                  "description": "Stable parameter key.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "settingKey",
+                "effectiveAt",
+                "precedence"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "parameter"
+          ]
+        },
         {
           "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
           "type": "string",
@@ -11054,6 +11284,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "guardRefusalCode": {
+          "description": "GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.\nOmission inherits a parent's diagnostic; guard evidence is retained.",
+          "type": "string"
         },
         "guards": {
           "description": "Boolean ZEN Expressions over the object's properties, evaluated on\nthe state before the change; the transition may be taken only when\nevery one holds (their conjunction). A subtype that redeclares the\ntransition restates every inherited guard verbatim and may append its\nown, so the declaration it carries is the full effective guard set;\ndropping or replacing an inherited guard is a checker error. A guard\nreads the object through `self`; the checker parses it (T1-ONT-2)\nand types it (T1-EXPR-5, #2523); enforcement at commit is the\nkernel's. Omitted when empty.",

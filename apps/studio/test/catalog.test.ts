@@ -26,7 +26,7 @@ test("a concept states its facts, relationships and parents as declared", () => 
   ])
   const field = (id: string) => holding?.fields.find((candidate) => candidate.id === id)
   expect(field("quantity")?.type).toBe("Exact number, 6 decimal places")
-  expect(field("stock_cost")).toEqual({ id: "stock_cost", type: "Exact number, 6 decimal places, currency from cost currency", optional: true, decimal: { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" } })
+  expect(field("stock_cost")).toEqual({ id: "stock_cost", type: "Exact number, 6 decimal places, currency from cost currency", optional: true, decimal: { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" }, scalar: { kind: "decimal" } })
   expect(field("quantity_basis")?.type).toBe("One of: on hand, available")
 })
 
@@ -77,4 +77,12 @@ test("a mapping target resolves through its entity artifact's declared name, wha
     { kind: "mapping", artifactId: "demo.mapping", payload: { source: { schemaId: "demo.source" }, maps: [{ source: { dataset: "Thing" }, target: { entity: "demo.things.v2" }, properties: [] }] } },
   ] as unknown as readonly Artifact[]
   expect(catalogOf(artifacts).byName.get("demo.Thing")?.feeds.map(({ system }) => system)).toEqual(["ERPNext"])
+})
+
+test("an object type no system feeds is still an object type, not a shared interface", () => {
+  const restatement = catalog.byName.get("core.analytics.Restatement")
+  expect(restatement?.definition).toBe("object type")
+  expect(restatement?.kind).toBe("core idea")
+  expect(catalog.byName.get("core.Agent")?.definition).toBe("interface")
+  expect(catalog.byName.get("canon.Holding")?.definition).toBe("object type")
 })

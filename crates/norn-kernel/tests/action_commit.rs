@@ -2518,6 +2518,97 @@ impl CellHost for BaseCollisionBeforeFirstCandidate {
     }
 }
 
+/// A host on which a rival naming-series create commits just before the first commit it is given.
+struct RivalNamingCreate {
+    cell: Cell,
+    types: Vec<ObjectTypeDef>,
+    action: ActionRoot,
+    injected: bool,
+}
+
+impl CellHost for RivalNamingCreate {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = Infallible;
+
+    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
+        self.cell.load(key)
+    }
+
+    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
+        self.cell.load_link(key)
+    }
+
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "This test fixture must panic when the rival create fails rather than simulate a recoverable domain refusal"
+    )]
+    fn commit(
+        &mut self,
+        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
+    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        if !self.injected {
+            self.injected = true;
+            let catalog = TypeCatalog::new(&self.types);
+            let rival = naming_call(&self.action, "ACME", "rival", 1_767_225_600_000);
+            let outcome = commit_action(&mut self.cell, &catalog, &rival, &Allow).unwrap();
+            assert_eq!(outcome_key(outcome), "SO-ACME-2025-00001");
+        }
+        CellHost::commit(&mut self.cell, commit)
+    }
+
+    fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, Self::Error> {
+        self.cell.perform()
+    }
+
+    fn observe(&mut self) -> Result<Option<Observed<JsonObject>>, Self::Error> {
+        self.cell.observe()
+    }
+
+    fn clock(&mut self) -> Result<Option<DueTimer<JsonObject>>, Self::Error> {
+        self.cell.clock()
+    }
+
+    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
+        self.cell.publish(receipt)
+    }
+}
+
+#[test]
+fn a_losing_create_of_an_immutable_naming_series_type_retries_with_the_next_number() {
+    for gap_policy in ["gapless_within_commit", "allow_gaps"] {
+        let mut types = naming_series_types(gap_policy, "year");
+        types[0].immutable = true;
+        let catalog = TypeCatalog::new(&types);
+        let action = naming_series_action("commerce.named_order.create.immutable_race");
+        let mut host = RivalNamingCreate {
+            cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+                .with_types(types.clone()),
+            types: types.clone(),
+            action: action.clone(),
+            injected: false,
+        };
+        // Both calls select SO-ACME-2025-00001, absent when each read it. The rival commits
+        // first; the loser's absent-expecting create is a retryable conflict, not an
+        // immutability refusal, so it allocates the next number.
+        let call = naming_call(&action, "ACME", "loser", 1_767_225_600_000);
+        let outcome = commit_action(&mut host, &catalog, &call, &Allow).unwrap();
+        assert_eq!(outcome_key(outcome), "SO-ACME-2025-00002", "{gap_policy}");
+        assert!(host.injected, "the rival create committed first");
+        assert_eq!(host.cell.ledger().len(), 2);
+        for key in ["SO-ACME-2025-00001", "SO-ACME-2025-00002"] {
+            assert!(
+                host.cell
+                    .load(&FactKey::new("commerce.NamedOrder", key))
+                    .unwrap()
+                    .exists(),
+                "{key}"
+            );
+        }
+    }
+}
+
 #[test]
 fn inherited_naming_series_candidate_cas_catches_concurrent_base_create() {
     for gap_policy in ["gapless_within_commit", "allow_gaps"] {
@@ -3417,6 +3508,53 @@ fn owned_series_add(row_id: &str) -> Value {
 }
 
 #[test]
+fn owned_quantity_intent_refuses_hosts_without_combined_admission() {
+    let definitions = owned_series_types(false, false);
+    let catalog = TypeCatalog::new(&definitions);
+    let mut action = owned_series_action();
+    let mut schema = serde_json::to_value(&action.input_schema).unwrap();
+    schema["properties"]["versions"] = json!({"type": "array", "items": {
+        "type": "object", "properties": {
+            "account": {"type": "string"}, "unit": {"type": "string"},
+            "layer": {"type": "string"}, "version": {"type": "integer"}
+        }, "required": ["account", "unit", "layer", "version"], "additionalProperties": false
+    }});
+    schema["properties"]["reservation"] = json!({"type": "string"});
+    schema["properties"]["posting"] = json!({"type": "string"});
+    action.input_schema = serde_json::from_value(schema).unwrap();
+    action.quantity_effect = Some(
+        serde_json::from_value(json!({
+            "ledgerId": "stock", "balanceVersionsField": "versions",
+            "operation": {"kind": "post_reservation", "reservationIdField": "reservation",
+                "postingIdField": "posting"}
+        }))
+        .unwrap(),
+    );
+    let mut request = owned_series_call(
+        &action,
+        "unsupported-quantity",
+        "0",
+        &json!({"name": "ORDER-1", "company": "ACME"}),
+        &json!([owned_series_add("row-c")]),
+    );
+    request.input.extend(
+        serde_json::from_value::<JsonObject>(json!({
+            "versions": [], "reservation": "hold", "posting": "posted"
+        }))
+        .unwrap(),
+    );
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(definitions.clone());
+    let refusal = refuse_owned_series_atomically(&mut cell, &catalog, &request);
+    assert!(
+        matches!(&refusal,
+        ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { reason })
+            if reason == "observation authorization did not match its prepared commit"),
+        "{refusal:?}"
+    );
+}
+
+#[test]
 fn owned_row_expressions_share_action_fuel_and_refuse_atomically() {
     use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
     use norn_kernel::{EnvelopeLimits, RefusalCategory, ResourceLimitProfile};
@@ -4132,18 +4270,29 @@ norn_testkit::proptest::proptest! {
         let action: ActionRoot = serde_json::from_value(payload).unwrap();
         let types = order_types(); let catalog = TypeCatalog::new(&types);
         let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        seed(&mut cell, ORDER, "SO-1", "draft");
+        let seeded = cell.ledger().len();
         let mut request = call(&action, "SO-1", "receipt-effect");
         request.input.insert("receipt".to_owned(), JsonValue::String(reference));
         let reference = norn_kernel::receipt_binding::ReceiptReference::parse(&JsonValue::String(format!("sha256:{}", "a".repeat(64)))).unwrap();
         let manifest = norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)));
         let unresolved = cell.resolve_accepted_receipt(&reference, &manifest).unwrap().is_none();
         norn_testkit::proptest::prop_assert!(unresolved);
-        let refused = matches!(commit_action(&mut cell, &catalog, &request, &Allow), Err(ActionRefusal::UnsupportedEffect { .. }));
-        norn_testkit::proptest::prop_assert!(refused);
-        norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
+        // RECEIPT-EFFECT-1: a host without receipt support refuses; a
+        // malformed reference refuses before any host lookup.
+        let refused = commit_action(&mut cell, &catalog, &request, &Allow).map(|_| ()).unwrap_err();
+        norn_testkit::proptest::prop_assert!(matches!(
+            refused.code(),
+            "action.receipt_effect_unsupported" | "action.receipt_reference_invalid"
+        ), "{}", refused.code());
+        norn_testkit::proptest::prop_assert_eq!(cell.ledger().len(), seeded);
         request.input.insert("receipt".to_owned(), JsonValue::Object(JsonObject::new()));
-        norn_testkit::proptest::prop_assert!(commit_action(&mut cell, &catalog, &request, &Allow).is_err());
-        norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
+        let refused = commit_action(&mut cell, &catalog, &request, &Allow).map(|_| ()).unwrap_err();
+        norn_testkit::proptest::prop_assert!(matches!(
+            refused.code(),
+            "action.invalid_input" | "action.receipt_body_forbidden"
+        ), "{}", refused.code());
+        norn_testkit::proptest::prop_assert_eq!(cell.ledger().len(), seeded);
     }
 }
 

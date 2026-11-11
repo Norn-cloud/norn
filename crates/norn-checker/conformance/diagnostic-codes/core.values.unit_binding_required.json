@@ -1,0 +1,7 @@
+{
+  "code": "core.values.unit_binding_required",
+  "message": "an interface Decimal requires an explicit implementing unit and scale",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

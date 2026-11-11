@@ -1,0 +1,42 @@
+{
+  "format": "norn.binding-manifest-digest.vectors/1",
+  "algorithm": "manifestDigest = \"sha256:\" + hex(SHA-256(UTF-8(JCS(manifest)))), JCS = RFC 8785; version without a gateway version = \"sha256-\" + the first 12 hex after \"sha256:\"",
+  "generator": "canonicalize@5.1.0 (the RFC 8785 reference implementation)",
+  "vectors": [
+    {
+      "name": "plain",
+      "manifestJson": "{\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"app\":\"norn-e2e\",\"tool\":\"echo\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\",\"minLength\":1},\"tag\":{\"type\":\"string\"}},\"required\":[\"message\"]},\"outputSchema\":null}",
+      "canonical": "{\"app\":\"norn-e2e\",\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"inputSchema\":{\"properties\":{\"message\":{\"minLength\":1,\"type\":\"string\"},\"tag\":{\"type\":\"string\"}},\"required\":[\"message\"],\"type\":\"object\"},\"outputSchema\":null,\"tool\":\"echo\"}",
+      "manifestDigest": "sha256:c038e03c30df824d801592bf4d613c5fc32f601f651f5bf5055b1452b29ece80",
+      "version": "sha256-c038e03c30df"
+    },
+    {
+      "name": "number spelling: 1.0, 1e3, -0, 0.1, 1e21, 1e-7",
+      "manifestJson": "{\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"app\":\"norn-e2e\",\"tool\":\"echo\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"n\":{\"type\":\"number\",\"minimum\":1.0,\"maximum\":1e3,\"default\":-0,\"multipleOf\":0.1,\"exclusiveMaximum\":1e21,\"exclusiveMinimum\":1e-7}}},\"outputSchema\":null}",
+      "canonical": "{\"app\":\"norn-e2e\",\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"inputSchema\":{\"properties\":{\"n\":{\"default\":0,\"exclusiveMaximum\":1e+21,\"exclusiveMinimum\":1e-7,\"maximum\":1000,\"minimum\":1,\"multipleOf\":0.1,\"type\":\"number\"}},\"type\":\"object\"},\"outputSchema\":null,\"tool\":\"echo\"}",
+      "manifestDigest": "sha256:3e24f528906cbed89394104cdbdebb0fa181cbbb8eff8598290c9aeca8123074",
+      "version": "sha256-3e24f528906c"
+    },
+    {
+      "name": "2^53+1 reads as the nearest double, 2^53",
+      "manifestJson": "{\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"app\":\"norn-e2e\",\"tool\":\"echo\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\",\"const\":9007199254740993,\"maximum\":9007199254740992}}},\"outputSchema\":null}",
+      "canonical": "{\"app\":\"norn-e2e\",\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"inputSchema\":{\"properties\":{\"id\":{\"const\":9007199254740992,\"maximum\":9007199254740992,\"type\":\"integer\"}},\"type\":\"object\"},\"outputSchema\":null,\"tool\":\"echo\"}",
+      "manifestDigest": "sha256:e1573bcb360e2efa60524ecdc11a74e31f866a1b4bbf135c7da91ebe2c36ca23",
+      "version": "sha256-e1573bcb360e"
+    },
+    {
+      "name": "key order by UTF-16 code units: non-ASCII and astral-plane keys",
+      "manifestJson": "{\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"app\":\"norn-e2e\",\"tool\":\"echo\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"z\":{\"type\":\"string\"},\"a\":{\"type\":\"string\"},\"é\":{\"type\":\"string\"},\"€\":{\"type\":\"string\"},\"דּ\":{\"type\":\"string\"},\"😀\":{\"type\":\"string\"},\"Z\":{\"type\":\"string\"},\"aa\":{\"type\":\"string\"}}},\"outputSchema\":null}",
+      "canonical": "{\"app\":\"norn-e2e\",\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"inputSchema\":{\"properties\":{\"Z\":{\"type\":\"string\"},\"a\":{\"type\":\"string\"},\"aa\":{\"type\":\"string\"},\"z\":{\"type\":\"string\"},\"é\":{\"type\":\"string\"},\"€\":{\"type\":\"string\"},\"😀\":{\"type\":\"string\"},\"דּ\":{\"type\":\"string\"}},\"type\":\"object\"},\"outputSchema\":null,\"tool\":\"echo\"}",
+      "manifestDigest": "sha256:5106d337fa7d9d74514630e91211d12c59a7f2f0cf14cb525a6251a563fb2ca2",
+      "version": "sha256-5106d337fa7d"
+    },
+    {
+      "name": "string escapes",
+      "manifestJson": "{\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"app\":\"github\",\"tool\":\"list_issues\",\"inputSchema\":{\"type\":\"object\",\"description\":\"line\\u2028sep \\\"quoted\\\" \\u001f </script> \\u00e9\",\"properties\":{}},\"outputSchema\":{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\"}}}}",
+      "canonical": "{\"app\":\"github\",\"format\":\"norn.connector-tool-manifest/1\",\"gateway\":\"executor\",\"inputSchema\":{\"description\":\"line sep \\\"quoted\\\" \\u001f </script> é\",\"properties\":{},\"type\":\"object\"},\"outputSchema\":{\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"type\":\"object\"},\"tool\":\"list_issues\"}",
+      "manifestDigest": "sha256:65a77f4a580001deae181fb96e23ee3cc6bf7a83afe516353e9b9e5afef03bbf",
+      "version": "sha256-65a77f4a5800"
+    }
+  ]
+}
