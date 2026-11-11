@@ -299,6 +299,11 @@ mod tests {
             "map([1], {kind: 'perform', function: 'a', functionVersion: '1'})",
             "x ? [{kind: 'perform', function: 'a', functionVersion: '1'}] : event.more",
             "[{kind: 'perform'",
+            // Fable B1: the VM keeps the first of duplicate keys, a map the last.
+            "[{kind: 'perform', function: 'x.y', functionVersion: '1', kind: 'timer'}]",
+            "[{kind: 'perform', function: 'payments.charge', functionVersion: '1', function: 'norn.decision'}]",
+            // Fable B1: a bracketed identifier key is evaluated, not a literal name.
+            "[{kind: 'timer', function: 'x.y', functionVersion: '1', [k]: 'perform'}]",
         ] {
             let refused = perform_refs(&table_payload(cell)).unwrap_err();
             assert_eq!(

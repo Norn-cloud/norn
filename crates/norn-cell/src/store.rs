@@ -1814,6 +1814,16 @@ fn preflight_definition_install<E: SqlEngine>(
                     .to_owned(),
             ));
         }
+        // Nor does it change the model (Fable S6): only a flow installs a new
+        // kernel set, and with it a new projected model.
+        let same_model = install.candidate_model.model_hash() == previous_model.model_hash()
+            && install.candidate_model.ddl_hash() == previous_model.ddl_hash();
+        if !same_model && change.definition.kind != "flow" {
+            return Err(CellError::DefinitionReceiptInvalid(
+                "a retained revision that is not a flow installs over the active model, unchanged"
+                    .to_owned(),
+            ));
+        }
         crate::retained::preflight(engine, change)?;
     }
     let (layout, layout_revision) =
@@ -2037,6 +2047,10 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Self, CellError> {
         let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
         let mut store = Self::unverified(conn, model);
+        // FORK-PIN-1: a fork reopened through provisioning stays a fork.
+        if !Self::engine_is_fresh(&store.conn)? {
+            store.fork = crate::fork::load_pin(&store.conn)?;
+        }
         if let Some(active) = Self::read_active_definitions(&store.conn)? {
             let installation = store
                 .journal_record(active.commit_seq)?
@@ -2163,6 +2177,9 @@ impl<E: SqlEngine> CellStore<E> {
         store.verified.replace(self.verified.borrow().clone());
         store.quantity_boundary.set(self.quantity_boundary.get());
         store
+            .candidate_validator
+            .set(self.candidate_validator.get());
+        store
             .transparency
             .replace(self.transparency.borrow().clone());
         store.fork = Some(pin);
@@ -2250,6 +2267,15 @@ impl<E: SqlEngine> CellStore<E> {
             .transparency
             .replace(crate::transparency::load(&store.conn)?);
         store.fork = crate::fork::load_pin(&store.conn)?;
+        if store
+            .fork
+            .as_ref()
+            .is_some_and(|pin| pin.base.commits > store.verified.borrow().commits)
+        {
+            return Err(CellError::Encoding(
+                "fork pin: the base is past the store's head".to_owned(),
+            ));
+        }
         Ok(store)
     }
 
@@ -3433,6 +3459,33 @@ mod identity_history_tests {
             .install_definitions(current.clone(), definition_input(&current), Some(0), "s")
             .expect("current admission after removing the collision");
         (store, current)
+    }
+
+    /// FORK-PIN-1 (Fable S1): provisioning a fork's engine again (the
+    /// identical-request reopen path) keeps the pin, and the reopened fork
+    /// still refuses to perform.
+    #[test]
+    fn a_fork_reopened_through_provisioning_keeps_its_pin() {
+        let current = Model::from_snapshot(&snapshot(1)).expect("current model");
+        let input = definition_input(&current);
+        let main = CellStore::provision_definitions(
+            NativeEngine::open_in_memory().expect("engine"),
+            current.clone(),
+            &input,
+            "s",
+        )
+        .expect("public provisioning");
+        let base = main.verified_head().expect("head");
+        let fork = main.fork("what-if", &base).expect("forks");
+        let pin = fork.fork_pin().cloned();
+        let mut reopened =
+            CellStore::provision_definitions(fork.conn, current, &input, "s").expect("reopens");
+        assert_eq!(reopened.fork_pin(), pin.as_ref());
+        assert!(pin.is_some());
+        assert!(matches!(
+            reopened.record_performed("c", 0, &Value::Null),
+            Err(CellError::WorldPerformForbidden)
+        ));
     }
 
     #[test]

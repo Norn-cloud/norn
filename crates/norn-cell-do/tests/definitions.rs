@@ -1387,6 +1387,11 @@ fn constructed_command_records_are_refused() {
         "[merge([{kind: 'timer', function: 'uninstalled', functionVersion: '1'}, {['ki' + 'nd']: 'perform'}])]",
         "[event.command]",
         "event.commands",
+        // Fable B1: duplicate keys (the VM keeps the first) and a bracketed
+        // identifier key (evaluated, not a literal name).
+        "[{kind: 'perform', runId: key, step: 's', function: 'x.y', functionVersion: '1', input: {}, kind: 'timer'}]",
+        "[{kind: 'perform', runId: key, step: 's', function: 'payments.charge', functionVersion: '1', input: {}, function: 'norn.decision'}]",
+        "[{kind: 'timer', runId: key, step: 's', function: 'x.y', functionVersion: '1', input: {}, [k]: 'perform'}]",
     ] {
         let (status, refused) = install_flow(
             &cell,
@@ -1507,6 +1512,22 @@ fn reserved_namespaces_are_refused() {
             "{refused}"
         );
     }
+    // Fable S5 (D84): reads and retirements are not new ids. A reserved id
+    // is looked up like any other: absent here, so 404, never id_reserved.
+    assert_eq!(
+        get(&cell, "/v1/definitions/core.dashboard", "", VIEWER).0,
+        404
+    );
+    assert_eq!(
+        post(
+            &cell,
+            "/v1/definitions/core.dashboard:retire",
+            ADMIN,
+            &json!({ "expectedVersion": 1 })
+        )
+        .0,
+        404
+    );
 }
 
 /// Sol S4: two flow ids that derive the same Run type cannot overwrite each
@@ -1676,6 +1697,13 @@ fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
     );
     assert_eq!(admitted["restatementSha256"], json!(sha256(&words)));
 
+    // Fable S7: unsigned, a flow this cell can restate is refused.
+    let (status, unsigned) = install_flow(&cell, &body);
+    assert_eq!(
+        (status, unsigned["code"].clone()),
+        (422, json!("definition.signoff_required")),
+        "{unsigned}"
+    );
     // A sign-off of other words is refused with the server's own words.
     let mut wrong = body.clone();
     wrong["signoff"] = json!({ "restatementSha256": sha256("something else") });

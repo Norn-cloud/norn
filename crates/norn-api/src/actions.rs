@@ -20,7 +20,7 @@ use norn_cell::{MAIN_WORLD, Receipt, compute::lineage::keyed_receipt_handle, eng
 use norn_ir::RuntimeValue;
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, DecisionTurn, LogicalTime, Refusable,
-    TypeCatalog, World,
+    TypeCatalog,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -255,7 +255,8 @@ pub fn call_action<E: SqlEngine>(
         turn: DecisionTurn {
             id: format!("{action_id}/{}", request.idempotency_key),
             now,
-            world: World::Main,
+            // L5 (Fable S2): the turn's world is the store's pin, never assumed.
+            world: cell.store().world(),
             consumes: None,
         },
     };

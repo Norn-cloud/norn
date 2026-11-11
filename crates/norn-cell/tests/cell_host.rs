@@ -2668,6 +2668,8 @@ struct ForkPut {
 enum ForkOp {
     Main(ForkPut),
     MainPerform,
+    MainClaim,
+    MainComplete,
     MainSimulate,
     Create { slot: u8, from: Option<u8> },
     CreateStale { from: Option<u8> },
@@ -2699,6 +2701,8 @@ fn fork_op() -> impl Strategy<Value = ForkOp> {
     prop_oneof![
         4 => fork_put().prop_map(ForkOp::Main),
         2 => Just(ForkOp::MainPerform),
+        1 => Just(ForkOp::MainClaim),
+        1 => Just(ForkOp::MainComplete),
         1 => Just(ForkOp::MainSimulate),
         3 => (slot.clone(), from.clone()).prop_map(|(slot, from)| ForkOp::Create { slot, from }),
         1 => from.clone().prop_map(|from| ForkOp::CreateStale { from }),
@@ -2753,11 +2757,42 @@ fn consume(cell: &mut LawNative, performed: &Performed<WireInput>) {
 
 /// Perform main's head command, and consume what it delivers.
 fn perform_main(cell: &mut LawNative) -> String {
-    let performed = cell.perform().expect("main performs");
+    // A claim whose outcome is unknown refuses here, identically in both mains.
+    let performed = match cell.perform() {
+        Ok(performed) => performed,
+        Err(error) => return format!("{error}"),
+    };
     if let Some(performed) = &performed {
         consume(cell, performed);
     }
     format!("{performed:?}")
+}
+
+/// Claim main's head command without completing it (Fable S9: a fork taken
+/// between claim and result inherits an outcome-unknown claim).
+fn claim_main(cell: &mut LawNative) -> String {
+    match cell.claim_perform() {
+        Ok(Some(norn_cell::PerformClaim::Fresh(command))) => format!("claimed {}", command.id.0),
+        Ok(other) => format!("{other:?}"),
+        Err(error) => format!("{error}"),
+    }
+}
+
+/// Complete main's claimed head command with the responder's answer, then
+/// consume it.
+fn complete_main(cell: &mut LawNative) -> String {
+    let Some(command) = cell.pending_commands().expect("outbox").into_iter().next() else {
+        return "nothing pending".to_owned();
+    };
+    let input = law_cell_responder(&command);
+    match cell.complete_perform(&command, input) {
+        Ok(Some(performed)) => {
+            consume(cell, &performed);
+            format!("completed {}", command.id.0)
+        }
+        Ok(None) => "not the claimed head".to_owned(),
+        Err(error) => format!("{error}"),
+    }
 }
 
 /// The instance one operation may change.
@@ -2852,6 +2887,17 @@ impl ForkTrace {
             }
             ForkOp::MainPerform => {
                 assert_eq!(perform_main(&mut self.main), perform_main(&mut self.alone));
+                Touched::Main
+            }
+            ForkOp::MainClaim => {
+                assert_eq!(claim_main(&mut self.main), claim_main(&mut self.alone));
+                Touched::Main
+            }
+            ForkOp::MainComplete => {
+                assert_eq!(
+                    complete_main(&mut self.main),
+                    complete_main(&mut self.alone)
+                );
                 Touched::Main
             }
             ForkOp::MainSimulate => {

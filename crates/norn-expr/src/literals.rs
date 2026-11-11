@@ -25,8 +25,13 @@ pub enum FieldValue {
 pub struct ObjectLiteral {
     /// Fields whose key is a literal name.
     pub fields: BTreeMap<String, FieldValue>,
-    /// Whether some key is not a literal name.
+    /// Whether some key is not a literal name. A bracketed key (`[k]`) is
+    /// evaluated, so it is computed even when it is a bare identifier.
     pub computed_keys: bool,
+    /// Whether a literal name appears more than once. The checker and the
+    /// VM could disagree on which entry wins, so such a record is never
+    /// treated as fixed.
+    pub duplicate_keys: bool,
 }
 
 /// Every object literal anywhere in `source`, including those nested in
@@ -102,6 +107,7 @@ fn records_of(node: &Node<'_>, records: &mut Vec<ObjectLiteral>) -> bool {
             Node::Object(entries) => {
                 let record = literal(entries);
                 let fixed = !record.computed_keys
+                    && !record.duplicate_keys
                     && matches!(record.fields.get("kind"), Some(FieldValue::String(_)));
                 records.push(record);
                 fixed
@@ -154,8 +160,11 @@ fn literal(entries: &[(&Node<'_>, &Node<'_>)]) -> ObjectLiteral {
     let mut object = ObjectLiteral::default();
     for (key, value) in entries {
         let name = match key {
-            Node::String(name) | Node::Identifier(name) => (*name).to_owned(),
-            Node::Null
+            // The parser makes a bare key a string; an identifier in key
+            // position comes only from a bracketed, evaluated key.
+            Node::String(name) => (*name).to_owned(),
+            Node::Identifier(_)
+            | Node::Null
             | Node::Bool(_)
             | Node::Number(_)
             | Node::TemplateString(_)
@@ -203,7 +212,9 @@ fn literal(entries: &[(&Node<'_>, &Node<'_>)]) -> ObjectLiteral {
             | Node::MethodCall { .. }
             | Node::Error { .. } => FieldValue::Other,
         };
-        object.fields.insert(name, value);
+        if object.fields.insert(name, value).is_some() {
+            object.duplicate_keys = true;
+        }
     }
     object
 }

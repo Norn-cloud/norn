@@ -123,12 +123,18 @@ pub(crate) fn load_pin<E: SqlEngine>(conn: &E) -> Result<Option<ForkPin>, CellEr
     let main_horizon = main_horizon
         .parse()
         .map_err(|error| CellError::Encoding(format!("fork main horizon: {error}")))?;
-    Ok(Some(ForkPin {
+    let pin = ForkPin {
         world,
         parent,
         base,
         main_horizon,
-    }))
+    };
+    if pin.main_horizon > pin.base.commits {
+        return Err(CellError::Encoding(
+            "fork pin: the main horizon is past the base".to_owned(),
+        ));
+    }
+    Ok(Some(pin))
 }
 
 fn write_pin<E: SqlEngine>(conn: &E, pin: &ForkPin) -> Result<(), CellError> {
@@ -180,6 +186,15 @@ impl<E: ForkEngine> CellStore<E> {
             });
         }
         let engine = self.conn.fork_engine()?;
+        // Another handle may commit between the head check and the copy: the
+        // copy itself must hold exactly `base`, or the fork refuses.
+        let copied = copied_head(&engine, self.model())?;
+        if copied != (head.commits, head.hash.clone()) {
+            return Err(CellError::ForkStaleBase {
+                expected: base.commits,
+                head: copied.0,
+            });
+        }
         let pin = ForkPin {
             world: world.to_owned(),
             parent,
@@ -189,6 +204,27 @@ impl<E: ForkEngine> CellStore<E> {
         engine.transaction(|| write_pin(&engine, &pin))?;
         Ok(self.forked(engine, pin))
     }
+}
+
+/// The newest commit of `engine` and its ledger head hash: one indexed read
+/// of the newest receipt, not a verification pass (the copy's contents are
+/// the parent's, which this store verified).
+fn copied_head<E: SqlEngine>(engine: &E, model: &crate::Model) -> Result<(u64, String), CellError> {
+    let reader = crate::StoreReader::new(engine, model);
+    let commits = reader.next_commit_seq()?.saturating_sub(1);
+    if commits == 0 {
+        return Ok((0, crate::system::GENESIS_HASH.to_owned()));
+    }
+    let newest = reader.receipts_after(commits.saturating_sub(1), 1)?;
+    let hash = newest
+        .first()
+        .filter(|receipt| receipt.body.commit_seq == commits)
+        .map(|receipt| receipt.body.ledger_head.clone())
+        .ok_or(CellError::LedgerCorrupt {
+            seq: commits,
+            reason: "the fork copy has no newest receipt".to_owned(),
+        })?;
+    Ok((commits, hash))
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -292,8 +328,92 @@ impl<E: SqlEngine> CellStore<E> {
 mod tests {
     use norn_projections::SqliteDdlInput;
 
-    use super::ForkPin;
-    use crate::{CellError, CellStore, MAIN_WORLD, Model};
+    use std::path::PathBuf;
+
+    use super::{ForkEngine, ForkPin};
+    use crate::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
+    use crate::{CellError, CellStore, CommitBatch, MAIN_WORLD, Model, StoreOptions};
+
+    /// A file engine whose fork first lets another handle commit: the race
+    /// between the parent's head check and the copy, made deterministic.
+    #[derive(Debug)]
+    struct Racing {
+        native: NativeEngine,
+        path: PathBuf,
+        model: Model,
+    }
+
+    impl SqlEngine for Racing {
+        fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+            self.native.execute(sql, params)
+        }
+        fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+            self.native.query(sql, params)
+        }
+        fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+            self.native.execute_batch(sql)
+        }
+        fn transaction<T, X: From<CellError>>(
+            &self,
+            f: impl FnOnce() -> Result<T, X>,
+        ) -> Result<T, X> {
+            self.native.transaction(f)
+        }
+        fn read_isolation(&self) -> ReadIsolation {
+            self.native.read_isolation()
+        }
+    }
+
+    impl ForkEngine for Racing {
+        fn fork_engine(&self) -> Result<Self, CellError> {
+            let mut other =
+                CellStore::open(&self.path, self.model.clone(), StoreOptions::default())?;
+            other.commit(&CommitBatch {
+                world: MAIN_WORLD.to_owned(),
+                scope: "s".to_owned(),
+                ..CommitBatch::default()
+            })?;
+            Ok(Self {
+                native: self.native.fork_engine()?,
+                path: self.path.clone(),
+                model: self.model.clone(),
+            })
+        }
+    }
+
+    /// FORK-PIN-1 (Fable S3): a commit that lands between the head check and
+    /// the copy refuses the fork; it never pins a base the copy does not hold.
+    #[test]
+    fn a_commit_racing_the_copy_refuses_the_fork() -> Result<(), CellError> {
+        let model = Model::new(&SqliteDdlInput {
+            object_types: &[],
+            property_types: &[],
+        })?;
+        let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
+        let path = dir.path().join("cell.sqlite");
+        drop(CellStore::open(
+            &path,
+            model.clone(),
+            StoreOptions::default(),
+        )?);
+        let store = CellStore::from_engine(
+            Racing {
+                native: NativeEngine::open(&path, StoreOptions::default())?,
+                path: path.clone(),
+                model: model.clone(),
+            },
+            model,
+        )?;
+        let base = store.verified_head()?;
+        assert!(matches!(
+            store.fork("raced", &base),
+            Err(CellError::ForkStaleBase {
+                expected: 0,
+                head: 1
+            })
+        ));
+        Ok(())
+    }
 
     /// FORK-PIN-1, exhaustive to depth 4: every fork in a chain keeps its pin
     /// across reopen, names its parent, and still refuses to perform.

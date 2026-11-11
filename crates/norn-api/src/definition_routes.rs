@@ -84,6 +84,9 @@ pub mod codes {
     pub const SIGNOFF_MISMATCH: &str = "definition.signoff_mismatch";
     /// This cell cannot restate the payload, so it cannot verify a sign-off (422).
     pub const SIGNOFF_UNAVAILABLE: &str = "definition.signoff_unavailable";
+    /// A flow is installed only by signing the server's words for it when
+    /// the cell can restate it (422): it changes what the system does.
+    pub const SIGNOFF_REQUIRED: &str = "definition.signoff_required";
 }
 
 /// One tool binding the host resolved for the org from CONNECT's stored
@@ -512,15 +515,33 @@ pub fn authorize<E: SqlEngine>(
     Ok(())
 }
 
-fn check_id(id: &str) -> Result<(), Refusal> {
+/// A write's id: valid, and not a new id in a reserved namespace. An id that
+/// already names a retained definition keeps its revisions (D84: existing
+/// definitions stay readable, retirable and revisable).
+fn check_new_id<E: SqlEngine>(host: &DevHost<E>, id: &str) -> Result<(), Refusal> {
+    check_id(id)?;
     if crate::kernel_set::is_reserved(id) {
-        return Err(Refusal::new(
-            StatusCode::BAD_REQUEST,
-            codes::ID_RESERVED,
-            "the definition id is in a reserved namespace",
-            "core. and std. name the trusted base; choose another namespace",
-        ));
+        let existing = {
+            let cell = host.cell()?;
+            let reader = cell.store().read();
+            reader
+                .retained_definition(id, None)
+                .map_err(Refusal::host)?
+                .is_some()
+        };
+        if !existing {
+            return Err(Refusal::new(
+                StatusCode::BAD_REQUEST,
+                codes::ID_RESERVED,
+                "the definition id is in a reserved namespace",
+                "core. and std. name the trusted base; choose another namespace",
+            ));
+        }
     }
+    Ok(())
+}
+
+fn check_id(id: &str) -> Result<(), Refusal> {
     if valid_id(id) {
         return Ok(());
     }
@@ -998,7 +1019,7 @@ pub fn admit_definition<E: SqlEngine>(
 ) -> Result<AdmitDefinitionResponse, Refusal> {
     authorize(host, scope, actor, Operation::WriteDefinitions)?;
     let actor = actor.ok_or_else(read_denied)?;
-    check_id(&request.id)?;
+    check_new_id(host, &request.id)?;
     let (payload, diagnostics) = validate(
         host,
         scope,
@@ -1240,7 +1261,7 @@ pub fn install_definition<E: SqlEngine>(
 ) -> Result<InstallDefinitionResponse, Refusal> {
     authorize(host, scope, actor, Operation::WriteDefinitions)?;
     let actor = actor.ok_or_else(read_denied)?;
-    check_id(&request.id)?;
+    check_new_id(host, &request.id)?;
     // An agent is admitted against the bindings of this definitions version;
     // it commits only if no definition was written since.
     let pinned = if request.kind == "agent" {
@@ -1260,6 +1281,16 @@ pub fn install_definition<E: SqlEngine>(
     )?;
     if !admitted(&diagnostics) {
         return Err(refused(diagnostics));
+    }
+    // Fable S7: nothing checks a sign-off when a run starts, so a flow that
+    // this cell can restate is installed only once a signer signs its words.
+    if request.kind == "flow" && kinds.restater.is_some() && request.signoff.is_none() {
+        return Err(Refusal::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            codes::SIGNOFF_REQUIRED,
+            "a flow is installed by signing the server's words for it",
+            "admit the flow, read its restatement, and install it with signoff.restatementSha256",
+        ));
     }
     let signed = request
         .signoff

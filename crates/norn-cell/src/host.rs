@@ -1378,6 +1378,9 @@ where
             .read()
             .perform_claimed(&head.command.command_id, head.command.generation)?
         {
+            // WORLD-ISOLATE-1 (Fable S9): a fork inherits main's claim but can
+            // never learn or settle its real outcome.
+            self.store.refuse_perform_in_fork()?;
             return Ok(Some(PerformClaim::OutcomeUnknown(command)));
         }
         self.store.commit(&CommitBatch {

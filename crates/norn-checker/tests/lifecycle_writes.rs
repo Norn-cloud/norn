@@ -462,6 +462,25 @@ fn an_enum_input_must_fit_the_enum_property_it_writes() {
                 format!("/payload/inputSchema/properties/{field}/enum")
             )]
         );
+    } // Fable S8: an enum inside array items (at any depth) is an input enum too.
+    for (schema, pointer) in [
+        (
+            json!({ "type": "array", "items": { "type": "string", "enum": ["web"] } }),
+            "/payload/inputSchema/properties/channel/items/enum",
+        ),
+        (
+            json!({ "type": "array", "items": { "type": "array", "items": { "type": "string", "enum": ["web"] } } }),
+            "/payload/inputSchema/properties/channel/items/items/enum",
+        ),
+    ] {
+        let action = upsert_with_input("channel", schema);
+        assert_eq!(
+            input_enum_findings(action),
+            vec![(
+                "action.validation.input_enum_unbound".to_owned(),
+                pointer.to_owned()
+            )]
+        );
     }
 }
 

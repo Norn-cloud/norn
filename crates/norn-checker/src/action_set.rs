@@ -183,27 +183,42 @@ fn collect_input_enums(
             "{at}/properties/{}",
             field.replace('~', "~0").replace('/', "~1")
         );
-        let fields = schema.as_object();
-        if let Some(nested) = fields
-            .and_then(|fields| fields.get("properties"))
-            .and_then(JsonValue::as_object)
-        {
-            collect_input_enums(nested, &here, false, out);
-        }
-        if norn_expr::schema::fixed_currency_schema(schema) {
-            continue;
-        }
-        if let Some(values) = fields
-            .and_then(|fields| fields.get("enum"))
-            .and_then(JsonValue::as_array)
-        {
-            let values = values
-                .iter()
-                .filter_map(JsonValue::as_string)
-                .map(str::to_owned)
-                .collect();
-            out.push((field.clone(), top_level, values, format!("{here}/enum")));
-        }
+        collect_schema_enums(field, schema, &here, top_level, out);
+    }
+}
+
+/// The enums of one field's schema: its own, its nested properties', and
+/// those of its array `items`, at any depth (Fable S8).
+fn collect_schema_enums(
+    field: &str,
+    schema: &JsonValue,
+    here: &str,
+    top_level: bool,
+    out: &mut Vec<(String, bool, Vec<String>, String)>,
+) {
+    let fields = schema.as_object();
+    if let Some(nested) = fields
+        .and_then(|fields| fields.get("properties"))
+        .and_then(JsonValue::as_object)
+    {
+        collect_input_enums(nested, here, false, out);
+    }
+    if let Some(items) = fields.and_then(|fields| fields.get("items")) {
+        collect_schema_enums(field, items, &format!("{here}/items"), top_level, out);
+    }
+    if norn_expr::schema::fixed_currency_schema(schema) {
+        return;
+    }
+    if let Some(values) = fields
+        .and_then(|fields| fields.get("enum"))
+        .and_then(JsonValue::as_array)
+    {
+        let values = values
+            .iter()
+            .filter_map(JsonValue::as_string)
+            .map(str::to_owned)
+            .collect();
+        out.push((field.to_owned(), top_level, values, format!("{here}/enum")));
     }
 }
 

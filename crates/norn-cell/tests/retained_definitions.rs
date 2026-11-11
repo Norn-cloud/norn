@@ -109,6 +109,26 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
     assert_eq!(installed.version, 2);
     assert_eq!(installed.canonical_set, canonical);
 
+    // Fable S6: a revision that is not a flow cannot change the model.
+    let other_model = Model::from_definitions(&[], &[]).expect("another model");
+    let remodelled = change(
+        "studio.dashboard.m",
+        1,
+        RetainedLifecycle::Active,
+        "M",
+        None,
+    );
+    assert!(matches!(
+        store.install_retained_definition(
+            other_model,
+            &input(&canonical, 21),
+            Some(2),
+            SCOPE,
+            &remodelled
+        ),
+        Err(CellError::DefinitionReceiptInvalid(_))
+    ));
+
     // An unused id is required without an expected revision.
     let again = change(
         "studio.dashboard.a",
