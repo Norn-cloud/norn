@@ -99,6 +99,39 @@ FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+SCCACHE_START = """set -uo pipefail
+# Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
+# cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+gha=false
+[ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
+export SCCACHE_GHA_ENABLED=$gha
+echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+# A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+# sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
+# cannot restart), compile again with plain rustc. A compiler failure keeps its exit
+# status and diagnostics, also after a `sccache: warning:` (a local compile).
+wrapper="$RUNNER_TEMP/sccache-rustc"
+cat > "$wrapper" <<'WRAPPER'
+#!/usr/bin/env bash
+log=$(mktemp) || exec "$@"
+sccache "$@" 2> "$log"
+status=$?
+if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
+  echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
+  rm -f "$log"
+  exec "$@"
+fi
+cat "$log" >&2
+rm -f "$log"
+exit "$status"
+WRAPPER
+chmod +x "$wrapper"
+if sccache --start-server; then
+  echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
+else
+  echo "::warning::sccache server unavailable; compiling with plain rustc"
+fi
+"""
 GATE_PROFILES = {"fast", "full"}
 QUINT_APALACHE_HARNESS = ROOT / "scripts/quint_apalache.py"
 NEGATIVE_CANARIES = ROOT / "verification/coverage-v1/negative_canaries.py"
@@ -428,7 +461,46 @@ def validate_expression_lengths(sources: dict[str, str]) -> None:
                             f"{length}-character expression, over the {EXPRESSION_CAP} cap (GitHub rejects 21,000)")
 
 
-def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW) -> None:
+# A pull_request workflow cancels its own superseded PR runs and nothing else. Mirrors the
+# skeleton guard's rule (crates/norn-skeleton-guard/src/ci/mod.rs, `concurrency_error`):
+# the group starts with one arm per workflow and pull request, every other event gets a
+# group of its own run, and only the main-push supersede (push limited to main) may add
+# another cancelled event.
+PR_CONCURRENCY_GROUP = ("${{ github.workflow }}-${{ github.event_name == 'pull_request' && "
+                        "format('pr-{0}', github.event.pull_request.number) || ")
+PR_CONCURRENCY = (
+    ("format('run-{0}', github.run_id) }}", "${{ github.event_name == 'pull_request' }}", False),
+    ("github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
+     "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}", True),
+)
+
+
+def validate_pull_request_concurrency(sources: dict[str, str]) -> None:
+    for path, text in sources.items():
+        workflow = yaml.load(text, Loader=WorkflowLoader)
+        trigger = workflow.get("on", workflow.get(True))
+        if not (trigger == "pull_request" or (isinstance(trigger, (list, dict)) and "pull_request" in trigger)):
+            continue
+        concurrency = workflow.get("concurrency")
+        require(isinstance(concurrency, dict) and set(concurrency) <= {"group", "cancel-in-progress"},
+                f"{path}: a pull_request workflow needs a workflow-level concurrency mapping that cancels its superseded PR runs")
+
+        def squash(value: object) -> str | None:
+            return " ".join(value.split()) if isinstance(value, str) else None
+        shapes = [shape for shape in PR_CONCURRENCY
+                  if squash(concurrency.get("group")) == PR_CONCURRENCY_GROUP + shape[0]]
+        require(len(shapes) == 1,
+                f"{path}: concurrency group must be per workflow and pull request "
+                "(github.event.pull_request.number) and give every other event its own run group")
+        _, cancel, main_push = shapes[0]
+        require(squash(concurrency.get("cancel-in-progress")) == cancel,
+                f"{path}: cancel-in-progress must be `{cancel}`: superseded pull_request runs are cancelled and no other event is")
+        require(not main_push or (isinstance(trigger, dict) and trigger.get("push") == {"branches": ["main"]}),
+                f"{path}: superseding main pushes needs the push trigger limited to branches [main]")
+
+
+def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW,
+                                workflows: Path = ROOT / ".github/workflows") -> None:
     source = formal_path.read_text(encoding="utf-8")
     validate_rust_toolchain_steps(formal_path, source)
     for action in re.findall(r"^\s*- uses: (\S+)", source, re.MULTILINE):
@@ -438,6 +510,9 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
+    validate_pull_request_concurrency({**{f".github/workflows/{path.name}": path.read_text(encoding="utf-8")
+                                          for path in sorted(workflows.glob("*.yml"))},
+                                       ".github/workflows/ci-policy.yml": source})
     validate_expression_lengths({formal_path.name: source,
                                  "trusted-merge-group.yml": (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")})
     require(workflow.get("on", workflow.get(True)) == {
@@ -494,10 +569,10 @@ await github.rest.repos.createCommitStatus({
     }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
     boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        expected_runner = boat_runner if name in {"core", "test"} else "ubuntu-24.04"
+        expected_runner = boat_runner if name in {"core", "plan", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
-    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
+    cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
         "core": cache_env,
@@ -527,8 +602,11 @@ echo "$plan"''',
         {"uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
          "with": {"toolchain": "1.98.0", "components": "rustfmt, clippy", "targets": "wasm32-unknown-unknown"}},
         {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.3.14"}},
+        # No post-job stats: their failure would fail a build that succeeded without sccache.
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
-         "with": {"version": "v0.19.0"}},
+         "with": {"version": "v0.19.0", "disable_annotations": True}},
+        # RUSTC_WRAPPER is set only once the sccache server runs; otherwise plain rustc.
+        {"name": "Start sccache or compile without it", "run": SCCACHE_START},
         {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
          "with": {"cache-targets": False, "shared-key": "cargo-registry",
                   "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
@@ -540,6 +618,27 @@ echo "$plan"''',
          "with": {"path": "~/.cache/norn-interop",
                   "key": "norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}"}},
     ]
+    # Same-repository pull requests that fell back to hosted runners say so on their checks;
+    # forks run hosted by design and stay quiet.
+    hosted_warning = {
+        "name": "Warn that pull request CI fell back to hosted runners",
+        "if": "${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}",
+        "run": """echo "::warning title=PR CI on hosted runners::PR CI is running on hosted runners: the repository variable NORN_PR_RUNNER is not 'boat', so this same-repository pull request fell back from Boat."
+"""}
+    # Boat's base image has only libclang-18.so.18; clang-sys needs the unversioned libclang.so.
+    libclang = {"name": "Make libclang loadable on Boat runners",
+                "if": "${{ runner.environment == 'self-hosted' }}",
+                "run": """set -euo pipefail
+libclang_dev_version='1:18.1.3-1ubuntu1'
+library=/usr/lib/llvm-18/lib/libclang.so
+if [ -e "$library" ]; then
+  echo "$library is already present"
+elif ! { timeout 120 sudo apt-get update -qq && timeout 300 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libclang-18-dev=$libclang_dev_version"; }; then
+  echo "::warning::could not install libclang-18-dev=$libclang_dev_version; linking the image's libclang-18.so.18"
+  sudo ln -sfn libclang-18.so.18 "$library"
+fi
+ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
+"""}
     cleanup = {"name": "Reclaim runner disk space",
                "if": "${{ runner.environment == 'github-hosted' }}",
                "run": """set -euo pipefail
@@ -551,6 +650,19 @@ if [ "$(available)" -lt "$minimum" ]; then
 fi
 df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
+"""}
+    # Disposable Boat VMs drop only image content no Norn job uses, then fail fast
+    # unless the bundle has room to build (b1 needs ~50 GiB at peak).
+    boat_cleanup = {"name": "Reclaim Boat runner disk space",
+                    "if": "${{ runner.environment == 'self-hosted' }}",
+                    "run": """set -euo pipefail
+minimum=$((40 * 1024 * 1024))
+available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+df -h /
+docker system prune --all --force
+rustup toolchain uninstall stable nightly-2025-03-01
+df -h /
+[ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
 """}
     nextest = {"uses": "taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941",
                "with": {"tool": "nextest@0.9.150"}}
@@ -576,6 +688,9 @@ df -h /
             if name == "test":
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
             preparation.insert(0, reclaim)
+            preparation.insert(1, copy.deepcopy(boat_cleanup))
+            after_checkout = preparation.index(checkout) + 1
+            preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -585,7 +700,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 2),
+        require(len([step for step in job_steps if "run" in step]) == {"plan": 1, "core": 6, "test": 5}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
@@ -654,6 +769,12 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = CORE_RUNNER.read_text()
+    # Bundles may drop only Cargo build outputs, between tasks and when disk is low;
+    # target/verification-* evidence and tools and any other target content stay.
+    prune = '    pruned=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Bundle tasks never share build outputs (the planner packs them freely), so\n      # a task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1\n'
+    contained = 'prune_target() {\n  local root target entry name\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  for entry in "$target"/*; do\n    name=${entry##*/}\n    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue\n    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then\n      rm -rf -- "$entry"\n    fi\n  done\n}\n'
+    require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
+            "bundle may prune only Cargo build outputs, between tasks and when disk is low")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.
     browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'

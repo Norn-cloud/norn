@@ -97,6 +97,7 @@ impl NornCell {
         lineage_key: Option<String>,
         now_ms: f64,
     ) -> Result<Self, JsValue> {
+        let lineage_key = lineage_key.map(String::into_bytes);
         let scope = CellScope {
             org_id,
             environment_id,
@@ -112,7 +113,7 @@ impl NornCell {
                 catalog,
             } = analytics::provision(engine, &scope).map_err(rejected)?;
             let questions = DemoQuestions::new(plan, scope.clone())
-                .try_with_handle_key(lineage_key.as_deref().map(str::as_bytes))
+                .try_with_handle_key(lineage_key.as_deref())
                 .map_err(rejected)?
                 .with_metrics(definitions, catalog);
             (store, Some(questions))

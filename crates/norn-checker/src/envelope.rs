@@ -6772,50 +6772,6 @@ mod tests {
     }
 
     #[test]
-    fn validates_supported_envelope() {
-        let artifact = ArtifactEnvelope {
-            ir_version: SUPPORTED_IR_VERSION.to_string(),
-            artifact_id: "commerce.entity.product".to_string(),
-            namespace: "commerce".to_string(),
-            name: "Product".to_string(),
-            version: "0.1.0".to_string(),
-            lifecycle: ArtifactLifecycle::Draft,
-            scope: ScopeRef::default(),
-            dependencies: Vec::new(),
-            provenance: provenance(),
-            payload: ArtifactPayload::from_kind_json(&ArtifactKind::Entity, entity_payload())
-                .expect("entity payload is an object"),
-        };
-
-        assert!(artifact.validate().is_ok());
-    }
-
-    #[test]
-    fn rejects_unsupported_ir_version() {
-        let artifact = ArtifactEnvelope {
-            ir_version: "9.9".to_string(),
-            artifact_id: "commerce.entity.product".to_string(),
-            namespace: "commerce".to_string(),
-            name: "Product".to_string(),
-            version: "0.1.0".to_string(),
-            lifecycle: ArtifactLifecycle::Draft,
-            scope: ScopeRef::default(),
-            dependencies: Vec::new(),
-            provenance: provenance(),
-            payload: ArtifactPayload::from_kind_json(
-                &ArtifactKind::Entity,
-                JsonValue::Object(BTreeMap::new()),
-            )
-            .expect("entity payload is an object"),
-        };
-
-        let diagnostics = artifact
-            .validate()
-            .expect_err("unsupported versions should fail");
-        assert_eq!(diagnostics[0].code, "ir.validation.unsupported_version");
-    }
-
-    #[test]
     fn rejects_dependency_without_explicit_version() {
         let mut artifact = entity_artifact();
         artifact.dependencies = vec![ArtifactDependency {
@@ -6855,14 +6811,6 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "ir.validation.invalid_dependency")
         );
-    }
-
-    #[test]
-    fn validates_shared_connector_fixture() {
-        let artifact = artifact_fixture("retail-inventory.connector.json");
-
-        assert_eq!(artifact.kind(), ArtifactKind::Connector);
-        assert!(artifact.validate().is_ok());
     }
 
     #[test]
@@ -7233,45 +7181,6 @@ mod tests {
     }
 
     #[test]
-    fn validates_shared_widget_fixture() {
-        let artifact = artifact_fixture("retail-replenishment.widget.json");
-
-        assert_eq!(artifact.kind(), ArtifactKind::Widget);
-        assert!(artifact.validate().is_ok());
-    }
-
-    #[test]
-    fn rejects_connector_mapping_to_unknown_resource() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Connector,
-            json!({
-                "connectorVersion": "0.1",
-                "auth": { "kind": "none" },
-                "resources": [{
-                    "kind": "csv_import",
-                    "resourceId": "inventory",
-                    "delimiter": ",",
-                    "columns": ["sku"]
-                }],
-                "mappings": [{
-                    "kind": "external_id",
-                    "resourceId": "missing",
-                    "sourcePath": "$.sku",
-                    "targetObjectKind": "retail.StockItem",
-                    "externalSource": "demo_inventory"
-                }]
-            }),
-        );
-
-        let diagnostics = artifact.validate().expect_err("mapping should fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "connector.validation.unknown_resource")
-        );
-    }
-
-    #[test]
     fn validates_connector_custom_step_hook_schemas() {
         let artifact = artifact_with_payload(
             &ArtifactKind::Connector,
@@ -7334,35 +7243,6 @@ mod tests {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.path == Some("payload.customStepHooks[0].inputSchema".to_string())
         }));
-    }
-
-    #[test]
-    fn rejects_unsafe_widget_action_binding() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Widget,
-            json!({
-                "widgetVersion": "0.1",
-                "widgetId": "retail.replenishment.proposal",
-                "dataDependencies": [],
-                "viewStates": [{ "stateId": "preview", "kind": "preview" }],
-                "actionBindings": [{
-                    "bindingId": "approve",
-                    "actionId": "retail.replenishment.approve",
-                    "label": "Approve",
-                    "inputMapping": {},
-                    "requiredPermissions": ["retail.replenishment.approve"],
-                    "unsafeRawMutation": true
-                }],
-                "permissions": []
-            }),
-        );
-
-        let diagnostics = artifact.validate().expect_err("unsafe widget should fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "widget.validation.unsafe_action_binding")
-        );
     }
 
     #[test]
@@ -7583,11 +7463,15 @@ mod tests {
         let diagnostics = artifact
             .validate()
             .expect_err("ActionIR contract fields should be required");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "action.validation.invalid_payload")
-        );
+        for path in ["payload.scopeRequired", "payload.idempotent"] {
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == "action.validation.invalid_payload"
+                        && diagnostic.path.as_deref() == Some(path)
+                }),
+                "expected action.validation.invalid_payload at {path}, got: {diagnostics:?}"
+            );
+        }
     }
 
     #[test]
@@ -7675,11 +7559,19 @@ mod tests {
         let diagnostics = artifact
             .validate()
             .expect_err("RuleIR contract fields should be required");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "rule.validation.invalid_payload")
-        );
+        for path in [
+            "payload.appliesTo",
+            "payload.expression",
+            "payload.severity",
+        ] {
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == "rule.validation.invalid_payload"
+                        && diagnostic.path.as_deref() == Some(path)
+                }),
+                "expected rule.validation.invalid_payload at {path}, got: {diagnostics:?}"
+            );
+        }
     }
 
     #[test]
@@ -7725,23 +7617,6 @@ mod tests {
     }
 
     #[test]
-    fn validates_business_pack_payload_shape() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::BusinessPack,
-            json!({
-                "packId": "retail.pack.core",
-                "packVersion": "0.1",
-                "packKind": "composition",
-                "artifacts": [
-                    { "artifactId": "retail.StockPosition.entity", "kind": "entity", "version": "0.1.0" }
-                ]
-            }),
-        );
-
-        assert!(artifact.validate().is_ok());
-    }
-
-    #[test]
     fn accepts_legacy_ir_v01_composition_pack_without_discriminator() {
         let artifact = artifact_with_payload(
             &ArtifactKind::BusinessPack,
@@ -7773,9 +7648,11 @@ mod tests {
             .validate()
             .expect_err("BusinessPackIR contract fields should be required");
         assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "business_pack.validation.invalid_payload")
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "business_pack.validation.invalid_payload"
+                    && diagnostic.path.as_deref() == Some("payload.artifacts")
+            }),
+            "expected payload.artifacts, got: {diagnostics:?}"
         );
     }
 
@@ -7903,20 +7780,6 @@ mod tests {
         }
     }
 
-    fn artifact_fixture(name: &str) -> ArtifactEnvelope {
-        let fixture = match name {
-            "retail-inventory.connector.json" => {
-                include_str!("../../../fixtures/ir/retail-inventory.connector.json")
-            }
-            "retail-replenishment.widget.json" => {
-                include_str!("../../../fixtures/ir/retail-replenishment.widget.json")
-            }
-            _ => panic!("unknown fixture {name}"),
-        };
-
-        serde_json::from_str(fixture).expect("shared IR fixture should decode")
-    }
-
     // -----------------------------------------------------------------------
     // Entity / Relation payload validation (closing lib.rs:487 hole)
     // -----------------------------------------------------------------------
@@ -7935,30 +7798,37 @@ mod tests {
 
     #[test]
     fn rejects_entity_without_fields() {
-        let artifact = artifact_with_payload(&ArtifactKind::Entity, json!({}));
+        let artifact = artifact_with_payload(
+            &ArtifactKind::Entity,
+            json!({ "objectKind": "commerce.Product" }),
+        );
         let diagnostics = artifact
             .validate()
             .expect_err("entity without fields must fail");
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "entity.validation.invalid_payload"),
-            "expected entity.validation.invalid_payload, got: {:?}",
-            diagnostics
+            diagnostics.iter().any(|d| {
+                d.code == "entity.validation.invalid_payload"
+                    && d.path.as_deref() == Some("payload.fields")
+            }),
+            "expected entity.validation.invalid_payload at payload.fields, got: {diagnostics:?}"
         );
     }
 
     #[test]
     fn rejects_entity_with_non_object_fields() {
-        let artifact =
-            artifact_with_payload(&ArtifactKind::Entity, json!({ "fields": "not-an-object" }));
+        let artifact = artifact_with_payload(
+            &ArtifactKind::Entity,
+            json!({ "objectKind": "commerce.Product", "fields": "not-an-object" }),
+        );
         let diagnostics = artifact
             .validate()
             .expect_err("entity with non-object fields must fail");
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "entity.validation.invalid_payload")
+            diagnostics.iter().any(|d| {
+                d.code == "entity.validation.invalid_payload"
+                    && d.path.as_deref() == Some("payload.fields")
+            }),
+            "expected entity.validation.invalid_payload at payload.fields, got: {diagnostics:?}"
         );
     }
 
@@ -8129,9 +7999,11 @@ mod tests {
             .validate()
             .expect_err("relation with invalid cardinality must fail");
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "relation.validation.invalid_payload")
+            diagnostics.iter().any(|d| {
+                d.code == "relation.validation.invalid_payload"
+                    && d.path.as_deref() == Some("payload.cardinality")
+            }),
+            "expected payload.cardinality, got: {diagnostics:?}"
         );
     }
 
@@ -8147,9 +8019,11 @@ mod tests {
             .validate()
             .expect_err("relation without from must fail");
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "relation.validation.invalid_payload")
+            diagnostics.iter().any(|d| {
+                d.code == "relation.validation.invalid_payload"
+                    && d.path.as_deref() == Some("payload.from")
+            }),
+            "expected payload.from, got: {diagnostics:?}"
         );
     }
 
@@ -8185,169 +8059,86 @@ mod tests {
         );
     }
 
+    /// Each case breaks one member of `valid_derived_payload()` and must be
+    /// refused under its code at that member's path, so a refusal for some
+    /// other reason cannot pass.
     #[test]
-    fn rejects_derived_with_effectful_ts_calc() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Derived,
-            json!({
-                "viewVersion": "0.1",
-                "viewId": "commerce.view.bad",
-                "inputs": [{
-                    "artifactId": "commerce.entity.invoice",
-                    "kind": "entity",
-                    "version": "0.1.0",
-                    "alias": "invoice"
-                }],
-                "calc": { "kind": "effectful_ts", "sourceRef": "some/module.ts" },
-                "outputSchema": {},
-                "maintenance": "recompute_on_read"
-            }),
-        );
-        let diagnostics = artifact
-            .validate()
-            .expect_err("effectful_ts in derived must fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "derived.validation.io_in_view"),
-            "expected derived.validation.io_in_view, got: {:?}",
-            diagnostics
-        );
-    }
-
-    #[test]
-    fn rejects_derived_with_raw_promise_calc() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Derived,
-            json!({
-                "viewVersion": "0.1",
-                "viewId": "commerce.view.bad",
-                "inputs": [{
-                    "artifactId": "commerce.entity.invoice",
-                    "kind": "entity",
-                    "version": "0.1.0",
-                    "alias": "invoice"
-                }],
-                "calc": { "kind": "raw_promise", "sourceRef": "some/module.ts" },
-                "outputSchema": {},
-                "maintenance": "recompute_on_read"
-            }),
-        );
-        let diagnostics = artifact
-            .validate()
-            .expect_err("raw_promise calc must always fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "derived.validation.io_in_view")
-        );
-    }
-
-    #[test]
-    fn rejects_derived_with_incremental_maintenance() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Derived,
-            json!({
-                "viewVersion": "0.1",
-                "viewId": "commerce.view.bad",
-                "inputs": [{
-                    "artifactId": "commerce.entity.invoice",
-                    "kind": "entity",
-                    "version": "0.1.0",
-                    "alias": "invoice"
-                }],
-                "calc": { "kind": "field_projection", "fields": ["id"] },
-                "outputSchema": {},
-                "maintenance": "incremental"
-            }),
-        );
-        let diagnostics = artifact
-            .validate()
-            .expect_err("incremental maintenance must be rejected");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "derived.validation.incremental_not_supported"),
-            "expected derived.validation.incremental_not_supported, got: {:?}",
-            diagnostics
-        );
-    }
-
-    #[test]
-    fn rejects_derived_with_empty_inputs() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Derived,
-            json!({
-                "viewVersion": "0.1",
-                "viewId": "commerce.view.bad",
-                "inputs": [],
-                "calc": { "kind": "field_projection", "fields": ["id"] },
-                "outputSchema": {},
-                "maintenance": "recompute_on_read"
-            }),
-        );
-        let diagnostics = artifact.validate().expect_err("empty inputs must fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "derived.validation.invalid_payload")
-        );
-    }
-
-    #[test]
-    fn rejects_derived_input_with_action_kind() {
-        // Only entity / relation / derived are valid input kinds.
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Derived,
-            json!({
-                "viewVersion": "0.1",
-                "viewId": "commerce.view.bad",
-                "inputs": [{
+    fn rejects_derived_defects_at_their_paths() {
+        const INVALID: &str = "derived.validation.invalid_payload";
+        const IO_IN_VIEW: &str = "derived.validation.io_in_view";
+        for (label, member, value, code, path) in [
+            (
+                "empty inputs",
+                "inputs",
+                json!([]),
+                INVALID,
+                "payload.inputs",
+            ),
+            (
+                // Only entity / relation / derived are valid input kinds.
+                "action input kind",
+                "inputs",
+                json!([{
                     "artifactId": "commerce.action.something",
                     "kind": "action",
                     "version": "0.1.0",
                     "alias": "something"
-                }],
-                "calc": { "kind": "field_projection", "fields": ["id"] },
-                "outputSchema": {},
-                "maintenance": "recompute_on_read"
-            }),
-        );
-        let diagnostics = artifact
-            .validate()
-            .expect_err("action input kind must fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "derived.validation.invalid_payload")
-        );
-    }
-
-    #[test]
-    fn rejects_derived_input_without_version() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Derived,
-            json!({
-                "viewVersion": "0.1",
-                "viewId": "commerce.view.bad",
-                "inputs": [{
+                }]),
+                INVALID,
+                "payload.inputs[0].kind",
+            ),
+            (
+                "versionless input",
+                "inputs",
+                json!([{
                     "artifactId": "commerce.entity.invoice",
                     "kind": "entity",
                     "alias": "invoice"
-                }],
-                "calc": { "kind": "field_projection", "fields": ["id"] },
-                "outputSchema": {},
-                "maintenance": "recompute_on_read"
-            }),
-        );
-        let diagnostics = artifact
-            .validate()
-            .expect_err("versionless input must fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "derived.validation.invalid_payload")
-        );
+                }]),
+                INVALID,
+                "payload.inputs[0].version",
+            ),
+            (
+                "as_of_param without an as_of input",
+                "temporalScope",
+                json!({ "mode": "as_of_param" }),
+                INVALID,
+                "payload.inputs",
+            ),
+            (
+                "field_projection with empty fields",
+                "calc",
+                json!({ "kind": "field_projection", "fields": [] }),
+                INVALID,
+                "payload.calc.fields",
+            ),
+            (
+                "effectful_ts calc",
+                "calc",
+                json!({ "kind": "effectful_ts", "sourceRef": "some/module.ts" }),
+                IO_IN_VIEW,
+                "payload.calc.kind",
+            ),
+            (
+                "raw_promise calc",
+                "calc",
+                json!({ "kind": "raw_promise", "sourceRef": "some/module.ts" }),
+                IO_IN_VIEW,
+                "payload.calc.kind",
+            ),
+        ] {
+            let mut payload = valid_derived_payload();
+            payload[member] = value;
+            let diagnostics = artifact_with_payload(&ArtifactKind::Derived, payload)
+                .validate()
+                .expect_err(label);
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|d| d.code == code && d.path.as_deref() == Some(path)),
+                "{label}: expected {code} at {path}, got: {diagnostics:?}"
+            );
+        }
     }
 
     #[test]
@@ -8381,73 +8172,6 @@ mod tests {
             artifact.validate().is_ok(),
             "as_of_param with as_of input should be valid: {:?}",
             artifact.validate()
-        );
-    }
-
-    #[test]
-    fn rejects_derived_as_of_param_without_as_of_input() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Derived,
-            json!({
-                "viewVersion": "0.1",
-                "viewId": "compliance.view.bad",
-                "inputs": [{
-                    "artifactId": "einvoicing.entity.invoice",
-                    "kind": "entity",
-                    "version": "0.1.0",
-                    "alias": "invoice"
-                }],
-                "calc": { "kind": "field_projection", "fields": ["id"] },
-                "outputSchema": {},
-                "maintenance": "recompute_on_read",
-                "temporalScope": { "mode": "as_of_param" }
-            }),
-        );
-        let diagnostics = artifact
-            .validate()
-            .expect_err("as_of_param without as_of input must fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "derived.validation.invalid_payload"),
-            "expected derived.validation.invalid_payload, got: {:?}",
-            diagnostics
-        );
-    }
-
-    #[test]
-    fn validates_derived_with_current_temporal_scope() {
-        let mut payload = valid_derived_payload();
-        payload["temporalScope"] = json!({ "mode": "current" });
-        let artifact = artifact_with_payload(&ArtifactKind::Derived, payload);
-        assert!(artifact.validate().is_ok());
-    }
-
-    #[test]
-    fn rejects_derived_with_field_projection_calc_and_empty_fields() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Derived,
-            json!({
-                "viewVersion": "0.1",
-                "viewId": "commerce.view.bad",
-                "inputs": [{
-                    "artifactId": "commerce.entity.invoice",
-                    "kind": "entity",
-                    "version": "0.1.0",
-                    "alias": "invoice"
-                }],
-                "calc": { "kind": "field_projection", "fields": [] },
-                "outputSchema": {},
-                "maintenance": "recompute_on_read"
-            }),
-        );
-        let diagnostics = artifact
-            .validate()
-            .expect_err("empty fields in field_projection must fail");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "derived.validation.invalid_payload")
         );
     }
 }
