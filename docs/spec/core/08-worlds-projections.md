@@ -160,3 +160,29 @@ Named scenarios:
 - `label_catalogs_change_no_model_and_no_seeded_fact` (norn-cell-do): the demo host's own admission, model projection, install and first commit, with and without the recording's label catalog.
 - `three_systems_object_reads_are_the_cells_exact_documents` (norn-api): with the catalog installed, every object's source-lineage `bundleDigest` is byte-unchanged.
 - `later_layers_win_per_locale_and_no_locale_is_lost` (norn-ir), and the refusal scenarios and properties in `norn-checker/tests/labels.rs`.
+
+### READ-LOCAL-1 — local read evidence
+
+A `norn.cell.read/v1` envelope carries one `(cell, world, revision)` frontier,
+completeness, exact-versus-stale semantics, definition generation/model/admission
+pins, and the existing CommitBinding policy/resource/authorization epoch pins.
+It never claims a global snapshot. Stale evidence retains its own local frontier.
+Token reuse compares the entire trusted context; exact requests refuse stale or
+partial evidence. Tokens describe authorized results and grant no authority.
+
+The native point-read envelope captures its value, durable cell identity,
+revision and definition pins in one store transaction. The server supplies its
+current authorized CommitBinding; resource mismatch refuses. This native profile
+supports main only. Internal `load` stays local, and legacy unqualified stores
+cannot issue portable tokens. No multi-cell vector, migration, or new authority
+model is introduced.
+
+Named scenarios: **READ-CONTEXT** refuses reuse across cell, world, revision,
+definition and authority contexts; **READ-EXACT** refuses stale/partial evidence;
+**READ-SNAPSHOT** binds the existing native point-read result to its local cut.
+Qualification selector `cell_local_read_envelope` covers these and two more:
+refused envelopes (unknown type, another resource, unqualified legacy history)
+leave the complete store state unchanged; a token never validates against a
+same-scope sibling cell at the same revision and authority, and a cell restored
+from its export reproduces the same context because its logical identity does
+not fork.

@@ -11,6 +11,7 @@ export const PAGES = {
   "/objects/$type": "/objects/canon.Item",
   "/decisions": "/decisions",
   "/runs/$id": "/runs/run_restock_7",
+  "/episodes/$id": "/episodes/ep_demo_overridden",
   "/questions": "/questions",
   "/questions/new": "/questions/new",
   "/questions/build": "/questions/build",

@@ -13,7 +13,7 @@ export function Keys({ children, className }: { readonly children: string; reado
 export const keysText = (keys: string) => `⁦${keys}⁩`
 
 const EDITOR_SHORTCUTS: readonly (readonly [string, string])[] = [
-  ["⌘Z", "undo"], ["⌘⇧Z", "redo"], ["⌘D", "duplicate"], ["⌘C/⌘V", "copy and paste"], ["⌘A", "select all"], ["⌘S", "save draft"],
+  ["⌘Z", "undo"], ["⌘⇧Z", "redo"], ["⌘D", "duplicate"], ["⌘C/⌘V", "copy and paste"], ["⌘A", "select all"], ["⌘S", "save draft"], ["⇧⌘L", "tidy up"],
 ]
 
 /** The canvas editors' shortcut line, each hint isolated. */

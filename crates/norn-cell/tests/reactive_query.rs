@@ -11,6 +11,7 @@
 //! state.
 
 mod common;
+mod query_support;
 
 use std::collections::BTreeMap;
 
@@ -1284,4 +1285,87 @@ fn dependency_capture_refuses_entry_and_byte_overflow_without_truncation() {
         Err(norn_cell::CellError::DependencyBudgetExceeded)
     ));
     assert!(dependencies.entries.is_empty());
+}
+
+/// #613 QUERY-FANOUT (COMPUTE-DETERMINISTIC-1, QUERY-GRAIN-1, QUERY-FRESH-1): the exact
+/// cell engine evaluates the admitted holding-grain question over the authorized
+/// snapshot only: one holding worth 80 with two tags returns 80, complete and exact,
+/// and its contribution identity is stable across unrelated and unauthorized commits.
+#[test]
+fn query_fanout_exact_cell_question_returns_80_with_stable_identities_for_authorized_holdings() {
+    use norn_cell::ObjectRecord;
+    use norn_cell::compute::{Engine, Freshness, lineage::LineageDisclosure};
+    use query_support::fanout::{Fixture, HOLDING, fanout_batch, fanout_fixture, holding, tags};
+    let Fixture {
+        mut store,
+        plan,
+        context,
+        ..
+    } = fanout_fixture();
+    let authorized = |record: &ObjectRecord| Ok(record.id == "H1");
+    let mut seed = fanout_batch();
+    seed.writes.extend([holding("H1", 80), holding("H2", 45)]);
+    tags(&mut seed, "H1", 2);
+    tags(&mut seed, "H2", 1);
+    store.commit(&seed).expect("seed");
+    let first = store
+        .evaluate_question(&plan, context.clone(), authorized)
+        .expect("exact");
+    assert_eq!(first.engine, Engine::Cell);
+    assert_eq!(first.grain.as_str(), HOLDING);
+    assert!(first.complete);
+    assert_eq!(first.freshness, Freshness::Exact);
+    assert!(first.exclusions.is_empty());
+    let row = &first.rows["null"];
+    assert_eq!(row.value.expect("80").canonical(), "80");
+    assert_eq!(row.members.keys().collect::<Vec<_>>(), ["H1"]);
+    let trace = store
+        .trace_question(
+            &plan,
+            context.clone(),
+            &first.lineage_ref,
+            "null",
+            authorized,
+            LineageDisclosure {
+                values: &mut |_| Ok(true),
+                source: &mut |_| Ok(false),
+            },
+        )
+        .expect("trace");
+    let [contribution] = trace.contributions.as_slice() else {
+        panic!("one holding-grain contribution")
+    };
+    assert_eq!(contribution.fact.object_type.as_str(), HOLDING);
+    assert_eq!(contribution.fact.key, "H1");
+    assert_eq!(contribution.fact.version, row.members["H1"].version);
+
+    let mut later = fanout_batch();
+    later.writes.extend([holding("H2", 999), holding("H3", 80)]);
+    tags(&mut later, "H3", 2);
+    store.commit(&later).expect("unauthorized commits");
+    let second = store
+        .evaluate_question(&plan, context.clone(), authorized)
+        .expect("exact again");
+    assert_ne!(second.revision, first.revision);
+    assert_eq!(second.query_pin, first.query_pin);
+    assert_eq!(second.rows, first.rows);
+    // The lineage ref is bound to the revision, so it moves; the contribution identity does not.
+    assert_ne!(second.lineage_ref, first.lineage_ref);
+    let retrace = store
+        .trace_question(
+            &plan,
+            context,
+            &second.lineage_ref,
+            "null",
+            authorized,
+            LineageDisclosure {
+                values: &mut |_| Ok(true),
+                source: &mut |_| Ok(false),
+            },
+        )
+        .expect("trace again");
+    let [again] = retrace.contributions.as_slice() else {
+        panic!("still one holding-grain contribution")
+    };
+    assert_eq!(again.fact, contribution.fact);
 }

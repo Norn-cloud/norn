@@ -1027,6 +1027,14 @@ fn evaluate_typed_properties(
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
+    if catalog.effective_view_refused(&key.object_type) {
+        return Err(InvariantEvaluationError::InvalidEffectiveValues(
+            crate::EffectiveValuesError::Unsupported {
+                property: key.object_type.as_str().to_owned(),
+                feature: "the effective type view is refused".to_owned(),
+            },
+        ));
+    }
     let properties = catalog
         .effective_type(&key.object_type)
         .into_iter()
