@@ -1743,7 +1743,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) export_notify: Arc<Notify>,
     /// The last head this store verified (#2975): verification at open,
     /// then [`Self::verified_head`] extends it over later commits only.
-    verified: RefCell<LedgerHead>,
+    pub(crate) verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     /// Immutable quantity boundary found at open or established by a committed

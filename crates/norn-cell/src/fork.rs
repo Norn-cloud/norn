@@ -172,7 +172,14 @@ impl<E: ForkEngine> CellStore<E> {
         if world.is_empty() || world == MAIN_WORLD || world == parent {
             return Err(CellError::ForkInvalidWorld);
         }
-        let head = self.verified_head()?;
+        // The caller's base is normally the head it just verified: when it is
+        // this store's cached verified head and no commit landed since, it is
+        // current without verifying again (fork latency stays O(1)).
+        let head = if self.verified_head_is_current(base)? {
+            base.clone()
+        } else {
+            self.verified_head()?
+        };
         if &head != base {
             return Err(CellError::ForkStaleBase {
                 expected: base.commits,
@@ -192,6 +199,27 @@ impl<E: ForkEngine> CellStore<E> {
 }
 
 impl<E: SqlEngine> CellStore<E> {
+    /// Whether `head` is this store's cached verified head and still its
+    /// newest commit: one indexed read instead of a verification pass.
+    fn verified_head_is_current(&self, head: &LedgerHead) -> Result<bool, CellError> {
+        if *self.verified.borrow() != *head
+            || self.read().next_commit_seq()?.saturating_sub(1) != head.commits
+        {
+            return Ok(false);
+        }
+        // A rolled-back commit replaced by another keeps the count; the
+        // newest receipt must still name the cached ledger head.
+        if head.commits == 0 {
+            return Ok(true);
+        }
+        let newest = self
+            .read()
+            .receipts_after(head.commits.saturating_sub(1), 1)?;
+        Ok(newest.first().is_some_and(|receipt| {
+            receipt.body.commit_seq == head.commits && receipt.body.ledger_head == head.hash
+        }))
+    }
+
     /// The pin of a forked store; `None` for a store that is not a fork.
     #[must_use]
     pub const fn fork_pin(&self) -> Option<&ForkPin> {
