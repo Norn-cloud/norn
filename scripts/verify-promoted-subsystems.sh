@@ -747,6 +747,9 @@ run_gate full norm-precedence-decision-correspondence \
 run_gate full checker-certificates-correspondence \
   "scripts/verify-checker-certificates-aeneas.sh" command \
   scripts/verify-checker-certificates-aeneas.sh
+run_gate full law-exceptions-correspondence \
+  "scripts/verify-law-exceptions-aeneas.sh" command \
+  scripts/verify-law-exceptions-aeneas.sh
 
 # Validate observed selectors only after every producing gate has run.
 run_gate full verification-executed-test-selectors \

@@ -25,7 +25,9 @@
     "verification/semantics-v1/Checker/Certificates/LensReference.lean": "scripts/verify-checker-certificates-aeneas.sh",
     "verification/semantics-v1/Checker/Certificates/Support.lean": "scripts/verify-checker-certificates-aeneas.sh",
     "verification/semantics-v1/Checker/Obligations/FrameProof.lean": "scripts/verify-checker-certificates-aeneas.sh",
-    "verification/semantics-v1/Checker/Obligations/InductionReference.lean": "scripts/verify-checker-certificates-aeneas.sh"
+    "verification/semantics-v1/Checker/Obligations/InductionReference.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/LawExceptions/Audit.lean": "scripts/verify-law-exceptions-aeneas.sh",
+    "verification/semantics-v1/Checker/LawExceptions/Proof.lean": "scripts/verify-law-exceptions-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [

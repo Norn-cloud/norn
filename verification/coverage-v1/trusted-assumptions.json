@@ -46,7 +46,7 @@
       "owner": "Norn verification maintainers",
       "boundary": "Pinned Charon (a1d98905, nightly-2026-08-18 rustc front end) and Aeneas (74a460a2) translation of Rust MIR to Lean, and the Aeneas Lean standard-library models of machine integers, slices, vectors, control flow and core traits (including Result's Try branch and from_residual)",
       "justification": "Aeneas implementation proofs are about the Lean translation of the production MIR, not about compiled code. Translation correctness and the Aeneas core models are trusted; rustc and LLVM codegen below MIR are trusted as for every Rust claim.",
-      "blastRadius": "A translation defect or a wrong core model could make a correspondence theorem hold for code that behaves differently, affecting every claim proved through an Aeneas gate, including scripts/verify-kernel-l1-aeneas.sh, scripts/verify-norm-precedence-aeneas.sh and scripts/verify-checker-certificates-aeneas.sh.",
+      "blastRadius": "A translation defect or a wrong core model could make a correspondence theorem hold for code that behaves differently, affecting every claim proved through an Aeneas gate, including scripts/verify-kernel-l1-aeneas.sh, scripts/verify-norm-precedence-aeneas.sh, scripts/verify-checker-certificates-aeneas.sh and scripts/verify-law-exceptions-aeneas.sh.",
       "falsificationTest": "Run the seeded mutants in each Aeneas gate and require each to extract, elaborate, fail the proof and be refuted by its witness; re-extract with a newer pinned Charon/Aeneas and require the same theorems to check."
     },
     {
@@ -64,6 +64,14 @@
       "justification": "scripts/verify-checker-certificates-aeneas.sh proves each extracted decision for every input and every lawful instance, so acceptance implies the written certificate property; what the glue feeds in (labels, numbers, tables, reads) and the refusal text it reports are ordinary reviewed code, and every glue path other than the proved decision can only refuse.",
       "blastRadius": "A wrong partition label, an inexact Rational operation, a Get table that differs from the mapping's expression, or an incomplete read set would make the proved decision accept a certificate whose real-world property fails, while the correspondence theorems still hold.",
       "falsificationTest": "The norn-checker unit and property tests (conservation, lens, IVM algebra, induction) exercise the glue against independent expectations; U2 replaces the Rational assumption with a proof, and P5 the evaluator assumption."
+    },
+    {
+      "id": "TRUST-LAW-EXCEPTIONS-STRING-LAYER",
+      "owner": "Norn checker maintainers",
+      "boundary": "The string layer around the proved exception-tree core (crates/norn-checker/src/law_exceptions/shape.rs, #718 U1): check_tree's and fold's collection of ids, targets and declaration validity (str::trim, deontic::valid_source) into the slices the core receives; the applied-set computation (shape::applied_exceptions, ancestors_hold), which no admission decision reads; and that str's derived PartialEq is byte equality (the Lawful hypothesis of the theorems).",
+      "justification": "scripts/verify-law-exceptions-aeneas.sh proves, for every identity type with lawful equality and every input of one length, that check_shape returns Ok exactly on a WellFormed tree and that lifted returns the semantic fold at fuel |ids| + 1; on an admitted tree that is the unique stable (defeasible) labelling. The wrappers only collect values and map them back; the applied set is checked against the former recursive fold by a property test on every admitted tree.",
+      "blastRadius": "A wrongly collected id, target or validity flag would make the core decide about a different tree than the declared one, and a wrong applied set would misreport which exceptions applied, while every theorem still holds.",
+      "falsificationTest": "Run the norn-checker law_exceptions property test (level_fold_matches_the_recursive_fold, against the former recursive fold on random trees including cycles, duplicates and dangling targets) and the law_ir and deontic tests; run the seven seeded mutants in scripts/verify-law-exceptions-aeneas.sh and require each to fail the proof and be refuted by its witness."
     }
   ]
 }
