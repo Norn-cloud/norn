@@ -419,15 +419,36 @@ impl<'a> TypeCatalog<'a> {
 
     /// The effective object type in this catalog, if it resolves.
     ///
-    /// A catalog whose effective view was refused (see
-    /// [`Self::effective_refusal`]) resolves no type, so every caller fails
-    /// closed; the cell never builds such a catalog because its model
-    /// admission refuses the same input first.
+    /// `None` is a refused view when the type is declared in this catalog
+    /// (see [`Self::effective_view_refused`]) and a plain absence otherwise.
+    /// Callers that gate a write or a check on a property of the view must
+    /// treat a refused view as a refusal, never as "no such property"; the
+    /// owned-row protection, `has_invariants` and the implicit typed-property
+    /// checks do. A few lookups only read optional metadata and treat `None`
+    /// as "nothing declared" by design. A catalog whose whole view was
+    /// refused (see [`Self::effective_refusal`]) resolves no type; the cell
+    /// never builds such a catalog because its model admission refuses the
+    /// same input first.
     pub(crate) fn effective_type(
         &self,
         object_type: &ObjectTypeName,
     ) -> Option<&EffectiveObjectType> {
         self.effective_model().ok()?.object_types.get(object_type)
+    }
+
+    /// Whether `object_type` is declared here but has no effective view, so
+    /// the checker refused to resolve it. Fail-closed callers refuse on this.
+    pub(crate) fn effective_view_refused(&self, object_type: &ObjectTypeName) -> bool {
+        self.contains(object_type) && self.effective_type(object_type).is_none()
+    }
+
+    /// Test hook: pin an empty effective model so every declared type has a
+    /// refused view. Returns whether the model was pinned.
+    #[cfg(test)]
+    pub(crate) fn refuse_effective_view_for_test(&self) -> bool {
+        self.effective_model
+            .set(Ok(EffectiveModel::default()))
+            .is_ok()
     }
 
     /// Why this catalog has no effective view: the bounded inheritance
@@ -514,18 +535,24 @@ impl<'a> TypeCatalog<'a> {
     /// supertype, or from an implemented interface, or has stored temporal
     /// properties that require implicit validity checks.
     ///
+    /// A declared type whose effective view is refused reports `true`, so the
+    /// caller keeps the implicit checks instead of skipping them.
+    ///
     /// # Errors
     ///
     /// Returns the name of an interface referenced by the object's lineage
     /// that is absent from this catalog.
     pub fn has_invariants(&self, object_type: &ObjectTypeName) -> Result<bool, ObjectTypeName> {
         let declared = !self.invariants(object_type)?.is_empty();
-        let temporal = self.effective_type(object_type).is_some_and(|object_type| {
-            object_type
-                .properties
-                .iter()
-                .any(|property| !property.computed && is_temporal_property(property))
-        });
+        let temporal = self.effective_type(object_type).map_or_else(
+            || self.effective_view_refused(object_type),
+            |object_type| {
+                object_type
+                    .properties
+                    .iter()
+                    .any(|property| !property.computed && is_temporal_property(property))
+            },
+        );
         Ok(declared || temporal)
     }
 
@@ -2794,10 +2821,18 @@ fn apply_change<X>(
     let Some(entry) = working.get_mut(&key) else {
         return Err(DecisionRefusal::NotInSlice { key });
     };
+    // A declared type whose effective view is refused cannot prove which
+    // properties are protected, so a write or delete of its rows is refused.
+    let Some(effective) = catalog.effective_type(&key.object_type) else {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!(
+                "{key} has no effective type view, so its protected properties cannot be checked"
+            ),
+        });
+    };
     let protected = |property: &str| {
-        catalog
-            .effective_type(&key.object_type)
-            .and_then(|effective| effective.property(property))
+        effective
+            .property(property)
             .is_some_and(norn_checker::EffectiveProperty::protected)
     };
     let forbidden = match change {
@@ -2807,16 +2842,10 @@ fn apply_change<X>(
         }
         FactChange::Set { property, .. } => protected(property.as_str()),
         FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
-        FactChange::Delete { .. } => {
-            catalog
-                .effective_type(&key.object_type)
-                .is_some_and(|effective| {
-                    effective
-                        .properties
-                        .iter()
-                        .any(norn_checker::EffectiveProperty::protected)
-                })
-        }
+        FactChange::Delete { .. } => effective
+            .properties
+            .iter()
+            .any(norn_checker::EffectiveProperty::protected),
     };
     if forbidden {
         return Err(DecisionRefusal::InvalidOutput {
@@ -3204,7 +3233,7 @@ fn timer<X>(
 mod field_authority_tests {
     use super::{
         AdmissionOrigin, BTreeMap, BTreeSet, FactChange, FactKey, FactSlice, FactVersion,
-        JsonObject, JsonValue, ObjectTypeDef, TypeCatalog, Working, apply_change,
+        JsonObject, JsonValue, ObjectTypeDef, ObjectTypeName, TypeCatalog, Working, apply_change,
     };
 
     #[test]
@@ -3270,5 +3299,104 @@ mod field_authority_tests {
                 assert!(!working[&key].written);
             }
         }
+    }
+
+    /// A catalog that declares `object` but whose effective view is refused:
+    /// the checker produced no effective type for it.
+    fn refused_catalog(object: &ObjectTypeDef) -> TypeCatalog<'_> {
+        let catalog = TypeCatalog::new([object]);
+        assert!(catalog.refuse_effective_view_for_test());
+        catalog
+    }
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test fixtures and assertions require successful setup and existing keys"
+    )]
+    fn refused_effective_view_refuses_every_change_kind() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = refused_catalog(&object);
+        assert!(catalog.effective_view_refused(&object.name));
+        let key = FactKey::new("test.Counter", "one");
+        let values = Some(JsonObject::from([(
+            "total".to_owned(),
+            JsonValue::from(2_i64),
+        )]));
+        for change in [
+            FactChange::Delete {
+                object_type: key.object_type.clone(),
+                key: key.key.clone(),
+            },
+            FactChange::Create {
+                object_type: key.object_type.clone(),
+                key: key.key.clone(),
+                values: JsonObject::from([("total".to_owned(), JsonValue::from(1_i64))]),
+            },
+            FactChange::Set {
+                object_type: key.object_type.clone(),
+                key: key.key.clone(),
+                property: norn_ir::PropertyId("total".into()),
+                value: JsonValue::from(3_i64),
+            },
+        ] {
+            let mut working = BTreeMap::from([(
+                key.clone(),
+                Working {
+                    expected: FactVersion(1),
+                    values: values.clone(),
+                    written: false,
+                },
+            )]);
+            let error = apply_change::<std::convert::Infallible>(
+                &catalog,
+                &FactSlice::new(),
+                &mut working,
+                &change,
+                AdmissionOrigin::Command,
+                &BTreeSet::new(),
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "decision.invalid_output", "{change:?}");
+            assert_eq!(working[&key].values, values);
+            assert!(!working[&key].written);
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test fixtures require successful setup")]
+    fn refused_effective_view_keeps_the_implicit_checks() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" } }]
+        }))
+        .unwrap();
+        let resolved = TypeCatalog::new([&object]);
+        assert!(!resolved.has_invariants(&object.name).unwrap());
+        let refused = refused_catalog(&object);
+        assert!(refused.has_invariants(&object.name).unwrap());
+        let key = FactKey::new("test.Counter", "one");
+        let error = crate::commit_check::evaluate_invariants(
+            &refused,
+            &key,
+            &JsonObject::default(),
+            &mut 1_000,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(
+                crate::EffectiveValuesError::Unsupported { .. }
+            )
+        ));
+        // A type that is not declared at all is not a refused view.
+        let unknown = ObjectTypeName("test.Missing".to_owned());
+        assert!(!refused.effective_view_refused(&unknown));
+        assert!(!refused.has_invariants(&unknown).unwrap());
     }
 }
