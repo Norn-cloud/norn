@@ -1,0 +1,10 @@
+{
+  "order": 3,
+  "value": {
+    "artifact": "verification/exact-arith-v1/RationalProof.lean",
+    "command": "scripts/verify-exact-arith-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entryd4b961a3477119ffba3d50b376bdd6ad68d705f6555057adf72c4948facb6fd4.evidence.proof.entry09e988eed6d151eb3f6a01314d8455dc04644b84177b3cf3ac182c04470261be.selectors"
+    }
+  }
+}

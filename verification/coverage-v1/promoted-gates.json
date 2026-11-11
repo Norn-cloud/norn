@@ -1206,6 +1206,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "exact-arith-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-exact-arith-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "semantics-v1-lean",
       "profile": "full",
       "command": "scripts/verify-semantics-lean.sh",
@@ -1274,6 +1289,51 @@
       "classifications": [
         {
           "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-commit-order-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-kernel-commit-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-binding-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-kernel-binding-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-decider-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-kernel-decider-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
           "layer": "proof"
         }
       ],

@@ -44,10 +44,10 @@
     {
       "id": "TRUST-CHARON-AENEAS-AND-CORE-MODELS",
       "owner": "Norn verification maintainers",
-      "boundary": "Pinned Charon (a1d98905, nightly-2026-08-18 rustc front end) and Aeneas (74a460a2) translation of Rust MIR to Lean, and the Aeneas Lean standard-library models of machine integers, slices, vectors, control flow and core traits (including Result's Try branch and from_residual)",
-      "justification": "Aeneas implementation proofs are about the Lean translation of the production MIR, not about compiled code. Translation correctness and the Aeneas core models are trusted; rustc and LLVM codegen below MIR are trusted as for every Rust claim.",
-      "blastRadius": "A translation defect or a wrong core model could make a correspondence theorem hold for code that behaves differently, affecting every claim proved through an Aeneas gate, including scripts/verify-kernel-l1-aeneas.sh, scripts/verify-norm-precedence-aeneas.sh, scripts/verify-checker-certificates-aeneas.sh scripts/verify-law-exceptions-aeneas.sh and scripts/verify-preservation-aeneas.sh.",
-      "falsificationTest": "Run the seeded mutants in each Aeneas gate and require each to extract, elaborate, fail the proof and be refuted by its witness; re-extract with a newer pinned Charon/Aeneas and require the same theorems to check."
+      "boundary": "Pinned Charon (a1d98905, nightly-2026-08-18 rustc front end) and Aeneas (74a460a2) translation of Rust MIR to Lean, the Aeneas Lean standard-library models of machine integers, slices, vectors, control flow and core traits (including Result's Try branch and from_residual), the hand-written core models in verification/exact-arith-v1/CoreModels.lean (i128::unsigned_abs, checked_neg, checked_abs and pow, i64::unsigned_abs, i64::from(u32), i64::try_from(i128), u32::try_from(u64), Result::ok, Option::ok_or, and Option's Try branch and from_residual), and the rust_decimal 1.43 boundary models in verification/exact-arith-v1/Scaled/ (Decimal as a 96-bit coefficient with at most 28 places, scale, mantissa, normalize and try_from_i128_with_scale)",
+      "justification": "Aeneas implementation proofs are about the Lean translation of the production MIR, not about compiled code. Translation correctness, the Aeneas scalar, loop and core-trait models, and the hand-written core-function models (definitions, not axioms, written from Rust's documented semantics) are trusted; rustc and LLVM codegen below MIR are trusted as for every Rust claim.",
+      "blastRadius": "A translation defect, a wrong scalar or core model, or a wrong core-function model could make a correspondence theorem hold for code that behaves differently, affecting every claim proved through an Aeneas gate: scripts/verify-kernel-l1-aeneas.sh, scripts/verify-kernel-commit-aeneas.sh, scripts/verify-kernel-binding-aeneas.sh, scripts/verify-kernel-decider-aeneas.sh, scripts/verify-exact-arith-aeneas.sh, scripts/verify-norm-precedence-aeneas.sh, scripts/verify-checker-certificates-aeneas.sh, scripts/verify-law-exceptions-aeneas.sh and scripts/verify-preservation-aeneas.sh.",
+      "falsificationTest": "Run the seeded mutants in each Aeneas gate (including the rounding and overflow mutants in scripts/verify-exact-arith-aeneas.sh) and require each to extract, elaborate, fail the proof and be refuted by its witness; differentially test the exact-arith extracted functions against the Rust implementations on boundary inputs (i128::MIN/MAX, zero divisors, exact midpoints); re-extract with a newer pinned Charon/Aeneas and require the same theorems to check."
     },
     {
       "id": "TRUST-NORM-PRECEDENCE-SHELL",
@@ -80,6 +80,30 @@
       "justification": "scripts/verify-preservation-aeneas.sh extracts preservation/check.rs and proves check_correct and check_sound: whenever it returns true, NornSem.Exchange.check accepts the translated certificate, so (NornSem.Exchange.check_sound) the translated mapping preserves the target EGD on every source instance. Anything the lowering does not model (constants, target TGDs, non-full mapping rules) is not certified and keeps the bounded evidence.",
       "blastRadius": "A lowering defect (a relation or variable numbered inconsistently) would make the proved check decide about different theories than the declared ones, so a non-preserving path mapping could be reported as certified.",
       "falsificationTest": "The path_mapping integration tests require every mapping with a verified counterexample to stay refused and the identity mapping to be certified; run the seeded mutants in scripts/verify-preservation-aeneas.sh and require each to fail the proof and be refuted by its witness."
+    },
+    {
+      "id": "TRUST-KERNEL-COMMIT-STAGE-DISPATCH",
+      "owner": "Norn kernel maintainers",
+      "boundary": "LocalStages::run in crates/norn-kernel/src/commit_check.rs, which maps each CommitStage to its stage body; the read, write and link expectation lists check_versions builds and the ObjectVersions and LinkVersions host lookups it passes to first_conflict; the remaining stage bodies; and the profile and owned-rows wrappers around check_commit_local",
+      "justification": "scripts/verify-kernel-commit-aeneas.sh proves the extracted run_stages driver for every implementation of CommitStages, and the extracted first_conflict scan for every CurrentVersion lookup, so the stage order, the short-circuit and the compare-and-swap decision are proved; which Rust check runs for each stage, which keys reach the scan and what the host returns is ordinary reviewed code until its own unit lands (#718 P8).",
+      "blastRadius": "A stage arm calling the wrong check, or a stage body deciding wrongly, would refuse or admit a commit at a stage the written order does not name, while the driver theorem still holds.",
+      "falsificationTest": "Kernel and cell tests plus the DST simulator exercise every refusal kind through check_commit; the later K-A units replace stage bodies with extracted decision cores."
+    },
+    {
+      "id": "TRUST-KERNEL-BINDING-GLUE",
+      "owner": "Norn verification maintainers",
+      "boundary": "The glue around the proved kernel binding cores (crates/norn-kernel/src/replay_decision.rs, receipt_decision.rs): ActionCallRecord::from_values decoding, the RecordedCall impl and ActionCallRecord::call_identity in action_commit.rs, every replay call site returning a Replayed or IdempotencyConflict outcome before any commit, bind_receipt's store resolution, content_digest/result_identity, pin projection and summary decoding, ReceiptBinding::check_commit's refusal mapping, and the derived PartialEq of String, Digest, FactKey, JsonObject and Option<String> deciding equality. The Charon/Aeneas translation itself is TRUST-CHARON-AENEAS-AND-CORE-MODELS.",
+      "justification": "scripts/verify-kernel-binding-aeneas.sh proves the extracted decision cores for every input and every equality implementation, and under equality instances that decide equality. The glue only moves values in and maps the decision back; it is kept to one-line projections and is exercised by the kernel and cell tests.",
+      "blastRadius": "A projection that passes the wrong field, a call site that commits after a replay, or a non-structural equality would let a receipt bind, or a key replay, where the proved decision would refuse.",
+      "falsificationTest": "Run the kernel's action_commit, receipt_effect and result_reconciliation tests and the cell receipt_consume tests; run the 16 seeded mutants in scripts/verify-kernel-binding-aeneas.sh and require each to be refuted by a closed decide vector theorem; re-extract with a newer pinned Charon/Aeneas and require the same theorems to check."
+    },
+    {
+      "id": "TRUST-KERNEL-DECIDER-STEP-GLUE",
+      "owner": "Norn kernel maintainers",
+      "boundary": "The Turn and Ledger adaptors in crates/norn-kernel/src/decider.rs (evolve and initial_state delegate to the decider, clone_state is State::clone, counts are the event count and the is_perform and is_timer effect counts, events is the decision's event Vec), the Vec collect in the public fold and replay, the usize to u64 count conversions, and the caps and refusal rebuilding in crates/norn-kernel/src/envelope.rs",
+      "justification": "scripts/verify-kernel-decider-aeneas.sh proves the extracted fold_events, replay_events, run_step, exceeded_cap and exceeded_turn_cap for every Evolve and StepTurn implementation; that the production adaptors are such an implementation with a faithful clone and one shared evolve (the live_state_is_replay hypotheses) is ordinary reviewed code.",
+      "blastRadius": "An adaptor that evolved with a different function, cloned unfaithfully, miscounted effects or rebuilt the wrong cap would let step or replay diverge from the proved driver while every theorem still holds.",
+      "falsificationTest": "The norn-kernel decider tests and the norn-testkit state-machine laws (replay(ledger) == state after every turn, split-fold composition, refused turns leave state untouched) run the public step, fold and replay against the decider laws."
     }
   ]
 }

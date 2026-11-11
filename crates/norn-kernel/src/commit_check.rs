@@ -40,6 +40,8 @@ use crate::cell_host::{
 const MAX_LINK_READ_TARGETS: usize = 1_000;
 /// Maximum aggregate target-key bytes bound to a complete link read.
 const MAX_LINK_READ_BYTES: usize = 262_144;
+use crate::commit_order::{CommitStage, CommitStages, run_stages};
+use crate::commit_versions::{CurrentVersion, first_conflict};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
 use crate::snapshot_observe::ObservationAuthorization;
 
@@ -328,6 +330,10 @@ pub trait CommitView {
 
 /// The admission check every host runs before applying a commit.
 ///
+/// The stage order below lives in one straight-line driver,
+/// `commit_order::run_stages`, which is proved to run exactly this order and to
+/// stop at the first refusal (`scripts/verify-kernel-commit-aeneas.sh`).
+///
 /// Pure and host-independent: the model comes from the shared catalog, the
 /// state from the host's view, so every host refuses the same commits with
 /// the same refusal. Objects and links are compared by canonical identity.
@@ -494,6 +500,62 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     authorization: Option<&ObservationAuthorization>,
     trusted_owned_rows: bool,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
+    run_stages(&mut LocalStages {
+        commit,
+        model,
+        view,
+        authorization,
+        trusted_owned_rows,
+        links: BTreeMap::new(),
+    })?;
+    next_versions(commit)
+}
+
+/// The stage bodies of one local admission. [`run_stages`] fixes their order.
+struct LocalStages<'c, 'm, 'a, 'v, E, C, T, V: ?Sized> {
+    commit: &'c CellCommit<E, C, T>,
+    model: CommitModel<'m, 'a>,
+    view: &'v V,
+    authorization: Option<&'v ObservationAuthorization>,
+    trusted_owned_rows: bool,
+    /// The live links once the commit applies, set by [`CommitStage::Endpoints`]
+    /// before [`CommitStage::Cardinality`] reads them.
+    links: BTreeMap<FactKey, BTreeSet<LinkKey>>,
+}
+
+impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
+    for LocalStages<'_, '_, '_, '_, E, C, T, V>
+{
+    fn run(&mut self, stage: CommitStage) -> Result<(), CommitError<V::Error>> {
+        let (commit, model, view, authorization) =
+            (self.commit, self.model, self.view, self.authorization);
+        match stage {
+            CommitStage::EventLimit => check_event_limit(commit, authorization),
+            CommitStage::Shape => check_shape(commit, model, view, self.trusted_owned_rows),
+            CommitStage::Accounting => check_accounting_postings(commit, model, view),
+            CommitStage::Delivery => check_delivery(commit, view),
+            CommitStage::Immutable => check_immutable(commit, model, view),
+            CommitStage::Versions => check_versions(commit, model, view, authorization),
+            CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
+            CommitStage::Endpoints => {
+                self.links = live_links_after(commit, model, view)?;
+                check_endpoints(commit, model, view, &self.links)
+            }
+            CommitStage::LinkValues => check_link_values(commit, model, view),
+            CommitStage::Cardinality => check_cardinality(commit, model, view, &self.links),
+            CommitStage::RequiredLinks => check_required_links(commit, model, view, authorization),
+            CommitStage::Acyclic => check_acyclic_links(commit, model, view),
+            CommitStage::Invariants => check_invariants(commit, model.catalog, authorization)
+                .map_err(InvariantAdmissionError::into_commit_error),
+            CommitStage::Laws => check_governing_laws(commit, model, authorization),
+        }
+    }
+}
+
+fn check_event_limit<E, C, T, X>(
+    commit: &CellCommit<E, C, T>,
+    authorization: Option<&ObservationAuthorization>,
+) -> Result<(), CommitError<X>> {
     if let Some(authorization) = authorization
         && commit.events.len() > authorization.event_limit()
     {
@@ -502,8 +564,13 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             actual: commit.events.len(),
         });
     }
-    check_shape(commit, model, view, trusted_owned_rows)?;
-    check_accounting_postings(commit, model, view)?;
+    Ok(())
+}
+
+fn check_delivery<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    view: &V,
+) -> Result<(), CommitError<V::Error>> {
     if let Some(consumed) = &commit.consumes {
         let is_pending = view.pending(consumed).map_err(CommitError::Host)?;
         if !is_pending {
@@ -512,11 +579,20 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    // A write that observed an object already present and immutable can never succeed on
-    // retry, so `ImmutableObject` outranks the stale-version `Conflict`. A write whose
-    // expectation differs from the current version (an absent object that a concurrent
-    // create has since made present) is a retryable `Conflict` that `check_versions` reports,
-    // so creates can still re-read and replay or allocate the next number.
+    Ok(())
+}
+
+/// A write that observed an object already present and immutable can never
+/// succeed on retry, so `ImmutableObject` outranks the stale-version
+/// `Conflict`. A write whose expectation differs from the current version (an
+/// absent object that a concurrent create has since made present) is a
+/// retryable `Conflict` that `check_versions` reports, so creates can still
+/// re-read and replay or allocate the next number.
+fn check_immutable<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+) -> Result<(), CommitError<V::Error>> {
     for write in &commit.writes {
         let key = model.canonical(&write.key);
         let concrete = view.concrete(&key).map_err(CommitError::Host)?;
@@ -530,46 +606,27 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    check_versions(commit, model, view, authorization)?;
-    check_link_authority(commit, model, view, authorization)?;
-    let links = live_links_after(commit, model, view)?;
-    check_endpoints(commit, model, view, &links)?;
+    Ok(())
+}
+
+fn check_link_values<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+) -> Result<(), CommitError<V::Error>> {
     for write in &commit.links {
         if let LinkMutation::Add { values } = &write.mutation {
             model.effective_link_values(commit, view, &write.key, values)?;
         }
     }
-    check_cardinality(commit, model, view, &links)?;
-    check_required_links(commit, model, view, authorization)?;
-    check_acyclic_links(commit, model, view)?;
-    check_invariants(commit, model.catalog, authorization).map_err(|error| match error {
-        InvariantAdmissionError::Law { key, reason } => CommitError::Law { key, reason },
-        InvariantAdmissionError::EffectiveValues { key, reason } => {
-            CommitError::EffectiveValues { key, reason }
-        }
-        InvariantAdmissionError::BudgetExceeded { key, limit } => {
-            CommitError::InvariantBudgetExceeded { key, limit }
-        }
-        InvariantAdmissionError::MissingInterface { key, interface } => {
-            CommitError::InvariantModel { key, interface }
-        }
-        InvariantAdmissionError::Violation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        } => CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        },
-        InvariantAdmissionError::ObservationAuthorization => CommitError::ObservationAuthorization,
-    })?;
+    Ok(())
+}
+
+fn check_governing_laws<E, C, T, X>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    authorization: Option<&ObservationAuthorization>,
+) -> Result<(), CommitError<X>> {
     let mut remaining = EvaluationBudget::default().units();
     for write in &commit.writes {
         let FactMutation::Put { values } = &write.mutation else {
@@ -591,7 +648,7 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    next_versions(commit)
+    Ok(())
 }
 
 /// Outgoing links share the source's authority, not their target's authority.
@@ -1153,6 +1210,37 @@ enum InvariantAdmissionError {
     ObservationAuthorization,
 }
 
+impl InvariantAdmissionError {
+    fn into_commit_error<X>(self) -> CommitError<X> {
+        match self {
+            Self::Law { key, reason } => CommitError::Law { key, reason },
+            Self::EffectiveValues { key, reason } => CommitError::EffectiveValues { key, reason },
+            Self::BudgetExceeded { key, limit } => {
+                CommitError::InvariantBudgetExceeded { key, limit }
+            }
+            Self::MissingInterface { key, interface } => {
+                CommitError::InvariantModel { key, interface }
+            }
+            Self::Violation {
+                key,
+                owner,
+                version,
+                id,
+                message,
+                outcome,
+            } => CommitError::InvariantViolation {
+                key,
+                owner,
+                version,
+                id,
+                message,
+                outcome,
+            },
+            Self::ObservationAuthorization => CommitError::ObservationAuthorization,
+        }
+    }
+}
+
 fn evaluate_commit_invariants(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
@@ -1677,27 +1765,25 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             }
         }
     }
-    let expectations = commit
+    let reads: Vec<(&FactKey, u64)> = commit
         .reads
         .iter()
-        .map(|read| (&read.key, read.expected))
-        .chain(
-            commit
-                .writes
-                .iter()
-                .map(|write| (&write.key, write.expected)),
-        );
-    for (key, expected) in expectations {
-        let current = view
-            .version(&model.canonical(key))
-            .map_err(CommitError::Host)?;
-        if current != expected {
-            return Err(CommitError::Conflict {
-                key: key.clone(),
-                expected,
-                current,
-            });
-        }
+        .map(|read| (&read.key, read.expected.0))
+        .collect();
+    let writes: Vec<(&FactKey, u64)> = commit
+        .writes
+        .iter()
+        .map(|write| (&write.key, write.expected.0))
+        .collect();
+    if let Some((key, expected, current)) =
+        first_conflict(&mut ObjectVersions { model, view }, &reads, &writes)
+            .map_err(CommitError::Host)?
+    {
+        return Err(CommitError::Conflict {
+            key: key.clone(),
+            expected: FactVersion(expected),
+            current: FactVersion(current),
+        });
     }
     for write in &commit.writes {
         if !matches!(write.mutation, FactMutation::Put { .. }) {
@@ -1714,17 +1800,19 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    for write in &commit.links {
-        let current = view
-            .link_version(&model.canonical_link(&write.key))
-            .map_err(CommitError::Host)?;
-        if current != write.expected {
-            return Err(CommitError::LinkConflict {
-                key: Box::new(write.key.clone()),
-                expected: write.expected,
-                current,
-            });
-        }
+    let links: Vec<(&LinkKey, u64)> = commit
+        .links
+        .iter()
+        .map(|write| (&write.key, write.expected.0))
+        .collect();
+    if let Some((key, expected, current)) =
+        first_conflict(&mut LinkVersions { model, view }, &links, &[]).map_err(CommitError::Host)?
+    {
+        return Err(CommitError::LinkConflict {
+            key: Box::new(key.clone()),
+            expected: FactVersion(expected),
+            current: FactVersion(current),
+        });
     }
     for read in &commit.link_reads {
         let source = model.canonical(&read.source);
@@ -1762,6 +1850,30 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
     }
     crate::predicate_read::recheck_predicate_reads(&commit.predicate_reads, model, view)?;
     Ok(())
+}
+
+/// Each read or written object's current version, by canonical identity.
+struct ObjectVersions<'m, 'a, 'v, V: ?Sized> {
+    model: CommitModel<'m, 'a>,
+    view: &'v V,
+}
+
+impl<V: CommitView + ?Sized> CurrentVersion<&FactKey, V::Error> for ObjectVersions<'_, '_, '_, V> {
+    fn current(&mut self, key: &&FactKey) -> Result<u64, V::Error> {
+        Ok(self.view.version(&self.model.canonical(key))?.0)
+    }
+}
+
+/// Each written link's current version, by canonical identity.
+struct LinkVersions<'m, 'a, 'v, V: ?Sized> {
+    model: CommitModel<'m, 'a>,
+    view: &'v V,
+}
+
+impl<V: CommitView + ?Sized> CurrentVersion<&LinkKey, V::Error> for LinkVersions<'_, '_, '_, V> {
+    fn current(&mut self, key: &&LinkKey) -> Result<u64, V::Error> {
+        Ok(self.view.link_version(&self.model.canonical_link(key))?.0)
+    }
 }
 
 /// The canonical live links of every object the commit's links and deletes
