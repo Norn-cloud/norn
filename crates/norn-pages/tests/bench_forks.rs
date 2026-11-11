@@ -3,7 +3,8 @@
 //!
 //! Run in release: `cargo test --release -p norn-pages --test bench_forks --
 //! --ignored --nocapture`. Everything is in memory: this measures the CPU
-//! path of the in-memory tier, not durable or cold reads.
+//! path of the in-memory tier, not durable or cold reads. Each value is also
+//! printed as a `METRIC` JSON line for the metrics ledger's nightly probe.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::as_conversions,
@@ -94,6 +95,30 @@ fn seed<E: SqlEngine>(cell: &mut Cell<E>) {
         })
         .expect("seeds");
     }
+}
+
+/// One machine-readable line per value, for the metrics ledger's probe:
+/// `METRIC {"metric", "value", "unit", "statistic"}`.
+fn metric(name: &str, value: f64, unit: &str, statistic: &str) {
+    println!(
+        "METRIC {}",
+        json!({ "metric": name, "value": value, "unit": unit, "statistic": statistic })
+    );
+}
+
+fn ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
+}
+
+fn us(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000_000.0
+}
+
+/// The p50 and p99 of one measured pair, under `prefix`.
+fn percentile_metrics(prefix: &str, (p50, p99): (Duration, Duration), unit: &str) {
+    let convert = if unit == "us" { us } else { ms };
+    metric(&format!("{prefix}.p50"), convert(p50), unit, "p50");
+    metric(&format!("{prefix}.p99"), convert(p99), unit, "p99");
 }
 
 fn percentiles(mut samples: Vec<Duration>) -> (Duration, Duration) {
@@ -194,13 +219,54 @@ fn fork_benchmark() {
             grown as f64 / forks as f64,
             grown as f64 * 100.0 / (base_pages * forks) as f64,
         );
+        percentile_metrics(&format!("fork.cow.create.f{forks}"), cow_run.fork, "ms");
+        percentile_metrics(
+            &format!("fork.cow.read.fork.f{forks}"),
+            cow_run.fork_read,
+            "us",
+        );
+        percentile_metrics(
+            &format!("fork.cow.read.main.f{forks}"),
+            cow_run.main_read,
+            "us",
+        );
+        metric(
+            &format!("fork.cow.pages_per_fork.f{forks}"),
+            grown as f64 / forks as f64,
+            "count",
+            "mean",
+        );
+        metric(
+            &format!("fork.cow.storage_vs_full.f{forks}"),
+            grown as f64 * 100.0 / (base_pages * forks) as f64,
+            "percent",
+            "single",
+        );
         drop(cow_cells);
         let discard_start = Instant::now();
         let report = store.collect_garbage().expect("collects");
+        let discard = discard_start.elapsed();
         println!(
-            "{forks} | cow | collection with forks live {gc:?}; discard {forks} forks and collect {:?}, freed {} pages",
-            discard_start.elapsed(),
+            "{forks} | cow | collection with forks live {gc:?}; discard {forks} forks and collect {discard:?}, freed {} pages",
             report.pages_freed
+        );
+        metric(
+            &format!("fork.cow.gc.collect_live.f{forks}"),
+            ms(gc),
+            "ms",
+            "single",
+        );
+        metric(
+            &format!("fork.cow.gc.discard_collect.f{forks}"),
+            ms(discard),
+            "ms",
+            "single",
+        );
+        metric(
+            &format!("fork.cow.gc.pages_freed.f{forks}"),
+            report.pages_freed as f64,
+            "count",
+            "single",
         );
         if forks <= 100 {
             let (copy_run, copy_cells) = run(&mut copy, forks);
@@ -212,6 +278,11 @@ fn fork_benchmark() {
                 copy_run.main_read.1,
                 copy_run.fork_read.0,
                 copy_run.fork_read.1,
+            );
+            percentile_metrics(
+                &format!("fork.full_copy.create.f{forks}"),
+                copy_run.fork,
+                "ms",
             );
             drop(copy_cells);
         }
