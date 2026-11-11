@@ -1,34 +1,27 @@
 {
   "schemaVersion": "norn.verification.cell-protocol-v1.results/1",
   "date": "2026-11-11",
-  "host": "Boat default VM (4 vCPU, 8 GB), deleted afterwards",
+  "host": "Boat default VMs (4 vCPU, 8 GB), deleted afterwards",
   "quint": "0.32.0",
   "apalache": "0.56.1",
   "jdk": "17",
   "models": {
     "cell-lifecycle": {
-      "modelSha256": "dbf255c5e2ac93cb4c988597d07c5d895632b0b46c2675c88ea876471069ce1b",
+      "modelSha256": "29f81cfe254ccdab5607895678e77d2f78351f13b96fabc5f9ab1f5bad2f6046",
       "bmc": [
-        {
-          "step": "step",
-          "invariant": "invariantWithProgress",
-          "maxSteps": 6,
-          "verdict": "bounded-no-counterexample",
-          "seconds": 18
-        },
         {
           "step": "step",
           "invariant": "invariantWithProgress",
           "maxSteps": 8,
           "verdict": "bounded-no-counterexample",
-          "seconds": 254
+          "seconds": 337
         },
         {
           "step": "step",
           "invariant": "invariantWithProgress",
           "maxSteps": 10,
           "verdict": "unknown",
-          "note": "timed out at 700 s"
+          "note": "timed out at 700 s (earlier model revision; deeper runs not repeated)"
         }
       ],
       "simulation": {
@@ -43,8 +36,8 @@
         "witnessReissuedConsumed": 102,
         "witnessRefused": 84876,
         "witnessStaleRefused": 18344,
-        "witnessRescheduledFired": 23948,
-        "witnessRecordedAfterReopen": 1072
+        "witnessRescheduledFired": 6799,
+        "witnessRecordedAfterReopen": 931
       },
       "variants": [
         {
@@ -54,24 +47,36 @@
         }
       ],
       "liveness": {
-        "property": "claimedResolves",
+        "harness": "liveness/cell-lifecycle-live.qnt",
+        "properties": [
+          "claimedResolves",
+          "timerFires"
+        ],
+        "engine": "TLC",
         "verdict": "unknown",
-        "note": "not model-checked; progressEnabled (the WF1 enabledness premise) is checked as a state invariant"
+        "note": "TLC stopped after 840 s at 956,289 distinct states with 618,890 queued and no violation; progressEnabled (the WF1 enabledness premise) is checked as a state invariant by BMC and simulation"
       },
       "inductive": {
         "verdict": "not attempted",
-        "note": "the ledger is a set of records with unbounded sequence numbers; an Apalache inductive check needs a finite universe for it"
+        "note": "the ledger is a set of records with unbounded sequence numbers"
       }
     },
     "fork-merge-gc": {
-      "modelSha256": "8f8e7481143b48e808028866e078fe3697a99ad950357b4401c81cf8543a5979",
+      "modelSha256": "8c4c9b25d745cc44e692df88018927c69575bfa6e91cb48e64c74dbbee4a476d",
       "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariant",
+          "maxSteps": 5,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 128
+        },
         {
           "step": "step",
           "invariant": "invariant",
           "maxSteps": 6,
           "verdict": "bounded-no-counterexample",
-          "seconds": 414
+          "seconds": 598
         }
       ],
       "simulation": {
@@ -85,8 +90,8 @@
       "witnesses": {
         "witnessPromoted": 5310,
         "witnessMergeRefused": 517,
-        "witnessGcFreed": 42295,
-        "witnessForkExport": 22913,
+        "witnessGcFreed": 38144,
+        "witnessForkExport": 20995,
         "witnessForkOfForkCommit": 1783,
         "witnessRefusedPerform": 20636
       },
@@ -116,28 +121,14 @@
       }
     },
     "offline-leases": {
-      "modelSha256": "81746903c8a72f95215b7462c0d189cb0c8924e324f665f00f1d62e82e0419c3",
+      "modelSha256": "76df4fde3c6a9e2de92953841234209163690e8842b60409d70efe9fedfc2ecf",
       "bmc": [
         {
           "step": "step",
-          "invariant": "invariant",
-          "maxSteps": 4,
-          "verdict": "bounded-no-counterexample",
-          "seconds": 27
-        },
-        {
-          "step": "step",
-          "invariant": "invariant",
+          "invariant": "invariant (with obligationProgress)",
           "maxSteps": 5,
           "verdict": "bounded-no-counterexample",
-          "seconds": 266
-        },
-        {
-          "step": "step",
-          "invariant": "invariant",
-          "maxSteps": 6,
-          "verdict": "unknown",
-          "note": "timed out at 1500 s (earlier 4-obligation bound)"
+          "seconds": 295
         }
       ],
       "simulation": {
@@ -174,13 +165,77 @@
         }
       ],
       "liveness": {
-        "property": "shortfallResolves",
+        "harness": "liveness/offline-leases-live.qnt",
+        "properties": [
+          "shortfallResolves",
+          "factApplied"
+        ],
+        "engine": "TLC",
         "verdict": "unknown",
-        "note": "obligationProgress (the WF1 enabledness premise) is checked as a state invariant"
+        "note": "TLC stopped after 600 s at 643,748 distinct states with 406,714 queued and no violation (reduced instance); obligationProgress is now part of the checked invariant"
       },
       "inductive": {
         "verdict": "not attempted",
         "note": "replayEqualsLive folds the ordered cell log"
+      }
+    },
+    "cross-cell-commitment": {
+      "modelSha256": "e3741d747ff765d512dccc54069de4379abd7e72d87efe79e8dd012c15e4c8eb",
+      "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariant",
+          "maxSteps": 6,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 58
+        }
+      ],
+      "simulation": {
+        "step": "step",
+        "invariant": "invariant",
+        "samples": 200000,
+        "maxSteps": 30,
+        "seed": 42,
+        "verdict": "sampled, no violation"
+      },
+      "witnesses": {
+        "witnessSettled": 30972,
+        "witnessRefused": 31168,
+        "witnessFencedThenRefused": 45714,
+        "witnessUnknownThenSettled": 15853,
+        "witnessCompensated": 1270,
+        "witnessCompensationFailed": 19421,
+        "witnessForeignIgnored": 29534
+      },
+      "variants": [
+        {
+          "step": "stepNoIssuerCheck",
+          "invariant": "agreement",
+          "verdict": "refuted"
+        },
+        {
+          "step": "stepNoFence",
+          "invariant": "agreement",
+          "verdict": "refuted"
+        },
+        {
+          "step": "stepNoDedupe",
+          "invariant": "acceptOnce",
+          "verdict": "refuted"
+        }
+      ],
+      "liveness": {
+        "harness": "liveness/cross-cell-commitment-live.qnt",
+        "properties": [
+          "commitmentResolves",
+          "compensationEnds"
+        ],
+        "engine": "TLC",
+        "verdict": "exhaustive-finite",
+        "note": "complete state graph: 239,850 distinct states, 14,507,373 generated, depth 18; no invariant or temporal violation under the stated fairness and fault budget"
+      },
+      "inductive": {
+        "verdict": "not attempted"
       }
     }
   },
@@ -206,6 +261,21 @@
       "kind": "assumption",
       "target": "#621 EFFECT-IDENTITY-1",
       "trace": "traces/cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json"
+    },
+    {
+      "model": "cross-cell-commitment",
+      "kind": "design",
+      "target": "#493",
+      "note": "receipts must be bound to the issuing cell; an unseen-id query must fence the id; acceptance must deduplicate by commitment id",
+      "traces": [
+        "traces/cross-cell-commitment-stepNoIssuerCheck-agreement.cex.json",
+        "traces/cross-cell-commitment-stepNoFence-agreement.cex.json",
+        "traces/cross-cell-commitment-stepNoDedupe-acceptOnce.cex.json"
+      ]
     }
+  ],
+  "tlc": "1.8.0",
+  "toolingNotes": [
+    "quint 0.32.0 `compile --target tlaplus` prints `x = LET .. IN ApaFoldSet(..) /\\ Q`, so the LET swallows Q; a lambda fold must end its conjunction. Apalache 0.56.1 rejects a named fold function from an imported module (`Expected F to be a binary operator passed by name`)."
   ]
 }

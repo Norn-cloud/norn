@@ -228,7 +228,8 @@ module fork_merge_gc {
     status' = status, pin' = pin, root' = root, seq' = seq, ver' = ver, receipts' = receipts,
     forkLog' = forkLog, cursor' = cursor, mainLog' = mainLog,
     ext' = ext, exported' = exported, shadow' = shadow, copyVals' = copyVals,
-    baseRoot' = baseRoot, lastAction' = "gcSweep",
+    baseRoot' = baseRoot,
+    lastAction' = if (stored.intersect(gc.marked.union(gc.barrier)) != stored) "gcSweepFreed" else "gcSweep",
   }
 
   // FORK-EVIDENCE-1 fence. Correct: a fork exports only records at or below
@@ -243,7 +244,7 @@ module fork_merge_gc {
       status' = status, pin' = pin, root' = root, seq' = seq, ver' = ver, receipts' = receipts,
       stored' = stored, gc' = gc, forkLog' = forkLog, cursor' = cursor, mainLog' = mainLog,
       ext' = ext, shadow' = shadow, copyVals' = copyVals, baseRoot' = baseRoot,
-      lastAction' = "export",
+      lastAction' = if (w == MAIN) "exportMain" else "exportFork",
     }
   }
 
@@ -304,9 +305,10 @@ module fork_merge_gc {
   // Non-vacuity witnesses: each must be reachable.
   def witnessPromoted = FORKS.exists(w => status.get(w) == "promoted" and forkLog.get(w).length() > 0)
   def witnessMergeRefused = lastAction == "mergeRefused"
-  def witnessGcFreed = lastAction == "gcSweep" and stored.size() > 0 and FORKS.exists(w => status.get(w) == "discarded")
-    and KEYS.exists(k => valOf(MAIN, k) > 0)
-  def witnessForkExport = lastAction == "export" and FORKS.exists(w => exported.exists(r => r.n > 0 and r.n <= pin.get(w).horizon and status.get(w) == "open"))
+  // A sweep that actually removed a page, after a fork was discarded.
+  def witnessGcFreed = lastAction == "gcSweepFreed" and FORKS.exists(w => status.get(w) == "discarded")
+  // A fork (not main) passed the export fence.
+  def witnessForkExport = lastAction == "exportFork" and exported.exists(r => r.n > 0)
   def witnessForkOfForkCommit = FORKS.exists(w => pin.get(w).parent != MAIN and status.get(w) == "open"
     and forkLog.get(w).length() > 0)
   def witnessRefusedPerform = lastAction == "refusePerform"

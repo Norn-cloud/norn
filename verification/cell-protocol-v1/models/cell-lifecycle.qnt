@@ -33,7 +33,7 @@ module cell_lifecycle {
   type Env = { now: int, toProvider: Set[Pair], net: Set[Msg], done: int -> int,
     doneVal: int -> int, fenced: int -> bool }
   type Ghost = { dispatches: Pair -> int, claimedEver: Set[Pair], replaced: Set[Pair],
-    last: str }
+    last: str, rescheduledIncs: Set[int], epoch: int, claimEpoch: Pair -> int, lastRecorded: Pair }
 
   pure val CMDS = Set(1, 2)
   pure val TIMERS = Set(1)
@@ -62,7 +62,8 @@ module cell_lifecycle {
     env' = { now: 0, toProvider: Set(), net: Set(), done: zeroC, doneVal: zeroC,
       fenced: CMDS.mapBy(_ => false) },
     g' = { dispatches: PAIRS.mapBy(_ => 0), claimedEver: Set(), replaced: Set(),
-      last: "init" },
+      last: "init", rescheduledIncs: Set(), epoch: 0, claimEpoch: PAIRS.mapBy(_ => 0),
+      lastRecorded: (0, 0) },
   }
 
   def pending(c: int): bool = d.gen.get(c) > d.consumedGen.get(c)
@@ -75,6 +76,10 @@ module cell_lifecycle {
   // --- Commands --------------------------------------------------------
   // EffectRow::Enqueue. First issue, or a newer generation of a pending
   // command, which replaces it in place and fences the old generation.
+  // Not modelled: EffectRow::Enqueue also appends a newer generation of an
+  // already consumed command. Under EFFECT-IDENTITY-1 that is a new business
+  // operation (a new operation key), so it is a fresh command here; reusing
+  // a consumed command id is outside this model (see manifest `exclusions`).
   action enqueue(c: int): bool = {
     val ng = d.gen.get(c) + 1
     all {
@@ -91,7 +96,8 @@ module cell_lifecycle {
     d' = { ...d, claimed: d.claimed.set(c, d.gen.get(c)), seq: d.seq + 1 },
     v' = { ...v, fresh: v.fresh.union(Set((c, d.gen.get(c)))) },
     env' = env,
-    g' = { ...g, last: "claim", claimedEver: g.claimedEver.union(Set((c, d.gen.get(c)))) },
+    g' = { ...g, last: "claim", claimedEver: g.claimedEver.union(Set((c, d.gen.get(c)))),
+      claimEpoch: g.claimEpoch.set((c, d.gen.get(c)), g.epoch) },
   }
   // PerformClaim::Fresh is the only dispatch licence, and it is volatile.
   action dispatch(p: Pair): bool = all {
@@ -133,7 +139,7 @@ module cell_lifecycle {
     d.resultGen.get(m.cmd) != m.gen,
     d' = { ...d, resultGen: d.resultGen.set(m.cmd, m.gen), resultVal: d.resultVal.set(m.cmd, m.value) },
     v' = { ...v, inflight: v.inflight.exclude(Set((m.cmd, m.gen))) },
-    env' = env, g' = { ...g, last: "record" },
+    env' = env, g' = { ...g, last: "record", lastRecorded: (m.cmd, m.gen) },
   }
   // A dispatched call that times out leaves its claim with no owner (I8).
   action timeout(p: Pair): bool = all {
@@ -183,7 +189,8 @@ module cell_lifecycle {
     v.up, due >= env.now,
     d' = { ...d, seq: d.seq + 1, timerInc: d.timerInc.set(t, d.seq + 1), timerDue: d.timerDue.set(t, due) },
     v' = v, env' = env,
-    g' = { ...g, last: if (d.timerInc.get(t) != 0) "reschedule" else "schedule" },
+    g' = { ...g, last: if (d.timerInc.get(t) != 0) "reschedule" else "schedule",
+      rescheduledIncs: if (d.timerInc.get(t) != 0) g.rescheduledIncs.union(Set(d.seq + 1)) else g.rescheduledIncs },
   }
   action cancel(t: int): bool = all {
     v.up, d.timerInc.get(t) != 0,
@@ -245,7 +252,7 @@ module cell_lifecycle {
   }
   // Reopen reloads the cache from the durable store; a retry redelivers.
   action reopen = all {
-    not(v.up), d' = d, env' = env, g' = { ...g, last: "reopen" },
+    not(v.up), d' = d, env' = env, g' = { ...g, last: "reopen", epoch: g.epoch + 1 },
     v' = { ...emptyVolatile, cache: d.facts },
   }
 
@@ -280,14 +287,22 @@ module cell_lifecycle {
   // and a consumed timer incarnation is no longer scheduled.
   def noStaleGeneration = d.log.forall(e => e.kind == "result" implies not(g.replaced.contains((e.id, e.gen))))
   def noStaleTimer = d.log.forall(e => e.kind == "timer" implies d.timerInc.get(e.id) != e.gen)
+  // A lambda fold must end its conjunction: `quint compile --target tlaplus`
+  // 0.32.0 prints `x = LET .. IN fold(..) /\ Q`, where the LET swallows Q.
+  // (Apalache rejects a named fold function, so the lambda stays.)
+  // consumedGen[c] is the highest command generation of c in the ledger.
+  def consumedIsLoggedMax(c: int): bool = {
+    val mine = d.log.filter(e => e.kind != "timer" and e.id == c)
+    if (d.consumedGen.get(c) == 0) mine == Set()
+    else mine.exists(e => e.gen == d.consumedGen.get(c)) and mine.forall(e => e.gen <= d.consumedGen.get(c))
+  }
   // ATOMICITY: ledger head, consumption marks and facts move together.
   def atomicity = d.seq >= d.log.size() and d.log.forall(e => e.seq <= d.seq)
-    and CMDS.forall(c => d.consumedGen.get(c) ==
-      d.log.fold(0, (a, e) => if (e.kind != "timer" and e.id == c and e.gen > a) e.gen else a))
+    and CMDS.forall(c => consumedIsLoggedMax(c))
   // REPLAY = LIVE: folding the ledger reproduces the live state, and a live
   // process's cache equals the durable state.
-  def replayEqualsLive = d.facts == d.log.fold(0, (a, e) => a + e.value)
-    and (v.up and v.turn == NONE implies v.cache == d.facts)
+  def replayEqualsLive = (v.up and v.turn == NONE implies v.cache == d.facts)
+    and d.facts == d.log.fold(0, (a, e) => a + e.value)
   // RESULT FIDELITY: a consumed result is the provider's one execution.
   def resultFidelity = d.log.forall(e => e.kind == "result" implies
     (env.done.get(e.id) != 0 and e.value == env.doneVal.get(e.id)))
@@ -302,24 +317,32 @@ module cell_lifecycle {
   def witnessReissuedConsumed = d.log.exists(e => e.kind == "result" and e.gen == 2)
   def witnessRefused = d.log.exists(e => e.kind == "refused")
   def witnessStaleRefused = g.last == "refuseStale"
-  def witnessRescheduledFired = d.log.exists(e => e.kind == "timer" and e.gen > 1)
-  def witnessRecordedAfterReopen = g.last == "record" and d.seq > 0 and v.fresh == Set() and v.inflight == Set()
+  // A fired incarnation that replaced a still-scheduled timer.
+  def witnessRescheduledFired = d.log.exists(e => e.kind == "timer" and g.rescheduledIncs.contains(e.gen))
+  // A result recorded by a later process incarnation than the one that
+  // claimed it: the crash/eviction recovery path.
+  def witnessRecordedAfterReopen = g.last == "record" and g.epoch > 0
+    and g.claimEpoch.get(g.lastRecorded) < g.epoch
 
   def resolved(p: Pair): bool = d.consumedGen.get(p._1) >= p._2 or g.replaced.contains(p)
   // PROGRESS (the WF1 premise of the liveness argument): while a claimed
   // generation is unresolved, some step that lowers its rank is enabled.
   // Rank, highest first: down > fresh > in flight > outcome unknown >
   // recorded > peeked. Reopen, dispatch, timeout, reconcile, peek and commit
-  // each strictly lower it; under weak fairness of those steps and eventual
-  // quiescence of crashes and drops, `claimedResolves` follows.
+  // each strictly lower it. Weak fairness alone is not enough: unbounded
+  // timer turns can keep the single turn slot busy, so peekResult is
+  // repeatedly disabled. `claimedResolves` follows under weak fairness of
+  // those steps plus a finite budget of crashes, drops and timer churn (as
+  // liveness/cell-lifecycle-live.qnt bounds them), or under strong fairness
+  // of peekResult.
   def progressEnabled = PAIRS.forall(p => (g.claimedEver.contains(p) and not(resolved(p))) implies (
     not(v.up) or v.fresh.contains(p) or v.inflight.contains(p) or outcomeUnknown(p._1)
       or v.turn != NONE or d.resultGen.get(p._1) == p._2))
   def invariantWithProgress = invariant and progressEnabled
 
-  // LIVENESS (candidate): a claimed generation of command 1 is eventually
-  // consumed, refused or fenced, assuming the process eventually stays up,
-  // the provider and the turn loop are weakly fair, and the wire eventually
-  // stops dropping. Stated for the first command and generation.
-  temporal claimedResolves = always(g.claimedEver.contains((1, 1)) implies eventually(resolved((1, 1))))
+  // LIVENESS: every claimed generation is eventually consumed, refused or
+  // fenced. This is the conclusion only; its fairness and finite-fault
+  // premises are encoded in liveness/cell-lifecycle-live.qnt (`live`).
+  temporal claimedResolves = PAIRS.forall(p =>
+    always(g.claimedEver.contains(p) implies eventually(resolved(p))))
 }

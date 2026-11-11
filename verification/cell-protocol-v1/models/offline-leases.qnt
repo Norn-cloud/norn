@@ -313,9 +313,16 @@ module offline_leases {
     dev.get(d).recorded.fold(0, (a, f) => a + (if (f.lseq > applied.get(d)) f.q else 0))
   def localTracksLease = DEVICES.forall(d => dev.get(d).local <=
     books.leased.get(d) - dev.get(d).grantIn - dev.get(d).returnOut - unappliedQty(d))
+
+  // PROGRESS (WF1 premise): an open obligation can always move toward
+  // resolved or escalated, because deadlines never pass MAX_TIME: either
+  // time can advance or escalation is enabled.
+  def obligationProgress = OBLS.forall(o => books.obl.get(o).state == "open" implies
+    (books.obl.get(o).deadline <= MAX_TIME and (now < MAX_TIME or now >= books.obl.get(o).deadline)))
   def invariant = conservation and onHandNonNegative and shortfallObligated and factNeverRefused
     and prefixApplied and replayEqualsLive and shortfallOnlyFromFacts and withinLeaseNeverShort
-    and localTracksLease
+    and localTracksLease and obligationProgress
+
   // Non-vacuity witnesses: each must be reachable.
   def witnessResolved = OBLS.exists(o => books.obl.get(o).state == "resolved")
   def witnessEscalated = OBLS.exists(o => books.obl.get(o).state == "escalated")
@@ -325,12 +332,10 @@ module offline_leases {
   def witnessSequencedReturn = factLog.foldl(false, (a, x) => a or x.f.kind == "return")
   temporal safety = always(invariant)
 
-  // PROGRESS (WF1 premise): an open obligation can always move toward
-  // resolved or escalated, because deadlines never pass MAX_TIME: either
-  // time can advance or escalation is enabled.
-  def obligationProgress = OBLS.forall(o => books.obl.get(o).state == "open" implies
-    (books.obl.get(o).deadline <= MAX_TIME and (now < MAX_TIME or now >= books.obl.get(o).deadline)))
-  // LIVENESS (candidate), under weak fairness of tick and escalate.
-  temporal shortfallResolves = always(books.obl.get(1).state == "open"
-    implies eventually(books.obl.get(1).state != "open"))
+  // LIVENESS: every shortfall slot is eventually resolved or escalated.
+  // This is the conclusion only; its weak-fairness premises (tick, escalate,
+  // sync, heal) and the finite fault budget are encoded in
+  // liveness/offline-leases-live.qnt (`live`).
+  temporal shortfallResolves = OBLS.forall(o => always(books.obl.get(o).state == "open"
+    implies eventually(books.obl.get(o).state != "open")))
 }
