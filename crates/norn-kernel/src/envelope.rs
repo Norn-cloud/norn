@@ -5,7 +5,32 @@
 //! qualification work in `T3-BUDGET-1` publishes calibrated values.
 
 use crate::decider::EnvelopeKind;
+use crate::decider::decider_fold::{Counts, EnvelopeCap, exceeded_cap, exceeded_turn_cap};
 use crate::limits::EnvelopeLimits;
+
+/// A `usize` count as `u64`. Lossless on every supported target; a count that
+/// did not fit would saturate and so exceed every cap.
+pub(crate) fn wide(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
+/// The per-decision caps as the decision core compares them.
+pub(crate) fn decision_caps(limits: &EnvelopeLimits) -> Counts {
+    Counts {
+        events: u64::from(limits.max_events),
+        commands: u64::from(limits.max_commands),
+        timers: u64::from(limits.max_timers),
+    }
+}
+
+/// The per-decision cap of one kind.
+pub(crate) const fn decision_cap(limits: &EnvelopeLimits, cap: EnvelopeCap) -> u32 {
+    match cap {
+        EnvelopeCap::Events => limits.max_events,
+        EnvelopeCap::Commands => limits.max_commands,
+        EnvelopeCap::Timers => limits.max_timers,
+    }
+}
 
 /// Counts in one decision output, or in the effects of one `step`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +48,24 @@ impl EnvelopeCounts {
             timers,
         }
     }
+
+    /// The counts as the decision core compares them.
+    fn wide(self) -> Counts {
+        Counts {
+            events: wide(self.events),
+            commands: wide(self.commands),
+            timers: wide(self.timers),
+        }
+    }
+
+    /// The count of one kind.
+    const fn of(self, cap: EnvelopeCap) -> usize {
+        match cap {
+            EnvelopeCap::Events => self.events,
+            EnvelopeCap::Commands => self.commands,
+            EnvelopeCap::Timers => self.timers,
+        }
+    }
 }
 
 /// A per-decision limit violation.
@@ -33,26 +76,20 @@ pub(crate) struct EnvelopeExceeded {
     pub(crate) actual: usize,
 }
 
-/// Checks one decision's event, command, and timer counts.
+/// Checks one decision's event, command, and timer counts: the first kind, in
+/// that order, above its cap (`decider_fold::exceeded_cap`).
 pub(crate) fn check_decision_envelope(
     limits: &EnvelopeLimits,
     counts: EnvelopeCounts,
 ) -> Result<(), EnvelopeExceeded> {
-    for (kind, limit, actual) in [
-        (EnvelopeKind::Events, limits.max_events, counts.events),
-        (EnvelopeKind::Commands, limits.max_commands, counts.commands),
-        (EnvelopeKind::Timers, limits.max_timers, counts.timers),
-    ] {
-        // A count that does not fit in u32 exceeds every per-decision cap.
-        if u32::try_from(actual).map_or(true, |actual| actual > limit) {
-            return Err(EnvelopeExceeded {
-                kind,
-                limit,
-                actual,
-            });
-        }
+    match exceeded_cap(decision_caps(limits), counts.wide()) {
+        None => Ok(()),
+        Some(cap) => Err(EnvelopeExceeded {
+            kind: EnvelopeKind::from(cap),
+            limit: decision_cap(limits, cap),
+            actual: counts.of(cap),
+        }),
     }
-    Ok(())
 }
 
 /// Explicit aggregate event, command, and timer limits for one cell turn.
@@ -135,38 +172,32 @@ impl TurnEnvelopeMeter {
         self.used
     }
 
+    /// Checks a commit's counts against what is left of the turn: the first
+    /// kind, in the order events, commands, timers, whose total would be above
+    /// its cap or overflow (`decider_fold::exceeded_turn_cap`).
     pub(crate) fn check(&self, counts: EnvelopeCounts) -> Result<(), TurnEnvelopeExceeded> {
-        for (kind, used, limit, added) in [
-            (
-                EnvelopeKind::Events,
-                self.used.events,
-                self.limits.max_events,
-                counts.events,
-            ),
-            (
-                EnvelopeKind::Commands,
-                self.used.commands,
-                self.limits.max_commands,
-                counts.commands,
-            ),
-            (
-                EnvelopeKind::Timers,
-                self.used.timers,
-                self.limits.max_timers,
-                counts.timers,
-            ),
-        ] {
-            let added = u64::try_from(added).unwrap_or(u64::MAX);
-            let actual = used.checked_add(added);
-            if actual.is_none_or(|actual| actual > limit) {
-                return Err(TurnEnvelopeExceeded {
-                    kind,
-                    limit,
-                    actual: actual.unwrap_or(u64::MAX),
-                });
-            }
+        let used = Counts {
+            events: self.used.events,
+            commands: self.used.commands,
+            timers: self.used.timers,
+        };
+        let caps = Counts {
+            events: self.limits.max_events,
+            commands: self.limits.max_commands,
+            timers: self.limits.max_timers,
+        };
+        match exceeded_turn_cap(used, caps, counts.wide()) {
+            None => Ok(()),
+            Some(exceeded) => Err(TurnEnvelopeExceeded {
+                kind: EnvelopeKind::from(exceeded.cap),
+                limit: match exceeded.cap {
+                    EnvelopeCap::Events => self.limits.max_events,
+                    EnvelopeCap::Commands => self.limits.max_commands,
+                    EnvelopeCap::Timers => self.limits.max_timers,
+                },
+                actual: exceeded.actual,
+            }),
         }
-        Ok(())
     }
 
     pub(crate) fn charge(&mut self, counts: EnvelopeCounts) {

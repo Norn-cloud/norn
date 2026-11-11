@@ -1,11 +1,20 @@
 //! The Decider form and the tick-shaped [`step`].
 
 use std::fmt;
+use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
+// The pure decision core lives in its own file so Charon can extract it
+// standalone (`scripts/verify-kernel-decider-aeneas.sh`).
+#[path = "decider_fold.rs"]
+pub(crate) mod decider_fold;
+
+use self::decider_fold::{
+    Counts, EnvelopeCap, Evolve, StepRefusal, StepTurn, fold_events, replay_events, run_step,
+};
 use crate::effect::Effect;
-use crate::envelope::{EnvelopeCounts, check_decision_envelope};
+use crate::envelope::{decision_cap, decision_caps, wide};
 use crate::limits::EnvelopeLimits;
 use crate::observations::Observations;
 
@@ -107,16 +116,32 @@ pub trait Decider {
     fn evolve(&self, state: &Self::State, event: &Self::Event) -> Self::State;
 }
 
-/// Folds `events` into `state` with [`Decider::evolve`].
+/// A decider folding a ledger of borrowed events, in the order the caller's
+/// iterator yields them.
+struct Ledger<'d, 'a, D: ?Sized + Decider>(&'d D, PhantomData<&'a D::Event>);
+
+impl<'a, D: Decider + ?Sized> Evolve for Ledger<'_, 'a, D> {
+    type State = D::State;
+    type Event = &'a D::Event;
+
+    fn initial_state(&self) -> D::State {
+        self.0.initial_state()
+    }
+
+    fn evolve(&self, state: &D::State, event: &&'a D::Event) -> D::State {
+        self.0.evolve(state, event)
+    }
+}
+
+/// Folds `events` into `state` with [`Decider::evolve`], first event first.
 pub fn fold<'a, D, I>(decider: &D, state: D::State, events: I) -> D::State
 where
     D: Decider + ?Sized,
     D::Event: 'a,
     I: IntoIterator<Item = &'a D::Event>,
 {
-    events
-        .into_iter()
-        .fold(state, |state, event| decider.evolve(&state, event))
+    let events: Vec<&'a D::Event> = events.into_iter().collect();
+    fold_events(&Ledger(decider, PhantomData), state, &events)
 }
 
 /// Rebuilds state from the ledger: `fold(evolve)` from the initial state.
@@ -126,7 +151,8 @@ where
     D::Event: 'a,
     I: IntoIterator<Item = &'a D::Event>,
 {
-    fold(decider, decider.initial_state(), events)
+    let events: Vec<&'a D::Event> = events.into_iter().collect();
+    replay_events(&Ledger(decider, PhantomData), &events)
 }
 
 /// Which envelope cap a decision exceeded.
@@ -139,6 +165,16 @@ pub enum EnvelopeKind {
     Commands,
     /// [`EnvelopeLimits::max_timers`].
     Timers,
+}
+
+impl From<EnvelopeCap> for EnvelopeKind {
+    fn from(cap: EnvelopeCap) -> Self {
+        match cap {
+            EnvelopeCap::Events => Self::Events,
+            EnvelopeCap::Commands => Self::Commands,
+            EnvelopeCap::Timers => Self::Timers,
+        }
+    }
 }
 
 impl fmt::Display for EnvelopeKind {
@@ -202,12 +238,76 @@ pub type StepOf<D> = Step<
 /// The outcome of [`step`] for decider `D`.
 pub type StepResult<D> = Result<StepOf<D>, StepError<<D as Decider>::Rejection>>;
 
+/// One turn of decider `D`, as the step driver in `decider_fold` sees it.
+struct Turn<'t, D: Decider + ?Sized> {
+    decider: &'t D,
+    input: &'t D::Input,
+    observations: &'t Observations,
+    limits: &'t EnvelopeLimits,
+}
+
+impl<D: Decider + ?Sized> Evolve for Turn<'_, D> {
+    type State = D::State;
+    type Event = D::Event;
+
+    fn initial_state(&self) -> D::State {
+        self.decider.initial_state()
+    }
+
+    fn evolve(&self, state: &D::State, event: &D::Event) -> D::State {
+        self.decider.evolve(state, event)
+    }
+}
+
+impl<D: Decider + ?Sized> StepTurn for Turn<'_, D> {
+    type Decision = DecisionOf<D>;
+    type Rejection = D::Rejection;
+
+    fn writable(&self) -> bool {
+        self.observations.world.is_writable()
+    }
+
+    fn may_perform(&self) -> bool {
+        self.observations.world.may_perform()
+    }
+
+    fn decide(&self, state: &D::State) -> Result<DecisionOf<D>, D::Rejection> {
+        self.decider.decide(state, self.input, self.observations)
+    }
+
+    fn counts(&self, decision: &DecisionOf<D>) -> Counts {
+        let effects = &decision.effects;
+        Counts {
+            events: wide(decision.events.len()),
+            commands: wide(effects.iter().filter(|effect| effect.is_perform()).count()),
+            timers: wide(effects.iter().filter(|effect| effect.is_timer()).count()),
+        }
+    }
+
+    fn caps(&self) -> Counts {
+        decision_caps(self.limits)
+    }
+
+    fn events<'d>(&self, decision: &'d DecisionOf<D>) -> &'d [D::Event] {
+        &decision.events
+    }
+
+    fn clone_state(&self, state: &D::State) -> D::State {
+        state.clone()
+    }
+}
+
+/// A count back in `usize`: every count the driver sees came from a `usize`.
+fn narrow(count: u64) -> usize {
+    usize::try_from(count).unwrap_or(usize::MAX)
+}
+
 /// One tick-shaped turn: `decide`, check, then `evolve`.
 ///
 /// All-or-nothing: on any error no event is produced, no effect is requested,
 /// and `state` (borrowed) is unchanged. Checks, in order: the world is
 /// writable; the decider accepts; the decision fits `limits`; a non-main world
-/// requests no `perform`.
+/// requests no `perform`. The order is `decider_fold::run_step`'s.
 ///
 /// # Errors
 ///
@@ -222,30 +322,30 @@ pub fn step<D>(
 where
     D: Decider + ?Sized,
 {
-    if !observations.world.is_writable() {
-        return Err(StepError::ReadOnlyWorld);
+    let turn = Turn {
+        decider,
+        input,
+        observations,
+        limits,
+    };
+    match run_step(&turn, state) {
+        Ok((next, Decision { events, effects })) => Ok(Step {
+            state: next,
+            events,
+            effects,
+        }),
+        Err(StepRefusal::ReadOnlyWorld) => Err(StepError::ReadOnlyWorld),
+        Err(StepRefusal::Rejected(rejection)) => Err(StepError::Rejected(rejection)),
+        Err(StepRefusal::EnvelopeExceeded { cap, actual }) => {
+            let kind = EnvelopeKind::from(cap);
+            Err(StepError::EnvelopeExceeded {
+                kind,
+                limit: decision_cap(limits, cap),
+                actual: narrow(actual),
+            })
+        }
+        Err(StepRefusal::PerformOutsideMain { commands }) => Err(StepError::PerformOutsideMain {
+            count: narrow(commands),
+        }),
     }
-    let Decision { events, effects } = decider
-        .decide(state, input, observations)
-        .map_err(StepError::Rejected)?;
-
-    let commands = effects.iter().filter(|effect| effect.is_perform()).count();
-    let timers = effects.iter().filter(|effect| effect.is_timer()).count();
-    check_decision_envelope(limits, EnvelopeCounts::new(events.len(), commands, timers)).map_err(
-        |exceeded| StepError::EnvelopeExceeded {
-            kind: exceeded.kind,
-            limit: exceeded.limit,
-            actual: exceeded.actual,
-        },
-    )?;
-    if commands > 0 && !observations.world.may_perform() {
-        return Err(StepError::PerformOutsideMain { count: commands });
-    }
-
-    let next = fold(decider, state.clone(), &events);
-    Ok(Step {
-        state: next,
-        events,
-        effects,
-    })
 }

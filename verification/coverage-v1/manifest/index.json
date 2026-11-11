@@ -10,7 +10,11 @@
     "verification/kernel-proof-v1/Commit/CasProof.lean": "scripts/verify-kernel-commit-aeneas.sh",
     "verification/kernel-proof-v1/Binding/BindingReference.lean": "scripts/verify-kernel-binding-aeneas.sh",
     "verification/kernel-proof-v1/Binding/ReceiptProof.lean": "scripts/verify-kernel-binding-aeneas.sh",
-    "verification/kernel-proof-v1/Binding/ReplayProof.lean": "scripts/verify-kernel-binding-aeneas.sh"
+    "verification/kernel-proof-v1/Binding/ReplayProof.lean": "scripts/verify-kernel-binding-aeneas.sh",
+    "verification/kernel-proof-v1/Decider/Reference.lean": "scripts/verify-kernel-decider-aeneas.sh",
+    "verification/kernel-proof-v1/Decider/FoldProof.lean": "scripts/verify-kernel-decider-aeneas.sh",
+    "verification/kernel-proof-v1/Decider/StepProof.lean": "scripts/verify-kernel-decider-aeneas.sh",
+    "verification/kernel-proof-v1/Decider/Probe.lean": "scripts/verify-kernel-decider-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [
