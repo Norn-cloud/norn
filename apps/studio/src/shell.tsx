@@ -17,6 +17,7 @@ import { KINDS, type Kind } from "@/lib/kinds"
 import type { Account } from "@/lib/session"
 import { cn } from "@/lib/utils"
 import { ViewProvider, ViewToggle, useView } from "@/lib/view"
+import { LocaleProvider, LocaleToggle, useLocale } from "@/lib/locale"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
 import nornMark from "@/assets/norn-mark.webp"
 
@@ -265,8 +266,10 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
 /** The page bar's right-hand buttons: the view, the page's own tools, then shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   const { view, setView } = useView()
+  const { locale, setLocale } = useLocale()
   return (
     <div className="flex items-center gap-1">
+      <LocaleToggle locale={locale} onChange={setLocale} />
       <ViewToggle view={view} onChange={setView} label="Business or technical view" />
       {tools}
       <DropdownMenu>
@@ -300,7 +303,7 @@ export function Shell({ sections, tools, account, onSignOut }: { readonly sectio
   const foot = sections.filter(({ foot }) => foot === true)
   const groups = [...new Set(main.map(({ group }) => group))]
   return (
-    <ViewProvider><InspectorProvider><TooltipProvider>
+    <LocaleProvider><ViewProvider><InspectorProvider><TooltipProvider>
       <SidebarProvider>
         <Sidebar collapsible="icon">
           <SidebarHeader><WorkspaceSwitcher /></SidebarHeader>
@@ -330,6 +333,6 @@ export function Shell({ sections, tools, account, onSignOut }: { readonly sectio
           <Inspector />
         </SidebarInset>
       </SidebarProvider>
-    </TooltipProvider></InspectorProvider></ViewProvider>
+    </TooltipProvider></InspectorProvider></ViewProvider></LocaleProvider>
   )
 }

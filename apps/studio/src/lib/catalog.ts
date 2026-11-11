@@ -1,5 +1,6 @@
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import type { Artifact } from "./transport.ts"
+import { labelIndex, pick } from "./labels.ts"
 
 type PropertyType = Schemas["NornIrPropertyType"]
 type PropertyTypeDef = Schemas["NornIrPropertyTypeDef"]
@@ -7,6 +8,12 @@ export type Lifecycle = Schemas["NornIrLifecycle"]
 
 export interface Field {
   readonly id: string
+  /** The reader's label for the fact, or the id in words when it has none in their language. */
+  readonly label: string
+  /** The language `label` is written in. */
+  readonly labelLang: string
+  /** Enum values' labels in the reader's language, by stored value; a value without one shows as stored. */
+  readonly valueLabels: ReadonlyMap<string, string>
   readonly type: string
   readonly optional: boolean
   /** Declared exact-decimal facts, with the unit or currency fact their type names. */
@@ -58,6 +65,10 @@ export function sourceOf(expression: string): Source {
 export interface Concept {
   readonly name: string
   readonly title: string
+  /** The language `title` is written in: the reader's when the type has a label in it, else `en`. */
+  readonly titleLang: string
+  /** The label awaits a person's review (machine-proposed). */
+  readonly titleNeedsReview: boolean
   /** A concept some connected system feeds, or a core idea the concepts build on. */
   readonly kind: "concept" | "core idea"
   /** What the definition declares: an object type (it can have records) or a shared interface. Feed presence is `kind`. */
@@ -140,8 +151,12 @@ function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDe
   return type.kind === "decimal" ? { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property } : undefined
 }
 
-/** Index the server's admitted artifacts; nothing is inferred beyond what they declare. */
-export function catalogOf(artifacts: readonly Artifact[]): Catalog {
+/**
+ * Index the server's admitted artifacts; nothing is inferred beyond what they declare.
+ * Titles and fact names come from `labels` artifacts in `locale` when they have one there.
+ */
+export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalog {
+  const labels = labelIndex(artifacts)
   const types = new Map<string, PropertyTypeDef>()
   const rules = new Map<string, string[]>()
   const feeds = new Map<string, Feed[]>()
@@ -199,23 +214,33 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       parents = def.extends ?? []
     } else continue
     const invariants = (def.invariants ?? []).map(({ description, message }) => description ?? message)
-    const title = conceptTitle(def.name)
+    const own = pick(labels, `objectType:${def.name}`, locale)
+    const title = own?.text ?? conceptTitle(def.name)
     const fed = feeds.get(def.name) ?? []
     concepts.push({
       name: def.name,
       title,
+      titleLang: own?.tag ?? "en",
+      titleNeedsReview: own?.needsReview ?? false,
       kind: fed.length > 0 ? "concept" : "core idea",
       definition: "objectType" in payload ? "object type" : "interface",
       summary: [def.name, title].includes(artifact.name) ? undefined : artifact.name,
-      description: def.description,
+      description: own?.description ?? def.description,
       parents,
-      fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types), scalar: scalarOf(type, types) })),
+      fields: (def.properties ?? []).map(({ id, type, constraints }) => {
+        const label = pick(labels, `property:${def.name}.${id}`, locale)
+        const scalar = scalarOf(type, types)
+        const valueLabels = new Map(scalar.kind === "enum"
+          ? scalar.values.flatMap((value) => { const text = pick(labels, `enumValue:${def.name}.${id}=${value}`, locale)?.text; return text === undefined ? [] : [[value, text] as const] })
+          : [])
+        return { id, label: label?.text ?? id.replaceAll("_", " "), labelLang: label?.tag ?? "en", valueLabels, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types), scalar }
+      }),
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],
       feeds: fed,
       lifecycles: "lifecycles" in def ? def.lifecycles ?? [] : [],
     })
   }
-  concepts.sort((a, b) => a.title.localeCompare(b.title))
+  concepts.sort((a, b) => a.title.localeCompare(b.title, locale))
   return { concepts, systems, byName: new Map(concepts.map((concept) => [concept.name, concept])) }
 }
