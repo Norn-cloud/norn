@@ -198,17 +198,36 @@ fn open_cow(name: &str, cache_kib: i64) -> Connection {
     c
 }
 
+static MAIN_VERSION: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1_000_000);
+
+/// fdatasync latency of a 4 KiB append in `dir`: the floor under any durable
+/// commit or durable fork record on this disk.
+fn fsync_probe(dir: &Path) {
+    use std::io::Write;
+    let p = dir.join("fsync-probe");
+    let mut f = std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(&p).unwrap();
+    let buf = [7u8; 4096];
+    let mut v = Vec::new();
+    for _ in 0..50 {
+        let t = Instant::now();
+        f.write_all(&buf).unwrap();
+        f.sync_data().unwrap();
+        v.push(t.elapsed().as_nanos() as u64);
+    }
+    summary(&format!("fdatasync 4 KiB append on {}", dir.display()), &mut v);
+    let _ = std::fs::remove_file(p);
+}
+
 /// Main keeps committing while forks are created and agents write.
 fn spawn_main_writer(main: Connection, subjects: u64, stop: Arc<AtomicBool>, pace: Duration) -> std::thread::JoinHandle<(Connection, Vec<u64>)> {
     std::thread::spawn(move || {
         let mut rng = SmallRng::seed_from_u64(99);
         let mut lat = Vec::new();
-        let mut v = 1_000_000i64;
         while !stop.load(Ordering::Relaxed) {
+            let v = MAIN_VERSION.fetch_add(1, Ordering::Relaxed);
             let t = Instant::now();
             commit_one(&main, &mut rng, subjects, v);
             lat.push(t.elapsed().as_nanos() as u64);
-            v += 1;
             std::thread::sleep(pace);
         }
         (main, lat)
@@ -308,6 +327,10 @@ fn main() {
     // ~2.6 KB per subject (8 fact rows + index entries + one ledger event).
     let subjects = cfg.size_mb * 1024 * 1024 / 2600;
 
+    fsync_probe(&cfg.dir);
+    if let Some(r) = &cfg.reflink_dir {
+        fsync_probe(r);
+    }
     let only = std::env::var("FB_PHASES").unwrap_or_else(|_| "baseline,cow".into());
     if only.contains("baseline") {
         baselines(&cfg, subjects);

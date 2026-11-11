@@ -253,6 +253,7 @@ impl Engine {
         self.files.read().get(name).cloned()
     }
 
+    #[allow(dead_code)]
     pub fn file_count(&self) -> usize {
         self.files.read().len()
     }
