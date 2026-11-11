@@ -1,5 +1,5 @@
 {
-  "sha256": "28c75416497a80c661e633d79f26afaa551562d76277e73b2765d24c59a39f88",
+  "sha256": "a0c82f348b21efa3c1d0d58da8cae502e30c575be26570f0d9ea99b977296adc",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -21,6 +21,7 @@
     "crates/norn-graph/Cargo.toml",
     "crates/norn-ir/Cargo.toml",
     "crates/norn-kernel/Cargo.toml",
+    "crates/norn-pages/Cargo.toml",
     "crates/norn-projections/Cargo.toml",
     "crates/norn-skeleton-guard/Cargo.toml",
     "crates/norn-testkit/Cargo.toml",

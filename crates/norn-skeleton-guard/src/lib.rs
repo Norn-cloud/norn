@@ -210,6 +210,8 @@ pub const CRATES: &[CrateRule] = &[
         ],
     ),
     rule("norn-dataplane", Ring::One, &["norn-ir"]),
+    // Copy-on-write page store under SQLite (native only; FFI in sqlite-plugin).
+    rule("norn-pages", Ring::One, &["norn-cell", "norn-kernel"]),
     rule(
         "norn-api",
         Ring::One,

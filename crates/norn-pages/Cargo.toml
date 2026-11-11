@@ -1,0 +1,30 @@
+[package]
+name = "norn-pages"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Content-addressed copy-on-write page store under SQLite for O(1) cell forks (ring 1, native only)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Keyed per-tenant content addresses (keyed BLAKE3 MAC) and key derivation.
+blake3 = "=1.8.7"
+norn-cell = { path = "../norn-cell" }
+# The SQLite VFS FFI: a safe `Vfs` trait over SQLite's C interface, registered
+# statically against the bundled SQLite that norn-cell's rusqlite links. Its
+# build script runs bindgen, so builds need libclang.
+sqlite-plugin = { version = "=0.11.0", default-features = false, features = ["static"] }
+thiserror = "2.0.20"
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+norn-kernel = { path = "../norn-kernel" }
+norn-testkit = { path = "../norn-testkit" }
+proptest = "1.11.0"
+serde_json = "1.0.150"
+
+[lints]
+workspace = true

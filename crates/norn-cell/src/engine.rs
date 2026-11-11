@@ -373,6 +373,33 @@ impl NativeEngine {
         Self::configured(conn)
     }
 
+    /// Open `path` through the registered SQLite VFS `vfs`, with this
+    /// engine's configuration. The VFS owns the storage, so the connection
+    /// takes exclusive locking and an in-memory rollback journal: it must be
+    /// the file's only connection, and durability is the VFS's.
+    ///
+    /// # Errors
+    /// An unknown VFS, or SQLite open or configuration errors.
+    pub fn open_with_vfs(path: &str, vfs: &str) -> Result<Self, CellError> {
+        let conn = rusqlite::Connection::open_with_flags_and_vfs(
+            path,
+            rusqlite::OpenFlags::default(),
+            vfs,
+        )?;
+        for pragma in ["locking_mode = EXCLUSIVE", "journal_mode = MEMORY"] {
+            let _applied: String =
+                conn.query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))?;
+        }
+        conn.execute_batch("PRAGMA foreign_keys = ON")?;
+        Self::configured(conn)
+    }
+
+    /// Whether no transaction is open on this connection.
+    #[must_use]
+    pub fn is_autocommit(&self) -> bool {
+        self.conn.is_autocommit()
+    }
+
     fn configured(mut conn: rusqlite::Connection) -> Result<Self, CellError> {
         use rusqlite::config::DbConfig;
         use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
@@ -418,7 +445,7 @@ impl NativeEngine {
 #[cfg(feature = "native")]
 impl crate::fork::ForkEngine for NativeEngine {
     fn fork_engine(&self) -> Result<Self, CellError> {
-        if !self.conn.is_autocommit() {
+        if !self.is_autocommit() {
             return Err(CellError::Engine(
                 "a fork copies committed state; a transaction is open".to_owned(),
             ));

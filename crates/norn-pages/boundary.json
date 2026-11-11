@@ -1,0 +1,10 @@
+{
+  "name": "norn-pages",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-cell",
+    "norn-kernel"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}
