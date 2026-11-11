@@ -91,11 +91,14 @@ def apply(document: dict) -> None:
         _import_doctype(copy.deepcopy(doctype))
     for workflow in document.get("workflows", []):
         _replace_workflow(copy.deepcopy(workflow))
+    for name in wanted:
+        _asset_dir(name, keep=True)
     for name in frappe.get_all("DocType", {"module": MODULE}, pluck="name"):
         if name not in wanted:
             for workflow in frappe.get_all("Workflow", {"document_type": name}, pluck="name"):
                 frappe.delete_doc("Workflow", workflow, force=True, ignore_permissions=True)
             frappe.delete_doc("DocType", name, force=True, ignore_permissions=True)
+            _asset_dir(name, keep=False)
     frappe.db.commit()
     frappe.clear_cache()
     print(
@@ -103,6 +106,20 @@ def apply(document: dict) -> None:
         f" (was {(previous.get('bundleHash') or 'none')[:12]}):"
         f" {len(wanted)} DocType(s), {len(document.get('workflows', []))} Workflow(s)"
     )
+
+
+def _asset_dir(name: str, keep: bool) -> None:
+    """Desk form meta lists `<module>/doctype/<slug>/` for client assets even
+    for a virtual controller, so each generated DocType gets an empty folder.
+    It never holds code; the finder supplies the controller. A pruned DocType's
+    folder is removed only while empty (another site may still use it)."""
+    from frappe.modules import get_module_path, scrub
+
+    folder = os.path.join(get_module_path(MODULE), "doctype", scrub(name))
+    if keep:
+        os.makedirs(folder, exist_ok=True)
+    elif os.path.isdir(folder) and not os.listdir(folder):
+        os.rmdir(folder)
 
 
 def _ensure(doctype: str, name: str, values: dict) -> None:

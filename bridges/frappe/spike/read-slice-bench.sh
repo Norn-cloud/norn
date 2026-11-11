@@ -34,6 +34,10 @@ login() { # login USER PASSWORD -> cookie jar path
   curl -s -H "Host: $SITE" -c "$jar" -X POST http://127.0.0.1:8000/api/method/login -d "usr=$1" -d "pwd=$2" > /dev/null
   echo "$jar"
 }
+raw() { # raw JAR METHOD ARGS... -> the untruncated JSON response
+  local jar=$1 method=$2; shift 2
+  curl -s -H "Host: $SITE" -b "$jar" -G "http://127.0.0.1:8000/api/method/$method" "$@"
+}
 api() { # api JAR METHOD ARGS...
   local jar=$1 method=$2; shift 2
   curl -s -H "Host: $SITE" -b "$jar" -G "http://127.0.0.1:8000/api/method/$method" "$@" | python3 -c "$SHOW"
@@ -42,24 +46,24 @@ api() { # api JAR METHOD ARGS...
 case "${1:-}" in
 start-cell)
   dir=$2
-  docker exec $C bash -c 'for p in /proc/[0-9]*; do grep -qa celld $p/cmdline 2>/dev/null && kill ${p#/proc/}; done' || true
+  # Stop the previous cell host and its node: every process running in the cell dir.
+  docker exec $C bash -c 'for p in /proc/[0-9]*; do [ "$(readlink $p/cwd)" = /home/frappe/cell ] && kill ${p#/proc/}; done; for _ in $(seq 30); do (exec 3<>/dev/tcp/127.0.0.1/9877) 2>/dev/null || exit 0; sleep 1; done; exit 1' || true
   sleep 1
   docker exec $C rm -rf /home/frappe/cell
   docker cp "$dir" $C:/home/frappe/cell
   docker cp "$TOOLS/." $C:/usr/local/bin/
   docker exec $C chown -R frappe:frappe /home/frappe/cell
-  # The cell trusts exactly this issuer and JWKS URL (host configuration).
-  docker exec -u frappe $C python3 - <<'PY'
-import json
-path = "/home/frappe/cell/wrangler.json"
-config = json.load(open(path))
-config["vars"] = {
-    "NORN_HOST_ISSUER": "frappe:demo.localhost",
-    "NORN_HOST_JWKS_URL": "http://127.0.0.1:8000/api/method/norn_bridge.auth.jwks",
-}
-json.dump(config, open(path, "w"))
-PY
-  docker exec -d -u frappe -w /home/frappe/cell $C bash -lc 'celld dev --port 9877 > /home/frappe/cell/celld.log 2>&1'
+  # Host configuration: the cell trusts exactly this issuer and JWKS URL, and
+  # gets a fresh stage lineage key. The JWKS URL names the site (a *.localhost
+  # name resolves to loopback): Frappe picks the site from the Host header,
+  # which a Worker fetch cannot set. .dev.vars is the celld dev variable file.
+  docker exec -i -u frappe $C sh -c 'umask 077; cat > /home/frappe/cell/.dev.vars' <<VARS
+NORN_HOST_ISSUER=frappe:$SITE
+NORN_HOST_JWKS_URL=http://$SITE:8000/api/method/norn_bridge.auth.jwks
+NORN_LINEAGE_KEY=$(head -c 32 /dev/urandom | base64 -w0)
+VARS
+  # --no-watch: the build is fixed; watching would restart on the cell's own state writes.
+  docker exec -d -u frappe -w /home/frappe/cell $C bash -lc 'celld dev --no-watch --port 9877 > /home/frappe/cell/celld.log 2>&1'
   for _ in $(seq 120); do cellget /v1/definitions > /dev/null 2>&1 && break; sleep 1; done
   docker exec $C sh -c 'celld --version 2>/dev/null | head -1'
   echo "cell build: $(docker exec $C sha256sum /home/frappe/cell/pkg/norn_cell_do_bg.wasm | cut -c1-16)"
@@ -82,9 +86,9 @@ show)
   step "the cell refuses a caller without a host token"
   cellget "/v1/objects/canon.Item?orgId=org_demo&environmentId=dev"
   step "generated DocType meta (fields Frappe shows for Canon Item)"
-  api "$admin" frappe.desk.form.load.getdoctype --data-urlencode doctype="Canon Item" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d) if "docs" not in d else [(f["fieldname"], f["fieldtype"]) for f in d["docs"][0]["fields"]])'
+  raw "$admin" frappe.desk.form.load.getdoctype --data-urlencode doctype="Canon Item" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d) if "docs" not in d else [(f["fieldname"], f["fieldtype"]) for f in d["docs"][0]["fields"]])'
   step "generated Workflow for Core Analytics Restatement"
-  api "$admin" frappe.client.get --data-urlencode doctype=Workflow --data-urlencode "name=Core Analytics Restatement status lifecycle" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print("states:", [s["state"] for s in d["states"]]); print("transitions:", [(t["state"], t["action"], t["next_state"], t["allowed"]) for t in d["transitions"]])'
+  raw "$admin" frappe.client.get --data-urlencode doctype=Workflow --data-urlencode "name=Core Analytics Restatement status lifecycle" | python3 -c 'import json,sys; d=json.load(sys.stdin)["message"]; print("states:", [s["state"] for s in d["states"]]); print("transitions:", [(t["state"], t["action"], t["next_state"], t["allowed"]) for t in d["transitions"]])'
   for who in Administrator:admin viewer@demo.localhost:demo-pass-1234 member@demo.localhost:demo-pass-1234 nobody@demo.localhost:demo-pass-1234; do
     jar=$(login "${who%%:*}" "${who#*:}")
     step "as ${who%%:*}: Canon Item list, count and one form"
