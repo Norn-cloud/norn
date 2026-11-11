@@ -132,3 +132,21 @@ describe("closures, sum and day helpers", () => {
     expect(checked.diagnostics.diagnostics).toEqual([]); expect(checked.admitted).toBe(true)
   }, 30_000)
 })
+
+// A2 (#1176): TypeScript lambdas in laws and guards lower statically to the A1 forms.
+test("typed lambdas in laws and guards compile to norn-zen/6 and are admitted", () => {
+  const compiled = compileDefinitions(join(TOOL_ROOT, "corpus/accept/law-closures.ts"), { scope: options.scope, sourcePath: "corpus/accept/law-closures.ts" })
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+  const byId = new Map(compiled.artifacts.map((a) => [(a as { artifactId: string }).artifactId, a as { payload: Record<string, any> }]))
+  const law = byId.get("books.JournalEntry.balanced.law")!.payload
+  expect(law.condition).toBe("self.status == 'posted'")
+  expect(law.response.expression).toBe("(((sum(map(self.lines as l, l.amount)) == 0) and all(self.lines as l, l.amount != 0)) and (not some(self.lines as l, startsWith(l.sku, 'VOID-') and some(['A', 'B'] as p, endsWith(l.sku, p))))) and (add_days(date(self.issue_date), 30) >= date(self.due_date))")
+  const guard = byId.get("books.JournalEntry.entity")!.payload.objectType.lifecycles[0].transitions[0].guards[0]
+  expect(guard).toBe("(count(self.lines as l, l.amount != 0) >= 2) and (days_between(date(self.issue_date), date(self.due_date)) <= 90)")
+  // Each lambda maps back to its source line.
+  expect(compiled.sourceMap.some((s) => s.artifactId === "books.JournalEntry.balanced.law" && s.pointer === "/payload/response/expression" && s.at.line === 48)).toBe(true)
+  if (checker) {
+    const checked = checker.checkArtifactSet(compiled.artifacts)
+    expect(checked.diagnostics.diagnostics).toEqual([]); expect(checked.admitted).toBe(true)
+  }
+}, 30_000)

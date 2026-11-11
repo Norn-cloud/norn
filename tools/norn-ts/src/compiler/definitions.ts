@@ -1006,7 +1006,35 @@ class DefinitionCompiler {
   private law(call: ts.CallExpression): L.LawDef {
     const members = this.meta(call, ["id", "title", "version", "law", "dependencies"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
-    return L.law({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), law: this.json(need("law")) as unknown as L.LawIR, dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+    const id = this.string(need("id"))
+    return L.law({ id, title: this.string(need("title")), version: this.string(need("version")), law: this.lawBody(need("law"), id) as unknown as L.LawIR, dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+  }
+
+  /**
+   * LawIR as literal data, except that `condition` and `response.expression`
+   * may be typed expression callbacks (`Norn.expression(Subject, self => ...)`,
+   * A2 of #1176) instead of ZEN text; string literals stay as written.
+   */
+  private lawBody(input: ts.Expression, artifactId: string): Json {
+    const members = this.record(input)
+    const slot = (value: ts.Expression, pointer: string): Json => {
+      const e = this.deref(value)
+      return ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e) ? e.text : this.zenAt(value, artifactId, pointer, "self")
+    }
+    const out: Record<string, Json> = {}
+    for (const [key, value] of members) {
+      if (key === "__proto__") throw new CompileError("NORN-FLOW-LITERAL", "__proto__ is not a portable JSON member name", value.parent)
+      if (key === "condition") out[key] = slot(value, "/payload/condition")
+      else if (key === "response" && ts.isObjectLiteralExpression(this.deref(value))) {
+        const response: Record<string, Json> = {}
+        for (const [field, member] of this.record(value)) {
+          if (field === "__proto__") throw new CompileError("NORN-FLOW-LITERAL", "__proto__ is not a portable JSON member name", member.parent)
+          response[field] = field === "expression" ? slot(member, "/payload/response/expression") : this.json(member)
+        }
+        out[key] = response
+      } else out[key] = this.json(value)
+    }
+    return out
   }
 
   private connector(call: ts.CallExpression): C.ConnectorDef {

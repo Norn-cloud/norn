@@ -55,6 +55,11 @@ export interface CheckOptions {
   readonly cancellationToken?: ts.CancellationToken
 }
 
+/** Array methods that lower to norn-zen/6 closures; `.length` lowers to `len`. */
+const ARRAY_CLOSURES: ReadonlySet<string> = new Set(["some", "every", "filter", "map"])
+/** Element names that would shadow a Norn expression binding or a zen keyword. */
+export const RESERVED_CLOSURE_NAMES: ReadonlySet<string> = new Set(["self", "actor", "input", "slice", "event", "and", "or", "not", "in", "as"])
+
 interface Ctx {
   /** Inside the body argument of a `Norn.flow` call. */
   readonly flow: boolean
@@ -311,6 +316,8 @@ export class ProfileChecker {
 class FileWalk {
   private readonly diagnostics: Diagnostic[] = []
   private readonly uses: SymbolUse[] = []
+  /** Element names of the enclosing array closures, innermost last. */
+  private readonly closureParams: string[] = []
   private readonly jsonData = new Map<ts.VariableDeclaration, boolean>()
   private readonly boundedJsonData = new Set<ts.VariableDeclaration>()
   private jsonDataDepthExceeded = false
@@ -1025,8 +1032,8 @@ class FileWalk {
       case ts.SyntaxKind.LessThanEqualsToken:
       case ts.SyntaxKind.GreaterThanToken:
       case ts.SyntaxKind.GreaterThanEqualsToken:
-        if (operands() && !(this.isNumber(b.left) && this.isNumber(b.right))) {
-          this.report(b, "NORN-FLOW-EXPRESSION", "ordering comparisons are qualified for numbers only")
+        if (operands() && !(this.isNumber(b.left) && this.isNumber(b.right)) && !this.sameParsedTemporal(b.left, b.right)) {
+          this.report(b, "NORN-FLOW-EXPRESSION", "ordering comparisons are qualified for numbers and for two parsed dates or timestamps (Norn.parseDate, Norn.addDays, Norn.parseTimestamp)")
         }
         return
       case ts.SyntaxKind.EqualsEqualsToken:
@@ -1142,6 +1149,7 @@ class FileWalk {
         for (const a of call.arguments) this.expr(a, ctx)
         return
       }
+      if (array && ARRAY_CLOSURES.has(name)) return this.arrayClosure(call, callee, ctx)
     }
     const text = callee.getText(this.sf)
     if (this.owner.spelledLikeAdmitted(text, ts.isIdentifier(callee))) {
@@ -1149,6 +1157,45 @@ class FileWalk {
     }
     if (this.isAmbient(callee)) return this.report(callee, "NORN-FLOW-AMBIENT", `\`${text}\` reads host time/entropy/IO`)
     this.report(callee, "NORN-FLOW-UNSUPPORTED-CALL", `\`${text}\` is a call the compiler cannot see`)
+  }
+
+  /**
+   * `xs.some(x => ...)`, `.every`, `.filter`, `.map` (A2, #1176): norn-zen/6
+   * closures. Only in a pure expression callback (a law, guard, derivation or
+   * decision), with one inline arrow whose single plain parameter is not
+   * already bound by an enclosing closure and whose body is an expression.
+   */
+  private arrayClosure(call: ts.CallExpression, callee: ts.PropertyAccessExpression, ctx: Ctx): void {
+    const name = callee.name.text
+    if (!ctx.pure) return this.report(callee, "NORN-FLOW-EXPRESSION", `\`.${name}\` is a closure; closures are admitted in expression callbacks (Norn.expression, laws, guards, derivations), not in flow data`)
+    this.expr(callee.expression, ctx)
+    const fn = call.arguments[0]
+    if (call.arguments.length !== 1 || !fn) return this.report(call, "NORN-FLOW-EXPRESSION", `\`.${name}\` takes exactly one inline callback`)
+    if (!ts.isArrowFunction(fn)) return this.report(fn, "NORN-FLOW-CAPTURE", `pass \`.${name}\` an inline arrow callback; a function value is opaque to the compiler`)
+    if (fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) return this.report(fn, "NORN-FLOW-UNSUPPORTED-CALL", "async callbacks are not admitted")
+    const [param, ...extra] = fn.parameters
+    if (!param || extra.length > 0 || !ts.isIdentifier(param.name) || param.initializer || param.dotDotDotToken) {
+      return this.report(fn, "NORN-FLOW-UNSUPPORTED-SYNTAX", `a \`.${name}\` callback takes one plain parameter (the element); the index and array arguments are not admitted`)
+    }
+    if (RESERVED_CLOSURE_NAMES.has(param.name.text)) return this.report(param, "NORN-FLOW-UNSUPPORTED-SYNTAX", `\`${param.name.text}\` names a Norn expression binding; call the element something else`)
+    if (this.closureParams.includes(param.name.text)) return this.report(param, "NORN-FLOW-UNSUPPORTED-SYNTAX", `\`${param.name.text}\` is already the element of an enclosing closure; give the inner element another name`)
+    if (ts.isBlock(fn.body)) return this.report(fn.body, "NORN-FLOW-UNSUPPORTED-SYNTAX", `a \`.${name}\` callback body is one expression; write \`x => ...\` without braces`)
+    this.closureParams.push(param.name.text)
+    try { this.expr(fn.body, ctx) } finally { this.closureParams.pop() }
+  }
+
+  /** Both operands are parsed temporal values of one kind, which norn-zen/6 orders semantically. */
+  private sameParsedTemporal(left: ts.Expression, right: ts.Expression): boolean {
+    const kind = (node: ts.Expression): string | undefined => {
+      while (ts.isParenthesizedExpression(node)) node = node.expression
+      if (!ts.isCallExpression(node)) return undefined
+      const callee = node.expression
+      const name = ts.isPropertyAccessExpression(callee) ? callee.name : ts.isIdentifier(callee) ? callee : undefined
+      const id = name && this.resolve(name).id
+      return id === "@norn/authoring#Norn.parseDate" || id === "@norn/authoring#Norn.addDays" ? "date" : id === "@norn/authoring#Norn.parseTimestamp" ? "timestamp" : undefined
+    }
+    const l = kind(left)
+    return l !== undefined && l === kind(right)
   }
 
   private args(call: ts.CallExpression, ctx: Ctx): void {

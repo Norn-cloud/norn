@@ -390,7 +390,11 @@ declare module "@norn/authoring" {
       readonly id: string
       readonly title: string
       readonly version: string
-      readonly law: import("../src/builder/law.ts").LawIR
+      /** `condition` and a predicate `response.expression` may be typed lambdas (`Norn.expression(Subject, self => ...)`). */
+      readonly law: Omit<import("../src/builder/law.ts").LawIR, "condition" | "response"> & {
+        readonly condition?: string | Expression<boolean>
+        readonly response: Exclude<import("../src/builder/law.ts").LawResponse, { readonly kind: "predicate" }> | { readonly kind: "predicate"; readonly expression: string | Expression<boolean> }
+      }
       readonly dependencies: import("../src/builder/law.ts").LawDef["dependencies"]
     }): LawDefinition
 
@@ -495,6 +499,12 @@ declare module "@norn/authoring" {
     function parseTimestamp(text: string): string
     /** UTF-8 byte count, matching the canonical ZEN profile. */
     function byteLength(text: string): number
+    /** Sum of a list of numbers (`sum`); an empty list sums to 0. */
+    function sum(values: ReadonlyArray<number>): number
+    /** Signed calendar days from `start` to `end` (`days_between`); raw date text is parsed. */
+    function daysBetween(start: string, end: string): number
+    /** The calendar date `days` after `date` (`add_days`); a parsed date, comparable with other parsed dates. */
+    function addDays(date: string, days: number): string
 
     interface SourceSchemaSpec {
       readonly id: string
