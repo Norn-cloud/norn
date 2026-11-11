@@ -322,12 +322,12 @@ fn newest(lines: &Receiver<Value>, pending: &mut VecDeque<Value>) -> Option<Valu
         pending.push_back(next);
     }
     if let Some(last) = pending.iter().rposition(is_compiled) {
-        let mut index = 0_usize;
-        pending.retain(|event| {
-            let keep = index == last || !is_compiled(event);
-            index += 1;
-            keep
-        });
+        *pending = std::mem::take(pending)
+            .into_iter()
+            .enumerate()
+            .filter(|(index, event)| *index == last || !is_compiled(event))
+            .map(|(_, event)| event)
+            .collect();
     }
     let first = pending
         .iter()
@@ -741,7 +741,10 @@ fn private_dir(root: &Path) -> Result<PathBuf, Failure> {
     if is_symlink(&state) {
         return Err(Failure::setup(
             "norn.dev.unsafe_state",
-            format!("{} is a symlink; norn dev keeps its session token only in a real .norn directory", state.display()),
+            format!(
+                "{} is a symlink; norn dev keeps its session token only in a real .norn directory",
+                state.display()
+            ),
         ));
     }
     std::fs::create_dir_all(&state)
@@ -749,8 +752,9 @@ fn private_dir(root: &Path) -> Result<PathBuf, Failure> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700))
-            .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", state.display())))?;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).map_err(
+            |error| Failure::setup("norn.dev.io", format!("{}: {error}", state.display())),
+        )?;
     }
     Ok(state)
 }
@@ -792,11 +796,16 @@ fn cell_path(root: &Path, cell: &str) -> Result<PathBuf, Failure> {
 /// followed through a symlink, and its mode is 0600 whether it is new or
 /// already existed (for example from a checkout).
 fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
-    let failed = |error: std::io::Error| Failure::setup("norn.dev.io", format!("{}: {error}", path.display()));
+    let failed = |error: std::io::Error| {
+        Failure::setup("norn.dev.io", format!("{}: {error}", path.display()))
+    };
     if is_symlink(path) {
         return Err(Failure::setup(
             "norn.dev.unsafe_state",
-            format!("{} is a symlink; norn dev refuses to write a session file through it", path.display()),
+            format!(
+                "{} is a symlink; norn dev refuses to write a session file through it",
+                path.display()
+            ),
         ));
     }
     let mut options = OpenOptions::new();
@@ -815,7 +824,6 @@ fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
     }
     file.write_all(text.as_bytes()).map_err(failed)
 }
-
 
 #[cfg(all(test, unix))]
 #[allow(
@@ -837,7 +845,12 @@ mod tests {
     fn the_cell_stays_inside_the_project() {
         let (_dir, root) = project();
         assert!(cell_path(&root, ".norn/cell.sqlite").is_ok());
-        for cell in ["/tmp/other.sqlite", "../other.sqlite", ".norn/../../other.sqlite", ""] {
+        for cell in [
+            "/tmp/other.sqlite",
+            "../other.sqlite",
+            ".norn/../../other.sqlite",
+            "",
+        ] {
             let refused = cell_path(&root, cell).err().unwrap();
             assert_eq!(refused.code, "norn.project.cell_outside", "{cell}");
         }
@@ -850,7 +863,11 @@ mod tests {
         );
         // So is a cell file that is itself a symlink.
         std::fs::create_dir_all(root.join("cells")).unwrap();
-        symlink(elsewhere.path().join("x.sqlite"), root.join("cells/cell.sqlite")).unwrap();
+        symlink(
+            elsewhere.path().join("x.sqlite"),
+            root.join("cells/cell.sqlite"),
+        )
+        .unwrap();
         assert_eq!(
             cell_path(&root, "cells/cell.sqlite").err().unwrap().code,
             "norn.project.cell_outside"
@@ -864,18 +881,27 @@ mod tests {
         let token = state.join("dev.token");
         // A new file is created 0600.
         write_private(&token, "a\n").unwrap();
-        assert_eq!(std::fs::metadata(&token).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&token).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         // An existing world-readable file (say, from a checkout) is narrowed.
         std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
         write_private(&token, "b\n").unwrap();
-        assert_eq!(std::fs::metadata(&token).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&token).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         assert_eq!(std::fs::read_to_string(&token).unwrap(), "b\n");
         // A symlinked token is refused and its target left alone.
         std::fs::remove_file(&token).unwrap();
         let target = root.join("victim");
         std::fs::write(&target, "keep").unwrap();
         symlink(&target, &token).unwrap();
-        assert_eq!(write_private(&token, "c\n").err().unwrap().code, "norn.dev.unsafe_state");
+        assert_eq!(
+            write_private(&token, "c\n").err().unwrap().code,
+            "norn.dev.unsafe_state"
+        );
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
     }
 
@@ -884,7 +910,10 @@ mod tests {
         let (_dir, root) = project();
         let elsewhere = tempfile::tempdir().unwrap();
         symlink(elsewhere.path(), root.join(".norn")).unwrap();
-        assert_eq!(private_dir(&root).err().unwrap().code, "norn.dev.unsafe_state");
+        assert_eq!(
+            private_dir(&root).err().unwrap().code,
+            "norn.dev.unsafe_state"
+        );
     }
 
     #[test]
