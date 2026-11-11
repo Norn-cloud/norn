@@ -1361,6 +1361,10 @@ fn integer_metadata_findings(expression: &str, member: &str, schema: Value) -> V
 /// literal, and every constructed object, array, and record member keeps that
 /// proof after type joining.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one table row per integer proof case"
+)]
 fn integer_action_inputs_require_an_integral_proof_for_every_constructed_leaf() {
     let count = json!({ "type": "integer" });
     let samples = json!({ "type": "array", "items": { "type": "integer" } });
