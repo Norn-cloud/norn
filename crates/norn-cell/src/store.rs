@@ -1799,15 +1799,16 @@ fn preflight_definition_install<E: SqlEngine>(
         })
         .transpose()?;
     if let Some(change) = install.retained {
-        // A retained revision rides the governed install but never changes
-        // the kernel: its set and receipt are the active ones, so the new
-        // definitions version has the kernel identity of the one before it
+        // A retained revision rides the governed install but, unless it is a
+        // flow (an automation that installs into the kernel set), never
+        // changes the kernel: its set and receipt are the active ones, so the
+        // new definitions version has the kernel identity of the one before it
         // (question pins and historical cutoffs compare that identity).
         let unchanged = previous.as_ref().is_some_and(|previous| {
             previous.canonical_set == install.input.canonical_set
                 && previous.receipt_sha256 == install.input.receipt_sha256
         });
-        if !unchanged {
+        if !unchanged && change.definition.kind != "flow" {
             return Err(CellError::DefinitionReceiptInvalid(
                 "a retained revision installs over the active kernel set and receipt, unchanged"
                     .to_owned(),
@@ -2610,25 +2611,27 @@ impl<E: SqlEngine> CellStore<E> {
         )
     }
 
-    /// Install one retained (non-kernel) definition revision through the
-    /// governed definitions install: the kernel set, receipt and model in
-    /// `input` must be the active ones, unchanged; the commit appends the
-    /// revision, a new definitions version and its ledger event atomically.
-    /// The revision is compare-and-set on the id's current revision.
+    /// Install one retained definition revision through the governed
+    /// definitions install: the commit installs `input`'s kernel set and
+    /// receipt with `candidate_model` (the active ones, unchanged, for a
+    /// definition that is not a kernel artifact; a flow's admitted set and
+    /// projected model otherwise), and appends the revision, a new
+    /// definitions version and its ledger event atomically. The revision is
+    /// compare-and-set on the id's current revision.
     ///
     /// # Errors
     ///
     /// A definitions-version or retained-revision conflict, or a store error.
     pub fn install_retained_definition(
         &mut self,
+        candidate_model: Model,
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
         scope: &str,
         change: &crate::retained::RetainedDefinitionChange,
     ) -> Result<InstalledDefinitionSet, CellError> {
-        let model = self.model.clone();
         self.install_definitions_from_origin(
-            model,
+            candidate_model,
             input,
             expected_version,
             scope,

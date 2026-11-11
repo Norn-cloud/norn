@@ -10,6 +10,147 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/actions/{actionId}": {
+      "post": {
+        "tags": [
+          "crate::actions"
+        ],
+        "summary": "Call one admitted action as the verified caller: it commits, or an\nidentical earlier call replays with its original receipt.\n# Errors\nOne opaque 403, decided before any storage read, for a missing or\nunverified caller, a denied policy, a foreign scope or an unknown action;\nthe same opaque 403 for every visibility or permission refusal the kernel\ndecides (an invisible or absent target, a denied policy decision);\n409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed\nrefusal, its detail disclosed only under an explicit diagnostic grant. A\nrefusal commits nothing.",
+        "operationId": "call_action",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "The definitions version the caller read the action from. A different\nactive version refuses `defs.stale` (409); absent calls the active one.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "description": "The admitted action identity.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The call committed, or replayed an identical earlier call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: a stale pin or a conflicting retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: the body exceeds the host bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused: a law or precondition does not hold.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request was refused: a declared limit was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/definitions/{id}": {
       "get": {
         "tags": [
@@ -501,7 +642,16 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "The previous page's cursor, bound to `kind` and `include`.",
+            "description": "The previous page's cursor, bound to `kind`, `include` and `uses`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uses",
+            "in": "query",
+            "description": "With `kind=flow`: only flows whose performs use this binding id.",
             "required": false,
             "schema": {
               "type": "string"
@@ -993,6 +1143,94 @@
   },
   "components": {
     "schemas": {
+      "ActionCallOutcome": {
+        "type": "string",
+        "description": "Whether this call committed now or replayed an earlier identical call.",
+        "enum": [
+          "committed",
+          "replayed"
+        ]
+      },
+      "ActionCommit": {
+        "type": "object",
+        "description": "The commit that carried the call.",
+        "required": [
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit's ledger position.",
+            "minimum": 0
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt hash for a reader with Values over the whole cell, else\nits keyed handle (D53): the raw hash chains every earlier event."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit's logical time (Unix milliseconds).",
+            "minimum": 0
+          }
+        }
+      },
+      "ActionReceipt": {
+        "type": "object",
+        "description": "A committed or replayed call: the target and the commit that wrote it.",
+        "required": [
+          "outcome",
+          "objectType",
+          "objectId",
+          "version",
+          "receipt"
+        ],
+        "properties": {
+          "objectId": {
+            "type": "string",
+            "description": "The target's id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The target's concrete object type."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ActionCallOutcome",
+            "description": "Committed now, or replayed."
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/ActionCommit",
+            "description": "The original commit, the same on every replay."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The target's version as the original commit wrote it.",
+            "minimum": 0
+          }
+        }
+      },
+      "ActionRequest": {
+        "type": "object",
+        "description": "`POST /v1/actions/{actionId}`: one call. The actor never travels in the body.",
+        "required": [
+          "input",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes."
+          },
+          "input": {
+            "$ref": "#/components/schemas/NornActionInput"
+          }
+        },
+        "additionalProperties": false
+      },
       "AdHocTraceRequest": {
         "type": "object",
         "description": "`POST /v1/questions:trace`: one bucket of an ad-hoc question's answer.",
@@ -1093,6 +1331,17 @@
           "restatementSha256"
         ],
         "properties": {
+          "flow": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FlowSummary",
+                "description": "For a flow: its id, version, rule and Run type."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "description": "The definition id."
@@ -1223,6 +1472,13 @@
             "type": "string",
             "description": "`active` or `retired`."
           },
+          "pinnedVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `uses`: the binding version this flow's performs are pinned to."
+          },
           "title": {
             "type": "string",
             "description": "Its title."
@@ -1254,6 +1510,41 @@
           }
         },
         "additionalProperties": false
+      },
+      "FlowSummary": {
+        "type": "object",
+        "description": "What a flow's install, read and list report.",
+        "required": [
+          "flowId",
+          "version",
+          "ruleArtifactId",
+          "runType"
+        ],
+        "properties": {
+          "flowId": {
+            "type": "string",
+            "description": "The flow id, also the definition id."
+          },
+          "ruleArtifactId": {
+            "type": "string",
+            "description": "The `decide` rule's artifact id."
+          },
+          "runType": {
+            "type": "string",
+            "description": "The Run object type."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its display title (the canvas flow title), when it has one."
+          },
+          "version": {
+            "type": "string",
+            "description": "The flow's authored version."
+          }
+        }
       },
       "InstallDefinitionRequest": {
         "type": "object",
@@ -1309,6 +1600,17 @@
           "receipt"
         ],
         "properties": {
+          "flow": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FlowSummary",
+                "description": "For a flow: its id, version, rule and Run type."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "description": "The definition id."
@@ -1527,6 +1829,7 @@
       "NornActionInput": {
         "type": "object",
         "title": "Map_of_RuntimeValue",
+        "description": "Action business arguments as exact JSON values. A field declared `nornType: decimal` travels as its exact decimal text (`\"12.500\"`, VAL-EXACT-1); a number token there refuses `action.invalid_input`. Other number tokens keep their digits exactly.",
         "additionalProperties": {
           "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
         }

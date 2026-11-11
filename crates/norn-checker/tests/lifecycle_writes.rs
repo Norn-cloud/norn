@@ -373,18 +373,96 @@ fn lifecycle_string_enums_are_admitted_in_rule_ir_schemas_only() {
             )]
         );
     }
-    // ActionIR keeps the enum-free subset its runtime input validation
-    // implements.
+    // D66: an ActionIR input string enum is well formed on its own; whether
+    // it fits the property it writes is checked over the artifact set
+    // (`action.validation.input_enum_*`). A malformed enum stays invalid.
     let mut action = read_json("ir/retail-reorder.action.json");
     action["payload"]["inputSchema"]["properties"]["skuId"] =
         json!({ "type": "string", "enum": ["a"] });
-    assert_eq!(
-        pairs(check_artifact_json(&action)),
-        vec![(
-            "action.validation.invalid_schema".to_owned(),
-            "/payload/inputSchema/properties/skuId/enum".to_owned()
-        )]
+    assert!(
+        !pairs(check_artifact_json(&action))
+            .iter()
+            .any(|(code, _)| code == "action.validation.invalid_schema")
     );
+    action["payload"]["inputSchema"]["properties"]["skuId"] =
+        json!({ "type": "string", "enum": ["a", "a"] });
+    assert!(
+        pairs(check_artifact_json(&action))
+            .iter()
+            .any(|(code, at)| code == "action.validation.invalid_schema"
+                && at.starts_with("/payload/inputSchema/properties/skuId/enum"))
+    );
+}
+
+/// The `SalesOrder` entity with a plain (non-lifecycle) enum property.
+fn valued_sales_order() -> Value {
+    let mut entity = read_json("ir/entity-v2/artifact-set/commerce-sales-order.entity.json");
+    entity["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .push(json!({ "id": "valuation_method", "type": { "kind": "enum",
+            "values": [{ "value": "fifo" }, { "value": "weighted_average" }, { "value": "standard" }] },
+            "constraints": { "nullable": true } }));
+    entity
+}
+
+/// An upsert of `SalesOrder` taking `field` with `schema` as an input.
+fn upsert_with_input(field: &str, schema: Value) -> Value {
+    let mut action = read_json("ir/artifact-set/action-invalid-write-mode.action.json");
+    let payload = &mut action["payload"];
+    payload["effectProgram"]
+        .as_object_mut()
+        .expect("effect")
+        .remove("writeMode");
+    payload["inputSchema"]["properties"][field] = schema;
+    action
+}
+
+fn input_enum_findings(action: Value) -> Vec<(String, String)> {
+    set_findings(vec![valued_sales_order(), action])
+        .into_iter()
+        .filter(|(code, _)| code.starts_with("action.validation.input_enum"))
+        .collect()
+}
+
+#[test]
+fn an_enum_input_must_fit_the_enum_property_it_writes() {
+    let at = "/payload/inputSchema/properties/valuation_method/enum".to_owned();
+    // Equal, or a subset of, the property's declared values: admitted.
+    for values in [
+        json!(["fifo", "weighted_average", "standard"]),
+        json!(["fifo"]),
+    ] {
+        let action = upsert_with_input(
+            "valuation_method",
+            json!({ "type": "string", "enum": values }),
+        );
+        assert_eq!(input_enum_findings(action), vec![]);
+    }
+    // A value the property does not declare: refused at the input's enum.
+    let action = upsert_with_input(
+        "valuation_method",
+        json!({ "type": "string", "enum": ["fifo", "lifo"] }),
+    );
+    assert_eq!(
+        input_enum_findings(action),
+        vec![("action.validation.input_enum_not_subset".to_owned(), at)]
+    );
+    // An enum input that writes a text property, or no property at all, binds
+    // to nothing to check against.
+    for (field, schema) in [
+        ("so_number", json!({ "type": "string", "enum": ["SO-1"] })),
+        ("channel", json!({ "type": "string", "enum": ["web"] })),
+    ] {
+        let action = upsert_with_input(field, schema);
+        assert_eq!(
+            input_enum_findings(action),
+            vec![(
+                "action.validation.input_enum_unbound".to_owned(),
+                format!("/payload/inputSchema/properties/{field}/enum")
+            )]
+        );
+    }
 }
 
 #[test]

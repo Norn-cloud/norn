@@ -164,6 +164,47 @@ pub mod codes {
     /// the action can bypass allocation for an existing series key.
     pub const NAMING_SERIES_TARGET_MISMATCH: &str =
         "artifact_set.action.naming_series_target_mismatch";
+    /// D66: a string-enum input writes no enum property.
+    pub const INPUT_ENUM_UNBOUND: &str = "action.validation.input_enum_unbound";
+    /// D66: a string-enum input admits a value its target property does not declare.
+    pub const INPUT_ENUM_NOT_SUBSET: &str = "action.validation.input_enum_not_subset";
+}
+
+/// Every string-enum input below `properties` as `(field, top_level, values,
+/// pointer to its enum)`; the fixed-currency schema is not an enum input.
+fn collect_input_enums(
+    properties: &BTreeMap<String, JsonValue>,
+    at: &str,
+    top_level: bool,
+    out: &mut Vec<(String, bool, Vec<String>, String)>,
+) {
+    for (field, schema) in properties {
+        let here = format!(
+            "{at}/properties/{}",
+            field.replace('~', "~0").replace('/', "~1")
+        );
+        let fields = schema.as_object();
+        if let Some(nested) = fields
+            .and_then(|fields| fields.get("properties"))
+            .and_then(JsonValue::as_object)
+        {
+            collect_input_enums(nested, &here, false, out);
+        }
+        if norn_expr::schema::fixed_currency_schema(schema) {
+            continue;
+        }
+        if let Some(values) = fields
+            .and_then(|fields| fields.get("enum"))
+            .and_then(JsonValue::as_array)
+        {
+            let values = values
+                .iter()
+                .filter_map(JsonValue::as_string)
+                .map(str::to_owned)
+                .collect();
+            out.push((field.clone(), top_level, values, format!("{here}/enum")));
+        }
+    }
 }
 
 /// Check every candidate action's effect targets and declared write set over
@@ -1287,6 +1328,7 @@ impl Defined<'_> {
             }
         }
         findings.extend(self.naming_series_findings(action, root, program));
+        findings.extend(self.input_enum_findings(action, root, program));
         if let (
             ActionEffectProgram::FireTransition {
                 lifecycle,
@@ -1311,6 +1353,70 @@ impl Defined<'_> {
             findings.extend(draft_write_mode_findings(
                 action, kind, lifecycles, lifecycle, state,
             ));
+        }
+        findings
+    }
+
+    /// D66: a string input may declare an `enum` only when the action writes
+    /// it to an enum property declaring every one of its values. An upsert
+    /// writes each top-level input field to the property of the same name;
+    /// no other effect writes an input field to a property, so an enum input
+    /// of any other effect, or one nested in an object, binds to none.
+    fn input_enum_findings(
+        &self,
+        action: &ArtifactEnvelope,
+        root: &ActionRoot,
+        program: &ActionEffectProgram,
+    ) -> Vec<Diagnostic> {
+        let Some(properties) = root
+            .input_schema
+            .get("properties")
+            .and_then(JsonValue::as_object)
+        else {
+            return Vec::new();
+        };
+        let view = self
+            .effective_object_type
+            .as_ref()
+            .and_then(|view| view.as_ref().ok());
+        let upsert = matches!(program, ActionEffectProgram::UpsertInputObject { .. });
+        let mut findings = Vec::new();
+        let mut enums = Vec::new();
+        collect_input_enums(properties, "/payload/inputSchema", true, &mut enums);
+        for (field, top_level, values, at) in enums {
+            let target = view
+                .filter(|_| upsert && top_level)
+                .and_then(|view| view.property(&field))
+                .and_then(|property| {
+                    if let crate::EffectiveKind::Base(norn_ir::PropertyType::Enum { values }) =
+                        &property.kind
+                    {
+                        Some(values)
+                    } else {
+                        None
+                    }
+                });
+            let Some(declared) = target else {
+                findings.push(finding(
+                    codes::INPUT_ENUM_UNBOUND,
+                    format!("input {field:?} declares an enum but writes no enum property"),
+                    action,
+                    &at,
+                ));
+                continue;
+            };
+            let missing: Vec<&String> = values
+                .iter()
+                .filter(|value| !declared.iter().any(|declared| &declared.value == *value))
+                .collect();
+            if !missing.is_empty() {
+                findings.push(finding(
+                    codes::INPUT_ENUM_NOT_SUBSET,
+                    format!("input {field:?} admits {missing:?}, which property {field:?} does not declare"),
+                    action,
+                    &at,
+                ));
+            }
         }
         findings
     }

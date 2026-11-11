@@ -1,4 +1,8 @@
 //! Core IR and checker wire schemas, projected by the existing `OpenAPI` generator.
+/// Retained action admission and the kernel's action model types.
+pub mod action_admission;
+/// HOST-ACTION-1: the one governed action service shared by transports.
+pub mod actions;
 /// Typed-question answer documents.
 pub mod answers;
 /// Default-deny server authorization for host operations and kernel action requests.
@@ -17,10 +21,14 @@ pub use clock::{Clock, ManualClock};
 pub mod binding_definitions;
 /// Retained (non-kernel) definitions: admit, install, retire, list, get.
 pub mod definition_routes;
+/// The `flow` retained-definition kind (automations lowered by `lowerFlow`).
+pub mod flow_definitions;
 /// Shared cell and definition epoch.
 pub mod host;
 /// RFC 8785 JSON canonicalization for connector manifest digests.
 pub mod jcs;
+/// Admission of a cell's full kernel artifact set.
+pub mod kernel_set;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
 /// HOST-READ-4: an object's link neighbourhood and its source lineage.

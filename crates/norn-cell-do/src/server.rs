@@ -1,7 +1,8 @@
 //! Fetch dispatch over `norn_api`'s shared, authorized services: the read
-//! routes, F2b's ad-hoc questions, and the retained-definition routes
+//! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
-//! `/v1/definitions/{id}:retire`), whose writes are the only mutations.
+//! `/v1/definitions/{id}:retire`), and the one governed action route,
+//! `POST /v1/actions/{actionId}`.
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -12,6 +13,7 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
+use norn_api::actions::{ActionQuery, action_denied, call_action, decode_action_request};
 use norn_api::authz::Operation;
 use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
@@ -120,8 +122,12 @@ pub fn handle_all<E: SqlEngine>(
         .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
+    let action = path
+        .strip_prefix("/v1/actions/")
+        .filter(|id| !id.is_empty() && !id.contains('/'));
     let known = path == "/v1/definitions"
         || ad_hoc
+        || action.is_some()
         || object.is_some()
         || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
     let result = if let Some(route) = definitions_route(path) {
@@ -133,6 +139,8 @@ pub fn handle_all<E: SqlEngine>(
             "no such route",
             "the host serves only its declared read routes",
         ))
+    } else if let Some(action) = action {
+        governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
     } else if method != "GET" {
@@ -233,6 +241,60 @@ fn ad_hoc_question<E: SqlEngine>(
         let request: AdHocTraceRequest = serde_json::from_str(body).map_err(malformed)?;
         document_json(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
     }
+}
+
+/// HOST-ACTION-1: `POST /v1/actions/{actionId}`, scoped by the query string
+/// (`orgId`, `environmentId`, optional `version` pin) with the call in a JSON
+/// body. The shared service authorizes, admits and commits; the cell's
+/// question runtime is its receipt-disclosure authority (D53), so a cell
+/// without one serves no action.
+fn governed_action<E: SqlEngine>(
+    host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    (method, action, query, body): (&str, &str, &str, &str),
+    now: u64,
+) -> Result<String, Refusal> {
+    if method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "an action is called with POST",
+        ));
+    }
+    let mut fields = parse(query, &["orgId", "environmentId", "version"])?;
+    let version = fields
+        .remove("version")
+        .map(|version| {
+            version
+                .parse::<u64>()
+                .map_err(|error| Refusal::invalid(format!("version: {error}")))
+        })
+        .transpose()?;
+    let query = ActionQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        version,
+    };
+    // No runtime, no actor: one denial, before the body is read.
+    let (Some(runtime), Some(_)) = (questions, actor) else {
+        return Err(action_denied());
+    };
+    let action = percent_encoding::percent_decode_str(action)
+        .decode_utf8()
+        .map_err(|_invalid| Refusal::invalid("the action path segment is not UTF-8"))?;
+    let request = decode_action_request(body)?;
+    let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
+    document_json(&call_action(
+        host,
+        &query,
+        actor,
+        &action,
+        &request,
+        named(runtime),
+        now,
+    )?)
 }
 
 /// The segments of an object route after `/v1/objects/`: a type, an optional
@@ -420,6 +482,7 @@ fn definitions<E: SqlEngine>(
             "include",
             "limit",
             "cursor",
+            "uses",
         ],
         DefinitionsRoute::Get(_) => &["orgId", "environmentId", "version"],
         DefinitionsRoute::Admit | DefinitionsRoute::Install | DefinitionsRoute::Retire(_) => {
@@ -484,6 +547,7 @@ fn definitions<E: SqlEngine>(
                 include: fields.remove("include"),
                 limit,
                 cursor: fields.remove("cursor"),
+                uses: fields.remove("uses"),
             };
             document_json(&definition_routes::list_definitions(host, &query, actor)?)
         }
