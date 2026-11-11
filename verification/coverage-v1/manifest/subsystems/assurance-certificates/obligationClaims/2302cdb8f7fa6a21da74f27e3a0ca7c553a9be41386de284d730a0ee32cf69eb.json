@@ -1,0 +1,21 @@
+{
+  "order": 2,
+  "value": {
+    "id": "INV-CERT-LAW-EXCEPTION-SEMANTICS",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "reference_proved",
+    "residual": "The reference semantics (#718 P3 U0) and the Aeneas extraction of crates/norn-checker/src/law_exceptions/shape.rs (check_shape, lifted), proved against it for every input with lawful identity equality (#718 U1): the shape check decides WellFormed, and on an admitted tree the fold decides lifting under the unique stable labelling. No implementation_proved claim is made (#969). The string layer, the applied-set computation and expression evaluation are outside it (TRUST-LAW-EXCEPTIONS-STRING-LAYER, P5).",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry2302cdb8f7fa6a21da74f27e3a0ca7c553a9be41386de284d730a0ee32cf69eb.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry2302cdb8f7fa6a21da74f27e3a0ca7c553a9be41386de284d730a0ee32cf69eb.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry2302cdb8f7fa6a21da74f27e3a0ca7c553a9be41386de284d730a0ee32cf69eb.evidence.proof"
+      }
+    }
+  }
+}

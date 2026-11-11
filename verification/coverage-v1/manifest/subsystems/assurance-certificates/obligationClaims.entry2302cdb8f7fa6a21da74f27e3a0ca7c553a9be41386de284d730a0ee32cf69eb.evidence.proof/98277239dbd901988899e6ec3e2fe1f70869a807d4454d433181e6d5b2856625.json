@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/semantics-v1/Checker/LawExceptions/Proof.lean",
+    "command": "scripts/verify-law-exceptions-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entry2302cdb8f7fa6a21da74f27e3a0ca7c553a9be41386de284d730a0ee32cf69eb.evidence.proof.entry98277239dbd901988899e6ec3e2fe1f70869a807d4454d433181e6d5b2856625.selectors"
+    }
+  }
+}
