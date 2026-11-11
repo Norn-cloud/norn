@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,936 records across 141 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,940 records across 142 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -164,6 +164,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
+| `ci.core.bundle.b2.peak_disk_used_gib` | 66,317,406,208 | bytes (single) | boat | 2 | 66,317,406,208 / 80,086,061,056 | █▁ | `ae22979719` | [link](https://github.com/Norn-cloud/norn/pull/1248) |
 | `ci.core.run.s` | 3,291 | s (single) | github-hosted | 170 | 35 / 9,710 | ▃▂▅▂▃▂▂▄▃▃▂▂▃▃▂▃▃▃▃▃▃▄▃▂▂▂▃▂▃▂▃▃▃▃▃▃▃▂▃▃ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.phase.browser.s` | 138 | s (single) | boat, github-hosted | 24 | 0 / 447 | ▁▁▁▄▆▆▄▅▅▇▆▇▆▆▆▅▆▅▇█▅▇▅▃ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
 | `ci.core.task.phase.clippy.s` | 77 | s (single) | boat, github-hosted | 72 | 42 / 121 | ▆▁▅▆▄▃▃▃▃▂▂▄▄▃▃▄▃▂▁▃▁▄▃▃▅▂▄▄▄▃▄▂▃▃▅█▆▃▆▄ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
