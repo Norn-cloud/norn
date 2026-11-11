@@ -598,6 +598,31 @@ impl Model {
             .ok_or_else(|| CellError::UnknownObjectType(name.to_owned()))
     }
 
+    /// The effective properties of `object_type`, inherited ones included,
+    /// in declaration order, each with its resolved local type (`None` for a
+    /// registry or unresolved type, whose definition is not available here).
+    ///
+    /// # Errors
+    /// The type is not in this model.
+    pub fn effective_property_types(
+        &self,
+        object_type: &str,
+    ) -> Result<Vec<(String, Option<norn_ir::PropertyType>)>, CellError> {
+        Ok(self
+            .query_contract(object_type)?
+            .properties
+            .iter()
+            .map(|property| {
+                let resolved = match &property.kind {
+                    norn_checker::entity_instance::EffectiveKind::Base(kind) => Some(kind.clone()),
+                    norn_checker::entity_instance::EffectiveKind::Registry(_)
+                    | norn_checker::entity_instance::EffectiveKind::Unresolved => None,
+                };
+                (property.id.as_str().to_owned(), resolved)
+            })
+            .collect())
+    }
+
     /// Every object type of the model (#3018: the kernel's `TypeCatalog`
     /// over this store is built from them).
     pub fn object_types(&self) -> impl Iterator<Item = &ObjectTypeDef> {
