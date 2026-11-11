@@ -81,7 +81,7 @@ export const Invoice = Norn.type({
 })
 ```
 
-The compiler emits these labels as a separate `labels` artifact (`sales.Invoice.entity.labels`), never inside the type, so adding or fixing a translation changes no artifact hash, model hash or receipt (LABEL-LOCALE-1, [core 08](../spec/core/08-worlds-projections.md#localized-definition-labels)). A tenant or locale pack can ship its own `labels` artifact for upstream types; its labels replace the installed ones for the same target and locale. Labels may not contain bidi control characters, because renderers isolate ids, codes and numbers themselves.
+The compiler emits these labels as a separate `labels` artifact (`sales.Invoice.entity.labels`), never inside the type, so adding or fixing a translation changes no artifact hash, model hash or receipt (LABEL-LOCALE-1, [core 08](../spec/core/08-worlds-projections.md#localized-definition-labels)). A tenant or locale pack labels types another layer owns with `Norn.labels({ id, title, version, types: { "canon.Holding": { label: { ar: "رصيد مخزون" }, properties: { … }, values: { … } } } })` (see `registry/packs/locale-ar`); its labels replace the installed ones for the same target and locale. `requiredLocales` lists the locales the layer serves, and every definition with no label in one is listed as a warning. Labels may not contain bidi control characters, because renderers isolate ids, codes and numbers themselves.
 
 ## How to write a Norn app
 
