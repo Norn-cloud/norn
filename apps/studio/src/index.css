@@ -227,3 +227,10 @@
 .code pre { background: transparent !important; }
 .code span { color: var(--shiki-light); }
 .dark .code span { color: var(--shiki-dark); }
+
+/* Arabic mirrors the layout, but text not yet translated stays English: each block of text takes the
+   direction of its own first strong character, so an English sentence keeps its punctuation and
+   numbers in order inside a right-to-left page (LABEL-LOCALE-1). */
+[dir="rtl"] :where(p, h1, h2, h3, h4, h5, h6, li, td, th, label, button, a, dt, dd, figcaption, span) {
+  unicode-bidi: plaintext;
+}

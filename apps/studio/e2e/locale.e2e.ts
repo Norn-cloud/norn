@@ -12,7 +12,9 @@ const LOCALES = [
 
 async function shoot(page: Page, name: string) {
   await page.waitForTimeout(400) // past the colour transitions
-  await page.locator("main").screenshot({ path: `test-results/locale/${name}.png` })
+  for (const state of ["facts", "message", "problems"]) {
+    await page.locator(`[data-state="locale/${state}"]`).screenshot({ path: `test-results/locale/${state}-${name}.png` })
+  }
 }
 
 for (const locale of LOCALES) for (const scheme of ["light", "dark"] as const) {
@@ -46,7 +48,7 @@ for (const locale of LOCALES) for (const scheme of ["light", "dark"] as const) {
 
     const problems = page.locator('[data-state="locale/problems"]')
     await expect(problems.locator('[data-code="lifecycle.validation.dead_end_state"]').first()).toHaveAttribute("data-message-lang", locale.tag)
-    await shoot(page, `sheet-${locale.tag}-${scheme}`)
+    await shoot(page, `${locale.tag}-${scheme}`)
   })
 }
 

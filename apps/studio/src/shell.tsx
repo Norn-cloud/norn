@@ -17,7 +17,7 @@ import { KINDS, type Kind } from "@/lib/kinds"
 import type { Account } from "@/lib/session"
 import { cn } from "@/lib/utils"
 import { ViewProvider, ViewToggle, useView } from "@/lib/view"
-import { LocaleProvider, LocaleToggle, useLocale } from "@/lib/locale"
+import { LocaleProvider, LocaleToggle, directionOf, useLocale } from "@/lib/locale"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
 import nornMark from "@/assets/norn-mark.webp"
 
@@ -296,16 +296,22 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
  * who is viewing), a page bar with breadcrumbs, search and the view, the
  * page, and the inspector docked on its right.
  */
-export function Shell({ sections, tools, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
+export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
+  return <LocaleProvider><LocalizedShell {...props} /></LocaleProvider>
+}
+
+/** The shell in the reader's direction: in Arabic the sidebar docks on the right. */
+function LocalizedShell({ sections, tools, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
+  const { locale } = useLocale()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
   const main = sections.filter(({ foot }) => foot !== true)
   const foot = sections.filter(({ foot }) => foot === true)
   const groups = [...new Set(main.map(({ group }) => group))]
   return (
-    <LocaleProvider><ViewProvider><InspectorProvider><TooltipProvider>
+    <ViewProvider><InspectorProvider><TooltipProvider>
       <SidebarProvider>
-        <Sidebar collapsible="icon">
+        <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"}>
           <SidebarHeader><WorkspaceSwitcher /></SidebarHeader>
           <SidebarContent>
             {groups.map((group) => (
@@ -333,6 +339,6 @@ export function Shell({ sections, tools, account, onSignOut }: { readonly sectio
           <Inspector />
         </SidebarInset>
       </SidebarProvider>
-    </TooltipProvider></InspectorProvider></ViewProvider></LocaleProvider>
+    </TooltipProvider></InspectorProvider></ViewProvider>
   )
 }
