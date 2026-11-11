@@ -753,6 +753,15 @@ run_gate full checker-certificates-correspondence \
 run_gate full law-exceptions-correspondence \
   "scripts/verify-law-exceptions-aeneas.sh" command \
   scripts/verify-law-exceptions-aeneas.sh
+run_gate full kernel-commit-order-correspondence \
+  "scripts/verify-kernel-commit-aeneas.sh" command \
+  scripts/verify-kernel-commit-aeneas.sh
+run_gate full kernel-binding-correspondence \
+  "scripts/verify-kernel-binding-aeneas.sh" command \
+  scripts/verify-kernel-binding-aeneas.sh
+run_gate full kernel-decider-correspondence \
+  "scripts/verify-kernel-decider-aeneas.sh" command \
+  scripts/verify-kernel-decider-aeneas.sh
 
 # Validate observed selectors only after every producing gate has run.
 run_gate full verification-executed-test-selectors \

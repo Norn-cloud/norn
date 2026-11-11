@@ -43,7 +43,17 @@
     "verification/semantics-v1/Checker/Obligations/FrameProof.lean": "scripts/verify-checker-certificates-aeneas.sh",
     "verification/semantics-v1/Checker/Obligations/InductionReference.lean": "scripts/verify-checker-certificates-aeneas.sh",
     "verification/semantics-v1/Checker/LawExceptions/Audit.lean": "scripts/verify-law-exceptions-aeneas.sh",
-    "verification/semantics-v1/Checker/LawExceptions/Proof.lean": "scripts/verify-law-exceptions-aeneas.sh"
+    "verification/semantics-v1/Checker/LawExceptions/Proof.lean": "scripts/verify-law-exceptions-aeneas.sh",
+    "verification/kernel-proof-v1/Commit/Reference.lean": "scripts/verify-kernel-commit-aeneas.sh",
+    "verification/kernel-proof-v1/Commit/OrderProof.lean": "scripts/verify-kernel-commit-aeneas.sh",
+    "verification/kernel-proof-v1/Commit/CasProof.lean": "scripts/verify-kernel-commit-aeneas.sh",
+    "verification/kernel-proof-v1/Binding/BindingReference.lean": "scripts/verify-kernel-binding-aeneas.sh",
+    "verification/kernel-proof-v1/Binding/ReceiptProof.lean": "scripts/verify-kernel-binding-aeneas.sh",
+    "verification/kernel-proof-v1/Binding/ReplayProof.lean": "scripts/verify-kernel-binding-aeneas.sh",
+    "verification/kernel-proof-v1/Decider/Reference.lean": "scripts/verify-kernel-decider-aeneas.sh",
+    "verification/kernel-proof-v1/Decider/FoldProof.lean": "scripts/verify-kernel-decider-aeneas.sh",
+    "verification/kernel-proof-v1/Decider/StepProof.lean": "scripts/verify-kernel-decider-aeneas.sh",
+    "verification/kernel-proof-v1/Decider/Probe.lean": "scripts/verify-kernel-decider-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [

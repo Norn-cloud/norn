@@ -1281,6 +1281,51 @@
       "generatedArtifacts": []
     },
     {
+      "id": "kernel-commit-order-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-kernel-commit-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-binding-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-kernel-binding-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-decider-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-kernel-decider-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "verification-executed-test-selectors",
       "profile": "full",
       "command": "python3 scripts/validate-executed-test-selectors.py",
