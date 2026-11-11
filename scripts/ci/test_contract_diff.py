@@ -461,6 +461,19 @@ const URL: &str = "http://x.y"; // a "comment.code" after a string with //
         for path in ("crates/norn-new/schema/event.json", "packages/x/wire.schema.json", "tools/dev/dev.contract.json"):
             self.assertEqual(cd.unenrolled_surfaces(tree({**enrolled, path: "{}"})), [path], path)
 
+    def test_a_single_enrolled_schema_file_is_compared(self):
+        def tree(schema):
+            files = {cd.SCHEMA_FILES[0]: json.dumps(schema)}
+            return cd.Tree(lambda d: sorted(files) if d == "." else [], files.get)
+        record = {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}, "value": {"type": "number"}}}
+        grown = copy.deepcopy(record)
+        grown["properties"]["unit"] = {"type": "string"}
+        shrunk = copy.deepcopy(record)
+        del shrunk["properties"]["value"]
+        self.assertEqual(cd.diff(tree(record), tree(grown)), [])
+        self.assertEqual(cd.diff(tree(record), tree(shrunk)), [f"{cd.SCHEMA_FILES[0]}.value: property removed"])
+        self.assertEqual(cd.unenrolled_surfaces(tree(record)), [])
+
     def test_moving_a_code_is_not_removing_it(self):
         before = 'impl E {\n    pub const fn code(&self) -> &str {\n        match self { Self::A => "decision.guard_false", Self::B => OTHER }\n    }\n}\nconst OTHER: &str = "decision.other";\n'
         moved = 'fn helper() -> &\'static str { "decision.guard_false" }\nconst OTHER: &str = "decision.other";\n'
@@ -643,6 +656,7 @@ class Scenarios(unittest.TestCase):
         self.assertIn("init", document["authoringCli"]["commands"])
         self.assertIn("check", document["cli"].get("subcommands", {}))
         self.assertIn("defs.stale", document["refusalCodes"])
+        self.assertIn(cd.SCHEMA_FILES[0], document["schemas"])
         self.assertEqual(document["unenrolled"], [])
 
 

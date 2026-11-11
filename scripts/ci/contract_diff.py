@@ -60,12 +60,15 @@ TS_CLI_SNAPSHOT = "tools/norn-ts/cli.contract.json"
 DIAGNOSTIC_CODES = "crates/norn-checker/conformance/diagnostic-codes"
 SCHEMA_DIRS = ("crates/norn-ir/schema", "crates/norn-kernel/schema", "tools/norn-ts/schema",
                "crates/norn-builtins/src/schemas", "crates/norn-projections/schemas")
+# Single schema files outside a schema directory. The metrics ledger is append-only
+# and kept forever, so its record format only ever changes additively.
+SCHEMA_FILES = ("scripts/metrics/record.schema.json",)
 APPROVALS = "scripts/ci/contract-breaks.json"
 # Contract-shaped files that are not external contracts: CI tooling records and
 # proof bookkeeping read only by this repository's own scripts. Adding to this
 # list changes this gate file, so it needs `/approve-gates` like any gate change.
-INTERNAL = ("scripts/ci/implementation-receipt.schema.json", "scripts/metrics/record.schema.json",
-            "verification/coverage-v1/result.schema.json", "verification/stripmine-2026-08-22/schemas/")
+INTERNAL = ("scripts/ci/implementation-receipt.schema.json", "verification/coverage-v1/result.schema.json",
+            "verification/stripmine-2026-08-22/schemas/")
 # Example and test inputs are not contracts.
 NOT_CONTRACT_DIRS = ("fixtures", "test", "tests")
 CODE = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+")
@@ -836,7 +839,7 @@ def unenrolled_surfaces(tree: Tree) -> list[str]:
         if not path.endswith(".json") or path.startswith(".github/") or set(parts[:-1]) & set(NOT_CONTRACT_DIRS):
             continue
         shaped = path.endswith((".schema.json", ".contract.json")) or (len(parts) > 1 and parts[-2] in ("schema", "schemas"))
-        if not shaped or path in enrolled or path.startswith(tuple(f"{d}/" for d in SCHEMA_DIRS)) \
+        if not shaped or path in enrolled or path in SCHEMA_FILES or path.startswith(tuple(f"{d}/" for d in SCHEMA_DIRS)) \
                 or path.startswith(INTERNAL) or path.startswith(DIAGNOSTIC_CODES):
             continue
         found.append(path)
@@ -855,8 +858,13 @@ def approvals(tree: Tree) -> set[str]:
 
 
 def schema_files(tree: Tree) -> dict[str, str]:
-    return {path: tree.read(path) or "" for directory in SCHEMA_DIRS for path in tree.list(directory)
-            if path.endswith(".json")}
+    files = {path: tree.read(path) or "" for directory in SCHEMA_DIRS for path in tree.list(directory)
+             if path.endswith(".json")}
+    for path in SCHEMA_FILES:
+        text = tree.read(path)
+        if text is not None:
+            files[path] = text
+    return files
 
 
 def diff(old: Tree, new: Tree) -> list[str]:
