@@ -230,7 +230,8 @@
 
 /* Arabic mirrors the layout, but text not yet translated stays English: each block of text takes the
    direction of its own first strong character, so an English sentence keeps its punctuation and
-   numbers in order inside a right-to-left page (LABEL-LOCALE-1). */
-[dir="rtl"] :where(p, h1, h2, h3, h4, h5, h6, li, td, th, label, button, a, dt, dd, figcaption, span):not([dir]) {
+   numbers in order inside a right-to-left page (LABEL-LOCALE-1). Table cells keep the page direction
+   and align to its start; the text inside them decides its own. */
+[dir="rtl"] :where(p, h1, h2, h3, h4, h5, h6, li, label, button, a, dt, dd, figcaption, span):not([dir]) {
   unicode-bidi: plaintext;
 }

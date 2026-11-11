@@ -136,7 +136,7 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
           <TableCell className="whitespace-normal text-muted-foreground">
             {field.valueLabels !== undefined && field.valueLabels.size > 0
               ? <span dir={directionOf(locale)}>{[...field.valueLabels].map(([value, label], index) => <span key={value}>{index > 0 && comma}{label}{technical && <> <Iso className="font-mono text-xs">{value}</Iso></>}</span>)}</span>
-              : field.type}
+              : <span>{field.type}</span>}
           </TableCell>
         </TableRow>
       ))}
