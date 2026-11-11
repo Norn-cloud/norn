@@ -284,6 +284,10 @@
     "fix": "Run norn init <dir> with only the documented options."
   },
   {
+    "code": "cli.setup.checker_unavailable",
+    "fix": "Build the checker package with crates/norn-checker-wasm/scripts/build-pkg.sh and set NORN_CHECKER_WASM_PKG to its directory."
+  },
+  {
     "code": "cli.setup.unpublished",
     "fix": "Run norn init from a repository checkout until a published distribution is available."
   },

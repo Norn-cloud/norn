@@ -30,15 +30,25 @@ export interface CheckResult {
   readonly receiptSha256: string | null
 }
 
+export interface ExplainResult {
+  readonly format: "norn/explain@2"
+  readonly admitted: boolean
+  readonly report: unknown | null
+  readonly diagnostics: ReadonlyArray<CheckerDiagnostic>
+}
+
 export interface CheckerAbi {
   /** `checkArtifactSet(artifacts, context)`; the context defaults to an empty base layer. */
   readonly checkArtifactSet: (artifacts: ReadonlyArray<unknown>, context?: unknown) => CheckResult
+  /** `explainArtifactSet` (#517), absent from a package built before it existed. */
+  readonly explainArtifactSet?: (artifacts: ReadonlyArray<unknown>, kind: string, id: string, options: unknown) => ExplainResult
   readonly version: () => Readonly<Record<string, string>>
 }
 
 interface WasmModule {
   readonly initSync: (options: { module: Uint8Array }) => unknown
   readonly checkArtifactSet: (artifactsJson: string, contextJson: string) => string
+  readonly explainArtifactSet?: (artifactsJson: string, contextJson: string, kind: string, id: string, optionsJson: string) => string
   readonly version: () => string
 }
 
@@ -52,9 +62,14 @@ export async function loadChecker(dir: string | undefined = process.env[CHECKER_
   if (!existsSync(js) || !existsSync(wasm)) throw new Error(`${CHECKER_PKG_ENV}=${dir} holds no norn-checker-wasm package`)
   const abi = (await import(pathToFileURL(js).href)) as WasmModule
   abi.initSync({ module: readFileSync(wasm) })
+  const explain = abi.explainArtifactSet?.bind(abi)
   return {
     checkArtifactSet: (artifacts, context = null) =>
       JSON.parse(abi.checkArtifactSet(JSON.stringify(artifacts), JSON.stringify(context))) as CheckResult,
+    ...(explain ? {
+      explainArtifactSet: (artifacts: ReadonlyArray<unknown>, kind: string, id: string, options: unknown) =>
+        JSON.parse(explain(JSON.stringify(artifacts), "{}", kind, id, JSON.stringify(options))) as ExplainResult,
+    } : {}),
     version: () => JSON.parse(abi.version()) as Record<string, string>,
   }
 }

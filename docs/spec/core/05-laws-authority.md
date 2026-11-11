@@ -161,7 +161,9 @@ a pre-change checker receipt verifies against its original hash.
 projects the existing admitted catalog and conservative whole-set writer closure.
 Every declaration retains its version and semantic digest. Direct writes and
 bounded read slices remain separate from the conservative writer inventory.
-An explanation is neither a permission grant nor proof. Server consumers must
+In a project, `norn explain <action|law|concept> <id>` compiles the
+project's sources and calls the same checker entry point; refusals carry the
+authoring source line. An explanation is neither a permission grant nor proof. Server consumers must
 supply a complete definition set already authorized for disclosure.
 
 **EXPLAIN-ORIGIN-1:** canonical inheritance paths terminate at the authored
