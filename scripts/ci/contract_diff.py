@@ -64,8 +64,8 @@ APPROVALS = "scripts/ci/contract-breaks.json"
 # Contract-shaped files that are not external contracts: CI tooling records and
 # proof bookkeeping read only by this repository's own scripts. Adding to this
 # list changes this gate file, so it needs `/approve-gates` like any gate change.
-INTERNAL = ("scripts/ci/implementation-receipt.schema.json", "verification/coverage-v1/result.schema.json",
-            "verification/stripmine-2026-08-22/schemas/")
+INTERNAL = ("scripts/ci/implementation-receipt.schema.json", "scripts/metrics/record.schema.json",
+            "verification/coverage-v1/result.schema.json", "verification/stripmine-2026-08-22/schemas/")
 # Example and test inputs are not contracts.
 NOT_CONTRACT_DIRS = ("fixtures", "test", "tests")
 CODE = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+")
