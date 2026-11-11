@@ -128,6 +128,13 @@
         {
           "step": "step",
           "invariant": "invariant",
+          "maxSteps": 5,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 266
+        },
+        {
+          "step": "step",
+          "invariant": "invariant",
           "maxSteps": 6,
           "verdict": "unknown",
           "note": "timed out at 1500 s (earlier 4-obligation bound)"
