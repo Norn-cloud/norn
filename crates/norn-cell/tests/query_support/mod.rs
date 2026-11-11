@@ -505,11 +505,7 @@ pub(crate) mod fanout {
         tag.properties[0].id = PropertyId("label".into());
         let objects = [holding, tag];
         let catalog = fanout_catalog(&objects);
-        let model = Model::new(&norn_projections::SqliteDdlInput {
-            object_types: &objects,
-            property_types: &[],
-        })
-        .expect("model");
+        let model = Model::from_definitions(&objects, &[]).expect("model");
         let mut measure = seed_plan
             .definitions()
             .iter()
