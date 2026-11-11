@@ -20,6 +20,72 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// ID-STABLE-1: canonical authored creation cannot reuse a retained identity.
+    #[error("{code}: {message}", code = norn_checker::IDENTITY_REUSE, message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
+
+    /// An effective property uses semantics the kernel cannot evaluate.
+    #[error(transparent)]
+    EffectiveValues(#[from] norn_kernel::EffectiveValuesError),
+    /// ID-UNIQUE-1: two live objects share a normalized key in one scope/world.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// The declaring root; no row values or identities are disclosed.
+        owner: String,
+        /// The declared key name.
+        key: String,
+        /// Internal lookup subjects for authorized diagnostics; never displayed.
+        conflicts: [String; 2],
+    },
+    /// OBS-DISPUTE-LOOKUP-1: retry after three unstable source-evidence snapshots.
+    #[error("core.boundary.source_evidence_changed")]
+    SourceEvidenceChanged,
+    /// OBS-EVIDENCE-1: an open source dispute excludes this governed subject.
+    #[error("core.boundary.import_finding: disputed source identity")]
+    SourceIdentityDisputed,
+    /// Core 08 has not retained the source-dispute evidence frontier for this world.
+    #[error("core.world.source_dispute_unqualified")]
+    SourceDisputeWorldUnqualified,
+    /// Captured relation/delete output requires a processing profile beyond CP2.
+    #[error("unsupported mapping processing profile")]
+    UnsupportedMappingProfile,
+    /// The kernel refused preparation of source observations.
+    #[error("observation preparation: {0}")]
+    ObservationPreparation(Box<norn_kernel::snapshot_observe::ObservationRefusal>),
+    /// The kernel or store refused the atomic observation commit.
+    #[error("observation commit: {0}")]
+    ObservationCommit(Box<norn_kernel::CommitError<CellError>>),
+    /// OBS-EVIDENCE-1: retained evidence disagrees with cell-owned recomputation.
+    #[error("core.boundary.bundle_mismatch")]
+    MappingBundleMismatch,
+    /// Law-bearing definitions predate authenticated law retention.
+    #[error(
+        "core.boundary.legacy_law_snapshot: legacy stores must be recreated; migration is out of scope"
+    )]
+    LegacyLawSnapshot,
+    /// A finding has no admitted definition version to authenticate its rules.
+    #[error(
+        "core.boundary.unpinned_finding: legacy stores must be recreated; migration is out of scope"
+    )]
+    UnpinnedFinding,
+    /// Observation quality evaluation could not complete.
+    #[error("quality evaluation: {0}")]
+    QualityEvaluation(Box<norn_kernel::snapshot_observe::ObservationRefusal>),
+    /// Correction values disagree with their immutable proof.
+    #[error("quality evaluation: unproven correction values")]
+    UnprovenCorrection,
+    /// CP2 cannot resolve an applicable inherited/effective law without B2.
+    #[error("core.laws.unsupported_semantics: law {law_id} scope unsupported until B2")]
+    UnsupportedLawScope {
+        /// Retained law whose complete scope cannot yet be resolved.
+        law_id: String,
+    },
+    /// Deterministic query semantics or snapshot preconditions refused.
+    #[error("{0}")]
+    ComputeRefused(&'static str),
+    /// RUN-LEDGER-1: a run start or run write was refused (`run.*`).
+    #[error("{0}")]
+    RunRefused(&'static str),
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,
@@ -44,6 +110,12 @@ pub enum CellError {
     /// The object types do not project to DDL.
     #[error("ddl projection: {0}")]
     Projection(#[from] SqliteDdlError),
+    /// The effective view of the object types could not be derived: the
+    /// bounded inheritance classification was exhausted (more than 4,096
+    /// object types, or another budget). The model is refused; no query ever
+    /// sees an empty view.
+    #[error(transparent)]
+    EffectiveViewRefused(#[from] norn_checker::EffectiveViewRefused),
     /// A payload does not (de)serialize.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
@@ -244,6 +316,18 @@ pub enum CellError {
         "perform claim for `{command_id}` generation {generation} is not the unperformed outbox head"
     )]
     PerformClaimNotPending {
+        /// The command id.
+        command_id: String,
+        /// The claimed generation.
+        generation: u64,
+    },
+    /// PARKED-1: a perform claim names a parked command, which is never
+    /// performed. No build before parked commands could record one, so a
+    /// retained journal that does is refused by name rather than replayed.
+    #[error(
+        "restore.parked_claim_unsupported: perform claim for parked command `{command_id}` generation {generation}"
+    )]
+    ParkedClaimUnsupported {
         /// The command id.
         command_id: String,
         /// The claimed generation.

@@ -1,0 +1,7 @@
+{
+  "code": "defined_concept.validation.invalid_payload",
+  "message": "defined-concept payload does not match its strict root",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "ontology_registry.validation.invalid_payload",
+  "message": "ontology registry is inconsistent at {path}: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

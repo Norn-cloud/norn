@@ -1,0 +1,7 @@
+{
+  "code": "ledger.amount.bound_overflow",
+  "message": "runtime coefficient for parameter `{parameterId}` overflows at a declared bound",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -22,7 +22,7 @@ use norn_checker::{
     decode_artifact_json, diagnostics_to_json,
 };
 use norn_checker_wasm::{
-    canonical_runtime_value_json, check_artifact_set_json, check_expression_json,
+    canonical_runtime_value_json, check_agent_json, check_artifact_set_json, check_expression_json,
     evaluate_expression_json, function_contract_json, lifecycle_diagrams_json, version_json,
 };
 use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
@@ -170,6 +170,10 @@ fn run(case: &Value) -> String {
             case["invocation"].as_str().map(read).as_deref(),
             case["receipt"].as_str().map(read).as_deref(),
         ),
+        "checkAgent" => check_agent_json(
+            case["agentJson"].as_str().expect("agentJson"),
+            case["contextJson"].as_str().expect("contextJson"),
+        ),
         "version" => Ok(version_json()),
         other => panic!("unknown call {other}"),
     };
@@ -270,7 +274,7 @@ fn check_matches_the_checker_called_directly() {
 }
 
 #[test]
-fn clean_set_issues_the_pinned_receipt() {
+fn clean_set_emits_v2_and_preserves_the_historical_receipt_pin() {
     let output = json_of(&output_of("retail-registry-clean"));
     assert_eq!(output["format"], "norn-checker-abi/check@1");
     assert_eq!(output["admitted"], true);
@@ -280,7 +284,19 @@ fn clean_set_issues_the_pinned_receipt() {
     );
     assert_eq!(output["diagnostics"]["diagnostics"], serde_json::json!([]));
     assert_eq!(output["receipt"]["format"], "norn-checker/receipt@2");
-    assert_eq!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
+    assert_eq!(output["receipt"]["typeEnv"]["version"], 2);
+    assert_ne!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
+    let historical: Value = serde_json::from_str(include_str!(
+        "../../norn-checker/tests/golden/check-receipt.retail.json"
+    ))
+    .expect("historical receipt");
+    let mut projected = output["receipt"].clone();
+    projected["typeEnv"] = historical["typeEnv"].clone();
+    assert_eq!(
+        norn_checker::receipt::admission_receipt_sha256(&projected.to_string())
+            .expect("historical projection hash"),
+        RETAIL_RECEIPT_SHA256
+    );
 }
 
 #[test]
@@ -584,6 +600,35 @@ fn runtime_values_match_the_pinned_golden() {
 }
 
 #[test]
+fn authored_host_refusal_is_preserved_by_the_shared_abi() {
+    use norn_ir::function::{FunctionManifest, ImplementationFormat};
+
+    let mut host: FunctionManifest =
+        serde_json::from_str(&read("fixtures/function/manifest.effectful.json"))
+            .expect("typed manifest");
+    host.function_id = "norn.builtin.fixture".to_owned();
+    host.implementation.format = ImplementationFormat::Host;
+    host.implementation.locator = Some(format!(
+        "{}/{}@{}",
+        host.runtime.id, host.runtime.version, host.implementation.digest
+    ));
+    let output = function_contract_json(&serde_json::to_string(&host).expect("encode"), None, None)
+        .expect("ABI response");
+    let output: Value = serde_json::from_str(&output).expect("response");
+    assert_eq!(output["admitted"], false);
+    assert!(
+        output["diagnostics"]["diagnostics"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| {
+                finding["code"] == norn_checker::function::codes::AUTHORED_HOST
+                    && finding["span"]["pointer"] == "/manifest/implementation/format"
+            })
+    );
+}
+
+#[test]
 fn function_contracts_match_the_pinned_golden() {
     // The norn-ir golden identities (T1-FN-1, #2776): the same digests
     // natively here and, through the parity run, on wasm32.
@@ -672,6 +717,83 @@ fn function_contract_findings_are_located_by_record() {
             .iter()
             .any(|(code, _)| code == "function.invocation.manifest_mismatch"),
         "the effectful command does not name the wasm manifest"
+    );
+}
+
+#[test]
+fn agent_admission_reports_every_rule_with_a_payload_pointer() {
+    let clean = json_of(&output_of("agent-clean"));
+    assert_eq!(clean["format"], "norn-checker-abi/agent@1");
+    assert_eq!(clean["admitted"], true, "{clean}");
+    assert_eq!(clean["diagnostics"]["diagnostics"], serde_json::json!([]));
+
+    let output = json_of(&output_of("agent-findings"));
+    assert_eq!(output["admitted"], false, "{output}");
+    let findings: Vec<(String, String, String)> = output["diagnostics"]["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .map(|finding| {
+            (
+                finding["code"].as_str().expect("code").to_owned(),
+                finding["span"]["pointer"]
+                    .as_str()
+                    .expect("pointer")
+                    .to_owned(),
+                finding["tier"]
+                    .as_str()
+                    .expect("registered tier")
+                    .to_owned(),
+            )
+        })
+        .collect();
+    let expected = [
+        ("agent.validation.unknown_model", "/model", "T3"),
+        ("agent.validation.unbound_tool", "/tools/1", "T3"),
+        ("agent.validation.unbound_tool", "/tools/2", "T3"),
+        ("agent.validation.unknown_law", "/laws/0", "T3"),
+        (
+            "agent.validation.budget_unbounded",
+            "/budgets/maxRuns",
+            "T2",
+        ),
+        // 1000.00000000000000000000001 would round to the cap through f64.
+        (
+            "agent.validation.budget_unbounded",
+            "/budgets/maxCostUsd",
+            "T2",
+        ),
+        (
+            "agent.validation.invalid_decision_policy",
+            "/decisionPolicy/laws",
+            "T2",
+        ),
+        (
+            "agent.validation.invalid_decision_policy",
+            "/decisionPolicy/deciderRoles",
+            "T2",
+        ),
+    ]
+    .map(|(code, pointer, tier)| (code.to_owned(), pointer.to_owned(), tier.to_owned()));
+    assert_eq!(findings, expected);
+
+    let unknown = json_of(&output_of("agent-unknown-member"));
+    assert_eq!(unknown["admitted"], false);
+    assert_eq!(
+        unknown["diagnostics"]["diagnostics"][0]["span"]["pointer"],
+        "/temperature"
+    );
+    assert!(
+        output_of("agent-context-unknown-member").starts_with("error: invalid context"),
+        "a malformed context is invalid input, not a finding"
+    );
+    assert!(
+        output_of("agent-context-bad-digest").starts_with("error: invalid context"),
+        "a binding manifest is named by digest, never a tag"
+    );
+    assert!(
+        check_agent_json("not json", "{\"models\":[],\"bindings\":[],\"laws\":[]}").is_err(),
+        "agent text that is not JSON is invalid input"
     );
 }
 

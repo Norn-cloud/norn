@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.unknown_interface",
+  "message": "implements {interface}, which names no interface",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

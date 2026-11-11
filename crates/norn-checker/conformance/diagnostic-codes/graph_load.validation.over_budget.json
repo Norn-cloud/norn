@@ -1,0 +1,7 @@
+{
+  "code": "graph_load.validation.over_budget",
+  "message": "{measure} exceeds budget {budget}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

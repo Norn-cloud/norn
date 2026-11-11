@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.unknown_object",
+  "message": "The measure object type is unavailable.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

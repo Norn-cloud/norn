@@ -1,0 +1,7 @@
+{
+  "code": "ledger.amount.unknown_parameter",
+  "message": "unknown or invalid parameter `{parameterId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

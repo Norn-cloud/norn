@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "properties": {
+    "question": { "type": "string" },
+    "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "effect": {
+            "type": "object",
+            "properties": {
+              "action": { "type": "string" },
+              "binding": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "scope": { "type": "string" }
+        },
+        "required": ["id", "label", "effect", "scope"],
+        "additionalProperties": false
+      }
+    },
+    "agentPick": { "type": "string" },
+    "decider": {
+      "type": "object",
+      "properties": {
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "law": { "type": "string" }
+      },
+      "required": ["roles"],
+      "additionalProperties": false
+    },
+    "expiresInMs": { "type": "integer" }
+  },
+  "required": ["question", "risk", "options", "decider"],
+  "additionalProperties": false
+}

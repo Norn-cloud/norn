@@ -1,0 +1,7 @@
+{
+  "code": "ledger.runtime.parameter_scale_mismatch",
+  "message": "runtime parameter `{parameterId}` has scale {scale}; expected {expected}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

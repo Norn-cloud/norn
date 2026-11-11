@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::action::{ActionCommandRejection, ActionRejection, AuthorizedRejection};
 use crate::action_commit::ActionRefusal;
-use crate::cell_host::CommitError;
+use crate::cell_host::{CommitError, FactKey};
 use crate::decider::StepError;
 use crate::decision_commit::DecisionRefusal;
 use crate::limits::IngressLimitExceeded;
@@ -103,18 +103,19 @@ pub struct Refusal {
     /// Definition-derived law and operands, when the refusal identifies them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<RefusalReason>,
+    /// Only engine-defined stale preparation/concurrency paths permit retry.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub retryable: bool,
 }
 
-/// Structured operands of a violated law, shared by every transport.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RefusalReason {
-    /// Stable law identifier.
-    pub law: String,
-    /// Object to which the law applies.
-    pub subject: String,
-    /// Named operands; absent states are null and declared state sets are arrays.
-    pub values: BTreeMap<String, RuntimeValue>,
+pub use norn_ir::RefusalReason;
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if passes a field reference"
+)]
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 impl Refusal {
@@ -136,6 +137,7 @@ impl Refusal {
             category,
             message,
             reason: None,
+            retryable: false,
         }
     }
 }
@@ -152,12 +154,26 @@ pub trait Refusable {
     fn refusal(&self) -> Refusal;
 }
 
+const fn law_category(reason: &crate::governing_laws::LawEvaluationError) -> RefusalCategory {
+    use crate::governing_laws::LawEvaluationError as Law;
+    match reason {
+        Law::Violated(_) => RefusalCategory::Precondition,
+        Law::BudgetExceeded => RefusalCategory::Limit,
+        Law::UnsupportedUntilB2(_) | Law::Unsupported(_) | Law::Invalid(_) => {
+            RefusalCategory::Invalid
+        }
+    }
+}
+
 impl<X> CommitError<X> {
     /// The refusal's category.
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
-            Self::DuplicateKey { .. }
+            Self::Law { reason, .. } => law_category(reason),
+            Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::DuplicateKey { .. }
             | Self::DuplicateLink { .. }
             | Self::LinkTarget { .. }
             | Self::InvariantModel { .. }
@@ -166,12 +182,18 @@ impl<X> CommitError<X> {
             | Self::ObservationAuthorization
             | Self::UnsupportedLinkRead { .. }
             | Self::DuplicateLinkRead { .. }
-            | Self::InvalidLinkRead { .. } => RefusalCategory::Invalid,
+            | Self::InvalidLinkRead { .. }
+            | Self::UnsupportedPredicateRead { .. }
+            | Self::InvalidPredicateRead { .. } => RefusalCategory::Invalid,
             Self::NotPending { .. }
             | Self::Conflict { .. }
             | Self::LinkConflict { .. }
-            | Self::LinkReadConflict { .. } => RefusalCategory::Conflict,
-            Self::DanglingLink { .. }
+            | Self::LinkReadConflict { .. }
+            | Self::PredicateReadConflict { .. } => RefusalCategory::Conflict,
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
+            | Self::ImmutableObject { .. }
+            | Self::DanglingLink { .. }
             | Self::LinkCardinality { .. }
             | Self::LinkRequired { .. }
             | Self::TypeMismatch { .. }
@@ -248,7 +270,26 @@ impl<X> CommitError<X> {
 
 impl<X> Refusable for CommitError<X> {
     fn refusal(&self) -> Refusal {
-        Refusal::new(self.code(), self.category(), self)
+        let mut refusal = Refusal::new(self.code(), self.category(), self);
+        if let Self::InvariantViolation {
+            key,
+            owner,
+            version,
+            id,
+            outcome,
+            ..
+        } = self
+        {
+            refusal.reason = Some(invariant_reason(key, owner, version, id, outcome));
+        }
+        refusal.retryable = matches!(
+            self,
+            Self::Conflict { .. }
+                | Self::LinkConflict { .. }
+                | Self::LinkReadConflict { .. }
+                | Self::PredicateReadConflict { .. }
+        );
+        refusal
     }
 }
 
@@ -257,7 +298,10 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
-            Self::GuardFalse { .. }
+            Self::Law { reason, .. } => law_category(reason),
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
+            | Self::GuardFalse { .. }
             | Self::GuardError { .. }
             | Self::NotFromState { .. }
             | Self::ObjectMissing { .. }
@@ -332,7 +376,9 @@ impl<X> DecisionRefusal<X> {
             | Self::EnvelopeExceeded { .. }
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
             Self::Host(_) => RefusalCategory::Internal,
-            Self::ReadOnlyWorld
+            Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::UnknownType { .. }
             | Self::NotInSlice { .. }
@@ -343,6 +389,51 @@ impl<X> DecisionRefusal<X> {
             | Self::UnknownTransition { .. }
             | Self::InvalidOutput { .. } => RefusalCategory::Invalid,
         }
+    }
+}
+
+/// DIAG-REASON-1: final-value refusals retain the exact evaluated declaration.
+fn invariant_reason(
+    key: &crate::FactKey,
+    owner: &norn_ir::InvariantOwner,
+    version: &str,
+    id: &norn_ir::InvariantId,
+    outcome: &norn_ir::DataQualityOutcome,
+) -> RefusalReason {
+    let outcome = match outcome {
+        norn_ir::DataQualityOutcome::NotSatisfied => "not_satisfied",
+        norn_ir::DataQualityOutcome::NonBoolean { .. } => "non_boolean",
+        norn_ir::DataQualityOutcome::EvaluationFailed { .. } => "evaluation_failed",
+        // Non-runtime outcomes carry no unproven observed values into a refusal.
+        norn_ir::DataQualityOutcome::ObservedOutOfBand { .. }
+        | norn_ir::DataQualityOutcome::InvalidTemporalObservation { .. }
+        | norn_ir::DataQualityOutcome::IdentityProjectionIsolation { .. } => "unsupported_outcome",
+    };
+    RefusalReason {
+        law: id.as_str().to_owned(),
+        subject: key.to_string(),
+        values: refusal_values([("outcome", outcome.into())]),
+        pin: Some(norn_ir::DataQualityRuleRef::Invariant {
+            owner: owner.clone(),
+            invariant_id: id.clone(),
+            version: version.to_owned(),
+        }),
+    }
+}
+
+fn builtin_reason(
+    law: &str,
+    key: &crate::FactKey,
+    values: BTreeMap<String, RuntimeValue>,
+) -> RefusalReason {
+    RefusalReason {
+        law: law.to_owned(),
+        subject: key.to_string(),
+        values,
+        pin: Some(norn_ir::DataQualityRuleRef::Builtin {
+            id: law.to_owned(),
+            version: "1".to_owned(),
+        }),
     }
 }
 
@@ -377,18 +468,26 @@ fn lifecycle_guard(
     transition: &str,
     guard: &str,
     error: Option<&str>,
+    underlying_code: Option<&str>,
 ) -> BTreeMap<String, RuntimeValue> {
     let mut values = refusal_values([("transition", transition.into()), ("guard", guard.into())]);
     let (name, value) = error.map_or(("result", RuntimeValue::Bool(false)), |error| {
         ("error", error.into())
     });
     values.insert(name.to_owned(), value);
+    if let Some(code) = underlying_code {
+        values.insert("underlyingCode".to_owned(), code.into());
+    }
     values
 }
 
 impl<X> DecisionRefusal<X> {
-    fn lifecycle_reason(&self) -> Option<RefusalReason> {
-        let reason = match self {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per lifecycle refusal, each with its own reason values"
+    )]
+    fn lifecycle_reason_parts(&self) -> Option<(&str, &FactKey, BTreeMap<String, RuntimeValue>)> {
+        match self {
             Self::NotFromState {
                 lifecycle,
                 key,
@@ -448,22 +547,38 @@ impl<X> DecisionRefusal<X> {
                 key,
                 transition,
                 guard,
+                diagnostic,
             } => Some((
                 "lifecycle.guard",
                 key,
-                lifecycle_guard(transition, guard, None),
+                lifecycle_guard(
+                    transition,
+                    guard,
+                    None,
+                    diagnostic.map(|_| "decision.guard_false"),
+                ),
             )),
             Self::GuardError {
                 key,
                 transition,
                 guard,
                 reason,
+                diagnostic,
             } => Some((
                 "lifecycle.guard_evaluable",
-                key,
-                lifecycle_guard(transition, guard, Some(reason)),
+                key.as_ref(),
+                lifecycle_guard(
+                    transition,
+                    guard,
+                    Some(reason),
+                    diagnostic.map(|_| "decision.guard_error"),
+                ),
             )),
-            Self::ReadOnlyWorld
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
+            | Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }
@@ -477,24 +592,38 @@ impl<X> DecisionRefusal<X> {
             | Self::Stale { .. }
             | Self::NotPending { .. }
             | Self::AccountingPosting { .. }
+            | Self::Law { .. }
             | Self::InvariantViolation { .. }
             | Self::InvariantBudgetExceeded { .. }
             | Self::TraversalLimitExceeded { .. }
             | Self::Overflow
             | Self::Host(_) => None,
-        };
-        reason.map(|(law, key, values)| RefusalReason {
-            law: law.to_owned(),
-            subject: key.to_string(),
-            values,
-        })
+        }
+    }
+
+    fn lifecycle_reason(&self) -> Option<RefusalReason> {
+        self.lifecycle_reason_parts()
+            .map(|(law, key, values)| builtin_reason(law, key, values))
     }
 }
 
 impl<X> Refusable for DecisionRefusal<X> {
     fn refusal(&self) -> Refusal {
         let mut refusal = Refusal::new(self.code(), self.category(), self);
-        refusal.reason = self.lifecycle_reason();
+        refusal.reason = if let Self::InvariantViolation {
+            key,
+            owner,
+            version,
+            id,
+            outcome,
+            ..
+        } = self
+        {
+            Some(invariant_reason(key, owner, version, id, outcome))
+        } else {
+            self.lifecycle_reason()
+        };
+        refusal.retryable = matches!(self, Self::Stale { .. });
         refusal
     }
 }
@@ -510,18 +639,22 @@ impl<X> ActionRefusal<X> {
             Self::PreconditionFailed { .. } | Self::WriteModeFailed { .. } => {
                 RefusalCategory::Precondition
             }
-            Self::IdempotencyConflict { .. } | Self::StalePreconditionRead { .. } => {
-                RefusalCategory::Conflict
-            }
-            Self::InputBoundExceeded { .. } | Self::ExpressionBudgetExceeded { .. } => {
-                RefusalCategory::Limit
-            }
+            Self::IdempotencyConflict { .. }
+            | Self::StalePreconditionRead { .. }
+            | Self::StaleAggregateRead { .. } => RefusalCategory::Conflict,
+            Self::ReceiptRefused { reason } => reason.category(),
+            Self::InputBoundExceeded { .. }
+            | Self::ExpressionBudgetExceeded { .. }
+            | Self::AggregateBoundExceeded { .. }
+            | Self::AggregateBytesExceeded { .. } => RefusalCategory::Limit,
             Self::Command(rejection) => rejection.category(),
             Self::MissingScope { .. }
             | Self::UnsupportedEffect { .. }
+            | Self::UncheckedWriter { .. }
             | Self::InvalidInput { .. }
             | Self::DerivationFailed { .. }
             | Self::SliceUnavailable { .. }
+            | Self::AggregateUnavailable { .. }
             | Self::KindMismatch { .. } => RefusalCategory::Invalid,
         }
     }
@@ -532,7 +665,12 @@ impl<X> Refusable for ActionRefusal<X> {
         if let Self::Decision(refusal) = self {
             return refusal.refusal();
         }
-        Refusal::new(self.code(), self.category(), self)
+        let mut refusal = Refusal::new(self.code(), self.category(), self);
+        refusal.retryable = matches!(
+            self,
+            Self::StalePreconditionRead { .. } | Self::StaleAggregateRead { .. }
+        );
+        refusal
     }
 }
 

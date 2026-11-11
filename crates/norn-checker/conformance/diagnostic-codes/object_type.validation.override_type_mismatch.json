@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.override_type_mismatch",
+  "message": "property {property} overrides the one {owner} declares with a type that is not the same or narrower; an override may only narrow",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

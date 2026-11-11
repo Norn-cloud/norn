@@ -1,0 +1,7 @@
+{
+  "code": "consistency.schema.unpreserved_constraint",
+  "message": "the source admits data that breaks {rule}: {witness}",
+  "severity": "warning",
+  "since": "0.2.0",
+  "tier": "T3"
+}

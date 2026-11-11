@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.unmapped_required_member",
+  "message": "required {memberKind} {id} of {target} is neither mapped nor declared as a gap",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

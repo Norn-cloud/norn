@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.invalid_member",
+  "message": "record member must match [a-z][a-z0-9_]*",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

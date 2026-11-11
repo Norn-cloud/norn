@@ -83,6 +83,7 @@ fn refusal_categories_are_stable() {
         ),
         (
             decision(DecisionRefusal::GuardFalse {
+                diagnostic: None,
                 key: key.clone(),
                 transition: "submit".into(),
                 guard: "self.amount > 0".into(),
@@ -111,6 +112,7 @@ fn refusal_categories_are_stable() {
             decision(DecisionRefusal::InvariantViolation {
                 key: Box::new(key.clone()),
                 owner: InvariantOwner::Object(ObjectTypeName("commerce.SalesOrder".into())),
+                version: "sha256:synthetic".into(),
                 id: InvariantId("positive_total".into()),
                 message: "total must be positive".into(),
                 outcome: Box::new(DataQualityOutcome::NotSatisfied),
@@ -167,6 +169,7 @@ fn refusal_categories_are_stable() {
             CommitError::<Infallible>::InvariantViolation {
                 key: Box::new(key.clone()),
                 owner: InvariantOwner::Object(ObjectTypeName("commerce.SalesOrder".into())),
+                version: "sha256:synthetic".into(),
                 id: InvariantId("positive_total".into()),
                 message: "total must be positive".into(),
                 outcome: Box::new(DataQualityOutcome::NotSatisfied),
@@ -517,6 +520,7 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
             serde_json::to_value(&refusal).unwrap()["reason"],
             json!({
                 "law": "lifecycle.transition_source",
+                "pin": {"kind": "builtin", "id": "lifecycle.transition_source", "version": "1"},
                 "subject": "commerce.SalesOrder/SO-1",
                 "values": {
                     "lifecycle": "status", "transition": "invoice",
@@ -530,4 +534,43 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
             refusal
         );
     }
+}
+
+#[test]
+fn only_engine_defined_stale_paths_are_retryable() {
+    let key = FactKey::new("demo.Item", "one");
+    let stale = ActionRefusal::<Infallible>::StalePreconditionRead {
+        key: key.clone(),
+        link: None,
+    }
+    .refusal();
+    assert!(stale.retryable);
+    assert!(
+        !ActionRefusal::<Infallible>::IdempotencyConflict { key: "used".into() }
+            .refusal()
+            .retryable
+    );
+    assert!(!Refusal::new("unknown", RefusalCategory::Conflict, "conflict").retryable);
+    assert!(
+        CommitError::<Infallible>::Conflict {
+            key,
+            expected: FactVersion(1),
+            current: FactVersion(2)
+        }
+        .refusal()
+        .retryable
+    );
+}
+
+#[test]
+fn historical_refusal_reason_does_not_invent_a_pin_or_retryability() {
+    let stored = json!({
+        "code": "decision.not_from_state", "category": "precondition", "message": "refused",
+        "reason": {"law": "lifecycle.transition_source", "subject": "demo.Item/one",
+                   "values": {"current": "draft"}}
+    });
+    let decoded: Refusal = serde_json::from_value(stored.clone()).unwrap();
+    assert!(!decoded.retryable);
+    assert!(decoded.reason.as_ref().unwrap().pin.is_none());
+    assert_eq!(serde_json::to_value(decoded).unwrap(), stored);
 }

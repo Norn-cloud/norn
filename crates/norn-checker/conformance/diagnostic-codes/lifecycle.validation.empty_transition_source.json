@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.empty_transition_source",
+  "message": "transition {id} has no source state",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

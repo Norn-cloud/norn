@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.entity.duplicate_object_type",
+  "message": "object type {name} is already defined by entity artifact {artifactId}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

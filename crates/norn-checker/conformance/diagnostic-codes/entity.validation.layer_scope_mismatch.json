@@ -1,0 +1,7 @@
+{
+  "code": "entity.validation.layer_scope_mismatch",
+  "message": "artifact scope.tenantId {detail} does not match the {layer} layer it is checked in",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

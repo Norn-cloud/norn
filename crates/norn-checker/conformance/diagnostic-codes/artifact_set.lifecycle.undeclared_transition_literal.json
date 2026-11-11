@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.lifecycle.undeclared_transition_literal",
+  "message": "the expression fires transition {transition}, but {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

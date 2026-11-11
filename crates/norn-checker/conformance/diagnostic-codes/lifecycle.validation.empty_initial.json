@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.empty_initial",
+  "message": "a lifecycle declares at least one initial state",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

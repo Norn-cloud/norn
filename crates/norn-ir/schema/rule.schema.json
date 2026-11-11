@@ -128,7 +128,7 @@
       "type": "object",
       "properties": {
         "rounding": {
-          "$ref": "#/$defs/FoldRounding"
+          "$ref": "#/$defs/Rounding"
         },
         "scale": {
           "description": "Quantity-ledger-compatible exact scaled integers; at most 18 places.",
@@ -165,15 +165,6 @@
       "enum": [
         "string",
         "integer"
-      ]
-    },
-    "FoldRounding": {
-      "type": "string",
-      "enum": [
-        "refuse",
-        "toward_zero",
-        "half_even",
-        "half_away_from_zero"
       ]
     },
     "JdmCustomNodeContent": {
@@ -986,6 +977,16 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
     },
+    "Rounding": {
+      "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+      "type": "string",
+      "enum": [
+        "refuse",
+        "toward_zero",
+        "half_even",
+        "half_away_from_zero"
+      ]
+    },
     "RuleConditionV1": {
       "description": "RuleIR v1 closed-operator condition, mirroring the conditions the\n`norn-engine` closed evaluator runs (`RuleCondition`).",
       "oneOf": [
@@ -1563,6 +1564,84 @@
     "SliceKey": {
       "description": "Where a [`SliceDeclaration`]'s key comes from.",
       "oneOf": [
+        {
+          "description": "A unique effective parameter selected from an earlier authorized link list.",
+          "type": "object",
+          "properties": {
+            "parameter": {
+              "type": "object",
+              "properties": {
+                "defaultFrom": {
+                  "description": "Earlier single-object slice holding an explicit default setting.",
+                  "type": "string"
+                },
+                "effectiveAt": {
+                  "description": "Action input field carrying the declared effective timestamp.",
+                  "$ref": "#/$defs/PropertyId"
+                },
+                "from": {
+                  "description": "Earlier list slice containing the candidate setting facts.",
+                  "type": "string"
+                },
+                "precedence": {
+                  "description": "Explicit scope precedence, highest first.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "businessUnitId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "environmentId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "orgId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tenantId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "workspaceId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "settingKey": {
+                  "description": "Stable parameter key.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "settingKey",
+                "effectiveAt",
+                "precedence"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "parameter"
+          ]
+        },
         {
           "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
           "type": "string",

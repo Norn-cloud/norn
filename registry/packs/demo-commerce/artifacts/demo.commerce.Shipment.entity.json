@@ -1,0 +1,50 @@
+{
+  "artifactId": "demo.commerce.Shipment.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Shipment identity evidence",
+  "namespace": "demo.commerce",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "demo.commerce.SourceIdentity"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "canonical_event",
+          "target": "core.EconomicEvent"
+        }
+      ],
+      "name": "demo.commerce.Shipment",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-commerce/artifacts/demo.commerce.Shipment.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

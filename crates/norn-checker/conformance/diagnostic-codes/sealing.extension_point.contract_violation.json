@@ -1,0 +1,7 @@
+{
+  "code": "sealing.extension_point.contract_violation",
+  "message": "overlay payload violates the extension-point contract: {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

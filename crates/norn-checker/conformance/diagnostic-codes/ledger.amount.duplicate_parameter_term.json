@@ -1,0 +1,7 @@
+{
+  "code": "ledger.amount.duplicate_parameter_term",
+  "message": "parameter `{parameterId}` appears more than once; normalize it to one coefficient",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

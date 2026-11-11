@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.inverted_range",
+  "message": "{lower} is greater than {upper}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

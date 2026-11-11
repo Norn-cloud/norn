@@ -1,0 +1,7 @@
+{
+  "code": "function.invocation.mutable_input",
+  "message": "input {name} is a mutable URL or object key; stage the bytes and pass their digest as a blob",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

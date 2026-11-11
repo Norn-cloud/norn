@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.duplicate_key_name",
+  "message": "key {key} is declared twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -10,9 +10,9 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::ExportRecord;
 use crate::export_journal::ConsumedInput;
-use crate::read::{LedgerEntry, ObjectRecord, StoreReader, to_i64, to_u64};
+use crate::read::{LedgerEntry, LedgerHead, ObjectRecord, StoreReader, to_i64, to_u64};
 use crate::system::{FACT_VALUES, GENESIS_HASH, INBOX, RECEIPT, RUN, STORE_FORMAT};
-use crate::{CellStore, CommitOutcome, InstalledDefinitionInput, Model, Receipt};
+use crate::{CellStore, CommitOutcome, Model, Receipt};
 
 /// The commitment preimage; absence is a tombstone, not an empty live object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,6 +38,19 @@ pub struct FactSnapshot {
     pub values: Option<BTreeMap<String, Value>>,
 }
 
+fn fact_receipt_matches(snapshot: &FactSnapshot, hash: &str, receipt: &Receipt) -> bool {
+    receipt.body.world == snapshot.world
+        && receipt.body.written.iter().any(|row| {
+            row.object_type == snapshot.object_type
+                && row.key == snapshot.key
+                && row.version == snapshot.version
+                && crate::receipt_commitment::receipt_digest_matches(
+                    row.snapshot_sha256.as_deref(),
+                    hash,
+                )
+        })
+}
+
 /// Store-authenticated source evidence for a single historical incarnation.
 /// Exporting this record preserves knowledge time in the hashed receipt. It is
 /// not authorization or publication authority; importing hosts must revalidate.
@@ -47,6 +60,107 @@ pub struct FactVersionEvidence {
     snapshot: FactSnapshot,
     snapshot_sha256: String,
     receipt: Receipt,
+}
+
+pub(crate) struct HistoricalFrame {
+    pub(crate) revision: LedgerHead,
+    pub(crate) receipt: Option<Receipt>,
+}
+
+/// Immutable knowledge coordinate; the frontier disambiguates equal logical clocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnowledgeCutoff {
+    /// Inclusive authenticated recorded-time bound.
+    pub recorded_at: norn_kernel::LogicalTime,
+    /// Inclusive immutable source commit frontier (zero is the empty history).
+    pub frontier: u64,
+}
+
+/// A bounded historical lookup distinguishes absence from exhausted evidence.
+#[derive(Debug)]
+pub enum HistoricalEvidence {
+    /// Authenticated incarnation; a tombstone retains its source receipt.
+    Found(Box<FactVersionEvidence>),
+    /// No incarnation was known at the requested cutoff.
+    Missing,
+    /// No partial answer is returned after the read budget is exhausted.
+    Exhausted,
+}
+
+// A cache is bound to one immutable reader, never action JSON or another cell.
+pub(crate) struct HistoryRead<'r, 'c, S: SqlEngine> {
+    reader: &'r StoreReader<'c, S>,
+    receipts: BTreeMap<u64, Receipt>,
+}
+impl<S: SqlEngine> HistoryRead<'_, '_, S> {
+    fn receipt(
+        &mut self,
+        commit: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<&Receipt>, CellError> {
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.receipts.entry(commit) {
+            let Some(receipt) = self.reader.receipt_at_with_budget(commit, budget)? else {
+                return Ok(None);
+            };
+            entry.insert(receipt);
+        }
+        Ok(self.receipts.get(&commit))
+    }
+    pub(crate) fn known_at(
+        &mut self,
+        world: &str,
+        kind: &str,
+        key: &str,
+        cutoff: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<HistoricalEvidence, CellError> {
+        let reader = self.reader;
+        reader.select_evidence_known_at_with_budget(
+            world,
+            kind,
+            key,
+            cutoff,
+            budget,
+            |root, version, budget| self.evidence(world, root, key, version, budget),
+        )
+    }
+    fn evidence(
+        &mut self,
+        world: &str,
+        kind: &str,
+        key: &str,
+        version: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<FactVersionEvidence>, CellError> {
+        let root = kind;
+        let metadata:Option<(i64,i64)>=self.reader.conn.query_optional(
+            &format!("SELECT octet_length(snapshot)+octet_length(hash)+128,commit_seq FROM \"{FACT_VALUES}\" WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4"),
+            params![world,root,key,to_i64(version,"fact version")?],|row|Ok((row.get(0)?,row.get(1)?)),
+        )?;
+        let (bytes, commit) = metadata.ok_or_else(unproven_snapshot)?;
+        if !budget.charge_rows(1) || !budget.charge(to_u64(bytes, "snapshot bytes")?) {
+            return Ok(None);
+        }
+        let row:Option<(String,String)>=self.reader.conn.query_optional(
+            &format!("SELECT snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4"),
+            params![world,root,key,to_i64(version,"fact version")?],|row|Ok((row.get(0)?,row.get(1)?)),
+        )?;
+        let (encoded, hash) = row.ok_or_else(unproven_snapshot)?;
+        let snapshot = decode_snapshot(world, root, key, version, &encoded, &hash)?;
+        let snapshot_sha256 = hash_json(&snapshot)?;
+        let Some(receipt) = self.receipt(to_u64(commit, "fact commit")?, budget)? else {
+            return Ok(None);
+        };
+        if snapshot.root_type != root || !fact_receipt_matches(&snapshot, &snapshot_sha256, receipt)
+        {
+            return Err(unproven_snapshot());
+        }
+        Ok(Some(FactVersionEvidence {
+            snapshot,
+            snapshot_sha256,
+            receipt: receipt.clone(),
+        }))
+    }
 }
 
 impl FactVersionEvidence {
@@ -110,6 +224,68 @@ fn materialize_historical_values(
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// OBS-EVIDENCE-1: resolve governing laws from the exact retained definition version.
+    /// Never falls back to current definitions or accepts caller-provided laws.
+    ///
+    /// # Errors
+    /// Missing/corrupt retained version, mismatched snapshot, or scope unsupported until B2.
+    pub fn governing_laws_at(
+        &self,
+        definitions_version: u64,
+        object_type: &str,
+    ) -> Result<Vec<norn_ir::ArtifactEnvelope>, CellError> {
+        self.retained_definition_model(definitions_version)?
+            .governing_laws(object_type)
+    }
+
+    /// OBS-LEGACY-1: version zero supplies no authenticated governing definition.
+    pub(crate) fn retained_definition_model(
+        &self,
+        definitions_version: u64,
+    ) -> Result<Model, CellError> {
+        if definitions_version == 0 {
+            return Err(CellError::UnpinnedFinding);
+        }
+        let installed = self
+            .installed_definitions(Some(definitions_version))?
+            .ok_or_else(unproven_event)?;
+        let installation = self.retained_definition_install(&installed)?;
+        Self::retained_model_from(&installed, &installation)
+    }
+
+    /// The per-call half of the retained proof: the export-journal record of
+    /// `installed.commit_seq` exists and verifies, its installed row equals
+    /// `installed` field for field, and the stored receipt at that sequence
+    /// equals the journal's.
+    pub(crate) fn retained_definition_install(
+        &self,
+        installed: &crate::InstalledDefinitionSet,
+    ) -> Result<crate::store::DefinitionInstallRecord, CellError> {
+        let record = crate::export_journal::read_record(self.conn, installed.commit_seq)?
+            .ok_or_else(unproven_event)?;
+        let installation = record.definition_install.ok_or_else(unproven_event)?;
+        if installation.installed != *installed
+            || self.receipt_at(installed.commit_seq)?.as_ref() != Some(&record.receipt)
+        {
+            return Err(unproven_event());
+        }
+        Ok(installation)
+    }
+
+    /// The pure half of the retained proof: a function of the journal's model
+    /// snapshot and the installed row only.
+    pub(crate) fn retained_model_from(
+        installed: &crate::InstalledDefinitionSet,
+        installation: &crate::store::DefinitionInstallRecord,
+    ) -> Result<Model, CellError> {
+        let model = Model::from_retained_snapshot(&installation.model)?;
+        if model.model_hash() != installed.model_hash {
+            return Err(unproven_event());
+        }
+        model.check_governing_laws(&installed.canonical_set)?;
+        Ok(model)
+    }
+
     fn proven_snapshot(
         &self,
         world: &str,
@@ -118,13 +294,41 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
     ) -> Result<FactSnapshot, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
-        let row: Option<(String, String)> = self.conn.query_optional(
-            &format!("SELECT \"snapshot\", \"hash\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
+        let row: Option<(String, String, i64, String)> = self.conn.query_optional(
+            &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
             params![world, root, key, to_i64(version, "fact version")?],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-        let (encoded, hash) = row.ok_or_else(unproven_snapshot)?;
-        decode_snapshot(world, object_type, key, version, &encoded, &hash)
+        let (encoded, hash, commit, stored_root) = row.ok_or_else(unproven_snapshot)?;
+        let snapshot = decode_snapshot(world, object_type, key, version, &encoded, &hash)?;
+        if snapshot.root_type != stored_root {
+            return Err(unproven_snapshot());
+        }
+        let commit = to_u64(commit, "snapshot commit")?;
+        if let Some((pending_commit, digests)) = self.pending_digests
+            && pending_commit == commit
+        {
+            let expected = digests.get(&(
+                snapshot.root_type.clone(),
+                snapshot.key.clone(),
+                snapshot.version,
+            ));
+            return if crate::receipt_commitment::receipt_digest_matches(
+                expected.map(String::as_str),
+                &hash,
+            ) {
+                Ok(snapshot)
+            } else {
+                Err(unproven_snapshot())
+            };
+        }
+        let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
+        if hash_json(&receipt.body)? != receipt.hash
+            || !fact_receipt_matches(&snapshot, &hash, &receipt)
+        {
+            return Err(unproven_snapshot());
+        }
+        Ok(snapshot)
     }
 
     /// Authenticate the receipt that emitted one exact committed fact version.
@@ -153,6 +357,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
     ) -> Result<FactVersionEvidence, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
+        self.fact_version_evidence_at_root(world, root, object_type, key, version)
+    }
+
+    fn fact_version_evidence_at_root(
+        &self,
+        world: &str,
+        root: &str,
+        object_type: &str,
+        key: &str,
+        version: u64,
+    ) -> Result<FactVersionEvidence, CellError> {
         let row: Option<(String, String, i64)> = self.conn.query_optional(
             &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4"),
             params![world, root, key, to_i64(version, "fact version")?],
@@ -167,10 +382,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .receipt_at(to_u64(commit_seq, "fact commit seq")?)?
             .ok_or_else(unproven_snapshot)?;
         if hash_json(&receipt.body)? != receipt.hash
-            || receipt.body.world != world
-            || !receipt.body.written.iter().any(|row| {
-                row.object_type == snapshot.object_type && row.key == key && row.version == version
-            })
+            || !fact_receipt_matches(&snapshot, &hash, &receipt)
         {
             return Err(unproven_snapshot());
         }
@@ -215,6 +427,25 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<FactVersionEvidence>, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
+        self.fact_version_evidence_at_root_with_budget(
+            world,
+            root,
+            object_type,
+            key,
+            version,
+            budget,
+        )
+    }
+
+    fn fact_version_evidence_at_root_with_budget(
+        &self,
+        world: &str,
+        root: &str,
+        object_type: &str,
+        key: &str,
+        version: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<FactVersionEvidence>, CellError> {
         let bytes: Option<i64> = self.conn.query_optional(
             &format!("SELECT octet_length(f.\"snapshot\") + octet_length(f.\"hash\") + COALESCE(octet_length(r.\"world\"), 0) + COALESCE(octet_length(r.\"idempotency_key\"), 0) + COALESCE(octet_length(r.\"request_hash\"), 0) + octet_length(r.\"receipt\") + octet_length(r.\"receipt_hash\") FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = f.\"commit_seq\" WHERE f.\"world\" = ?1 AND f.\"root_type\" = ?2 AND f.\"id\" = ?3 AND f.\"version\" = ?4"),
             params![world, root, key, to_i64(version, "fact version")?],
@@ -228,8 +459,187 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if !budget.charge_rows(2) || !budget.charge(bytes) {
             return Ok(None);
         }
-        self.fact_version_evidence(world, object_type, key, version)
+        self.fact_version_evidence_at_root(world, root, object_type, key, version)
             .map(Some)
+    }
+
+    /// ASOF-KNOWLEDGE-1: choose the newest authenticated incarnation known by
+    /// the inclusive cutoff. Effective-time interpretation and authorization
+    /// remain with the declared question and exporting host.
+    ///
+    /// # Errors
+    /// Corrupt/missing version proof, invalid identity or storage failure.
+    pub fn fact_evidence_known_at_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        known_as_of: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<HistoricalEvidence, CellError> {
+        let mut history = self.history_read();
+        if known_as_of.frontier > 0 && history.receipt(known_as_of.frontier, budget)?.is_none() {
+            return Ok(HistoricalEvidence::Exhausted);
+        }
+        history.known_at(world, object_type, key, known_as_of, budget)
+    }
+    pub(crate) fn history_read(&self) -> HistoryRead<'_, '_, E> {
+        self.history_read_seeded(None)
+    }
+    pub(crate) fn history_read_seeded(&self, receipt: Option<Receipt>) -> HistoryRead<'_, '_, E> {
+        HistoryRead {
+            reader: self,
+            receipts: receipt
+                .into_iter()
+                .map(|r| (r.body.commit_seq, r))
+                .collect(),
+        }
+    }
+    fn select_evidence_known_at_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        known_as_of: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+        mut resolve: impl FnMut(
+            &str,
+            u64,
+            &mut crate::reactive::DecodeBudget,
+        ) -> Result<Option<FactVersionEvidence>, CellError>,
+    ) -> Result<HistoricalEvidence, CellError> {
+        let capacity = budget.remaining_rows() / 3;
+        let limit = to_i64(
+            u64::try_from(capacity.saturating_add(1)).map_err(|_bound| unproven_snapshot())?,
+            "historical limit",
+        )?;
+        let frontier = to_i64(known_as_of.frontier, "knowledge frontier")?;
+        let suffix = format!(
+            "FROM \"{FACT_VALUES}\" INDEXED BY \"_norn_fact_values/key_frontier\" WHERE world=?1 AND id=?2 AND commit_seq<=?3 ORDER BY commit_seq,root_type,version LIMIT ?4"
+        );
+        let bindings = params![world, key, frontier, limit];
+        let lengths = self.conn.query(
+            &format!("SELECT octet_length(root_type)+64 {suffix}"),
+            bindings,
+        )?;
+        if lengths.len() > capacity {
+            return Ok(HistoricalEvidence::Exhausted);
+        }
+        for row in lengths {
+            if !budget.charge_rows(1)
+                || !budget.charge(to_u64(SqlRow(row).get(0)?, "root locator")?)
+            {
+                return Ok(HistoricalEvidence::Exhausted);
+            }
+        }
+        let rows = self
+            .conn
+            .query(&format!("SELECT root_type,version {suffix}"), bindings)?;
+        let mut roots = BTreeMap::<String, FactVersionEvidence>::new();
+        for row in rows {
+            let row = SqlRow(row);
+            let root: String = row.get(0)?;
+            let version = to_u64(row.get(1)?, "fact version")?;
+            let Some(candidate) = resolve(&root, version, budget)? else {
+                return Ok(HistoricalEvidence::Exhausted);
+            };
+            let selected = roots.get(&root).map(|proof| proof.snapshot().version);
+            let next = crate::history_selection::select_known_version(
+                known_as_of.recorded_at.as_millis(),
+                selected,
+                version,
+                candidate.receipt().body.logical_time,
+            );
+            if next != selected {
+                roots.insert(root, candidate);
+            }
+        }
+        Ok(roots
+            .into_values()
+            .filter(|proof| {
+                proof
+                    .snapshot()
+                    .lineage
+                    .iter()
+                    .any(|name| name == object_type)
+            })
+            .max_by_key(|proof| (proof.receipt().body.commit_seq, proof.snapshot().version))
+            .map_or(HistoricalEvidence::Missing, |proof| {
+                HistoricalEvidence::Found(Box::new(proof))
+            }))
+    }
+
+    /// Read a pinned receipt only after admitting its complete encoded size.
+    /// ASOF-KNOWLEDGE-1: absence/corruption refuses; None means budget exhaustion.
+    /// # Errors
+    /// Missing/corrupt receipt or engine failure. The empty frontier has no receipt.
+    pub fn receipt_at_with_budget(
+        &self,
+        commit_seq: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<Receipt>, CellError> {
+        let bytes: Option<i64> = self.conn.query_optional(
+            &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
+            params![to_i64(commit_seq,"knowledge frontier")?], |row| row.get(0),
+        )?;
+        let bytes = to_u64(
+            bytes.ok_or_else(unproven_snapshot)?,
+            "frontier receipt bytes",
+        )?;
+        if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
+            return Ok(None);
+        }
+        let receipt = self.receipt_at(commit_seq)?.ok_or_else(unproven_snapshot)?;
+        if hash_json(&receipt.body)? != receipt.hash {
+            return Err(unproven_snapshot());
+        }
+        Ok(Some(receipt))
+    }
+
+    /// Bind a historical result to the actual immutable ledger prefix.
+    /// ASOF-KNOWLEDGE-1: a frontier recorded after its cutoff refuses.
+    /// # Errors
+    /// Unproven/future receipt, invalid ledger span, or engine failure.
+    pub fn historical_revision_with_budget(
+        &self,
+        cutoff: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<LedgerHead>, CellError> {
+        Ok(self
+            .historical_frame_with_budget(cutoff, budget)?
+            .map(|frame| frame.revision))
+    }
+    pub(crate) fn historical_frame_with_budget(
+        &self,
+        cutoff: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<HistoricalFrame>, CellError> {
+        if cutoff.frontier == 0 {
+            return Ok(Some(HistoricalFrame {
+                revision: LedgerHead::genesis(),
+                receipt: None,
+            }));
+        }
+        let Some(receipt) = self.receipt_at_with_budget(cutoff.frontier, budget)? else {
+            return Ok(None);
+        };
+        if receipt.body.logical_time > cutoff.recorded_at.as_millis() {
+            return Err(CellError::TemporalLeakage);
+        }
+        let seq = crate::history_selection::receipt_last_sequence(
+            receipt.body.first_event_seq,
+            receipt.body.event_count,
+        )
+        .ok_or_else(unproven_snapshot)?;
+        let revision = LedgerHead {
+            seq,
+            hash: receipt.body.ledger_head.clone(),
+            commits: receipt.body.commit_seq,
+        };
+        Ok(Some(HistoricalFrame {
+            revision,
+            receipt: Some(receipt),
+        }))
     }
 
     pub(crate) fn retained_fact_scope(
@@ -248,7 +658,29 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         for receipt in self.receipt_stream() {
             let receipt = receipt?;
             for row in receipt.body.written {
-                self.proven_snapshot(&receipt.body.world, &row.object_type, &row.key, row.version)?;
+                let stored: Option<(String, String, String)> = self.conn.query_optional(
+                    &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5"),
+                    params![receipt.body.world, to_i64(receipt.body.commit_seq, "fact commit")?, row.object_type, row.key, to_i64(row.version, "fact version")?],
+                    |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
+                )?;
+                let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
+                let snapshot = decode_snapshot(
+                    &receipt.body.world,
+                    &row.object_type,
+                    &row.key,
+                    row.version,
+                    &encoded,
+                    &hash,
+                )?;
+                if snapshot.root_type != root
+                    || snapshot.object_type != row.object_type
+                    || !crate::receipt_commitment::receipt_digest_matches(
+                        row.snapshot_sha256.as_deref(),
+                        &hash,
+                    )
+                {
+                    return Err(unproven_snapshot());
+                }
             }
         }
         Ok(())
@@ -290,9 +722,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
-        let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(\"snapshot\") + octet_length(\"hash\") FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
+        let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(f.snapshot)+octet_length(f.hash)+octet_length(r.receipt)+octet_length(r.receipt_hash)+COALESCE(octet_length(r.world),0)+COALESCE(octet_length(r.idempotency_key),0)+COALESCE(octet_length(r.request_hash),0)+128 FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.commit_seq=f.commit_seq WHERE f.world=?1 AND (f.root_type=?2 OR f.object_type=?2) AND f.id=?3 AND f.version=?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
         let length = length.ok_or_else(unproven_event)?;
-        if !budget.charge_rows(1) || !budget.charge(to_u64(length, "historical snapshot bytes")?) {
+        if !budget.charge_rows(2) || !budget.charge(to_u64(length, "historical snapshot bytes")?) {
             return Ok(crate::reactive::BudgetedRead::Exhausted);
         }
         Ok(
@@ -320,7 +752,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         known_as_of: norn_kernel::LogicalTime,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
-        let Some(receipt) = self.receipt_for_fact_version_with_budget(
+        let Some(evidence) = self.fact_version_evidence_with_budget(
             world,
             fact.object_type.as_str(),
             &fact.key,
@@ -330,16 +762,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(crate::reactive::BudgetedRead::Exhausted);
         };
-        if receipt.body.logical_time > known_as_of.as_millis() {
+        if evidence.receipt.body.logical_time > known_as_of.as_millis() {
             return Err(CellError::TemporalLeakage);
         }
-        self.object_at_version_with_budget(
-            world,
-            fact.object_type.as_str(),
-            &fact.key,
-            version,
-            budget,
-        )
+        let snapshot = evidence.snapshot;
+        Ok(match snapshot.values {
+            Some(values) => crate::reactive::BudgetedRead::Found(ObjectRecord {
+                object_type: snapshot.object_type,
+                id: snapshot.key,
+                scope: snapshot.scope,
+                version: snapshot.version,
+                values,
+            }),
+            None => crate::reactive::BudgetedRead::Missing,
+        })
     }
 
     /// Authenticate a complete snapshot against engine-materialized committed values.
@@ -449,7 +885,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 let record = crate::export_journal::read_record(self.conn, installed.commit_seq)?
                     .ok_or_else(unproven_event)?;
                 let installation = record.definition_install.ok_or_else(unproven_event)?;
-                historical_model = Model::from_snapshot(&installation.model)?;
+                historical_model = Model::from_retained_snapshot(&installation.model)?;
                 if installation.installed != installed
                     || historical_model.model_hash() != installed.model_hash
                     || record.model_hash != installed.model_hash
@@ -1447,15 +1883,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(snapshot) = candidates.next() else {
             return Ok(None);
         };
-        if candidates.next().is_some() || snapshot.model_hash != self.model().model_hash() {
+        let receipt = self
+            .receipt_at(entry.commit_seq)?
+            .ok_or_else(unproven_event)?;
+        let model = self.retained_definition_model(receipt.body.definitions_version)?;
+        if candidates.next().is_some() || snapshot.model_hash != model.model_hash() {
             return Ok(None);
         }
         let Some(values) = snapshot.values else {
             return Ok(None);
         };
-        let definitions = self.model().object_types().cloned().collect::<Vec<_>>();
-        let catalog =
-            norn_kernel::TypeCatalog::new(&definitions).with_interfaces(self.model().interfaces());
+        let catalog = norn_kernel::TypeCatalog::new(model.object_types())
+            .with_interfaces(model.interfaces())
+            .with_property_types(model.property_types())
+            .with_governing_laws(model.law_artifacts());
         if !norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &values, &finding)
             .unwrap_or(false)
         {
@@ -1566,7 +2007,8 @@ impl<E: SqlEngine> CellStore<E> {
         if previous != expected_head_hash {
             return Err(refused());
         }
-        let mut store = Self::from_engine(engine, Model::from_snapshot(initial)?)?;
+        let mut store =
+            Self::from_retained_engine(engine, Model::from_retained_snapshot(initial)?)?;
         if store.export_commit_count()? != 0 {
             return Err(refused());
         }
@@ -1575,21 +2017,7 @@ impl<E: SqlEngine> CellStore<E> {
                 store.bind(key, value)?;
             }
             if let Some(install) = &record.definition_install {
-                let installed = store.install_definitions(
-                    Model::from_snapshot(&install.model)?,
-                    InstalledDefinitionInput {
-                        canonical_set: install.installed.canonical_set.clone(),
-                        registry: install.installed.registry.clone(),
-                        receipt_sha256: install.installed.receipt_sha256.clone(),
-                        admission_receipt: install.installed.admission_receipt.clone(),
-                        readmission: install.readmission.clone(),
-                        installed_at: install.installed.installed_at,
-                        diff: install.diff.clone(),
-                        layout: install.installed.layout.clone(),
-                    },
-                    Some(install.installed.version.saturating_sub(1)),
-                    &record.batch.scope,
-                )?;
+                let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
                     return Err(refused());
                 }
@@ -1601,17 +2029,7 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused());
                 }
                 restore_input(&mut store, record)?;
-                let ((), outcome) = store
-                    .commit_guarded_submitted(
-                        &record.batch,
-                        record.quantity_input.as_ref(),
-                        |_reader| Ok::<(), CellError>(()),
-                        &mut |_point| Ok(()),
-                    )
-                    .map_err(|error| match error {
-                        crate::store::GuardedError::Guard(error)
-                        | crate::store::GuardedError::Store(error) => error,
-                    })?;
+                let outcome = store.commit_retained_batch(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))
                     || outcome.receipt() != &record.receipt
                 {
@@ -1631,6 +2049,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
         }
         store.read().verify_ledger()?;
+        store.admit_reconstructed_model()?;
         Ok(store)
     }
 }
@@ -1684,7 +2103,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
             result,
             runs,
         } => {
-            let head = store.read().head_command()?.ok_or_else(mismatch)?;
+            let head = replayed_result(store, position)?.ok_or_else(mismatch)?;
             if head.position != position
                 || head.commit_seq != commit_seq
                 || head.command != command
@@ -1735,6 +2154,23 @@ pub(crate) fn restore_input<E: SqlEngine>(
         return Err(mismatch());
     }
     Ok(())
+}
+
+/// PARKED-1: the pending command a retained result consumption names: a
+/// parked command at its own position, any other only as the FIFO head.
+fn replayed_result<E: SqlEngine>(
+    store: &CellStore<E>,
+    position: u64,
+) -> Result<Option<crate::read::PendingCommand>, CellError> {
+    let reader = store.read();
+    let Some(row) = reader.pending_at(position)? else {
+        return Ok(None);
+    };
+    if crate::read::is_parked(&row.command) {
+        return Ok(Some(row));
+    }
+    let fifo_head = reader.head_command()?.map(|head| head.position);
+    Ok((fifo_head == Some(row.position)).then_some(row))
 }
 
 fn restore_run_history<E: SqlEngine>(

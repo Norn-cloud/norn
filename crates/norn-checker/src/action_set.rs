@@ -100,23 +100,29 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{
-    EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv, check_expression,
+    EntityDefinitions, EnvOptions, Expression, FieldSource, RecordType, Type, ZenTypeEnv,
 };
 use norn_ir::{
-    ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactPayload,
-    DiagnosticRemediation, DiagnosticSeverity, EntityMutationAuthority, JsonObject, JsonValue,
-    ObjectTypeName, OwnedCollectionAction, PropertyId, PropertyTypeName, SliceKey, TransitionId,
-    UpsertWriteMode, WriteChange, ZenExpression,
+    ActionAggregateInput, ActionEffectProgram, ActionEffectTarget, ActionRoot, AggregateFunction,
+    ArtifactEnvelope, ArtifactKind, ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity,
+    EntityMutationAuthority, JsonObject, JsonValue, ObjectTypeName, OwnedCollectionAction,
+    PropertyAdditivity, PropertyId, PropertyTypeName, SliceKey, TransitionId, UpsertWriteMode,
+    WriteChange, ZenExpression,
 };
 
 use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
-use crate::entity_instance::{EffectiveCatalog, EffectiveLifecycle, EffectiveObjectType};
+use crate::entity_instance::{
+    EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveObjectType, EffectiveProperty,
+};
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::lifecycle_writes::{codes as codes_lifecycle, finding as lifecycle_finding};
 use crate::lifecycles::{check_transition_firing, codes::UNDECLARED_WRITE};
+use crate::predicate_property::{
+    EQUALITY, ScalarClass, WINDOW, indexed_scalar_property, scalar_class,
+};
 use crate::property_types::error;
-use crate::typed_roots::check_action_slice_preconditions;
+use crate::typed_roots::{action_input_field_type, check_action_slice_preconditions};
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 /// Stable `artifact_set.action.*` and `artifact_set.entity.*` codes.
@@ -141,6 +147,9 @@ pub mod codes {
     pub const UNKNOWN_SLICE_KIND: &str = "artifact_set.action.unknown_slice_kind";
     /// An action slice reads an unknown key property or link.
     pub const INVALID_SLICE: &str = "artifact_set.action.invalid_slice";
+    /// An action aggregate input names an unknown type or property, or a
+    /// property whose kind the fold cannot read (#1105).
+    pub const INVALID_AGGREGATE: &str = "artifact_set.action.invalid_aggregate";
     /// An effect target or declared write is not writable by a generic
     /// action: a domain-engine type, or a computed property.
     pub const TARGET_NOT_WRITABLE: &str = "artifact_set.action.target_not_writable";
@@ -160,6 +169,7 @@ pub mod codes {
 /// Check every candidate action's effect targets and declared write set over
 /// the resolved set of `artifacts` and the installed `base` (T3). See the
 /// module docs.
+/// Informational notes do not refuse admission; consumers check [`Diagnostic::is_error`].
 #[must_use]
 pub fn check_action_set(
     artifacts: &[ArtifactEnvelope],
@@ -269,6 +279,107 @@ pub fn check_action_firing(
     )
 }
 
+/// TXN-RULE-1: bind the exact admitted writer without an ambient latest lookup.
+fn synchronous_rule_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let mut findings = Vec::new();
+    if let Some(pin) = &root.synchronous_rule {
+        let matched: Vec<_> = artifacts
+            .iter()
+            .chain(base)
+            .filter(|candidate| {
+                candidate.artifact_id == pin.artifact_id
+                    && candidate.version == pin.version
+                    && candidate.kind() == ArtifactKind::Rule
+            })
+            .collect();
+        let valid = !pin.artifact_id.trim().is_empty()
+            && !pin.version.trim().is_empty()
+            && matches!(
+                root.effect_program.as_ref(),
+                Some(ActionEffectProgram::FireTransition { .. })
+            )
+            && matched.len() == 1
+            && artifact.dependencies.iter().any(|dependency| {
+                dependency.artifact_id == pin.artifact_id
+                    && dependency.kind == ArtifactKind::Rule
+                    && dependency.version.as_deref() == Some(pin.version.as_str())
+                    && dependency.required
+            })
+            && matched
+                .first()
+                .and_then(|candidate| serde_json::to_value(candidate.payload.to_json_value()).ok())
+                .and_then(|payload| serde_json::from_value::<norn_ir::RuleRoot>(payload).ok())
+                .is_some_and(|rule| {
+                    rule.contract == Some(norn_ir::RuleContractV2::Decide)
+                        && rule
+                            .scope_required
+                            .iter()
+                            .all(|scope| root.scope_required.contains(scope))
+                });
+        if valid {
+            if let Some(candidate) = matched.first() {
+                findings.extend(scope_finding(
+                    artifact,
+                    candidate,
+                    "/payload/synchronousRule",
+                ));
+            }
+        } else {
+            findings.push(finding("action.validation.invalid_payload",
+                "synchronousRule requires a transition action, one exact decide artifact and a required dependency at that version, with scope covered by the action".to_owned(),
+                artifact, "/payload/synchronousRule"));
+        }
+    }
+    findings
+}
+
+/// TXN-CLOSED-1: every permitted fact writer contributes to admission's footprint.
+fn synchronous_writer_targets(
+    payload: &serde_json::Value,
+) -> Option<BTreeSet<(&str, WriteChange)>> {
+    let properties = payload.pointer("/outputSchema/properties/facts/items/properties")?;
+    let kinds = properties.get("objectType")?.get("enum")?.as_array()?;
+    let operations = properties.get("op")?.get("enum")?.as_array()?;
+    if kinds.is_empty() || operations.is_empty() {
+        return None;
+    }
+    let mut result = BTreeSet::new();
+    for kind in kinds {
+        let kind = kind.as_str().filter(|kind| !kind.trim().is_empty())?;
+        for operation in operations {
+            let change = match operation.as_str()? {
+                "create" => WriteChange::Created,
+                "set" | "patch" | "transition" => WriteChange::Modified,
+                _ => return None,
+            };
+            result.insert((kind, change));
+        }
+    }
+    Some(result)
+}
+
+fn synchronous_writer_payload(
+    root: &ActionRoot,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Option<serde_json::Value> {
+    root.synchronous_rule
+        .as_ref()
+        .and_then(|pin| {
+            artifacts.iter().chain(base).find(|candidate| {
+                candidate.artifact_id == pin.artifact_id
+                    && candidate.version == pin.version
+                    && candidate.kind() == ArtifactKind::Rule
+            })
+        })
+        .and_then(|artifact| serde_json::to_value(artifact.payload.to_json_value()).ok())
+}
+
 /// The findings of one action.
 fn check_action(
     artifact: &ArtifactEnvelope,
@@ -278,9 +389,18 @@ fn check_action(
     base: &[ArtifactEnvelope],
 ) -> Vec<Diagnostic> {
     let mut findings = action_slice_findings(artifact, root, model);
+    findings.extend(synchronous_rule_findings(artifact, root, artifacts, base));
     findings.extend(quantity_effect_findings(artifact, root, model));
     findings.extend(create_link_findings(artifact, root, model));
+    let writer = synchronous_writer_payload(root, artifacts, base);
     let mut targets: BTreeSet<(&str, WriteChange)> = BTreeSet::new();
+    if let Some(writer) = &writer {
+        if let Some(writes) = synchronous_writer_targets(writer) {
+            targets.extend(writes);
+        } else {
+            findings.push(finding(codes::UNDECLARED_EFFECT_WRITE, "synchronousRule requires finite objectType and supported op enums in its closed fact schema".to_owned(), artifact, "/payload/synchronousRule"));
+        }
+    }
     if let Some(program) = &root.effect_program {
         let kind = program.target().object_kind;
         targets.extend(program.changes().iter().map(|change| (kind, *change)));
@@ -319,24 +439,7 @@ fn check_action(
         ));
     }
 
-    for (index, write) in root.writes.iter().enumerate() {
-        let kind = write.entity_kind.as_str();
-        let pointer = format!("/payload/writes/{index}/entityKind");
-        match model.object_type(kind) {
-            None => findings.push(finding(
-                codes::UNKNOWN_WRITE_KIND,
-                format!(
-                    "the write set names {kind:?}, which is not an object type of the artifact set or the installed base"
-                ),
-                artifact,
-                &pointer,
-            )),
-            Some(defined) => {
-                findings.extend(scope_finding(artifact, defined.artifact, &pointer));
-                findings.extend(defined.authority_finding(artifact, kind, &pointer));
-            }
-        }
-    }
+    findings.extend(declared_write_findings(artifact, root, model));
 
     if root.effect_program.is_some() {
         let declared: BTreeSet<(&str, WriteChange)> = root
@@ -373,21 +476,71 @@ fn check_action(
     findings
 }
 
+fn declared_write_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    model: &Model<'_>,
+) -> Vec<Diagnostic> {
+    let mut findings = Vec::new();
+    for (index, write) in root.writes.iter().enumerate() {
+        let kind = write.entity_kind.as_str();
+        let pointer = format!("/payload/writes/{index}/entityKind");
+        if root.synchronous_rule.is_some() && model.is_owned_child_target(kind) {
+            findings.push(finding(
+                codes::TARGET_NOT_WRITABLE,
+                "a synchronous writer cannot bypass the parent's owned-row authority".to_owned(),
+                artifact,
+                &pointer,
+            ));
+        }
+
+        match model.object_type(kind) {
+            None => findings.push(finding(
+                codes::UNKNOWN_WRITE_KIND,
+                format!(
+                    "the write set names {kind:?}, which is not an object type of the artifact set or the installed base"
+                ),
+                artifact,
+                &pointer,
+            )),
+            Some(defined) => {
+                findings.extend(scope_finding(artifact, defined.artifact, &pointer));
+                findings.extend(defined.authority_finding(artifact, kind, &pointer));
+            }
+        }
+    }
+    findings
+}
+
 fn action_slice_findings(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
     model: &Model<'_>,
 ) -> Vec<Diagnostic> {
     let mut findings = Vec::new();
-    if !root.slice.is_empty() {
-        let slice = action_slice_types(artifact, root, model);
+    if !root.slice.is_empty() || !root.aggregates.is_empty() {
+        // An aggregate-only action has no slice to type; its aggregates report
+        // their own findings.
+        let slice = if root.slice.is_empty() {
+            ActionSliceTypes {
+                findings: Vec::new(),
+                records: BTreeMap::new(),
+                fields: BTreeMap::new(),
+                typed_slice: true,
+            }
+        } else {
+            action_slice_types(artifact, root, model)
+        };
         findings.extend(slice.findings);
-        if slice.typed_slice {
+        let aggregates = action_aggregate_types(artifact, root, model);
+        findings.extend(aggregates.findings);
+        if slice.typed_slice && aggregates.typed {
             findings.extend(
                 check_action_slice_preconditions(
                     root,
                     slice.records,
                     slice.fields,
+                    aggregates.fields,
                     Some(&artifact.artifact_id),
                 )
                 .into_iter()
@@ -511,6 +664,231 @@ fn action_slice_types(
         fields: slice_fields,
         typed_slice,
     }
+}
+
+struct ActionAggregateTypes {
+    findings: Vec<Diagnostic>,
+    fields: BTreeMap<String, Type>,
+    typed: bool,
+}
+
+/// Resolve each aggregate input (#1105) against the effective model: its
+/// type, the scalar filter properties and their input fields, the window
+/// property, and the summed property. The result type of a sum is the summed
+/// property's type (an exact decimal keeps its scale, unit and currency); a
+/// count is an integer.
+fn action_aggregate_types(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    model: &Model<'_>,
+) -> ActionAggregateTypes {
+    let mut types = ActionAggregateTypes {
+        findings: Vec::new(),
+        fields: BTreeMap::new(),
+        typed: true,
+    };
+    if root.aggregates.is_empty() {
+        return types;
+    }
+    let Ok(environment) = &model.expression_environment else {
+        types.findings.push(finding(
+            codes::INVALID_AGGREGATE,
+            "aggregate property types cannot be resolved".to_owned(),
+            artifact,
+            "/payload/aggregates",
+        ));
+        types.typed = false;
+        return types;
+    };
+    let input_schema = JsonValue::Object(root.input_schema.clone());
+    for (index, aggregate) in root.aggregates.iter().enumerate() {
+        let site = AggregateSite {
+            artifact,
+            aggregate,
+            path: format!("/payload/aggregates/{index}"),
+            input_schema: &input_schema,
+        };
+        match aggregate_result_type(&site, model, environment, &mut types.findings) {
+            Some(ty) => {
+                types.fields.insert(aggregate.name.clone(), ty);
+            }
+            None => types.typed = false,
+        }
+    }
+    types
+}
+
+struct AggregateSite<'a> {
+    artifact: &'a ArtifactEnvelope,
+    aggregate: &'a ActionAggregateInput,
+    path: String,
+    input_schema: &'a JsonValue,
+}
+
+impl AggregateSite<'_> {
+    fn finding(&self, suffix: &str, message: &str) -> Diagnostic {
+        finding(
+            codes::INVALID_AGGREGATE,
+            format!("aggregate {:?}: {message}", self.aggregate.name),
+            self.artifact,
+            &format!("{}{suffix}", self.path),
+        )
+    }
+}
+
+/// Whether an action input field can be compared with a stored property of
+/// `class`. Inputs carry dates and timestamps as strings.
+fn input_comparable(input: ScalarClass, property: ScalarClass) -> bool {
+    match property {
+        ScalarClass::Date | ScalarClass::Timestamp => input == ScalarClass::Text,
+        ScalarClass::Decimal => matches!(input, ScalarClass::Decimal | ScalarClass::Integer),
+        ScalarClass::Text | ScalarClass::Integer | ScalarClass::Bool => input == property,
+    }
+}
+
+/// METRIC-ADDITIVITY-1: only an explicit numeric contract admits a sum. A
+/// semi-additive property sums across objects at one instant, never across a
+/// time window.
+fn sum_admitted(property: &EffectiveProperty, windowed: bool) -> bool {
+    let EffectiveKind::Base(kind) = &property.kind else {
+        return false;
+    };
+    match kind.additivity() {
+        PropertyAdditivity::Additive {} => true,
+        PropertyAdditivity::SemiAdditive {} => !windowed,
+        PropertyAdditivity::Undeclared {}
+        | PropertyAdditivity::NonAdditive {}
+        | PropertyAdditivity::Ratio { .. } => false,
+    }
+}
+
+fn aggregate_result_type(
+    site: &AggregateSite<'_>,
+    model: &Model<'_>,
+    environment: &ZenTypeEnv,
+    findings: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let aggregate = site.aggregate;
+    let kind = aggregate.object_type.as_str();
+    let Some(defined) = model.object_type(kind) else {
+        findings.push(site.finding(
+            "/objectType",
+            &format!("{kind:?} is not an object type of the artifact set or the installed base"),
+        ));
+        return None;
+    };
+    findings.extend(scope_finding(
+        site.artifact,
+        defined.artifact,
+        &format!("{}/objectType", site.path),
+    ));
+    let (Some(Ok(effective)), Some(record)) =
+        (&defined.effective_object_type, environment.record(kind))
+    else {
+        findings.push(site.finding(
+            "/objectType",
+            &format!("{kind:?} has no admitted effective definition"),
+        ));
+        return None;
+    };
+    let mut admitted = true;
+    // #1104 shares this rule: predicate properties are indexed scalars.
+    let mut compare =
+        |suffix: String, property: &PropertyId, input: &str, allowed: &[ScalarClass]| {
+            let class = match indexed_scalar_property(record, effective, property.as_str(), allowed)
+            {
+                Ok((class, _)) => class,
+                Err(error) => {
+                    findings.push(site.finding(
+                        &suffix,
+                        &format!("property {:?} {}", property.as_str(), error.reason()),
+                    ));
+                    admitted = false;
+                    return;
+                }
+            };
+            let input_class = action_input_field_type(Some(site.input_schema), input)
+                .as_ref()
+                .and_then(scalar_class);
+            if input_class.is_some_and(|input_class| !input_comparable(input_class, class)) {
+                findings.push(site.finding(
+                    &suffix,
+                    &format!(
+                        "input field {input:?} cannot be compared with property {:?}",
+                        property.as_str()
+                    ),
+                ));
+                admitted = false;
+            }
+        };
+    for (property, input) in &aggregate.filter {
+        compare(
+            format!("/filter/{}", property.as_str()),
+            property,
+            input,
+            EQUALITY,
+        );
+    }
+    if let Some(window) = &aggregate.window {
+        compare(
+            "/window/start".to_owned(),
+            &window.property,
+            &window.start,
+            WINDOW,
+        );
+        compare(
+            "/window/end".to_owned(),
+            &window.property,
+            &window.end,
+            WINDOW,
+        );
+    }
+    let result = match &aggregate.aggregate {
+        AggregateFunction::Count {} => Some(Type::Integer),
+        AggregateFunction::Sum { property } => {
+            sum_result_type(site, record, effective, property, findings)
+        }
+    };
+    result.filter(|_| admitted)
+}
+
+/// The result type of a sum: the summed property's type, when it is a
+/// stored, non-nullable decimal or integer with an additive contract.
+fn sum_result_type(
+    site: &AggregateSite<'_>,
+    record: &RecordType,
+    effective: &EffectiveObjectType,
+    property: &PropertyId,
+    findings: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let id = property.as_str();
+    // Only stored properties are folded; links are never implicit reads.
+    let stored = record
+        .fields
+        .get(id)
+        .filter(|field| matches!(field.source, FieldSource::Property { .. }))
+        .map(|field| field.ty.clone());
+    let message = match stored {
+        Some(ty @ (Type::Decimal { .. } | Type::Integer)) => {
+            let windowed = site.aggregate.window.is_some();
+            if effective
+                .property(id)
+                .is_some_and(|stored| sum_admitted(stored, windowed))
+            {
+                return Some(ty);
+            }
+            format!(
+                "summed property {id:?} must declare additive aggregation (semi-additive only without a window)"
+            )
+        }
+        Some(_) => format!("summed property {id:?} must be a non-nullable decimal or integer"),
+        None => format!(
+            "{id:?} is not a stored property of {:?}",
+            site.aggregate.object_type.as_str()
+        ),
+    };
+    findings.push(site.finding("/aggregate/property", &message));
+    None
 }
 
 fn action_slice_key_findings(
@@ -1479,7 +1857,7 @@ fn owned_row_precondition_findings(
     for precondition in preconditions {
         match Expression::compile(precondition.as_str()) {
             Ok(expression) => {
-                if let Err(errors) = check_expression(&expression, row_env, &Type::Bool) {
+                if let Err(errors) = expression.check_typed(row_env, &Type::Bool) {
                     findings.extend(errors.into_iter().map(|error| {
                         owned_row_expression_invalid(
                             artifact,
@@ -1530,7 +1908,7 @@ fn owned_row_derivation_findings(
         };
         match Expression::compile(source.as_str()) {
             Ok(expression) => {
-                if let Err(errors) = check_expression(&expression, derive_env, &expected) {
+                if let Err(errors) = expression.check_typed(derive_env, &expected) {
                     findings.extend(errors.into_iter().map(|error| {
                         owned_row_expression_invalid(
                             artifact,
@@ -1889,6 +2267,120 @@ impl<'a> Model<'a> {
     }
 }
 
+/// The object types admission binds, through the same [`Model`] the action
+/// and lifecycle-write checks resolve with: the single source for consumers
+/// that must agree with admission, such as the definition catalog.
+pub(crate) struct Admission<'a> {
+    model: Model<'a>,
+    artifacts: &'a [ArtifactEnvelope],
+    base: &'a [ArtifactEnvelope],
+}
+
+/// One admitted object type definition.
+#[derive(Clone, Copy)]
+pub(crate) struct AdmittedType<'m, 'a> {
+    defined: &'m Defined<'a>,
+}
+
+impl<'a> Admission<'a> {
+    pub(crate) fn new(
+        artifacts: &'a [ArtifactEnvelope],
+        base: &'a [ArtifactEnvelope],
+        registry: &BTreeSet<PropertyTypeName>,
+    ) -> Self {
+        Self {
+            model: Model::new(artifacts, base, registry, true),
+            artifacts,
+            base,
+        }
+    }
+
+    /// The definition an object type name binds to (decide-graph
+    /// `objectType` values, supertypes, owned-collection child types).
+    pub(crate) fn named(&self, name: &str) -> Option<AdmittedType<'_, 'a>> {
+        self.model
+            .object_type(name)
+            .map(|defined| AdmittedType { defined })
+    }
+
+    /// The definition an entity artifact id declares (mapping targets).
+    pub(crate) fn declared_by(
+        &self,
+        artifact_id: &str,
+        version: Option<&str>,
+    ) -> Option<AdmittedType<'_, 'a>> {
+        let mut definitions = self.model.by_name.values().flatten().filter(|defined| {
+            defined.artifact.artifact_id == artifact_id
+                && version.is_none_or(|version| defined.artifact.version == version)
+        });
+        let defined = definitions.next()?;
+        definitions
+            .next()
+            .is_none()
+            .then_some(AdmittedType { defined })
+    }
+
+    /// The definition an action effect pins, when its pinned entity artifact
+    /// defines the effect's object kind ([`effect_target_findings`]).
+    pub(crate) fn effect_target(
+        &self,
+        program: &ActionEffectProgram,
+    ) -> Option<AdmittedType<'_, 'a>> {
+        let target = program.target();
+        let pinned = self.artifacts.iter().chain(self.base).find(|candidate| {
+            candidate.artifact_id == target.entity_artifact_id
+                && candidate.version == target.entity_artifact_version
+        })?;
+        self.model
+            .defined_by(pinned)
+            .filter(|defined| defined.name == target.object_kind)
+            .map(|defined| AdmittedType { defined })
+    }
+}
+
+impl<'m, 'a> AdmittedType<'m, 'a> {
+    /// The entity artifact that defines the type.
+    pub(crate) const fn artifact(self) -> &'a ArtifactEnvelope {
+        self.defined.artifact
+    }
+
+    pub(crate) fn name(self) -> &'m str {
+        &self.defined.name
+    }
+
+    fn effective(self) -> Option<&'m EffectiveObjectType> {
+        self.defined.effective_object_type.as_ref()?.as_ref().ok()
+    }
+
+    /// The effective supertype names, nearest first.
+    pub(crate) fn supertypes(self) -> Vec<&'m str> {
+        self.effective()
+            .map(|effective| {
+                effective
+                    .lineage
+                    .iter()
+                    .skip(1)
+                    .map(ObjectTypeName::as_str)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The child type names of every effective owned collection, inherited
+    /// ones included.
+    pub(crate) fn owned_child_types(self) -> Vec<&'m str> {
+        self.effective()
+            .map(|effective| {
+                effective
+                    .owned_collections
+                    .iter()
+                    .map(|collection| collection.child_type.as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 /// The typed root of an `action` artifact, when its payload decodes.
 fn decode_action(artifact: &ArtifactEnvelope) -> Option<ActionRoot> {
     let ArtifactPayload::Action(payload) = &artifact.payload else {
@@ -2045,19 +2537,30 @@ fn create_link_findings(
     let mut findings = Vec::new();
     let mut seen = BTreeSet::new();
     for binding in &root.create_links {
-        let source = root
-            .effect_program
+        let primary = root.effect_program.as_ref();
+        let composed = root.synchronous_rule.is_some()
+            && matches!(primary, Some(ActionEffectProgram::FireTransition { .. }));
+        let source_kind = binding
+            .source
             .as_ref()
-            .filter(|p| {
-                matches!(
-                    p,
-                    ActionEffectProgram::UpsertInputObject {
-                        write_mode: UpsertWriteMode::CreateOnly,
-                        ..
-                    }
-                )
+            .map(|s| s.object_type.as_str())
+            .or_else(|| primary.map(|p| p.target().object_kind));
+        let source = source_kind.and_then(|kind| model.object_type(kind));
+        let source_written = binding.source.as_ref().is_none_or(|source| {
+            composed
+                && input_schema_field_is_string(&root.input_schema, &source.id_field)
+                && root.writes.iter().any(|write| {
+                    write.entity_kind == source.object_type
+                        && matches!(write.change, WriteChange::Created | WriteChange::Modified)
+                })
+        });
+        let legacy_create = matches!(
+            primary,
+            Some(ActionEffectProgram::UpsertInputObject {
+                write_mode: UpsertWriteMode::CreateOnly,
+                ..
             })
-            .and_then(|p| model.object_type(p.target().object_kind));
+        );
         let declared = source.and_then(|s| {
             s.links
                 .iter()
@@ -2065,14 +2568,213 @@ fn create_link_findings(
                 .map(|(_, target)| target)
         });
         let in_slice = root.slice.iter().any(|entry| entry.object_type.as_str() == binding.target_type && !entry.optional && matches!(&entry.key, SliceKey::Property { from, property } if from == "input" && property.as_str() == binding.target_id_field));
+        let created_target = composed
+            && root.writes.iter().any(|write| {
+                write.entity_kind == binding.target_type && write.change == WriteChange::Created
+            });
+        let primary_target = composed
+            && primary.is_some_and(|program| {
+                program.target().object_kind == binding.target_type
+                    && program.target().object_id_field == binding.target_id_field
+            });
+        let identity = (
+            source_kind,
+            binding.source.as_ref().map(|s| s.id_field.as_str()),
+            binding.link.as_str(),
+        );
         if root.create_links.len() > 16
-            || !seen.insert(&binding.link)
-            || !in_slice
+            || !seen.insert(identity)
+            || !(legacy_create || composed)
+            || !source_written
+            || !(in_slice || created_target || primary_target)
             || !input_schema_field_is_string(&root.input_schema, &binding.target_id_field)
             || declared.is_none_or(|target| target != &binding.target_type)
         {
-            findings.push(finding(codes::CREATE_LINK, "createLinks requires a create-only business effect, a unique declared link and a required authorized input-key slice of its exact target type".to_owned(), artifact, "/payload/createLinks"));
+            findings.push(finding(codes::CREATE_LINK, "createLinks requires a declared written source, unique source/link binding, and an authorized required slice target or a target created in the same proposal".to_owned(), artifact, "/payload/createLinks"));
         }
     }
     findings
+}
+
+#[cfg(test)]
+mod synchronous_rule_tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "pin conformance fixtures"
+    )]
+    use super::*;
+
+    fn fixture(version: &str) -> (ArtifactEnvelope, ActionRoot, ArtifactEnvelope) {
+        let mut action: ArtifactEnvelope = serde_json::from_str(include_str!(
+            "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
+        ))
+        .expect("action fixture");
+        let mut rule: ArtifactEnvelope = serde_json::from_str(include_str!(
+            "../../../fixtures/ir/retail-reorder-routing.rule.json"
+        ))
+        .expect("rule fixture");
+        rule.version = version.to_owned();
+        let mut payload = rule.payload.to_json_value();
+        if let JsonValue::Object(ref mut object) = payload {
+            object.insert(
+                "contract".to_owned(),
+                JsonValue::String("decide".to_owned()),
+            );
+            object.insert(
+                "scopeRequired".to_owned(),
+                JsonValue::Array(vec![
+                    JsonValue::String("orgId".to_owned()),
+                    JsonValue::String("environmentId".to_owned()),
+                ]),
+            );
+        }
+        rule.payload =
+            ArtifactPayload::from_kind_json(&ArtifactKind::Rule, payload).expect("rule payload");
+        action.dependencies.push(norn_ir::ArtifactDependency {
+            artifact_id: rule.artifact_id.clone(),
+            kind: ArtifactKind::Rule,
+            version: Some(version.to_owned()),
+            required: true,
+        });
+        let mut root = decode_action(&action).expect("typed action");
+        root.synchronous_rule = Some(norn_ir::ActionRuleRef {
+            artifact_id: rule.artifact_id.clone(),
+            version: version.to_owned(),
+        });
+        (action, root, rule)
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn exact_rule_versions_resolve_and_mismatches_refuse(version in 0u16..1000) {
+            let (action, root, mut rule) = fixture(&format!("1.0.{version}"));
+            proptest::prop_assert!(serde_json::from_value::<norn_ir::ActionRuleRef>(serde_json::json!(["demo.rule", format!("1.0.{version}")])).is_err(), "sequence pins refuse");
+            proptest::prop_assert!(serde_json::from_value::<norn_ir::ActionRuleRef>(serde_json::json!({"artifactId":"demo.rule", "version":format!("1.0.{version}")})).is_ok(), "object pins decode");
+            proptest::prop_assert!(synchronous_rule_findings(&action, &root, std::slice::from_ref(&rule), &[]).is_empty());
+            rule.version.push_str("-changed");
+            proptest::prop_assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
+        }
+    }
+
+    #[test]
+    fn missing_ambiguous_or_uncovered_rule_pins_refuse() {
+        let (action, mut root, rule) = fixture("1.0.0");
+        assert!(!synchronous_rule_findings(&action, &root, &[], &[]).is_empty());
+        assert!(
+            !synchronous_rule_findings(
+                &action,
+                &root,
+                std::slice::from_ref(&rule),
+                std::slice::from_ref(&rule)
+            )
+            .is_empty()
+        );
+        root.scope_required.clear();
+        assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod writer_footprint_tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "closed writer schema conformance"
+    )]
+    use super::*;
+
+    fn schema(kinds: &[String], operations: &[&str]) -> serde_json::Value {
+        serde_json::json!({"outputSchema":{"properties":{"facts":{"items":{"properties":{"objectType":{"enum":kinds},"op":{"enum":operations}}}}}}})
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn every_declared_writer_is_covered_and_unbounded_targets_refuse(kind in "test\\.[A-Z][a-z]{1,20}") {
+            let kinds = [kind.clone()];
+            let value = schema(&kinds, &["create", "patch", "transition"]);
+            let targets = synchronous_writer_targets(&value).expect("finite schema");
+            proptest::prop_assert_eq!(targets, BTreeSet::from([(kind.as_str(), WriteChange::Created), (kind.as_str(), WriteChange::Modified)]));
+            let mut unbounded = value;
+            unbounded["outputSchema"]["properties"]["facts"]["items"]["properties"]["objectType"] = serde_json::json!({"type":"string"});
+            proptest::prop_assert!(synchronous_writer_targets(&unbounded).is_none());
+        }
+    }
+
+    #[test]
+    fn typed_atomic_writer_admits_and_an_uncovered_creation_refuses() {
+        let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../norn-kernel/tests/fixtures/action-writer.json"
+        ))
+        .expect("typed fixture");
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            base: &[],
+            registry: &registry,
+            tenant: None,
+        };
+        let findings = crate::check_artifact_set(&artifacts, &context);
+        assert!(findings.is_empty(), "{findings:?}");
+        let action = artifacts
+            .iter_mut()
+            .find(|artifact| artifact.kind() == ArtifactKind::Action)
+            .expect("typed action");
+        let mut root = decode_action(action).expect("action root");
+        root.writes
+            .retain(|write| write.entity_kind != "commerce.Quote");
+        let payload =
+            serde_json::from_value(serde_json::to_value(root).expect("root serialization"))
+                .expect("IR values");
+        action.payload = ArtifactPayload::from_kind_json(&ArtifactKind::Action, payload)
+            .expect("action payload");
+        assert!(
+            crate::check_artifact_set(&artifacts, &context)
+                .iter()
+                .any(|finding| finding.code.as_str() == codes::UNDECLARED_EFFECT_WRITE)
+        );
+    }
+
+    #[test]
+    fn composed_links_require_written_sources_and_captured_or_created_targets() {
+        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../norn-kernel/tests/fixtures/action-writer.json"
+        ))
+        .expect("typed fixture");
+        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let action = artifacts
+            .iter()
+            .find(|artifact| artifact.kind() == ArtifactKind::Action)
+            .expect("typed action");
+        let mut root = decode_action(action).expect("root");
+        root.create_links.truncate(1);
+        root.create_links[0].source = Some(norn_ir::ActionLinkSource {
+            object_type: "commerce.SalesOrder".into(),
+            id_field: "so_number".into(),
+        });
+        assert!(create_link_findings(action, &root, &model).is_empty());
+        root.writes.clear();
+        assert!(!create_link_findings(action, &root, &model).is_empty());
+        root.writes.push(norn_ir::ActionWrite {
+            entity_kind: "commerce.SalesOrder".into(),
+            change: WriteChange::Modified,
+        });
+        assert!(!create_link_findings(action, &root, &model).is_empty());
+        root.create_links[0]
+            .source
+            .as_mut()
+            .expect("source")
+            .id_field = "undeclared".into();
+        assert!(!create_link_findings(action, &root, &model).is_empty());
+    }
+
+    #[test]
+    fn unsupported_operations_and_empty_enums_refuse_writer_admission() {
+        for operations in [vec!["delete"], vec!["custom"], vec![]] {
+            assert!(
+                synchronous_writer_targets(&schema(&["test.Note".to_owned()], &operations))
+                    .is_none()
+            );
+        }
+        assert!(synchronous_writer_targets(&schema(&[], &["create"])).is_none());
+    }
 }

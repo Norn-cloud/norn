@@ -1,0 +1,7 @@
+{
+  "code": "widget.interaction.keyboard_unreachable_control",
+  "message": "an interactive control is not keyboard reachable: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

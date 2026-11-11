@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.property_not_enum",
+  "message": "lifecycle property {property} must be a local enum; its values are the states",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

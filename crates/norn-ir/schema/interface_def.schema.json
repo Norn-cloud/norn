@@ -46,6 +46,10 @@
         "$ref": "#/$defs/InterfaceProperty"
       }
     },
+    "role": {
+      "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+      "$ref": "#/$defs/ConceptRole"
+    },
     "status": {
       "description": "The definition's resource status. Omitted means `active`.",
       "$ref": "#/$defs/ResourceStatus"
@@ -60,6 +64,21 @@
       "description": "An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone.",
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "ConceptRole": {
+      "description": "Semantic role of an ordinary concept, independent of lifecycle presence.",
+      "oneOf": [
+        {
+          "description": "A persistent thing.",
+          "type": "string",
+          "const": "thing"
+        },
+        {
+          "description": "A concept that occurs, runs or terminates in time.",
+          "type": "string",
+          "const": "happening"
+        }
+      ]
     },
     "ConstraintClass": {
       "description": "How a declared invariant is applied at a write boundary.",
@@ -302,6 +321,91 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
     },
+    "PropertyAdditivity": {
+      "description": "METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.\nMissing declarations permit point reads but never authorize aggregation.",
+      "oneOf": [
+        {
+          "description": "No aggregation contract has been declared.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "undeclared"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Summable across entities and time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Summable across entities at a single instant, never across time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "semi_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Requires a separately declared weighting calculation.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "non_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Recompute from the sums of these operands, never average stored ratios.",
+          "type": "object",
+          "properties": {
+            "denominator": {
+              "description": "Denominator property at the same object grain.",
+              "$ref": "#/$defs/PropertyId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "ratio"
+            },
+            "numerator": {
+              "description": "Numerator property at the same object grain.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "numerator",
+            "denominator"
+          ]
+        }
+      ]
+    },
     "PropertyConstraints": {
       "description": "Constraints on the values of a property type.\n\nApplicability (checked by `norn-checker`): `min`/`max` apply to `integer`\nand `decimal`; `minLength`/`maxLength`/`pattern` apply to `text`;\n`nullable` applies to every kind. Through a `ref` they apply to the\nreferenced type's kind.",
       "type": "object",
@@ -362,6 +466,10 @@
           "description": "A signed 64-bit integer.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "Explicit aggregation contract; a missing declaration fails closed.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "kind": {
               "type": "string",
               "const": "integer"
@@ -376,6 +484,10 @@
           "description": "An exact decimal with a fixed number of fraction digits, optionally a\nquantity in a declared unit.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "Explicit aggregation contract; units do not imply additivity.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "currencySource": {
               "description": "Authoritative currency path relative to the object holding this amount.\nMonetary decimals declare this instead of a quantity unit. Metrics\nmust verify this source; descriptions and names carry no semantics.",
               "$ref": "#/$defs/DimensionPath"
@@ -383,6 +495,14 @@
             "kind": {
               "type": "string",
               "const": "decimal"
+            },
+            "perUnit": {
+              "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`.",
+              "$ref": "#/$defs/UnitRef"
+            },
+            "rounding": {
+              "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+              "$ref": "#/$defs/Rounding"
             },
             "scale": {
               "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",
@@ -396,6 +516,25 @@
           "required": [
             "kind",
             "scale"
+          ]
+        },
+        {
+          "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+          "type": "object",
+          "properties": {
+            "group": {
+              "description": "Same-name members in one interface bind identically.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal-binding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group"
           ]
         },
         {
@@ -625,6 +764,16 @@
             "since"
           ]
         }
+      ]
+    },
+    "Rounding": {
+      "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+      "type": "string",
+      "enum": [
+        "refuse",
+        "toward_zero",
+        "half_even",
+        "half_away_from_zero"
       ]
     },
     "TextFormat": {

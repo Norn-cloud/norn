@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.duplicate_definition",
+  "message": "{kind} {name} has exactly the structure of {kind} {other} (artifact {artifactId}); reuse or extend it instead of redefining it",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

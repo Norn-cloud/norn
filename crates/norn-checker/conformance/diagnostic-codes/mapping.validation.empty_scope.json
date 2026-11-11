@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.empty_scope",
+  "message": "{member} must not be empty",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

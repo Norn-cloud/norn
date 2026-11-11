@@ -52,8 +52,9 @@ use norn_kernel::{
     FactState, FactVersion, FactWrite, FreshnessPolicy, Generation, IdempotencyKey, LedgerSeq,
     LinkKey, LinkMutation, LinkReadTarget, LinkState, LinkWrite, LogicalTime,
     ObservationAuthorization, ObservationEvent, ObservationId, Observed, OwnedRowsCommitProof,
-    Performed, Provenance, Timer, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
-    check_commit, check_commit_observed, check_commit_owned_rows,
+    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Provenance, Timer, TimerId,
+    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_observed,
+    check_commit_owned_rows,
 };
 use proptest::prelude::*;
 use proptest::test_runner::{TestError, TestRunner};
@@ -100,6 +101,7 @@ pub struct MemoryCell<E, C, I> {
     types: Vec<ObjectTypeDef>,
     interfaces: Vec<InterfaceDef>,
     property_types: Vec<PropertyTypeDef>,
+    law_artifacts: Vec<norn_kernel::cell_host::ArtifactEnvelope>,
     facts: BTreeMap<FactKey, FactState>,
     concrete: BTreeMap<FactKey, ObjectTypeName>,
     links: BTreeMap<LinkKey, LinkState>,
@@ -124,6 +126,7 @@ impl<E, C, I> MemoryCell<E, C, I> {
             types: Vec::new(),
             interfaces: Vec::new(),
             property_types: Vec::new(),
+            law_artifacts: Vec::new(),
             facts: BTreeMap::new(),
             concrete: BTreeMap::new(),
             links: BTreeMap::new(),
@@ -161,6 +164,16 @@ impl<E, C, I> MemoryCell<E, C, I> {
     #[must_use]
     pub fn with_property_types(mut self, property_types: Vec<PropertyTypeDef>) -> Self {
         self.property_types = property_types;
+        self
+    }
+
+    /// The same reference host with the retained laws of its definition snapshot.
+    #[must_use]
+    pub fn with_governing_laws(
+        mut self,
+        artifacts: Vec<norn_kernel::cell_host::ArtifactEnvelope>,
+    ) -> Self {
+        self.law_artifacts = artifacts;
         self
     }
 
@@ -288,6 +301,52 @@ impl<E, C, I> MemoryCell<E, C, I> {
     }
 }
 
+impl<E, C, I> MemoryCell<E, C, I> {
+    /// The live objects of the queried object type (or a subtype) matching
+    /// `predicate`, in key order, at most `limit`. Every object is in
+    /// memory, so the enumeration is complete; an interface predicate is
+    /// unsupported (`None`), as on every host.
+    fn predicate_objects(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Option<Vec<PredicateObject>> {
+        let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
+            .with_interfaces(&self.interfaces)
+            .with_property_types(&self.property_types);
+        if !catalog.contains(&predicate.object_type) {
+            return None;
+        }
+        let model = CommitModel::new(&catalog);
+        let candidates: Vec<(FactKey, FactVersion, &JsonObject)> = self
+            .facts
+            .iter()
+            .filter_map(|(key, state)| {
+                let values = state.values.as_ref()?;
+                let concrete = self.concrete.get(key)?;
+                model.is_a(concrete, &predicate.object_type).then(|| {
+                    (
+                        FactKey {
+                            object_type: concrete.clone(),
+                            key: key.key.clone(),
+                        },
+                        state.version,
+                        values,
+                    )
+                })
+            })
+            .collect();
+        Some(norn_kernel::predicate_read::select_members(
+            predicate,
+            candidates
+                .iter()
+                .map(|(key, version, values)| (key, *version, *values)),
+            limit,
+        ))
+    }
+}
+
 /// What a [`MemoryCell`] has committed, as [`check_commit`] reads it.
 struct MemoryView<'c, E, C, I>(&'c MemoryCell<E, C, I>);
 
@@ -360,6 +419,17 @@ impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
         Ok(Some(reads))
     }
 
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
+        Ok(self
+            .0
+            .predicate_objects(predicate, limit)
+            .map(|objects| objects.iter().map(PredicateObject::member).collect()))
+    }
+
     fn has_link_target(
         &self,
         source: &FactKey,
@@ -398,6 +468,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I> {
     ) -> Result<CommitReceipt, CommitError<Infallible>> {
         let (CommitVersions { written, linked }, fact_keys, link_keys) = {
             let catalog = TypeCatalog::new(&self.types)
+                .with_governing_laws(&self.law_artifacts)
                 .with_interfaces(&self.interfaces)
                 .with_property_types(&self.property_types);
             for write in &mut commit.writes {
@@ -522,6 +593,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
 
     fn load(&self, key: &FactKey) -> Result<FactState, Infallible> {
         let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
         let model = CommitModel::new(&catalog);
@@ -553,6 +625,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
             return Ok(None);
         }
         let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
         let concrete_type = if state.exists() {
@@ -569,10 +642,20 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, Infallible> {
         let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
         let canonical = CommitModel::new(&catalog).canonical_link(key);
         Ok(self.links.get(&canonical).cloned().unwrap_or_default())
+    }
+
+    fn read_predicate(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        _max_bytes: u64,
+    ) -> Result<Option<Vec<PredicateObject>>, Infallible> {
+        Ok(self.predicate_objects(predicate, max_members.saturating_add(1)))
     }
 
     fn read_link_targets(
@@ -583,6 +666,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, Infallible> {
         let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
         let model = CommitModel::new(&catalog);
@@ -631,6 +715,9 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<Infallible>> {
+        if proof.quantity().is_some() {
+            return Err(CommitError::ObservationAuthorization);
+        }
         self.commit_with_authorization(commit, None, Some(proof))
     }
 
@@ -737,6 +824,8 @@ pub fn law_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, links: Vec<Link>| ObjectTypeDef {
+        immutable: false,
+        role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
         status: ResourceStatus::default(),
@@ -1145,6 +1234,18 @@ impl CellModel {
         commit: &LawCommit,
         model: CommitModel<'_, '_>,
     ) -> Result<(), CommitError<Infallible>> {
+        for write in &commit.writes {
+            let key = model.canonical(&write.key);
+            if matches!(write.mutation, FactMutation::Put { .. })
+                && self
+                    .facts
+                    .get(&key)
+                    .is_some_and(|state| state.version != FactVersion::ABSENT)
+                && !self.concrete.contains_key(&key)
+            {
+                return Err(CommitError::IdentityReuse);
+            }
+        }
         let version = |key: &FactKey| {
             self.facts
                 .get(&model.canonical(key))
@@ -1734,6 +1835,7 @@ impl CellModel {
                         effects,
                         links,
                         link_reads: Vec::new(),
+                        predicate_reads: Vec::new(),
                     }
                 },
             )
@@ -1803,6 +1905,7 @@ impl CellModel {
                     effects,
                     links,
                     link_reads: Vec::new(),
+                    predicate_reads: Vec::new(),
                 },
             )
             .boxed()
@@ -1893,105 +1996,39 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
     }
 }
 
+/// Rebuild every listed field-only variant with an uninhabited host error.
+/// The generated `match` is exhaustive, so a new [`CommitError`] variant
+/// fails to compile until it is listed here.
+macro_rules! rehost {
+    ($error:expr; $($variant:ident $({ $($field:ident),* })?),* $(,)?) => {
+        match $error {
+            $(norn_kernel::CommitError::$variant $({ $($field),* })? =>
+                norn_kernel::CommitError::$variant $({ $($field),* })?,)*
+            norn_kernel::CommitError::Host(error) => return Err(error),
+        }
+    };
+}
+
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
-    Ok(match error {
-        CommitError::OwnedRowsProtected { key } => CommitError::OwnedRowsProtected { key },
-        CommitError::DuplicateKey { key } => CommitError::DuplicateKey { key },
-        CommitError::NotPending { consumed } => CommitError::NotPending { consumed },
-        CommitError::Conflict {
-            key,
-            expected,
-            current,
-        } => CommitError::Conflict {
-            key,
-            expected,
-            current,
-        },
-        CommitError::DuplicateLink { key } => CommitError::DuplicateLink { key },
-        CommitError::IdentifierTooLong {
-            field,
-            actual_bytes,
-            max_bytes,
-        } => CommitError::IdentifierTooLong {
-            field,
-            actual_bytes,
-            max_bytes,
-        },
-        CommitError::LinkConflict {
-            key,
-            expected,
-            current,
-        } => CommitError::LinkConflict {
-            key,
-            expected,
-            current,
-        },
-        CommitError::LinkReadConflict { source_key, link } => {
-            CommitError::LinkReadConflict { source_key, link }
-        }
-        CommitError::UnsupportedLinkRead { source_key, link } => {
-            CommitError::UnsupportedLinkRead { source_key, link }
-        }
-        CommitError::DuplicateLinkRead { source_key, link } => {
-            CommitError::DuplicateLinkRead { source_key, link }
-        }
-        CommitError::LinkReadTooLarge {
-            source_key,
-            link,
-            actual,
-            max,
-        } => CommitError::LinkReadTooLarge {
-            source_key,
-            link,
-            actual,
-            max,
-        },
-        CommitError::InvalidLinkRead { source_key, link } => {
-            CommitError::InvalidLinkRead { source_key, link }
-        }
-        CommitError::DanglingLink { key, missing } => CommitError::DanglingLink { key, missing },
-        CommitError::LinkTarget { key } => CommitError::LinkTarget { key },
-        CommitError::LinkCardinality { key, endpoint } => {
-            CommitError::LinkCardinality { key, endpoint }
-        }
-        CommitError::LinkRequired { parent, link } => CommitError::LinkRequired { parent, link },
-        CommitError::TypeMismatch { key, concrete } => CommitError::TypeMismatch { key, concrete },
-        CommitError::EffectiveValues { key, reason } => {
-            CommitError::EffectiveValues { key, reason }
-        }
-        CommitError::TraversalLimitExceeded { key, reason } => {
-            CommitError::TraversalLimitExceeded { key, reason }
-        }
-        CommitError::AccountingPosting { key, reason } => {
-            CommitError::AccountingPosting { key, reason }
-        }
-        CommitError::InvariantViolation {
-            key,
-            owner,
-            id,
-            message,
-            outcome,
-        } => CommitError::InvariantViolation {
-            key,
-            owner,
-            id,
-            message,
-            outcome,
-        },
-        CommitError::InvariantBudgetExceeded { key, limit } => {
-            CommitError::InvariantBudgetExceeded { key, limit }
-        }
-        CommitError::InvariantModel { key, interface } => {
-            CommitError::InvariantModel { key, interface }
-        }
-        CommitError::ObservationAuthorization => CommitError::ObservationAuthorization,
-        CommitError::EventLimitExceeded { limit, actual } => {
-            CommitError::EventLimitExceeded { limit, actual }
-        }
-        CommitError::Overflow => CommitError::Overflow,
-        CommitError::Host(error) => return Err(error),
-    })
+    Ok(rehost!(error;
+        IdentityReuse, AtomicBoundary { key }, AtomicDeliveryBoundary { consumed }, ImmutableObject { key },
+        Law { key, reason }, IdentityCollision { owner, key, conflicts },
+        OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed },
+        Conflict { key, expected, current }, DuplicateLink { key },
+        IdentifierTooLong { field, actual_bytes, max_bytes },
+        LinkConflict { key, expected, current }, LinkReadConflict { source_key, link },
+        UnsupportedLinkRead { source_key, link }, DuplicateLinkRead { source_key, link },
+        LinkReadTooLarge { source_key, link, actual, max }, InvalidLinkRead { source_key, link },
+        PredicateReadConflict { object_type }, UnsupportedPredicateRead { object_type },
+        InvalidPredicateRead { object_type, reason }, DanglingLink { key, missing },
+        LinkTarget { key }, LinkCardinality { key, endpoint }, LinkRequired { parent, link },
+        TypeMismatch { key, concrete }, EffectiveValues { key, reason },
+        TraversalLimitExceeded { key, reason }, AccountingPosting { key, reason },
+        InvariantViolation { key, owner, version, id, message, outcome },
+        InvariantBudgetExceeded { key, limit }, InvariantModel { key, interface },
+        ObservationAuthorization, EventLimitExceeded { limit, actual }, Overflow,
+    ))
 }
 
 fn consumed_label(consumed: Option<&Consumed>) -> &'static str {
@@ -2131,6 +2168,8 @@ pub fn override_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, link: Link| ObjectTypeDef {
+        immutable: false,
+        role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
         status: ResourceStatus::default(),

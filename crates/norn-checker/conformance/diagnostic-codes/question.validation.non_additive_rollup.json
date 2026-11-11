@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.non_additive_rollup",
+  "message": "Non-additive metrics cannot be re-aggregated.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

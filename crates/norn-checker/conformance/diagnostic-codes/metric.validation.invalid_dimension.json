@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.invalid_dimension",
+  "message": "Dimensions require a scalar property and compatible grain.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

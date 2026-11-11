@@ -223,7 +223,9 @@ fn check_one_local(model: &EntityModel<'_>, prefix: &str, subtype: bool) -> Vec<
         .into_iter()
         .filter(|finding| !depends_on_other_definitions(finding.code.as_str(), subtype))
         .map(|mut finding| {
-            if let Some(span) = &mut finding.span
+            if finding.code.as_str() == crate::inheritance::BUDGET_EXHAUSTED {
+                finding.span = Some(crate::Span::pointer(""));
+            } else if let Some(span) = &mut finding.span
                 && let Some(rest) = span.pointer.strip_prefix(prefix)
             {
                 span.pointer = rest.to_owned();
@@ -237,6 +239,10 @@ fn check_one_local(model: &EntityModel<'_>, prefix: &str, subtype: bool) -> Vec<
 /// artifact of the missing context (see [`check_object_type_local`]);
 /// `subtype` when the definition is an object type that `extends` another.
 fn depends_on_other_definitions(code: &str, subtype: bool) -> bool {
+    // A stopped validation pass must never disappear through local/T3 filtering.
+    if code == crate::inheritance::BUDGET_EXHAUSTED {
+        return false;
+    }
     crate::codes::lookup(code).is_none_or(|entry| entry.tier != crate::Tier::T2)
         || code == crate::property_types::codes::UNKNOWN_REF
         || code == codes::RESERVED_MEMBER_SEPARATOR
@@ -256,6 +262,55 @@ pub(crate) fn check(
     checker.out
 }
 
+/// The inheritance classification of a model exceeded its bounded budget
+/// (for example more than 4,096 registered object types), so no effective view
+/// can be derived. This is a refusal, never an empty view: an empty map reads as
+/// "no types are registered", which would make every known type look unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectiveViewRefused {
+    /// The exhausted budget dimension (`registered types`, `steps`, `facts`, ...).
+    pub dimension: &'static str,
+    /// The limit of that dimension.
+    pub limit: usize,
+}
+
+impl EffectiveViewRefused {
+    /// The registered `object_type.validation.inheritance_budget_exhausted`
+    /// finding for this refusal, anchored at the document root.
+    #[must_use]
+    pub fn diagnostic(&self) -> Diagnostic {
+        budget_exhausted_diagnostic(
+            self.dimension,
+            self.limit,
+            crate::Span::from_segments(Roots::DOCUMENT.object_types.iter().copied()),
+        )
+    }
+}
+
+impl std::fmt::Display for EffectiveViewRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: inheritance classification exhausted its {} budget (limit {}); no effective view was derived",
+            crate::inheritance::BUDGET_EXHAUSTED,
+            self.dimension,
+            self.limit
+        )
+    }
+}
+
+impl std::error::Error for EffectiveViewRefused {}
+
+fn budget_exhausted_diagnostic(dimension: &str, limit: usize, span: crate::Span) -> Diagnostic {
+    error(
+        crate::inheritance::BUDGET_EXHAUSTED,
+        format!(
+            "inheritance classification exhausted its {dimension} budget (limit {limit}); catalog validation stopped before ancestry resolution"
+        ),
+        span,
+    )
+}
+
 /// The effective view of every registered local object type of `model`
 /// (instance semantics, #2848), by its position in `model.object_types`.
 /// A duplicate definition of a name is not registered and has no entry.
@@ -265,20 +320,32 @@ pub(crate) fn check(
 /// instance validation never re-derives inheritance. It does not check the
 /// model: callers must reject a model with findings first
 /// ([`crate::entity_instance::EffectiveCatalog`] does).
-#[must_use]
+///
+/// # Errors
+///
+/// [`EffectiveViewRefused`] when the bounded inheritance classification is
+/// exhausted (more than 4,096 registered object types, or a text, step, fact
+/// or work budget). No partial or empty view is returned: callers must
+/// propagate the refusal (or surface [`EffectiveViewRefused::diagnostic`]) and
+/// must never fall back to an empty map, which would report registered types
+/// as unknown.
 pub fn effective_object_types(
     model: &EntityModel<'_>,
     context: &EntityContext<'_>,
-) -> BTreeMap<
-    usize,
-    (
-        crate::entity_instance::EffectiveObjectType,
-        Vec<crate::entity_instance::EffectiveLink>,
-    ),
+) -> Result<
+    BTreeMap<
+        usize,
+        (
+            crate::entity_instance::EffectiveObjectType,
+            Vec<crate::entity_instance::EffectiveLink>,
+        ),
+    >,
+    EffectiveViewRefused,
 > {
     let mut checker = Checker::new(model, context, &Roots::DOCUMENT);
     checker.register();
-    checker.find_cycles();
+    checker.classify_cycles()?;
+    checker.expression_env = has_invariants(model, context).then(|| expression_env(model, context));
     checker.register_inverses();
     let mut out = BTreeMap::new();
     for (index, def) in model.object_types.iter().enumerate() {
@@ -292,16 +359,15 @@ pub fn effective_object_types(
             out.insert(index, (object_type, links));
         }
     }
-    out
+    Ok(out)
 }
 
 impl<'a, 'r> Checker<'a, 'r> {
     fn new(model: &EntityModel<'a>, context: &EntityContext<'a>, roots: &'r Roots) -> Self {
-        let expression_env = has_invariants(model, context).then(|| expression_env(model, context));
         Checker {
             model: *model,
             context: *context,
-            expression_env,
+            expression_env: None,
             roots,
             types: BTreeMap::new(),
             interfaces: BTreeMap::new(),
@@ -508,6 +574,9 @@ impl<'a, 'r> Checker<'a, 'r> {
                     let mut property = crate::entity_instance::EffectiveProperty::from_resolved(
                         resolved, markings,
                     );
+                    if self.protected(&def.name, &property.id) {
+                        property.protect();
+                    }
                     if let Some(reads) = computed_reads.get(resolved.property.id.as_str()) {
                         property.computed_inputs = reads.fields.iter().cloned().collect();
                         property.computed_reads_all = reads.whole_root;
@@ -656,8 +725,39 @@ fn expression_env(
 impl<'a> Checker<'a, '_> {
     fn run(&mut self) {
         self.register();
-        self.find_cycles();
+        if !self.find_cycles() {
+            return;
+        }
+        self.expression_env = has_invariants(&self.model, &self.context)
+            .then(|| expression_env(&self.model, &self.context));
         self.register_inverses();
+        let roles = crate::concept_roles::resolve(self.model, self.context.base);
+        let definitions = self
+            .model
+            .interfaces
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i, d.name.as_str(), self.roots.interfaces))
+            .chain(
+                self.model
+                    .object_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| (i, d.name.as_str(), self.roots.object_types)),
+            );
+        for (index, name, root) in definitions {
+            if let Some(Err(conflict)) = roles.get(name) {
+                let (code, field): (_, &[&str]) = match conflict {
+                    norn_ir::RoleConflict::Inherited => ("core.graph.role_conflict", &[]),
+                    norn_ir::RoleConflict::Declared => ("core.graph.role_mismatch", &["role"]),
+                };
+                self.out.push(error(
+                    code,
+                    format!("concept {name} has incompatible declared or inherited roles"),
+                    span_at(&pointer(root, &index.to_string()), field),
+                ));
+            }
+        }
         for (index, def) in self.model.interfaces.iter().enumerate() {
             self.check_interface(index, def);
         }
@@ -833,25 +933,33 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    fn find_cycles(&mut self) {
-        for &start in self.types.keys() {
-            let mut seen = BTreeSet::new();
-            let mut current = start;
-            while let Some(parent) = self
-                .types
-                .get(current)
-                .and_then(|entry| entry.def.extends.as_ref())
-                .and_then(|parent| self.types.get_key_value(parent))
-                .map(|(name, _)| *name)
-            {
-                if parent == start {
-                    self.cyclic.insert(start);
-                    break;
-                }
-                if !seen.insert(parent) {
-                    break;
-                }
-                current = parent;
+    fn classify_cycles(&mut self) -> Result<(), EffectiveViewRefused> {
+        let entries = self
+            .types
+            .iter()
+            .map(|(&name, entry)| (name, entry.def.extends.as_ref()));
+        match crate::inheritance::classify(entries, crate::inheritance::Budget::default()) {
+            Ok(classification) => {
+                self.cyclic = classification.cyclic;
+                Ok(())
+            }
+            Err(refusal) => Err(EffectiveViewRefused {
+                dimension: refusal.dimension,
+                limit: refusal.limit,
+            }),
+        }
+    }
+
+    fn find_cycles(&mut self) -> bool {
+        match self.classify_cycles() {
+            Ok(()) => true,
+            Err(refusal) => {
+                self.out.push(budget_exhausted_diagnostic(
+                    refusal.dimension,
+                    refusal.limit,
+                    crate::Span::from_segments(self.roots.object_types.iter().copied()),
+                ));
+                false
             }
         }
     }
@@ -866,6 +974,25 @@ impl<'a> Checker<'a, '_> {
             .and_then(|entry| entry.def.extends.as_ref())
             .and_then(|parent| self.types.get_key_value(parent))
             .map(|(parent, _)| *parent)
+    }
+
+    fn protected(&self, name: &ObjectTypeName, property: &PropertyId) -> bool {
+        std::iter::once(name)
+            .chain(self.ancestors(name))
+            .flat_map(|name| {
+                self.types
+                    .get(name)
+                    .into_iter()
+                    .flat_map(|entry| &entry.def.properties)
+                    .chain(
+                        self.extensions
+                            .get(name)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|(_, _, extension)| &extension.properties),
+                    )
+            })
+            .any(|candidate| candidate.id == *property && candidate.protected)
     }
 
     /// The registered supertypes of `name`, nearest first.
@@ -1435,7 +1562,7 @@ impl<'a> Checker<'a, '_> {
                 && child_table
                     .get(&collection.ordering_key)
                     .is_some_and(|property| {
-                        matches!(property.base(), Some(PropertyType::Integer {}))
+                        matches!(property.base(), Some(PropertyType::Integer { .. }))
                             && !ordering_key_admits_dense_positions(property, collection.max_rows.0)
                     })
             {
@@ -1752,6 +1879,7 @@ impl<'a> Checker<'a, '_> {
             .flat_map(|interface| interface.links.iter().map(|link| link.id.as_str()))
             .collect();
 
+        self.check_decimal_bindings(base, &all, table);
         for (position, requirement) in &all {
             let Some(position) = position else { continue };
             let id = &requirement.property.id;
@@ -1799,6 +1927,58 @@ impl<'a> Checker<'a, '_> {
             }
         }
         conflicted
+    }
+
+    /// VAL-DECIMAL-BIND-1: re-resolve same-group units/scales, including inherited contracts.
+    fn check_decimal_bindings(
+        &mut self,
+        base: &[&str],
+        requirements: &[(Option<usize>, Requirement<'a>)],
+        table: &Table<'a>,
+    ) {
+        let mut decimal_bindings = BTreeMap::new();
+        for (position, requirement) in requirements {
+            let PropertyType::DecimalBinding { group } = &requirement.property.property_type else {
+                continue;
+            };
+            let at = position.map_or_else(
+                || span_at(base, &["implements"]),
+                |index| span_at(base, &["implements", &index.to_string()]),
+            );
+            let binding =
+                table
+                    .get(&requirement.property.id)
+                    .and_then(|member| match member.ty.resolution {
+                        TypeResolution::Base(PropertyType::Decimal {
+                            scale,
+                            unit: Some(unit),
+                            ..
+                        }) => Some((scale.0, unit.clone())),
+                        TypeResolution::Base(_)
+                        | TypeResolution::Registry
+                        | TypeResolution::Unresolved { .. } => None,
+                    });
+            let Some(binding) = binding else {
+                self.out.push(error(
+                    crate::property_types::codes::UNIT_BINDING_REQUIRED,
+                    "interface Decimal requires an explicit concrete unit and scale".to_owned(),
+                    at,
+                ));
+                continue;
+            };
+            let key = (requirement.interface, group);
+            if decimal_bindings
+                .get(&key)
+                .is_some_and(|previous| previous != &binding)
+            {
+                self.out.push(error(
+                    crate::property_types::codes::UNIT_MISMATCH,
+                    "interface Decimal group requires the same unit and scale".to_owned(),
+                    at,
+                ));
+            }
+            decimal_bindings.insert(key, binding);
+        }
     }
 
     /// Every requirement a type is held to: those of the interfaces it lists
@@ -2227,7 +2407,18 @@ fn type_narrows(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Option<bool> {
 }
 
 fn base_narrows(narrow: &PropertyType, wide: &PropertyType) -> bool {
+    // A `DecimalBinding` carries no additivity, so the implementor chooses its own.
+    if !matches!(wide, PropertyType::DecimalBinding { .. })
+        && narrow.additivity() != wide.additivity()
+    {
+        return false;
+    }
+
     match (narrow, wide) {
+        (
+            PropertyType::Decimal { unit: Some(_), .. } | PropertyType::DecimalBinding { .. },
+            PropertyType::DecimalBinding { .. },
+        ) => true,
         (PropertyType::Text { format: narrow }, PropertyType::Text { format: wide }) => {
             wide.is_none() || narrow == wide
         }
@@ -2301,6 +2492,27 @@ mod tests {
         };
         assert!(base_narrows(&values(&["a"]), &values(&["a", "b"])));
         assert!(!base_narrows(&values(&["a", "c"]), &values(&["a", "b"])));
-        assert!(!base_narrows(&PropertyType::Integer {}, &text));
+        assert!(!base_narrows(
+            &PropertyType::Integer {
+                additivity: norn_ir::PropertyAdditivity::Undeclared {}
+            },
+            &text
+        ));
+    }
+    #[test]
+    fn metric_additivity_is_preserved_by_numeric_overrides() {
+        use norn_ir::PropertyAdditivity;
+        let balance = PropertyType::Integer {
+            additivity: PropertyAdditivity::SemiAdditive {},
+        };
+        let additive = PropertyType::Integer {
+            additivity: PropertyAdditivity::Additive {},
+        };
+        let undeclared = PropertyType::Integer {
+            additivity: PropertyAdditivity::Undeclared {},
+        };
+        assert!(base_narrows(&balance, &balance));
+        assert!(!base_narrows(&additive, &balance));
+        assert!(!base_narrows(&undeclared, &balance));
     }
 }

@@ -326,7 +326,7 @@ fn cell_host_observation_ingested_once_and_consumed_once() {
     assert!(!cell.inject(law_observed(0, 5)), "a consumed id stays seen");
 }
 
-/// Every delivery is stale, every object exists at version 1, and every link
+/// Every delivery is stale, every object has retained version 1, and every link
 /// is at version 1.
 struct FixedView;
 
@@ -536,7 +536,7 @@ fn cell_host_check_commit_link_refusal_order() {
         })
     );
     // Link 2 is k2 -rel-> k0, and k2 does not exist: the add would dangle,
-    // unless this commit creates k2. A remove never dangles.
+    // and authored recreation refuses. A remove never dangles.
     assert_eq!(
         fixed(&commit(vec![], vec![link(2, 1, true)])),
         Err(CommitError::DanglingLink {
@@ -547,16 +547,7 @@ fn cell_host_check_commit_link_refusal_order() {
     assert!(fixed(&commit(vec![], vec![link(2, 1, false)])).is_ok());
     assert_eq!(
         fixed(&commit(vec![put(2, 1, 0)], vec![link(2, 1, true)])),
-        Ok(CommitVersions {
-            written: vec![WrittenVersion {
-                key: law_key(2),
-                version: FactVersion(2),
-            }],
-            linked: vec![WrittenLinkVersion {
-                key: law_link_key(2),
-                version: FactVersion(2),
-            }],
-        })
+        Err(CommitError::IdentityReuse)
     );
     // Deleting an endpoint in the same commit makes the add dangle.
     let delete = FactWrite {
@@ -747,6 +738,7 @@ fn cell_host_wire_shape_and_default_lane() {
         effects: vec![Effect::CancelTimer(law_timer_id(0))],
         links: vec![],
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     let json = serde_json::to_value(&commit).unwrap();
     assert_eq!(

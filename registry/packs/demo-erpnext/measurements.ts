@@ -3,6 +3,7 @@ import { Norn } from "@norn/authoring"
 
 export const Measurement = Norn.interfaceType({
   name: "demo.erpnext.Measurement", title: "Synthetic ERPNext measurement evidence", version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   properties: Schema.Struct({
     id: Schema.String, metal: Schema.Literals(["gold", "silver"]),
     role: Schema.Literals(["input", "output", "loss"]),
@@ -13,6 +14,7 @@ export const Measurement = Norn.interfaceType({
 
 export const StockEntryMeasurement = Norn.type({
   name: "demo.erpnext.StockEntryMeasurement", title: "Stock Entry measurement row", version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   implements: [Measurement],
   properties: Schema.Struct({
     id: Schema.String, metal: Schema.Literals(["gold", "silver"]),
@@ -70,4 +72,17 @@ export const Mapping = Norn.mapping({
     ],
     ignoredFields: [{ field: "custom_lot", reason: "Retained in the source document; canonical lot resolution is an explicit gap." }],
   }],
+})
+
+export const PurityWithinBounds = Norn.law({
+  id: "demo.erpnext.purity.law", title: "Measurement purity is within zero and one", version: "0.1.0",
+  dependencies: [{ artifactId: "demo.erpnext.StockEntryMeasurement.entity", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1", id: "demo.erpnext.purity_in_range", owner: "demo.erpnext.controls",
+    severity: "error", rationale: "Measurement purity must be within zero and one.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/demo-erpnext/measurements.ts" },
+    subject: "demo.erpnext.StockEntryMeasurement",
+    scope: { root: { kind: "entity", id: "demo.erpnext.StockEntryMeasurement" }, objectTypes: ["demo.erpnext.StockEntryMeasurement"] },
+    modality: { kind: "always" }, response: { kind: "predicate", expression: "self.purity >= 0 and self.purity <= 1" },
+  },
 })

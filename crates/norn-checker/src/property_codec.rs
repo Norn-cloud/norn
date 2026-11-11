@@ -1,6 +1,6 @@
-//! Exact scalar property values at the SQLite storage boundary.
+//! Exact scalar property values at the `SQLite` storage boundary.
 //!
-//! `norn-cell` adapts these portable encodings to SQLite values. Keeping the
+//! `norn-cell` adapts these portable encodings to `SQLite` values. Keeping the
 //! integer, decimal, boolean, text, and canonical JSON conversions here also
 //! lets the kernel prepare the exact values a cell will persist.
 
@@ -109,7 +109,9 @@ pub fn encode(
                 String::from_utf8_lossy(&bytes).into_owned(),
             ))
         }
-        PropertyKind::Ref => Err(PropertyCodecError::ValueType("a resolved property kind")),
+        PropertyKind::Ref | PropertyKind::DecimalBinding => {
+            Err(PropertyCodecError::ValueType("a resolved property kind"))
+        }
     }
 }
 

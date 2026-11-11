@@ -1,0 +1,7 @@
+{
+  "code": "graph_load.validation.missing_scope",
+  "message": "required scope '{key}' is missing",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

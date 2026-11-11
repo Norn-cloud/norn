@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.invalid_nesting",
+  "message": "dataset {dataset} is not a declared child table of {parent} held in its field {field}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

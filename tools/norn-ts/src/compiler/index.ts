@@ -13,7 +13,7 @@ import type { FlowDef, FnRef, Step, TaggedErrorDecl, SourceLocation, BuildOption
 import type { Expr } from "../builder/expr.ts"
 import { CompileError, SchemaBudget, resultSchema, valueSchema } from "./types.ts"
 
-export const COMPILER_LIMITS = { maxSourceBytes: 1_048_576, maxNodes: 100_000, maxModules: 128, maxDepth: 128, maxOutputBytes: 8_388_608, maxMillis: 30_000 } as const
+export const COMPILER_LIMITS = { maxSourceBytes: 1_048_576, maxNodes: 100_000, maxExpansionWork: 100_000, maxModules: 128, maxDepth: 128, maxOutputBytes: 8_388_608, maxMillis: 30_000 } as const
 export type CompilerLimits = { readonly [K in keyof typeof COMPILER_LIMITS]: number }
 export type CompileResult =
   | { readonly ok: true; readonly definition: FlowDef; readonly artifacts: ReadonlyArray<Json>; readonly sourceMap: Json; readonly warnings: ReadonlyArray<Diagnostic>; readonly flowSourceMap?: FlowSourceMapDraft }
@@ -141,7 +141,7 @@ export function prepareCompilation(files: ReadonlyArray<string>, overrides: Part
       failed.set(path, [diagnostic(sf, "NORN-FLOW-UNBOUNDED", "source exceeds compiler byte bound")])
     } else { eligible.push(path); rootBytes += rawBytes; readRoots.add(path) }
   }
-  const expansion = new ExpansionBudget({ maxWork: limits.maxNodes, maxOutputBytes: limits.maxOutputBytes, deadline: started + limits.maxMillis })
+  const expansion = new ExpansionBudget({ maxWork: limits.maxExpansionWork, maxOutputBytes: limits.maxOutputBytes, deadline: started + limits.maxMillis })
   let reports: ReturnType<ProfileChecker["check"]>
   let program: ts.Program | undefined
   try {
@@ -445,7 +445,7 @@ export class SyntaxCompiler {
       if (ts.isConditionalExpression(e)) return B.X.conditional(this.data(e.condition, env), this.data(e.whenTrue, env), this.data(e.whenFalse, env))
       if (ts.isCallExpression(e)) {
         const id = this.id(e)
-        if (id === "@norn/authoring#Norn.evaluate" && this.subDecision) return this.subDecision(e, this.data(e.arguments[1]!, env))
+        if ((id === "@norn/authoring#Norn.evaluate" || id === "@norn/authoring#Norn.orderedFold") && this.subDecision) return this.subDecision(e, this.data(e.arguments[1]!, env))
         if (id === "@norn/authoring#Norn.unsafeZen") {
           const text = this.scalar(e.arguments[0]!)
           if (typeof text !== "string" || !e.typeArguments?.[0]) throw new CompileError("NORN-FLOW-TYPE", "unsafeZen<T> requires its declared result type and literal ZEN text", e)
@@ -461,6 +461,7 @@ export class SyntaxCompiler {
         if (ts.isPropertyAccessExpression(e.expression)) {
           const receiver = this.data(e.expression.expression, env), name = e.expression.name.text
           const args = e.arguments.map((a) => this.data(a, env))
+          if (name === "concat") return B.X.call("concat", receiver, ...args)
           if (name === "includes") {
             const t = this.checker.getTypeAtLocation(e.expression.expression)
             return this.checker.isArrayType(t) || this.checker.isTupleType(t) ? B.X.binary("in", args[0]!, receiver) : B.X.call("contains", receiver, ...args)

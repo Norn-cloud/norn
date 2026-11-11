@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.weak_relationship",
+  "message": "property {id} of {name} refers to {target} by a scalar value, and no link to {target} exists; model the relationship as a link",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

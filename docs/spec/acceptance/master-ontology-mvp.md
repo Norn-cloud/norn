@@ -34,6 +34,32 @@ ERPNext/Shopify change feeds are live demo priority under [data engineering](dat
 - **MVP-MAP-THREE:** Given synthetic ERPNext/Shopify/Odoo documents with equivalent intended entities, when mapped, then preserve source aliases, role links and declared semantic differences; ambiguous identity is a finding or mapping refusal, never a guessed merge.
 - **MVP-MAP-GAP:** Given a Shopify price with no cost/book information, when asked for canonical valuation, then report incomplete coverage; do not label sales price as stock cost.
 - **MVP-CONSTITUTION:** Given an invalid core or jewelry law writer, when generated obligations and live commits run, then produce the named counterexample/refusal; no handwritten theorem substitutes.
+
+The bounded constitution driver is `cargo nextest run --profile drop-constitution` on
+clean main. Its typed `core.Conversion` specialisation records input, output and
+loss in pinned UCUM grams at scale zero. The approved LawIR stays unchanged while
+the compiler removes the writer's loss derivation, then restores it.
+
+- **MVP-CONSTITUTION-PASS:** From an empty SQLite cell, execute one create-only
+  action for every input 2–12 g and output 1–input g: all 77 cases commit, including
+  66 reachable positive-loss cases. Seed zero denotes deterministic enumeration.
+- **MVP-CONSTITUTION-LOSS-REMOVED:** Recompile the same writer with the loss
+  derivation removed. Its declared zero default exposes 66 conservation refusals;
+  generate the first witness (2 g in, 1 g out, missing 1 g loss), and compare the
+  entire SQLite dump before/after each refusal, including the action audit table.
+- **MVP-CONSTITUTION-RESTORED:** Restore the declaration and reproduce all 77
+  successes and the positive-loss witness. A previous result used with the mutated
+  Challenge is PROOF-STALE/unknown.
+
+Results consume existing checker-generated initialization, preservation and
+non-vacuity goals and the checker's evidence identity binding. Identity matching
+grants no verdict.
+The executable driver supplies bounded runtime conformance, not solver proof:
+generated action-to-backend relations, induction over arbitrary states/writers,
+inherited-law instantiation and full REA stock/value effects remain unknown.
+All generated proof goals remain open; linked observations are bounded runtime
+evidence only. This qualified subset does not by itself complete
+MVP-CONSTITUTION or thesis T4-C2.
 - **MVP-ROUNDTRIP:** Given one admitted action, when invoked through UI/API/MCP/CLI, then equivalent authorization, exact inputs, consequences and refusals hold; discovery catalog matches the admitted definitions.
 - **MVP-DATA:** Given the ERPNext/Shopify feed fixture, when analytical outputs are produced, then freshness/lineage/quarantine/as-of/statistical guards pass all beat-6 cases.
 
@@ -43,4 +69,4 @@ At the [core baseline](../core/README.md), `registry/core/src/{physics,commerce}
 
 Done requires every row above admitted with named laws and complete writer closure; every mapping required-member/unit/role case tested; all [core completeness](completeness-gate.md) and [six demo beats](jewelry-demo.md) passing without skips; explicit declared gaps; exact release/parameter/evidence pins; no new app opcode; and the repo's required CI/review gates on the accepted heads. Runtime/model/proof/parity statuses stay independent. Unknown unsupported safety, unresolved mandatory mappings or incomplete authoritative reads block the corresponding capability.
 
-Delivery order: core definitions/readable physics → inventory/accounting folds and transactions → sales exchange/settlement → jewelry → system mappings/observed-data qualification → same-binary acceptance. Data-engineering contracts and ERPNext/Shopify feed fixtures proceed alongside inventory, not after demo polish. Each implementation cut is ≤400 changed lines including conformance/provenance and remains fail-closed until its dependent semantics land.
+Delivery order: core definitions/readable physics → inventory/accounting folds and transactions → sales exchange/settlement → jewelry → system mappings/observed-data qualification → same-binary acceptance. Data-engineering contracts and ERPNext/Shopify feed fixtures proceed alongside inventory, not after demo polish. Each implementation cut is one coherent unit (no line cap) and remains fail-closed until its dependent semantics land.

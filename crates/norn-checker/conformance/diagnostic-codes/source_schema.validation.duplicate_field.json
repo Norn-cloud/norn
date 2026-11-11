@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.duplicate_field",
+  "message": "dataset {dataset} declares field {field} (or ordinal {ordinal}) twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

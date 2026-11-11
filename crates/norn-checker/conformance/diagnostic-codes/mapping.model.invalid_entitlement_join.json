@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.invalid_entitlement_join",
+  "message": "entitlement join {join} has an invalid alias, key, provenance, or field type",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

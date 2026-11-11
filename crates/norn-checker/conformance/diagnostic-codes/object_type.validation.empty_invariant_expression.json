@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.empty_invariant_expression",
+  "message": "the expression of invariant {invariant} is blank",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

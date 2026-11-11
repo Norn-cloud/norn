@@ -40,6 +40,13 @@
 //!    input's `set` changes. Both go through [`crate::prepare_decision`]. The
 //!    target's prepared `put` is canonicalized with the shared effective-value
 //!    builder, then authorized as the proposed state.
+//!    **Receipt acceptance** (RECEIPT-EFFECT-1 / RECEIPT-CONSUME-1, Core 07):
+//!    a `fire_transition` declaring `acceptReceipt` resolves its input's
+//!    receipt digest through [`CellHost::resolve_accepted_receipt`], checks the
+//!    receipt is bound to the target run and its current generation, and adds
+//!    the digest and bound result `set`s plus the acceptance's delivery and
+//!    pins to the same commit. The host's pending check refuses a second
+//!    consumption; no transition commits without its consumption.
 //! 9. **Commit**: the prepared writes and call record commit atomically. A
 //!    concurrent call that commits first makes this one stale; if that call
 //!    had the same idempotency key and binding, this one replays after current
@@ -60,7 +67,8 @@ use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_com
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, CommitReceipt, FactExpectation, FactKey, FactMutation,
     FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
-    LinkReadExpectation, LinkWrite, OwnedRowsCommitProof,
+    LinkReadExpectation, LinkWrite, OwnedRowsCommitProof, PredicateObject, PredicateQuery,
+    PredicateReadExpectation,
 };
 use crate::decision_commit::{
     DecisionRefusal, DecisionTurn, FactEvent, FactSlice, TypeCatalog, expr_value,
@@ -286,16 +294,20 @@ pub trait ActionAuthorizer {
 
 /// One field produced by an ordered action input derivation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionDerivedValue {
     /// The derived field.
     pub field: String,
-    /// The exact runtime value written to the effective input.
+    /// The exact runtime value written to the effective input. Preserve source
+    /// text and use an exact-number JSON parser; JavaScript `JSON.parse` may
+    /// lose precision.
     pub value: RuntimeValue,
 }
 
 /// The successful outcome of one action precondition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionPreconditionOutcome {
     /// The expression evaluated.
@@ -311,6 +323,7 @@ pub struct ActionInputPreparation<'a> {
     raw_input: &'a JsonObject,
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
+    actor: Option<String>,
     effective_input: JsonObject,
     derived_values: Vec<ActionDerivedValue>,
     remaining_fuel: u64,
@@ -319,11 +332,17 @@ pub struct ActionInputPreparation<'a> {
 }
 
 impl ActionInputPreparation<'_> {
+    fn recorded_effective_input(&self) -> Option<JsonObject> {
+        (!self.action.derive.is_empty() || self.effective_input != *self.raw_input)
+            .then(|| self.effective_input.clone())
+    }
+
     fn matches_call(&self, call: &ActionCall<'_>) -> bool {
         self.action == call.action
             && self.raw_input == &call.input
             && self.action_artifact_id == Some(call.action_artifact_id)
             && self.action_version == Some(call.action_version)
+            && self.actor.as_deref() == Some(call.actor.as_str())
     }
 
     /// The caller input after all derivations, before the action reads facts.
@@ -362,6 +381,7 @@ struct ActionPreconditionOutcomeRef<'a> {
 /// The idempotency record of a committed call (the values of its
 /// [`ACTION_CALL_TYPE`] object).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionCallRecord {
     /// The action.
@@ -378,11 +398,16 @@ pub struct ActionCallRecord {
     /// written before effect attribution and interpreted as `fire_transition`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_kind: Option<String>,
+    /// TXN-RULE-1: exact writer closure, action, scope and world identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_binding: Option<String>,
     /// The target object.
     pub object: FactKey,
     /// The call's input.
     pub input: JsonObject,
     /// The final input after ordered derivations. Legacy records use `input`.
+    /// Preserve source text and use an exact-number JSON parser for its values;
+    /// JavaScript `JSON.parse` may lose precision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_input: Option<JsonObject>,
     /// The values produced by each derivation, in declaration order.
@@ -407,6 +432,13 @@ pub struct ActionCallRecord {
 }
 
 impl ActionCallRecord {
+    /// Generated JSON Schema of this record's wire contract.
+    /// The kernel's schema correspondence test regenerates and checks it.
+    #[must_use]
+    pub const fn schema_json() -> &'static str {
+        include_str!("../schema/action_call_record.schema.json")
+    }
+
     fn for_transition(
         call: &ActionCall<'_>,
         preparation: &ActionInputPreparation<'_>,
@@ -419,10 +451,10 @@ impl ActionCallRecord {
             action_artifact_id: Some(call.action_artifact_id.to_owned()),
             action_version: Some(call.action_version.to_owned()),
             effect_kind: Some("fire_transition".to_owned()),
+            rule_binding: None,
             object: target.clone(),
             input: call.input.clone(),
-            effective_input: (!action.derive.is_empty())
-                .then(|| preparation.effective_input.clone()),
+            effective_input: preparation.recorded_effective_input(),
             derived_values: preparation.derived_values.clone(),
             precondition_outcomes: Vec::new(),
             actor: call.actor.clone(),
@@ -439,6 +471,7 @@ impl ActionCallRecord {
             && self.object == other.object
             && self.input == other.input
             && self.actor == other.actor
+            && self.rule_binding == other.rule_binding
     }
 
     fn binds_same_generated_call(
@@ -522,6 +555,9 @@ impl ActionCallRecord {
         if let Some(action_version) = &self.action_version {
             values.insert("actionVersion".to_owned(), string(action_version));
         }
+        if let Some(binding) = &self.rule_binding {
+            values.insert("ruleBinding".to_owned(), string(binding));
+        }
         if let Some(effect_kind) = &self.effect_kind {
             values.insert("effectKind".to_owned(), string(effect_kind));
         }
@@ -584,6 +620,11 @@ impl ActionCallRecord {
             action_artifact_id,
             action_version,
             effect_kind,
+            rule_binding: match values.get("ruleBinding") {
+                Some(JsonValue::String(value)) => Some(value.clone()),
+                None | Some(JsonValue::Null) => None,
+                _ => return None,
+            },
             object: FactKey::new(object_type.clone(), key.clone()),
             input: input.clone(),
             effective_input,
@@ -634,6 +675,12 @@ pub enum ActionRefusal<X> {
         /// The action.
         action_id: String,
     },
+    /// A synchronous writer escaped its closed declared effect set.
+    #[error("synchronous action writer refused: {reason}")]
+    UncheckedWriter {
+        /// The refused writer contract.
+        reason: String,
+    },
     /// The input does not name the target.
     #[error("the input does not satisfy the declared schema at {field:?}")]
     InvalidInput {
@@ -676,6 +723,30 @@ pub enum ActionRefusal<X> {
         /// The safe refusal detail.
         reason: String,
     },
+    /// An aggregate input matched more objects than its declared bound.
+    #[error("aggregate {aggregate:?} matched more than {max_items} objects")]
+    AggregateBoundExceeded {
+        /// The declared aggregate.
+        aggregate: String,
+        /// Its declared bound.
+        max_items: u32,
+    },
+    /// An aggregate input's matches outgrew the slice's byte bound.
+    #[error("aggregate {aggregate:?} matched more than {max_bytes} canonical bytes")]
+    AggregateBytesExceeded {
+        /// The declared aggregate.
+        aggregate: String,
+        /// The slice's canonical byte bound.
+        max_bytes: u64,
+    },
+    /// An aggregate input could not be read or folded exactly.
+    #[error("aggregate {aggregate:?} was refused: {reason}")]
+    AggregateUnavailable {
+        /// The declared aggregate.
+        aggregate: String,
+        /// The safe refusal detail.
+        reason: String,
+    },
     /// A visible, required single-object slice entry does not exist.
     #[error("required action slice entry {entry:?} is missing")]
     SliceObjectMissing {
@@ -689,6 +760,12 @@ pub enum ActionRefusal<X> {
         key: FactKey,
         /// The link name when the stale read was a complete adjacency set.
         link: Option<String>,
+    },
+    /// The objects an aggregate input folded over changed before commit.
+    #[error("aggregate read over {object_type:?} changed before commit")]
+    StaleAggregateRead {
+        /// The aggregate's object type.
+        object_type: ObjectTypeName,
     },
     /// A precondition is false or cannot be evaluated (fail-closed).
     #[error("precondition `{precondition}` does not hold ({})", .reason.as_deref().unwrap_or("false"))]
@@ -729,6 +806,14 @@ pub enum ActionRefusal<X> {
         /// Why the target failed the mode.
         reason: String,
     },
+    /// RECEIPT-EFFECT-1: the referenced receipt cannot be consumed by this
+    /// call (unknown, replayed, bound to another run or generation, not an
+    /// accepted success, or its result does not fit the declared bindings).
+    #[error("the action's receipt was refused: {}", reason.code())]
+    ReceiptRefused {
+        /// Why.
+        reason: crate::receipt_binding::ReceiptRefusal,
+    },
     /// The transition was refused by the decision-commit path.
     #[error(transparent)]
     Decision(DecisionRefusal<X>),
@@ -742,19 +827,25 @@ impl<X> ActionRefusal<X> {
             Self::Command(rejection) => rejection.code(),
             Self::MissingScope { .. } => "action.missing_scope",
             Self::UnsupportedEffect { .. } => "action.unsupported_effect",
+            Self::UncheckedWriter { .. } => "core.txn.unchecked_writer",
             Self::InvalidInput { .. } => "action.invalid_input",
             Self::DerivationFailed { .. } => "action.derivation_failed",
             Self::InputBoundExceeded { .. } => "action.input_bound_exceeded",
             Self::ExpressionBudgetExceeded { .. } => "action.expression_budget_exceeded",
             Self::SliceUnavailable { .. } => "action.slice_unavailable",
+            Self::AggregateBoundExceeded { .. } => "action.aggregate_bound_exceeded",
+            Self::AggregateBytesExceeded { .. } => "action.aggregate_bytes_exceeded",
+            Self::AggregateUnavailable { .. } => "action.aggregate_unavailable",
             Self::SliceObjectMissing { .. } => "action.slice_object_missing",
             Self::StalePreconditionRead { .. } => "action.precondition_stale_read",
+            Self::StaleAggregateRead { .. } => "action.aggregate_stale_read",
             Self::PreconditionFailed { .. } => "action.precondition_failed",
             Self::TargetNotFound => "action.target_not_found",
             Self::PermissionDenied { .. } => "action.permission_denied",
             Self::KindMismatch { .. } => "artifact_set.action.effect_kind_mismatch",
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
+            Self::ReceiptRefused { reason } => reason.code(),
             Self::Decision(refusal) => refusal.code(),
         }
     }
@@ -869,6 +960,10 @@ where
     commit_action_inner(host, catalog, call, authorizer, None, &limits, Some(meter))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dispatch resolves closure, scope, input and effect program before any commit"
+)]
 fn commit_action_inner<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
@@ -885,7 +980,9 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
-    if (action.quantity_effect.is_some() || !action.create_links.is_empty())
+    // TXN-RULE-1: a declared closure never degrades to its primary effect.
+    crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
+    if !action.create_links.is_empty()
         && matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
@@ -908,22 +1005,20 @@ where
             &call.input,
             call.action_artifact_id,
             call.action_version,
+            &call.actor,
         )?,
     };
     match action.effect_program.as_ref() {
-        // RECEIPT-EFFECT-1: refuse until consumption and effects share one commit.
-        Some(ActionEffectProgram::FireTransition {
-            accept_receipt: Some(_),
-            ..
-        })
-        | None => Err(ActionRefusal::UnsupportedEffect {
+        None => Err(ActionRefusal::UnsupportedEffect {
             action_id: action.action_id.clone(),
         }),
+        // RECEIPT-EFFECT-1: an accepted receipt is consumed in the transition's commit.
         Some(ActionEffectProgram::FireTransition {
             object_id_field,
             object_kind,
             lifecycle,
             transition,
+            accept_receipt,
             ..
         }) => commit_transition(
             host,
@@ -935,6 +1030,7 @@ where
             object_kind,
             lifecycle,
             transition,
+            accept_receipt.as_ref(),
             limits,
             meter,
         ),
@@ -985,7 +1081,8 @@ where
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the admitted action effect, host, and turn policy are explicit commit inputs"
+    clippy::too_many_lines,
+    reason = "the pinned writer and primary transition share authorization, captured fences and one commit"
 )]
 fn commit_transition<H>(
     host: &mut H,
@@ -997,6 +1094,7 @@ fn commit_transition<H>(
     object_kind: &str,
     lifecycle: &norn_ir::PropertyId,
     transition: &norn_ir::TransitionId,
+    accept_receipt: Option<&norn_ir::ReceiptAcceptance>,
     limits: &EnvelopeLimits,
     meter: Option<&mut TurnEnvelopeMeter>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
@@ -1007,6 +1105,15 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
+    if accept_receipt.is_some()
+        && (action.synchronous_rule.is_some() || call.turn.consumes.is_some())
+    {
+        // One commit consumes at most one delivery, and a rule writer's
+        // closure has not been qualified against receipt-bound values.
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
+    }
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
         return Err(ActionRefusal::InvalidInput {
@@ -1039,12 +1146,14 @@ where
         ACTION_CALL_TYPE,
         format!("{}/{}", action.action_id, call.idempotency_key),
     );
-    let record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    let rule = crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
+    let mut record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    record.rule_binding = rule.map(|rule| rule.binding(call)).transpose()?;
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if let Some(outcome) = replay(&recorded, &record, &call.idempotency_key)? {
         return Ok(outcome);
     }
-    let slice = load_action_slice(
+    let mut slice = load_action_slice(
         &ActionSliceContext {
             host,
             catalog,
@@ -1057,30 +1166,94 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         action,
         &preparation.effective_input,
-        &slice.values,
+        &slice,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
     )?;
-    let mut record = record;
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
+    let mut changes = if let Some(rule) = rule {
+        let output = rule.evaluate(
+            call,
+            &preparation.effective_input,
+            &slice.values,
+            &mut preparation.remaining_fuel,
+        )?;
+        check_action_envelope::<H::Error>(
+            limits,
+            output.facts.len().saturating_add(1),
+            action.commands.len(),
+        )?;
+        for change in &output.facts {
+            let (key, operation) = crate::synchronous_rule::writer_target(change)?;
+            if key.object_type.as_str().starts_with("norn.")
+                || !action.writes.iter().any(|write| {
+                    write.entity_kind == key.object_type.as_str() && write.change == operation
+                })
+                || (key == target && matches!(change, FactChange::Transition { .. }))
+            {
+                return Err(crate::synchronous_rule::refused(
+                    "the rule wrote outside the declared writer contract",
+                ));
+            }
+            if operation == norn_ir::WriteChange::Created {
+                if let std::collections::btree_map::Entry::Vacant(entry) = slice.facts.entry(key) {
+                    let state = authorize_upsert_target(
+                        host,
+                        call,
+                        &preparation.effective_input,
+                        authorizer,
+                        entry.key(),
+                    )?;
+                    entry.insert(state);
+                }
+            } else {
+                let state = slice.facts.get(&key).ok_or_else(|| {
+                    crate::synchronous_rule::refused(
+                        "a modified object is outside the captured slice",
+                    )
+                })?;
+                authorize_current_target(
+                    call,
+                    &preparation.effective_input,
+                    authorizer,
+                    &key,
+                    state,
+                )?;
+            }
+        }
+        output.facts
+    } else {
+        Vec::new()
+    };
+    let receipt = match accept_receipt {
+        Some(declaration) => {
+            let accepted =
+                resolve_receipt_effect(host, &preparation.effective_input, declaration, &target)?;
+            changes.extend(accepted.changes);
+            Some(accepted.acceptance)
+        }
+        None => None,
+    };
     let change = FactChange::Transition {
         object_type,
         key: object_id.clone(),
         lifecycle: lifecycle.clone(),
         transition: transition.clone(),
     };
+    changes.push(change);
     commit_effect(
         host,
         catalog,
         call,
         authorizer,
-        vec![change],
+        changes,
         Pending {
             effective_input: preparation.effective_input.clone(),
             remaining_fuel: preparation.remaining_fuel,
@@ -1088,14 +1261,89 @@ where
             slice: slice.facts,
             reference_only: slice.reference_only,
             link_reads: slice.link_reads,
+            predicate_reads: slice.predicate_reads,
             precondition_reads: slice.precondition_keys,
             record_key,
             recorded,
             record,
             series_candidate: None,
+            receipt,
         },
         EnvelopePolicy { limits, meter },
     )
+}
+
+/// The property changes and delivery a receipt-accepting transition commits.
+struct ReceiptEffect {
+    changes: Vec<FactChange>,
+    acceptance: crate::result_reconciliation::Acceptance,
+}
+
+/// RECEIPT-EFFECT-1: resolve the input's receipt reference through the host and
+/// turn the authenticated result into the declared property changes. Nothing
+/// is consumed here; [`commit_effect`] consumes the acceptance's delivery in
+/// the same commit as the transition.
+fn resolve_receipt_effect<H: CellHost + ?Sized>(
+    host: &H,
+    effective_input: &JsonObject,
+    declaration: &norn_ir::ReceiptAcceptance,
+    target: &FactKey,
+) -> Result<ReceiptEffect, ActionRefusal<H::Error>> {
+    use crate::receipt_binding::{ReceiptReference, ReceiptRefusal};
+    let refuse = |reason| ActionRefusal::ReceiptRefused { reason };
+    let reference = effective_input
+        .get(&declaration.reference_field)
+        .ok_or_else(|| ActionRefusal::InvalidInput {
+            field: declaration.reference_field.clone(),
+        })?;
+    let reference = ReceiptReference::parse(reference).map_err(|error| refuse(error.into()))?;
+    let binding = match host.resolve_accepted_receipt(&reference, &declaration.manifest_digest) {
+        Ok(Some(binding)) => binding,
+        Ok(None) => return Err(refuse(ReceiptRefusal::EffectUnsupported)),
+        Err(error) => return Err(error.into_refusal().map_or_else(host_failure, refuse)),
+    };
+    // The host authenticates; the kernel re-checks the pins it can see.
+    if binding.manifest() != &declaration.manifest_digest {
+        return Err(refuse(ReceiptRefusal::BindingMismatch));
+    }
+    // RUN-BIND-1: a receipt resolves only the run it was dispatched under.
+    if binding.run().id != target.key {
+        return Err(refuse(ReceiptRefusal::RunMismatch));
+    }
+    let run_generation = binding.run().generation;
+    let (digest, result, acceptance) = binding.into_parts();
+    if acceptance.record.generation.0 != run_generation
+        || acceptance.state.generation.0 != run_generation
+    {
+        return Err(refuse(ReceiptRefusal::RunMismatch));
+    }
+    if acceptance.requires_cell_lane || acceptance.destination.is_some() {
+        // Predicate pins and written destinations need their own fences.
+        return Err(refuse(ReceiptRefusal::EffectUnsupported));
+    }
+    let mut changes = Vec::with_capacity(declaration.result_bindings.len().saturating_add(1));
+    changes.push(FactChange::Set {
+        object_type: target.object_type.clone(),
+        key: target.key.clone(),
+        property: declaration.digest_property.clone(),
+        value: RuntimeValue::String(digest.0),
+    });
+    for (property, member) in &declaration.result_bindings {
+        let value = result
+            .get(member.as_str())
+            .cloned()
+            .ok_or_else(|| refuse(ReceiptRefusal::ResultType))?;
+        changes.push(FactChange::Set {
+            object_type: target.object_type.clone(),
+            key: target.key.clone(),
+            property: property.clone(),
+            value,
+        });
+    }
+    Ok(ReceiptEffect {
+        changes,
+        acceptance,
+    })
 }
 
 fn upsert_stored_input(
@@ -1228,9 +1476,10 @@ where
         action_artifact_id: Some(call.action_artifact_id.to_owned()),
         action_version: Some(call.action_version.to_owned()),
         effect_kind: Some("upsert_input_object".to_owned()),
+        rule_binding: None,
         object: target.clone(),
         input: call.input.clone(),
-        effective_input: (!action.derive.is_empty()).then(|| preparation.effective_input.clone()),
+        effective_input: preparation.recorded_effective_input(),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
         actor: call.actor.clone(),
@@ -1271,9 +1520,10 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         action,
         &preparation.effective_input,
-        &slice.values,
+        &slice,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -1362,11 +1612,13 @@ where
             slice: slice.facts,
             reference_only: slice.reference_only,
             link_reads: slice.link_reads,
+            predicate_reads: slice.predicate_reads,
             precondition_reads: slice.precondition_keys,
             record_key,
             recorded,
             record,
             series_candidate: None,
+            receipt: None,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -1716,6 +1968,7 @@ fn validate_stored_patch<X>(
             });
         };
         if declared.computed
+            || declared.protected()
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -1745,11 +1998,11 @@ fn row_expression_context<X>(
 }
 
 fn derive_row_values<X>(
+    action: &ActionRoot,
     catalog: &TypeCatalog<'_>,
     collection: &OwnedChildCollection,
     config: &OwnedCollectionAction,
     input: &JsonObject,
-    _current: Option<&JsonObject>,
     mut proposed: JsonObject,
     remaining_fuel: &mut u64,
 ) -> Result<JsonObject, ActionRefusal<X>> {
@@ -1761,6 +2014,24 @@ fn derive_row_values<X>(
             ),
         }));
     }
+    let base_env = catalog
+        .base_expression_environment()
+        .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
+    let excluded = config
+        .derive
+        .keys()
+        .map(|property| property.as_str().to_owned())
+        .collect();
+    let base_env = base_env
+        .bind_self_to_stored_fields(&collection.child_type, &excluded)
+        .map_err(|error| {
+            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                reason: error.to_string(),
+            })
+        })?;
+    let env =
+        norn_expr::schema::action_environment(action, Some(&base_env), action.derive.len())
+            .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
     for (property, expression) in &config.derive {
         let context = row_expression_context::<X>(input, &proposed)?;
         let invalid = |reason| {
@@ -1771,8 +2042,23 @@ fn derive_row_values<X>(
                 ),
             })
         };
-        let evaluated =
-            evaluate_row_expression(expression.as_str(), &context, remaining_fuel, invalid)?;
+        let expected = catalog
+            .expression_environment(&collection.child_type)
+            .ok()
+            .and_then(|env| {
+                env.record(collection.child_type.as_str())
+                    .and_then(|record| record.fields.get(property.as_str()))
+                    .map(|field| field.ty.clone())
+            })
+            .ok_or_else(|| invalid("unknown derived property type".into()))?;
+        let evaluated = evaluate_row_expression(
+            expression.as_str(),
+            &context,
+            remaining_fuel,
+            &env,
+            &expected,
+            invalid,
+        )?;
         let value = expression_value_to_runtime(&evaluated).map_err(invalid)?;
         proposed.insert(property.as_str().to_owned(), value);
     }
@@ -1780,19 +2066,38 @@ fn derive_row_values<X>(
 }
 
 fn check_row_preconditions<X>(
+    action: &ActionRoot,
+    catalog: &TypeCatalog<'_>,
+    child_type: &ObjectTypeName,
     config: &OwnedCollectionAction,
     input: &JsonObject,
-    _current: Option<&JsonObject>,
     proposed: &JsonObject,
     remaining_fuel: &mut u64,
 ) -> Result<(), ActionRefusal<X>> {
     let context = row_expression_context::<X>(input, proposed)?;
+    let base_env = catalog
+        .base_expression_environment()
+        .and_then(|env| {
+            env.bind_self_to_stored_fields(child_type, &BTreeSet::new())
+                .map_err(|e| e.to_string())
+        })
+        .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
+    let env =
+        norn_expr::schema::action_environment(action, Some(&base_env), action.derive.len())
+            .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
     for precondition in &config.preconditions {
         let invalid = |reason| ActionRefusal::PreconditionFailed {
             precondition: precondition.as_str().to_owned(),
             reason: Some(reason),
         };
-        match evaluate_row_expression(precondition.as_str(), &context, remaining_fuel, invalid)? {
+        match evaluate_row_expression(
+            precondition.as_str(),
+            &context,
+            remaining_fuel,
+            &env,
+            &norn_expr::Type::Bool,
+            invalid,
+        )? {
             ExprValue::Bool(true) => {}
             ExprValue::Bool(false) => {
                 return Err(ActionRefusal::PreconditionFailed {
@@ -1818,10 +2123,17 @@ fn evaluate_row_expression<X>(
     source: &str,
     context: &ExprValue,
     remaining_fuel: &mut u64,
+    env: &norn_expr::ZenTypeEnv,
+    expected: &norn_expr::Type,
     invalid: impl Fn(String) -> ActionRefusal<X>,
 ) -> Result<ExprValue, ActionRefusal<X>> {
     let expression = Expression::compile(source).map_err(|error| invalid(error.to_string()))?;
-    let attempt = expression.evaluate_metered(context, EvaluationBudget::new(*remaining_fuel));
+    let attempt = expression.evaluate_admitted_metered(
+        context,
+        EvaluationBudget::new(*remaining_fuel),
+        env,
+        expected,
+    );
     *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
     #[expect(
         clippy::wildcard_enum_match_arm,
@@ -2148,6 +2460,16 @@ where
             let Some(child) = catalog.effective_type(&collection.child_type) else {
                 return true;
             };
+            if [&collection.row_id_property, &collection.ordering_key]
+                .into_iter()
+                .any(|property| {
+                    child
+                        .property(property.as_str())
+                        .is_some_and(norn_checker::EffectiveProperty::protected)
+                })
+            {
+                return true;
+            }
             configs.get(id.as_str()).is_none_or(|config| {
                 config.derive.keys().any(|property| {
                     property == &collection.row_id_property
@@ -2158,7 +2480,7 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| candidate.computed)
+                            .is_none_or(|candidate| candidate.computed || candidate.protected())
                 })
             })
         })
@@ -2336,10 +2658,10 @@ where
         action_artifact_id: Some(call.action_artifact_id.to_owned()),
         action_version: Some(call.action_version.to_owned()),
         effect_kind: Some(ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS.to_owned()),
+        rule_binding: None,
         object: target.clone(),
         input: call.input.clone(),
-        effective_input: (!call.action.derive.is_empty())
-            .then(|| preparation.effective_input.clone()),
+        effective_input: preparation.recorded_effective_input(),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
         actor: call.actor.clone(),
@@ -2417,9 +2739,10 @@ where
         slice_meter,
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         call.action,
         &preparation.effective_input,
-        &action_slice.values,
+        &action_slice,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -2479,7 +2802,10 @@ where
             })?;
             let lifecycle_properties = catalog.lifecycle_properties(&object_type);
             let touch = effective_type.properties.iter().find_map(|property| {
-                if property.computed || lifecycle_properties.contains(&property.id) {
+                if property.computed
+                    || property.protected()
+                    || lifecycle_properties.contains(&property.id)
+                {
                     None
                 } else {
                     current_values
@@ -2774,17 +3100,16 @@ where
                     &FactKey::new(collection.child_type.as_str(), row_id.clone()),
                     &values,
                 )?;
-                let current_values = row_states.get(&key).and_then(|state| state.values.as_ref());
                 let recompute_derived = additions.contains(row_id)
                     || replacements.contains_key(row_id)
                     || order_changed;
                 if recompute_derived {
                     values = derive_row_values::<H::Error>(
+                        call.action,
                         catalog,
                         collection,
                         snapshot_config(&configs, collection_id)?,
                         &preparation.effective_input,
-                        current_values,
                         values,
                         &mut preparation.remaining_fuel,
                     )?;
@@ -2965,13 +3290,21 @@ where
     )?;
     // Do not expose a row guard's outcome until every proposed write has
     // passed authorization. Removed rows use their authorized current state.
-    for ((collection_id, row_id), values) in &guarded_rows {
+    for ((collection_id, _), values) in &guarded_rows {
+        let child_type = &declared
+            .get(collection_id)
+            .ok_or_else(|| {
+                ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                    reason: "unknown owned collection".into(),
+                })
+            })?
+            .child_type;
         check_row_preconditions::<H::Error>(
+            call.action,
+            catalog,
+            child_type,
             snapshot_config(&configs, collection_id)?,
             &preparation.effective_input,
-            row_states
-                .get(&(collection_id.clone(), row_id.clone()))
-                .and_then(|state| state.values.as_ref()),
             values,
             &mut preparation.remaining_fuel,
         )?;
@@ -3012,6 +3345,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: link_writes,
         link_reads: action_slice.link_reads,
+        predicate_reads: action_slice.predicate_reads,
     };
     if let Some(meter) = meter.as_deref() {
         meter.check(counts).map_err(|exceeded| {
@@ -3022,7 +3356,9 @@ where
             })
         })?;
     }
-    let proof = OwnedRowsCommitProof::new(&commit, limits.max_events);
+    let quantity =
+        super::action_quantity::prepare_quantity_action(call, &preparation.effective_input)?;
+    let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, quantity);
     match host.commit_owned_rows(commit, proof) {
         Ok(receipt) => {
             if let Some(meter) = meter {
@@ -3030,16 +3366,26 @@ where
             }
             Ok(ActionOutcome::Committed { receipt, record })
         }
-        Err(error @ CommitError::InvariantViolation { .. }) => Err(ActionRefusal::Decision(
+        Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => {
+            authorize_identity_collision(
+                host,
+                catalog,
+                call,
+                &preparation.effective_input,
+                authorizer,
+                &target,
+                &error,
+            )?;
             if matches!(
                 &error,
                 CommitError::Conflict { .. }
                     | CommitError::LinkConflict { .. }
                     | CommitError::LinkReadConflict { .. }
                     | CommitError::UnsupportedLinkRead { .. }
+                    | CommitError::PredicateReadConflict { .. }
                     | CommitError::NotPending { .. }
             ) && let Some(outcome) = replay_parent_rows_after_race(
                 host,
@@ -3208,9 +3554,10 @@ where
         )?;
         let mut receipt_evidence_bytes = preparation.receipt_evidence_bytes;
         let precondition_outcomes = check_action_preconditions(
+            catalog,
             call.action,
             &generated_input,
-            &slice.values,
+            &slice,
             &mut preparation.remaining_fuel,
             &mut receipt_evidence_bytes,
             usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -3220,6 +3567,7 @@ where
             action_artifact_id: Some(call.action_artifact_id.to_owned()),
             action_version: Some(call.action_version.to_owned()),
             effect_kind: Some("upsert_input_object".to_owned()),
+            rule_binding: None,
             row_operations: Vec::new(),
             object: target.clone(),
             input: call.input.clone(),
@@ -3244,12 +3592,14 @@ where
             slice: slice.facts,
             reference_only: slice.reference_only,
             link_reads: slice.link_reads,
+            predicate_reads: slice.predicate_reads,
             precondition_reads: slice.precondition_keys,
             record_key: record_key.clone(),
             recorded,
             record,
             series_candidate: Some(candidate),
             remaining_fuel: preparation.remaining_fuel,
+            receipt: None,
         };
         let outcome = commit_effect(
             host,
@@ -3336,9 +3686,10 @@ fn validate_generated_replay_input<H: CellHost + ?Sized>(
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     check_action_preconditions(
+        catalog,
         call.action,
         &input,
-        &slice.values,
+        &slice,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
@@ -3403,11 +3754,14 @@ struct Pending {
     slice: FactSlice,
     reference_only: bool,
     link_reads: Vec<LinkReadExpectation>,
+    predicate_reads: Vec<PredicateReadExpectation>,
     precondition_reads: BTreeSet<FactKey>,
     record_key: FactKey,
     recorded: FactState,
     record: ActionCallRecord,
     series_candidate: Option<SeriesCandidate>,
+    /// RECEIPT-EFFECT-1: the receipt delivery this commit consumes.
+    receipt: Option<crate::result_reconciliation::Acceptance>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.
@@ -3514,11 +3868,13 @@ where
         slice,
         reference_only,
         link_reads,
+        predicate_reads,
         precondition_reads,
         record_key,
         recorded,
         record,
         series_candidate,
+        receipt,
     } = pending;
     let generated_key = series_candidate.is_some();
     let additional_events = usize::from(generated_key);
@@ -3546,20 +3902,41 @@ where
     };
     let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
     let mut created_links = Vec::new();
+    // TXN-ATOMIC-1: links only connect captured or proposed endpoints; no extra transaction.
     for binding in &call.action.create_links {
-        let target_id = effective_input
-            .get(&binding.target_id_field)
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| ActionRefusal::InvalidInput {
-                field: binding.target_id_field.clone(),
-            })?;
-        let linked_target = FactKey::new(&binding.target_type, target_id);
-        if !slice.get(&linked_target).is_some_and(FactState::exists) {
-            return Err(ActionRefusal::InvalidInput {
-                field: binding.target_id_field.clone(),
-            });
+        let linked_target = action_link_endpoint::<H::Error>(
+            &effective_input,
+            &binding.target_type,
+            &binding.target_id_field,
+        )?;
+        let source = match &binding.source {
+            Some(source) => action_link_endpoint::<H::Error>(
+                &effective_input,
+                &source.object_type,
+                &source.id_field,
+            )?,
+            None => target.clone(),
+        };
+        if crate::CommitModel::new(catalog)
+            .link(&source.object_type, &binding.link)
+            .is_none_or(|link| link.target.as_str() != binding.target_type)
+            || !prepared.writes.iter().any(|write| {
+                write.key == source && matches!(write.mutation, FactMutation::Put { .. })
+            })
+            || !(slice.get(&linked_target).is_some_and(FactState::exists)
+                || prepared.writes.iter().any(|write| {
+                    write.key == linked_target && matches!(write.mutation, FactMutation::Put { .. })
+                }))
+            || (binding.source.is_some() && call.action.synchronous_rule.is_none())
+            || !created_links.iter().all(|write: &LinkWrite| {
+                write.key != LinkKey::new(source.clone(), &binding.link, linked_target.clone())
+            })
+        {
+            return Err(crate::synchronous_rule::refused(
+                "a link requires a written source and a captured or proposed target",
+            ));
         }
-        let key = LinkKey::new(target.clone(), &binding.link, linked_target);
+        let key = LinkKey::new(source, &binding.link, linked_target);
         let expected = host.load_link(&key).map_err(host_failure)?.version;
         created_links.push(LinkWrite {
             key,
@@ -3570,14 +3947,17 @@ where
         });
     }
 
-    authorize_proposed_target(
-        catalog,
-        call,
-        &effective_input,
-        authorizer,
-        &target,
-        &mut prepared.writes,
-    )?;
+    for write in &mut prepared.writes {
+        let key = write.key.clone();
+        authorize_proposed_target(
+            catalog,
+            call,
+            &effective_input,
+            authorizer,
+            &key,
+            std::slice::from_mut(write),
+        )?;
+    }
     let record = action_record_with_transition(record, &prepared.events);
     // Transition metadata is added after the earlier precondition/evidence
     // checks, so include the finalized receipt in the aggregate output bound.
@@ -3609,14 +3989,25 @@ where
             values: record.to_values(),
         },
     });
+    let mut consumes = prepared.consumes;
+    let receipt_delivery = match receipt {
+        Some(acceptance) => {
+            let delivery =
+                consume_receipt::<H::Error>(consumes.is_some(), &acceptance, &writes, &mut reads)?;
+            consumes = Some(delivery.clone());
+            Some(delivery)
+        }
+        None => None,
+    };
     let commit = CellCommit {
-        consumes: prepared.consumes,
+        consumes,
         reads,
         writes,
         events: events.into_iter().map(Into::into).collect(),
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: created_links,
         link_reads,
+        predicate_reads,
     };
     check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
     let quantity = super::action_quantity::prepare_quantity_action(call, &effective_input)?;
@@ -3629,16 +4020,7 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some(request) = quantity {
-        let identity = norn_ir::canonical::canonical_json_of(&(
-            "action.quantity/1",
-            &call.action.action_id,
-            &call.idempotency_key,
-        ))
-        .map_err(|_encoding_error| ActionRefusal::InvalidInput {
-            field: "idempotencyKey".to_owned(),
-        })?;
-        let key = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&identity);
+    let result = if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {
@@ -3656,11 +4038,12 @@ where
             }
             Ok(ActionOutcome::Committed { receipt, record })
         }
-        Err(error @ CommitError::InvariantViolation { .. }) => Err(ActionRefusal::Decision(
+        Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => action_commit_conflict(
             host,
+            catalog,
             call,
             authorizer,
             error,
@@ -3671,8 +4054,59 @@ where
                 precondition_reads: &precondition_reads,
                 generated_key,
             },
-        ),
+        )
+        .map_err(|refusal| {
+            // RECEIPT-EFFECT-1: the receipt's delivery was already consumed
+            // or is not the run's current generation; nothing committed.
+            if let ActionRefusal::Decision(DecisionRefusal::NotPending { consumed }) = &refusal
+                && receipt_delivery.as_ref() == Some(consumed)
+            {
+                ActionRefusal::ReceiptRefused {
+                    reason: crate::receipt_binding::ReceiptRefusal::NotPending,
+                }
+            } else {
+                refusal
+            }
+        }),
     }
+}
+
+/// RECEIPT-EFFECT-1: the receipt's delivery joins the transition's commit, with
+/// every reconciliation pin as a compare-and-swap read. The host's pending
+/// check makes this the receipt's only consumption; a refused commit applies
+/// neither the transition nor the consumption.
+fn consume_receipt<X>(
+    already_consumes: bool,
+    acceptance: &crate::result_reconciliation::Acceptance,
+    writes: &[FactWrite],
+    reads: &mut Vec<FactExpectation>,
+) -> Result<crate::cell_host::Consumed, ActionRefusal<X>> {
+    let mismatch = ActionRefusal::ReceiptRefused {
+        reason: crate::receipt_binding::ReceiptRefusal::BindingMismatch,
+    };
+    if already_consumes {
+        return Err(mismatch);
+    }
+    for pin in &acceptance.reads {
+        if let Some(write) = writes.iter().find(|write| write.key == pin.key) {
+            if write.expected != pin.expected {
+                return Err(ActionRefusal::StalePreconditionRead {
+                    key: pin.key.clone(),
+                    link: None,
+                });
+            }
+        } else if let Some(read) = reads.iter().find(|read| read.key == pin.key) {
+            if read.expected != pin.expected {
+                return Err(ActionRefusal::StalePreconditionRead {
+                    key: pin.key.clone(),
+                    link: None,
+                });
+            }
+        } else {
+            reads.push(pin.clone());
+        }
+    }
+    Ok(acceptance.consumed.clone())
 }
 
 /// Kernel-owned attribution for direct reference validation. It cannot cross a
@@ -3709,6 +4143,7 @@ impl ActionReferenceReads {
             && self.writes == commit.writes
             && self.links == commit.links
             && self.link_reads == commit.link_reads
+            && commit.predicate_reads.is_empty()
             && self.event_count == commit.events.len()
             && commit.effects.is_empty()
             && commit.consumes.is_none()
@@ -3856,6 +4291,7 @@ fn reference_read_proof<E, C, I>(
         || !commit.effects.is_empty()
         || commit.consumes.is_some()
         || !commit.link_reads.is_empty()
+        || !commit.predicate_reads.is_empty()
         || commit
             .writes
             .iter()
@@ -3909,12 +4345,15 @@ fn action_record_with_transition(
     events
         .iter()
         .find_map(|event| match event {
-            FactEvent::Transitioned { from, to, .. } => Some(ActionCallRecord {
-                from: from.clone(),
-                to: to.clone(),
-                ..record.clone()
-            }),
-            FactEvent::CommandEnqueued { .. }
+            FactEvent::Transitioned { key, from, to, .. } if *key == record.object => {
+                Some(ActionCallRecord {
+                    from: from.clone(),
+                    to: to.clone(),
+                    ..record.clone()
+                })
+            }
+            FactEvent::Transitioned { .. }
+            | FactEvent::CommandEnqueued { .. }
             | FactEvent::NamingSeriesAllocated { .. }
             | FactEvent::NamingSeriesCounterSeeded { .. }
             | FactEvent::Created { .. }
@@ -3952,6 +4391,7 @@ struct ActionReplayState<'a> {
 
 fn action_commit_conflict<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     error: CommitError<H::Error>,
@@ -3964,6 +4404,15 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         precondition_reads,
         generated_key,
     } = *state;
+    authorize_identity_collision(
+        host,
+        catalog,
+        call,
+        effective_input,
+        authorizer,
+        &record.object,
+        &error,
+    )?;
     if generated_key {
         // A generated candidate may lose the counter CAS to a different key.
         // The allocation loop reloads the call record and revalidates replay
@@ -3976,6 +4425,7 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         CommitError::Conflict { .. }
             | CommitError::LinkReadConflict { .. }
             | CommitError::UnsupportedLinkRead { .. }
+            | CommitError::PredicateReadConflict { .. }
             | CommitError::NotPending { .. }
     ) {
         // A concurrent call committed first (it changed the target,
@@ -3993,17 +4443,83 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         .unwrap_or_else(|| ActionRefusal::Decision(DecisionRefusal::from_commit(error))))
 }
 
+/// ID-UNIQUE-1: conflict details require ordinary collection/object read authority.
+fn authorize_identity_collision<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    input: &JsonObject,
+    authorizer: &dyn ActionAuthorizer,
+    target: &FactKey,
+    error: &CommitError<H::Error>,
+) -> Result<(), ActionRefusal<H::Error>> {
+    let CommitError::IdentityCollision { conflicts, .. } = error else {
+        return Ok(());
+    };
+    for key in conflicts.iter() {
+        authorize_slice_type(call, input, authorizer, &key.object_type)?;
+        let bounded = host
+            .load_bounded(
+                key,
+                norn_ir::ResourceLimitProfile::norn_limits_v1()
+                    .slice
+                    .max_canonical_bytes,
+            )
+            .map_err(host_failure)?
+            .ok_or(ActionRefusal::TargetNotFound)?;
+        if bounded.state.values.is_none() {
+            if key.key == target.key
+                && catalog
+                    .lineage(&target.object_type)
+                    .contains(&key.object_type)
+            {
+                continue;
+            }
+            return Err(ActionRefusal::TargetNotFound);
+        }
+        let concrete = bounded.concrete_type.as_ref().map_or_else(
+            || key.clone(),
+            |kind| FactKey::new(kind.as_str(), key.key.clone()),
+        );
+        if authorizer
+            .authorize_read(&ActionReadAuthzRequest {
+                action: call.action,
+                scope: &call.scope,
+                actor: &call.actor,
+                input,
+                declared_type: &key.object_type,
+                target: &concrete,
+                target_values: bounded.state.values.as_ref(),
+            })
+            .is_err()
+        {
+            return Err(ActionRefusal::TargetNotFound);
+        }
+    }
+    Ok(())
+}
+
 fn precondition_read_refusal<X>(
     error: &CommitError<X>,
     precondition_reads: &BTreeSet<FactKey>,
 ) -> Option<ActionRefusal<X>> {
+    if let CommitError::PredicateReadConflict { object_type } = error {
+        return Some(ActionRefusal::StaleAggregateRead {
+            object_type: object_type.clone(),
+        });
+    }
     let stale_fact = match error {
         CommitError::Conflict { key, .. } if precondition_reads.contains(key) => Some(key.clone()),
         CommitError::Conflict { key, .. } => precondition_reads
             .iter()
             .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
             .cloned(),
-        CommitError::OwnedRowsProtected { .. }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
+        | CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::DuplicateLink { .. }
@@ -4014,6 +4530,9 @@ fn precondition_read_refusal<X>(
         | CommitError::DuplicateLinkRead { .. }
         | CommitError::LinkReadTooLarge { .. }
         | CommitError::InvalidLinkRead { .. }
+        | CommitError::PredicateReadConflict { .. }
+        | CommitError::UnsupportedPredicateRead { .. }
+        | CommitError::InvalidPredicateRead { .. }
         | CommitError::DanglingLink { .. }
         | CommitError::LinkTarget { .. }
         | CommitError::LinkCardinality { .. }
@@ -4024,6 +4543,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantViolation { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4035,7 +4555,12 @@ fn precondition_read_refusal<X>(
         | CommitError::UnsupportedLinkRead { source_key, link } => {
             Some((source_key.clone(), link.clone()))
         }
-        CommitError::OwnedRowsProtected { .. }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
+        | CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::Conflict { .. }
@@ -4045,6 +4570,9 @@ fn precondition_read_refusal<X>(
         | CommitError::DuplicateLinkRead { .. }
         | CommitError::LinkReadTooLarge { .. }
         | CommitError::InvalidLinkRead { .. }
+        | CommitError::PredicateReadConflict { .. }
+        | CommitError::UnsupportedPredicateRead { .. }
+        | CommitError::InvalidPredicateRead { .. }
         | CommitError::DanglingLink { .. }
         | CommitError::LinkTarget { .. }
         | CommitError::LinkCardinality { .. }
@@ -4055,6 +4583,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantViolation { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4143,62 +4672,14 @@ where
     H: CellHost + ?Sized,
     H::Event: From<FactEvent>,
 {
-    let (key, owner, id, message, outcome) = match error {
-        CommitError::InvariantViolation {
-            key,
-            owner,
-            id,
-            message,
-            outcome,
-        } => (key, owner, id, message, outcome),
-        error @ (CommitError::OwnedRowsProtected { .. }
-        | CommitError::DuplicateKey { .. }
-        | CommitError::NotPending { .. }
-        | CommitError::Conflict { .. }
-        | CommitError::DuplicateLink { .. }
-        | CommitError::IdentifierTooLong { .. }
-        | CommitError::LinkConflict { .. }
-        | CommitError::LinkReadConflict { .. }
-        | CommitError::UnsupportedLinkRead { .. }
-        | CommitError::DuplicateLinkRead { .. }
-        | CommitError::LinkReadTooLarge { .. }
-        | CommitError::InvalidLinkRead { .. }
-        | CommitError::DanglingLink { .. }
-        | CommitError::LinkTarget { .. }
-        | CommitError::LinkCardinality { .. }
-        | CommitError::LinkRequired { .. }
-        | CommitError::TypeMismatch { .. }
-        | CommitError::EffectiveValues { .. }
-        | CommitError::TraversalLimitExceeded { .. }
-        | CommitError::AccountingPosting { .. }
-        | CommitError::InvariantBudgetExceeded { .. }
-        | CommitError::InvariantModel { .. }
-        | CommitError::ObservationAuthorization
-        | CommitError::EventLimitExceeded { .. }
-        | CommitError::Overflow
-        | CommitError::Host(_)) => return DecisionRefusal::from_commit(error),
-    };
-    let refusal = DecisionRefusal::InvariantViolation {
-        key: key.clone(),
-        owner: owner.clone(),
-        id: id.clone(),
-        message: message.clone(),
-        outcome: outcome.clone(),
-    };
     let attempt_id = format!("{}/{}", call.action.action_id, call.idempotency_key);
+    let Some(event) = error.invariant_refusal_event(attempt_id) else {
+        return DecisionRefusal::from_commit(error);
+    };
+    let refusal = DecisionRefusal::from_commit(error);
     let mut refusal_commit = CellCommit::empty();
     refusal_commit.consumes.clone_from(&call.turn.consumes);
-    refusal_commit.events.push(
-        FactEvent::InvariantRefused {
-            key: *key,
-            owner,
-            id,
-            message,
-            outcome: *outcome,
-            attempt_id,
-        }
-        .into(),
-    );
+    refusal_commit.events.push(event.into());
     match host.commit(refusal_commit) {
         Ok(_) => refusal,
         Err(error) => DecisionRefusal::from_commit(error),
@@ -4233,6 +4714,11 @@ fn check_action_envelope<X>(
 /// expressions remain inert IR until this admitted action is actually
 /// committed; the returned records are then converted by the shared decision
 /// path into `perform` effects in the same commit as the transition.
+struct ActionExpressionContext {
+    value: ExprValue,
+    environment: norn_expr::ZenTypeEnv,
+}
+
 fn build_action_commands<X>(
     action: &ActionRoot,
     input: &JsonObject,
@@ -4252,7 +4738,11 @@ fn build_action_commands<X>(
         .map(|(name, value)| expr_value(value).map(|value| (name.clone(), value)))
         .collect::<Result<BTreeMap<_, _>, _>>()
         .map_err(invalid)?;
-    let context = ExprValue::object([("input", ExprValue::Object(input))]);
+    let context = ActionExpressionContext {
+        value: ExprValue::object([("input", ExprValue::Object(input))]),
+        environment: norn_expr::schema::action_environment(action, None, action.derive.len())
+            .map_err(&invalid)?,
+    };
     action
         .commands
         .iter()
@@ -4348,7 +4838,7 @@ fn action_command_operation_name(operation: ActionCommandOperation) -> &'static 
 fn evaluate_action_expected_modified<X>(
     command_index: usize,
     source: Option<&str>,
-    context: &ExprValue,
+    context: &ActionExpressionContext,
     remaining_fuel: &mut u64,
 ) -> Result<Option<RuntimeValue>, ActionRefusal<X>> {
     let Some(source) = source else {
@@ -4372,7 +4862,7 @@ fn evaluate_action_expected_modified<X>(
 fn build_action_child_merges<X>(
     command_index: usize,
     command: &ActionCommand,
-    context: &ExprValue,
+    context: &ActionExpressionContext,
     remaining_fuel: &mut u64,
 ) -> Result<Option<RuntimeValue>, ActionRefusal<X>> {
     if command.child_merges.is_empty() {
@@ -4437,11 +4927,16 @@ fn build_action_child_merges<X>(
 /// Evaluates one action command expression with the input under `input`.
 fn evaluate_action_expression(
     source: &str,
-    context: &ExprValue,
+    context: &ActionExpressionContext,
     remaining_fuel: &mut u64,
 ) -> Result<RuntimeValue, String> {
     let expression = Expression::compile(source).map_err(|error| error.to_string())?;
-    let attempt = expression.evaluate_metered(context, EvaluationBudget::new(*remaining_fuel));
+    let attempt = expression.evaluate_admitted_metered(
+        &context.value,
+        EvaluationBudget::new(*remaining_fuel),
+        &context.environment,
+        &norn_expr::Type::Json,
+    );
     *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
     let evaluated = attempt.result.map_err(|error| error.to_string())?;
     expression_value_to_runtime(evaluated.value())
@@ -4488,11 +4983,13 @@ pub fn prepare_action_input<'a, X>(
     action: &'a ActionRoot,
     raw_input: &'a JsonObject,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
-    prepare_action_input_inner(action, raw_input, None, None)
+    prepare_action_input_inner(action, raw_input, None, None, None)
 }
 
 /// Prepares one action call's input, binding the opaque result to the action
 /// artifact version and exact raw input that the kernel will commit.
+/// ACTION-ACTOR-1: `actor.subjectId` is this authenticated host principal;
+/// caller identity fields refuse and a preparation cannot move to another actor.
 ///
 /// # Errors
 ///
@@ -4503,13 +5000,45 @@ pub fn prepare_action_input_for_call<'a, X>(
     raw_input: &'a JsonObject,
     action_artifact_id: &'a str,
     action_version: &'a str,
+    actor: &str,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     prepare_action_input_inner(
         action,
         raw_input,
         Some(action_artifact_id),
         Some(action_version),
+        Some(actor),
     )
+}
+
+fn normalize_action_input<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+) -> Result<JsonObject, ActionRefusal<X>> {
+    let schema = norn_expr::schema::Schema::parse_action(
+        &norn_ir::JsonValue::Object(action.input_schema.clone()),
+        "$input",
+    )
+    .map_err(|violation| ActionRefusal::InvalidInput {
+        field: violation.path,
+    })?;
+    let mut supplied = raw_input.clone();
+    for step in action.derive.iter().filter(|step| !step.input_required) {
+        if supplied.get(&step.field) == Some(&RuntimeValue::Null) {
+            supplied.remove(&step.field);
+        }
+    }
+    let normalized = schema
+        .decode_action_input(RuntimeValue::Object(supplied), "$input")
+        .map_err(|violation| ActionRefusal::InvalidInput {
+            field: violation.path,
+        })?;
+    let RuntimeValue::Object(normalized) = normalized else {
+        return Err(ActionRefusal::InvalidInput {
+            field: "$input".to_owned(),
+        });
+    };
+    Ok(normalized)
 }
 
 fn prepare_action_input_inner<'a, X>(
@@ -4517,26 +5046,36 @@ fn prepare_action_input_inner<'a, X>(
     raw_input: &'a JsonObject,
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
+    actor: Option<&str>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     let profile = ResourceLimitProfile::norn_limits_v1();
-    if !has_action_preparation_features(action) {
-        validate_action_input(action, raw_input)?;
+    let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
+    // Rejects injected identity fields and, for prepared actions, refuses
+    // oversized raw input by its canonical size before any clone, decode or
+    // normalization work.
+    check_action_identity_input::<X>(action, raw_input, actor, max_input_bytes)?;
+    let has_preparation = has_action_preparation_features(action);
+    let normalized = normalize_action_input::<X>(action, raw_input)?;
+    if !has_preparation && normalized == *raw_input {
+        validate_action_input(action, &normalized)?;
         return Ok(ActionInputPreparation {
             action,
             raw_input,
             action_artifact_id,
             action_version,
-            effective_input: raw_input.clone(),
+            actor: actor.map(str::to_owned),
+            effective_input: normalized,
             derived_values: Vec::new(),
             remaining_fuel: profile.turn.fuel_units,
             receipt_evidence_bytes: 0,
             precondition_outcomes: Vec::new(),
         });
     }
-    let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
     let max_receipt_bytes =
         usize::try_from(profile.envelope.max_output_bytes).unwrap_or(usize::MAX);
-    check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
+    if !has_preparation {
+        check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
+    }
     let raw_bytes = canonical_object_bytes::<X>(raw_input)?;
     if raw_bytes > max_receipt_bytes {
         return Err(ActionRefusal::InputBoundExceeded {
@@ -4545,7 +5084,7 @@ fn prepare_action_input_inner<'a, X>(
             max_bytes: max_receipt_bytes,
         });
     }
-    let mut effective_input = raw_input.clone();
+    let mut effective_input = normalized;
     for derivation in &action.derive {
         if derivation.input_required && !raw_input.contains_key(&derivation.field) {
             return Err(ActionRefusal::InvalidInput {
@@ -4557,8 +5096,8 @@ fn prepare_action_input_inner<'a, X>(
         }
     }
     check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
-    let effective_bytes = if action.derive.is_empty() {
-        0 // The receipt retains only raw input when no derivation ran.
+    let effective_bytes = if action.derive.is_empty() && effective_input == *raw_input {
+        0 // Raw input already describes the exact execution value.
     } else {
         canonical_object_bytes::<X>(&effective_input)?
     };
@@ -4575,10 +5114,13 @@ fn prepare_action_input_inner<'a, X>(
     let mut derived_values = Vec::with_capacity(action.derive.len());
     let mut remaining_fuel = profile.turn.fuel_units;
 
-    for derivation in &action.derive {
+    for (index, derivation) in action.derive.iter().enumerate() {
         let (value, next_receipt_bytes) = prepare_action_derivation(
+            action,
+            index,
             derivation,
             &effective_input,
+            actor,
             &mut remaining_fuel,
             receipt_evidence_bytes,
         )?;
@@ -4604,6 +5146,7 @@ fn prepare_action_input_inner<'a, X>(
         raw_input,
         action_artifact_id,
         action_version,
+        actor: actor.map(str::to_owned),
         effective_input,
         derived_values,
         remaining_fuel,
@@ -4612,20 +5155,115 @@ fn prepare_action_input_inner<'a, X>(
     })
 }
 
+/// ACTION-ACTOR-1: caller JSON cannot supply identity or approval claims.
+fn check_action_identity_input<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+    actor: Option<&str>,
+    max_bytes: usize,
+) -> Result<(), ActionRefusal<X>> {
+    // Validate the principal before any traversal of caller input.
+    if actor.is_some_and(|a| {
+        a.len() > max_bytes || a.trim().is_empty() || norn_ir::canonical::nfc(a) != a
+    }) {
+        return Err(ActionRefusal::InvalidInput {
+            field: "actor".into(),
+        });
+    }
+    if has_action_preparation_features(action)
+        || matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::MutateParentWithRows { .. })
+        )
+    {
+        check_canonical_object_bound::<X>("caller input", raw_input, max_bytes)?;
+    }
+    let mut objects = vec![raw_input];
+    let mut values = Vec::new();
+    while let Some(object) = objects.pop() {
+        for field in ["actor", "approved"] {
+            if object.contains_key(field) {
+                return Err(ActionRefusal::InvalidInput {
+                    field: field.into(),
+                });
+            }
+        }
+        values.extend(object.values());
+        while let Some(value) = values.pop() {
+            match value {
+                RuntimeValue::Object(object) => objects.push(object),
+                RuntimeValue::Array(items) => values.extend(items),
+                RuntimeValue::Null
+                | RuntimeValue::Bool(_)
+                | RuntimeValue::Number(_)
+                | RuntimeValue::String(_) => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn action_derivation_destination(
+    action: &ActionRoot,
+    derivation: &norn_ir::ActionInputDerivation,
+    env: &norn_expr::ZenTypeEnv,
+) -> norn_expr::Type {
+    let explicit_nullable = action
+        .input_schema
+        .get("properties")
+        .and_then(norn_ir::JsonValue::as_object)
+        .and_then(|fields| fields.get(&derivation.field))
+        .and_then(|schema| norn_expr::schema::Schema::parse(schema, "target").ok())
+        .is_some_and(|schema| matches!(schema, norn_expr::schema::Schema::Nullable(_)));
+    let declared = env
+        .record(norn_expr::env::INPUT_RECORD)
+        .and_then(|record| record.fields.get(&derivation.field))
+        .map_or(norn_expr::Type::Json, |field| field.ty.clone());
+    if !explicit_nullable && let norn_expr::Type::Optional(inner) = declared {
+        return *inner;
+    }
+    declared
+}
+
+/// ACTION-ACTOR-1: bind actor data only from the authenticated call principal.
+fn action_derivation_context<X>(
+    effective_input: &JsonObject,
+    actor: Option<&str>,
+    derivation: &norn_ir::ActionInputDerivation,
+) -> Result<ExprValue, ActionRefusal<X>> {
+    let mut context = action_expression_context(effective_input, &JsonObject::new(), None)
+        .map_err(|reason| ActionRefusal::DerivationFailed {
+            field: derivation.field.clone(),
+            expression: derivation.expression.as_str().to_owned(),
+            reason,
+        })?;
+    if let Some(principal) = actor {
+        let ExprValue::Object(fields) = &mut context else {
+            return Err(ActionRefusal::InvalidInput {
+                field: "actor".into(),
+            });
+        };
+        fields.insert(
+            "actor".into(),
+            ExprValue::Object(BTreeMap::from([(
+                "subjectId".into(),
+                ExprValue::String(principal.into()),
+            )])),
+        );
+    }
+    Ok(context)
+}
+
 fn prepare_action_derivation<X>(
+    action: &ActionRoot,
+    completed: usize,
     derivation: &norn_ir::ActionInputDerivation,
     effective_input: &JsonObject,
+    actor: Option<&str>,
     remaining_fuel: &mut u64,
     receipt_evidence_bytes: usize,
 ) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
-    let context =
-        action_expression_context(effective_input, &JsonObject::new()).map_err(|reason| {
-            ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason,
-            }
-        })?;
+    let context = action_derivation_context(effective_input, actor, derivation)?;
     let expression = Expression::compile(derivation.expression.as_str()).map_err(|error| {
         ActionRefusal::DerivationFailed {
             field: derivation.field.clone(),
@@ -4633,7 +5271,21 @@ fn prepare_action_derivation<X>(
             reason: error.to_string(),
         }
     })?;
-    let attempt = expression.evaluate_metered(&context, EvaluationBudget::new(*remaining_fuel));
+    let env =
+        norn_expr::schema::action_derivation_environment(action, completed).map_err(|reason| {
+            ActionRefusal::DerivationFailed {
+                field: derivation.field.clone(),
+                expression: derivation.expression.as_str().to_owned(),
+                reason,
+            }
+        })?;
+    let expected = action_derivation_destination(action, derivation, &env);
+    let attempt = expression.evaluate_admitted_metered(
+        &context,
+        EvaluationBudget::new(*remaining_fuel),
+        &env,
+        &expected,
+    );
     *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
     let evaluated = attempt
         .result
@@ -4729,7 +5381,11 @@ fn check_canonical_object_bound<X>(
     Ok(())
 }
 
-fn action_expression_context(input: &JsonObject, slice: &JsonObject) -> Result<ExprValue, String> {
+fn action_expression_context(
+    input: &JsonObject,
+    slice: &JsonObject,
+    aggregates: Option<&JsonObject>,
+) -> Result<ExprValue, String> {
     let mut context = expression_object(input)?
         .into_iter()
         .filter(|(name, _)| name != "input" && name != "slice")
@@ -4738,6 +5394,14 @@ fn action_expression_context(input: &JsonObject, slice: &JsonObject) -> Result<E
     let slice = expression_object(slice)?;
     context.insert("input".to_owned(), ExprValue::Object(input));
     context.insert("slice".to_owned(), ExprValue::Object(slice));
+    // A declared `aggregates` operand shadows an input field of that name,
+    // which stays reachable as `input.aggregates` (as the checker types it).
+    if let Some(aggregates) = aggregates {
+        context.insert(
+            "aggregates".to_owned(),
+            ExprValue::Object(expression_object(aggregates)?),
+        );
+    }
     Ok(ExprValue::Object(context))
 }
 
@@ -4749,7 +5413,10 @@ fn expression_object(values: &JsonObject) -> Result<BTreeMap<String, ExprValue>,
 }
 
 fn has_action_preparation_features(action: &ActionRoot) -> bool {
-    !action.derive.is_empty() || !action.slice.is_empty() || !action.preconditions.is_empty()
+    action.synchronous_rule.is_some()
+        || !action.derive.is_empty()
+        || !action.slice.is_empty()
+        || !action.preconditions.is_empty()
 }
 
 fn check_action_record_size<X>(
@@ -4760,6 +5427,12 @@ fn check_action_record_size<X>(
     // Existing actions without the new preparation phases retain their
     // admitted input/receipt behavior, including command-only actions.
     if !has_action_preparation_features(action)
+        && !record.effective_input.as_ref().is_some_and(|effective| {
+            record
+                .input
+                .iter()
+                .any(|(key, value)| effective.get(key).is_some_and(|current| current != value))
+        })
         && !matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
@@ -4844,6 +5517,10 @@ struct LoadedActionSlice {
     values: JsonObject,
     link_reads: Vec<LinkReadExpectation>,
     precondition_keys: BTreeSet<FactKey>,
+    /// Folded aggregate inputs (#1105), by declared name.
+    aggregates: JsonObject,
+    /// The predicate reads that pin each aggregate's members.
+    predicate_reads: Vec<PredicateReadExpectation>,
 }
 
 struct ActionSliceContext<'a, 'model, 'call, H: CellHost + ?Sized> {
@@ -4905,6 +5582,12 @@ fn action_slice_key<X>(
                 })?
                 .saturating_add(1);
             (depth, None)
+        }
+        SliceKey::Parameter { .. } => {
+            return Err(ActionRefusal::SliceUnavailable {
+                entry: entry.name.clone(),
+                reason: "parameter slice execution is not qualified in this cut".to_owned(),
+            });
         }
         SliceKey::TriggerObject
         | SliceKey::TriggerBefore
@@ -5239,6 +5922,12 @@ fn load_action_slice<H: CellHost + ?Sized>(
             );
         load_action_slice_entry(context, &mut state, entry, identity_only)?;
     }
+    let (aggregates, predicate_reads) = load_action_aggregates(
+        context,
+        &mut state.read_types,
+        &mut state.meter,
+        &state.limits,
+    )?;
     let ActionSliceState {
         mut facts,
         values,
@@ -5277,7 +5966,117 @@ fn load_action_slice<H: CellHost + ?Sized>(
         values,
         link_reads,
         precondition_keys,
+        aggregates,
+        predicate_reads,
     })
+}
+
+/// #1105: fold each declared aggregate over a complete, bounded predicate
+/// read of its type. Every member passes the same object read authorization
+/// as a slice read; an unreadable member refuses rather than silently
+/// shrinking the fold. The host reads under the slice bytes still unspent, and
+/// each member is then charged to the slice meter like any other record, so
+/// an aggregate cannot outgrow the slice's byte bound. The returned reads pin
+/// the members for the commit.
+fn load_action_aggregates<H: CellHost + ?Sized>(
+    context: &ActionSliceContext<'_, '_, '_, H>,
+    read_types: &mut BTreeSet<ObjectTypeName>,
+    meter: &mut SliceMeter,
+    limits: &crate::SliceLimits,
+) -> Result<(JsonObject, Vec<PredicateReadExpectation>), ActionRefusal<H::Error>> {
+    let ActionSliceContext {
+        host,
+        catalog,
+        call,
+        effective_input,
+        authorizer,
+    } = *context;
+    let mut values = JsonObject::new();
+    // Aggregates over the same predicate fold one snapshot: the commit pins
+    // each distinct predicate once.
+    let mut snapshots: Vec<(PredicateQuery, Vec<PredicateObject>)> = Vec::new();
+    for aggregate in &call.action.aggregates {
+        let unavailable = |reason: String| ActionRefusal::AggregateUnavailable {
+            aggregate: aggregate.name.clone(),
+            reason,
+        };
+        if read_types.insert(aggregate.object_type.clone()) {
+            authorize_slice_type(call, effective_input, authorizer, &aggregate.object_type)?;
+        }
+        let predicate =
+            crate::action_aggregate::predicate_query(aggregate, effective_input, catalog)
+                .map_err(unavailable)?;
+        let max_items = usize::try_from(aggregate.max_items).unwrap_or(usize::MAX);
+        let fresh = !snapshots.iter().any(|(read, _)| *read == predicate);
+        if fresh {
+            let remaining = limits.max_canonical_bytes.saturating_sub(meter.bytes());
+            let objects = host
+                .read_predicate(&predicate, max_items, remaining)
+                .map_err(host_failure)?
+                .ok_or_else(|| {
+                    unavailable(
+                        "the host cannot enumerate every match within the slice bounds".to_owned(),
+                    )
+                })?;
+            snapshots.push((predicate.clone(), objects));
+        }
+        let Some((_, objects)) = snapshots.iter().find(|(read, _)| *read == predicate) else {
+            return Err(unavailable(
+                "the predicate snapshot was not retained".to_owned(),
+            ));
+        };
+        if objects.len() > max_items {
+            return Err(ActionRefusal::AggregateBoundExceeded {
+                aggregate: aggregate.name.clone(),
+                max_items: aggregate.max_items,
+            });
+        }
+        if fresh {
+            for object in objects {
+                let bytes = norn_ir::canonical::canonical_json_of(&object.values)
+                    .map_err(|error| unavailable(error.to_string()))?
+                    .len();
+                meter
+                    .admit_record(u64::try_from(bytes).unwrap_or(u64::MAX), 0)
+                    .map_err(|exceeded| match exceeded.kind {
+                        crate::IngressLimit::SliceBytes => ActionRefusal::AggregateBytesExceeded {
+                            aggregate: aggregate.name.clone(),
+                            max_bytes: limits.max_canonical_bytes,
+                        },
+                        crate::IngressLimit::SliceRecords
+                        | crate::IngressLimit::SliceRelationDepth
+                        | crate::IngressLimit::EnvelopeBytes => unavailable(exceeded.to_string()),
+                    })?;
+            }
+        }
+        for object in objects {
+            authorizer
+                .authorize_read(&ActionReadAuthzRequest {
+                    action: call.action,
+                    scope: &call.scope,
+                    actor: &call.actor,
+                    input: effective_input,
+                    declared_type: &aggregate.object_type,
+                    target: &object.key,
+                    target_values: Some(&object.values),
+                })
+                .map_err(|_denied| ActionRefusal::TargetNotFound)?;
+        }
+        let value = norn_decisions::fold_aggregate(
+            &aggregate.aggregate,
+            objects.iter().map(|object| &object.values),
+        )
+        .map_err(|error| unavailable(error.to_string()))?;
+        values.insert(aggregate.name.clone(), value);
+    }
+    let reads = snapshots
+        .into_iter()
+        .map(|(predicate, objects)| PredicateReadExpectation {
+            predicate,
+            members: objects.iter().map(PredicateObject::member).collect(),
+        })
+        .collect();
+    Ok((values, reads))
 }
 
 /// Reconciles a declared slice read of the action target with the separately
@@ -5503,22 +6302,47 @@ fn authorize_slice_type<X>(
 /// Evaluates every declared action precondition over the derived input and the
 /// authorized slice, carrying forward the derivations' remaining fuel.
 fn check_action_preconditions<X>(
+    catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
     input: &JsonObject,
-    slice: &JsonObject,
+    slice: &LoadedActionSlice,
     remaining_fuel: &mut u64,
     receipt_evidence_bytes: &mut usize,
     max_receipt_bytes: usize,
 ) -> Result<Vec<ActionPreconditionOutcome>, ActionRefusal<X>> {
-    let context = action_expression_context(input, slice).map_err(|reason| {
-        ActionRefusal::PreconditionFailed {
-            precondition: action
-                .preconditions
+    let aggregates = (!action.aggregates.is_empty()).then_some(&slice.aggregates);
+    let context =
+        action_expression_context(input, &slice.values, aggregates).map_err(|reason| {
+            ActionRefusal::PreconditionFailed {
+                precondition: action
+                    .preconditions
+                    .first()
+                    .map_or_else(String::new, |expression| expression.as_str().to_owned()),
+                reason: Some(reason),
+            }
+        })?;
+    let catalog_env = action
+        .slice
+        .first()
+        .map(|entry| &entry.object_type)
+        .or_else(|| {
+            action
+                .aggregates
                 .first()
-                .map_or_else(String::new, |expression| expression.as_str().to_owned()),
+                .map(|aggregate| &aggregate.object_type)
+        })
+        .map(|object_type| catalog.expression_environment(object_type))
+        .transpose()
+        .map_err(|reason| ActionRefusal::PreconditionFailed {
+            precondition: String::new(),
             reason: Some(reason),
-        }
-    })?;
+        })?;
+    let env =
+        norn_expr::schema::action_environment(action, catalog_env.as_ref(), action.derive.len())
+            .map_err(|reason| ActionRefusal::PreconditionFailed {
+                precondition: String::new(),
+                reason: Some(reason),
+            })?;
     let mut outcomes = Vec::with_capacity(action.preconditions.len());
     for precondition in &action.preconditions {
         let source = precondition.as_str();
@@ -5528,7 +6352,12 @@ fn check_action_preconditions<X>(
         };
         let expression =
             Expression::compile(source).map_err(|error| refusal(Some(error.to_string())))?;
-        let attempt = expression.evaluate_metered(&context, EvaluationBudget::new(*remaining_fuel));
+        let attempt = expression.evaluate_admitted_metered(
+            &context,
+            EvaluationBudget::new(*remaining_fuel),
+            &env,
+            &norn_expr::Type::Bool,
+        );
         *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
         let evaluated = attempt
             .result
@@ -5593,6 +6422,21 @@ fn replay<X>(
     }
 }
 
+fn action_link_endpoint<X>(
+    input: &JsonObject,
+    object_type: &str,
+    field: &str,
+) -> Result<FactKey, ActionRefusal<X>> {
+    input
+        .get(field)
+        .and_then(JsonValue::as_str)
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| FactKey::new(object_type, key))
+        .ok_or_else(|| ActionRefusal::InvalidInput {
+            field: field.to_owned(),
+        })
+}
+
 #[cfg(test)]
 mod reference_lineage_tests {
     #![allow(
@@ -5601,6 +6445,77 @@ mod reference_lineage_tests {
         reason = "kernel proof assertions"
     )]
     use super::*;
+
+    #[test]
+    fn decimal_input_preparation_keeps_wire_text_and_exact_execution_value() {
+        let mut action: ActionRoot = serde_json::from_str(
+            r#"{
+          "actionId":"test.decimal", "scopeRequired":["orgId","environmentId"],
+          "idempotent":true, "ledgered":true,
+          "inputSchema":{"type":"object","properties":{"amount":{"type":"number","nornType":{"kind":"decimal","scale":2}}},
+            "required":["amount"],"additionalProperties":false},
+          "outputSchema":{"type":"object","properties":{},"additionalProperties":false}
+        }"#,
+        )
+        .expect("action");
+        action.derive.clear();
+        action.slice.clear();
+        action.preconditions.clear();
+        let raw = JsonObject::from([(
+            "amount".to_owned(),
+            RuntimeValue::String("9007199254740993.25".to_owned()),
+        )]);
+        let prepared = prepare_action_input::<()>(&action, &raw).expect("exact input");
+        assert_eq!(prepared.raw_input, &raw);
+        assert_eq!(
+            prepared.recorded_effective_input(),
+            Some(prepared.effective_input.clone())
+        );
+        assert!(prepared.receipt_evidence_bytes > 0);
+        assert_eq!(
+            prepared.effective_input.get("amount"),
+            Some(&RuntimeValue::Number(
+                Decimal::parse("9007199254740993.25").expect("decimal")
+            ))
+        );
+        let number = JsonObject::from([(
+            "amount".to_owned(),
+            RuntimeValue::Number(Decimal::from(1_u64)),
+        )]);
+        assert!(matches!(
+            prepare_action_input::<()>(&action, &number),
+            Err(ActionRefusal::InvalidInput { .. })
+        ));
+        action.derive = serde_json::from_str(
+            r#"[{"field":"amount","expression":"input.amount ?? 0","inputRequired":false}]"#,
+        )
+        .expect("default");
+        for raw in [
+            JsonObject::new(),
+            JsonObject::from([("amount".to_owned(), RuntimeValue::Null)]),
+        ] {
+            assert_eq!(
+                prepare_action_input::<()>(&action, &raw)
+                    .expect("defaulted decimal")
+                    .effective_input
+                    .get("amount"),
+                Some(&RuntimeValue::Number(Decimal::ZERO))
+            );
+        }
+    }
+
+    norn_testkit::proptest::proptest! {
+        #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn exact_action_decimal_wire_matches_the_integer_reference(coefficient in norn_testkit::proptest::prelude::any::<i64>(), fraction in 0_u8..100) {
+            let text = format!("{coefficient}.{fraction:02}");
+            let wire = serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#).unwrap();
+            let schema = norn_expr::schema::Schema::parse_action(&wire, "amount").unwrap();
+            let decoded = schema.decode_action_input(RuntimeValue::String(text.clone()), "amount").unwrap();
+            let expected = if fraction == 0 { coefficient.to_string() } else { text.trim_end_matches('0').to_owned() };
+            norn_testkit::proptest::prop_assert_eq!(decoded.as_decimal().unwrap().canonical(), expected);
+        }
+    }
 
     #[test]
     fn reference_proof_rejects_changed_outputs_and_keeps_added_guards_full() {
@@ -5655,5 +6570,45 @@ mod reference_lineage_tests {
                 .with_read_guards(&mut commit.clone(), &[mismatch])
                 .is_none()
         );
+    }
+
+    #[test]
+    #[allow(
+        clippy::expect_used,
+        reason = "generated receipt schema correspondence"
+    )]
+    fn action_call_record_schema_matches_generated_contract() {
+        let generated = serde_json::to_string_pretty(&schemars::schema_for!(ActionCallRecord))
+            .expect("receipt schema")
+            + "\n";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("schema/action_call_record.schema.json");
+        if std::env::var("NORN_KERNEL_UPDATE_SCHEMAS").as_deref() == Ok("1") {
+            std::fs::create_dir_all(path.parent().expect("schema directory"))
+                .expect("schema directory");
+            std::fs::write(&path, &generated).expect("write generated schema");
+        }
+        assert_eq!(
+            generated,
+            std::fs::read_to_string(path).expect("generated schema")
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::expect_used,
+        reason = "receipt schema precision guidance assertion"
+    )]
+    fn receipt_schema_keeps_exact_number_guidance_on_runtime_value_fields() {
+        let schema =
+            serde_json::to_value(schemars::schema_for!(ActionCallRecord)).expect("receipt schema");
+        for description in [
+            &schema["properties"]["effectiveInput"]["description"],
+            &schema["$defs"]["ActionDerivedValue"]["properties"]["value"]["description"],
+        ] {
+            let text = description.as_str().expect("field description");
+            assert!(text.contains("exact-number JSON parser"), "{text}");
+            assert!(text.contains("JSON.parse"), "{text}");
+        }
     }
 }

@@ -1,0 +1,7 @@
+{
+  "code": "ledger.parameter.invalid_bounds",
+  "message": "minUnscaled must be less than or equal to maxUnscaled",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.invalid_write_mode",
+  "message": "the action write mode is not valid for its effective lifecycle",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -399,3 +399,16 @@ CURRENT codes come from the profile/corpus; semantic rows describe TARGET refusa
 | Unsupported or stale proof evidence | Show unknown; implement the generic semantics or regenerate/check evidence; never lower the required assurance |
 
 CURRENT commands, from `tools/norn-ts`: `bun src/cli.ts profile <file.ts>`, then `bun src/cli.ts check <pack-dir|file.ts> --org ID --env ID` with `NORN_CHECKER_WASM_PKG` built as described in the SDK README. Profile recognition is not admission. Run SDK `bun run typecheck` and `bun test` there, then `bash scripts/ci/core.sh cheap` from the repository root and the required full CI gates in the prescribed test environment; target examples require implementation and correspondence scenarios before they can pass these checks.
+
+`Norn.rate(scale, { currency: "currency", perUnit: { system: "ucum", code: "g" }, rounding: "refuse" })` is CURRENT declaration syntax for the bounded Rate refinement. It emits Decimal `currencySource` plus `perUnit` at one scale; omitted rounding means Refuse. The bounded typed profile admits Rate<C,U> × Quantity<U> → Money<C>, Money<C> ÷ Quantity<U> → Rate<C,U>, and same-type +/−/comparisons. General compound units remain TARGET.
+
+
+CURRENT exact action/rule schemas use the same `Norn.decimal` / `Norn.rate` declarations: the compiler emits `{type: "number", nornType: <the existing Decimal>}`. Declare a fixed singleton currency sibling with `Schema.Literal("USD")`; a bare `Schema.Number` keeps legacy arithmetic and cannot enter an exact computation. Decimal options accept explicit `rounding` (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`), defaulting to Refuse. Direct decision callbacks lower each declared numeric destination to the shared rescale site; exact callbacks with sub-decisions or loop/table transforms currently refuse. Keep gram/rate working scales within the exact profile maximum of 18. Returned quantities/money retain their destination bindings; mixed currencies, denominator codes and Rate × Rate refuse.
+
+Path equation declarations on `Norn.type` use `pathEquations: [{ id: "provider",
+left: ["fulfils", "provider"], right: ["provider"] }]`. These compile to typed
+EntityIR extension data and lower to the existing chase EGDs (PATH-EQ-1 in Core
+05). Both endpoints must have the same concrete type and every link must be
+functional. Optional paths assert equality only when both exist. Declaration
+validation is structural evidence; mapping-preservation admission and #712's
+four schema-level mutation scenarios remain TARGET until their bridge qualifies.

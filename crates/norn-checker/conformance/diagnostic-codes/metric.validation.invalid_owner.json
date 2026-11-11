@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.invalid_owner",
+  "message": "Metrics require an explicit non-blank owner.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

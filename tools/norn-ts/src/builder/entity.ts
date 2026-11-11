@@ -17,9 +17,12 @@
  */
 import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
-import { type EnvelopeOptions, envelope } from "./envelope.ts"
+import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
 
 // ------------------------------------------------------------ value kinds
+
+/** Wire spellings of the shared norn_ir::Rounding contract. */
+export type Rounding = "refuse" | "toward_zero" | "half_even" | "half_away_from_zero"
 
 export type TextFormat = "email" | "uri" | "uuid"
 export type TimezonePolicy = "utc" | "offset"
@@ -37,11 +40,17 @@ export interface EnumValue {
   readonly description?: string
 }
 
+/** Numeric aggregation semantics; omission permits point reads only. */
+export type PropertyAdditivity =
+  | { readonly kind: "undeclared" | "additive" | "semi_additive" | "non_additive" }
+  | { readonly kind: "ratio"; readonly numerator: string; readonly denominator: string }
+
 /** One of the ten EntityIR v2 value kinds (`PropertyType`). */
 export type PropertyType =
   | { readonly kind: "text"; readonly format?: TextFormat }
-  | { readonly kind: "integer" }
-  | { readonly kind: "decimal"; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource }
+  | { readonly kind: "integer"; readonly additivity?: PropertyAdditivity }
+  | { readonly kind: "decimal"; readonly additivity?: PropertyAdditivity; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource; readonly perUnit?: UnitRef; readonly rounding?: Rounding }
+  | { readonly kind: "decimal-binding"; readonly group: string }
   | { readonly kind: "boolean" }
   | { readonly kind: "timestamp"; readonly timezone: TimezonePolicy }
   | { readonly kind: "date" }
@@ -58,6 +67,14 @@ export const money = (scale: number, currency: string | CurrencySource): Propert
   kind: "decimal",
   scale,
   currencySource: typeof currency === "string" ? { links: [], property: currency } : { links: [...currency.links], property: currency.property },
+})
+export const boundDecimal = (group: string): PropertyType => ({ kind: "decimal-binding", group })
+/** VAL-RATE: currency per one declared quantity unit at a single exact scale. */
+export const rate = (scale: number, currency: string | CurrencySource, perUnit: UnitRef, rounding?: Rounding): PropertyType => ({
+  kind: "decimal", scale,
+  currencySource: typeof currency === "string" ? { links: [], property: currency } : { links: [...currency.links], property: currency.property },
+  perUnit: { system: perUnit.system, code: perUnit.code },
+  ...(rounding === undefined ? {} : { rounding }),
 })
 export const boolean: PropertyType = { kind: "boolean" }
 export const timestamp = (timezone: TimezonePolicy): PropertyType => ({ kind: "timestamp", timezone })
@@ -100,6 +117,7 @@ export interface TransitionDecl {
   readonly to: string
   /** ZEN Expression guards (conjoined). */
   readonly guards?: ReadonlyArray<string>
+  readonly guardRefusalCode?: string
 }
 
 export interface LifecycleDecl {
@@ -139,6 +157,8 @@ export interface InvariantDecl {
 }
 
 interface TypeMetaBase {
+  readonly role?: "thing" | "happening"
+  readonly dependencies?: ReadonlyArray<DependencyPin>
   readonly markings?: ReadonlyArray<string>
   /** Qualified name: dotted lower-case domain namespace and a PascalCase type name (`commerce.SalesOrder`). */
   readonly name: string
@@ -149,7 +169,14 @@ interface TypeMetaBase {
   readonly properties: ReadonlyArray<PropertyDecl>
 }
 
+export interface PathEquation {
+  readonly id: string
+  readonly left: ReadonlyArray<string>
+  readonly right: ReadonlyArray<string>
+}
+
 export interface ObjectTypeDef extends TypeMetaBase {
+  readonly pathEquations?: ReadonlyArray<PathEquation>
   readonly _tag: "ObjectType"
   readonly extends?: string
   readonly implements: ReadonlyArray<string>
@@ -205,6 +232,7 @@ export function property(id: string, type: PropertyType, options: Omit<PropertyD
 
 export function objectType(
   meta: TypeMetaBase & {
+    readonly pathEquations?: ReadonlyArray<PathEquation>
     readonly extends?: string | ObjectTypeDef
     readonly implements?: ReadonlyArray<string | InterfaceDef>
     readonly links?: ReadonlyArray<LinkDecl>
@@ -287,6 +315,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
           entityVersion: "2.0",
           interface: {
             name: def.name,
+            role: def.role,
             extends: omitEmpty(def.extends),
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
@@ -302,8 +331,10 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
         }
       : {
           entityVersion: "2.0",
+          extensions: def.pathEquations?.length ? { "norn.path-equations/1.0.0": def.pathEquations } : undefined,
           objectType: {
             name: def.name,
+            role: def.role,
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
             extends: def.extends,
@@ -331,6 +362,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
     {
       kind: "entity",
       artifactId: `${def.name}.${def._tag === "Interface" ? "interface" : "entity"}`,
+      dependencies: pinnedDependencies(def.dependencies,"entity"),
       namespace,
       name: def.title,
       version: def.version,

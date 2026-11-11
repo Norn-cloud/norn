@@ -54,6 +54,14 @@ impl InterfaceName {
 pub struct InterfaceDef {
     /// Unique name, across interfaces and object types.
     pub name: InterfaceName,
+    /// Declared concept role; omission inherits, then defaults to `thing`.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "crate::ConceptRole")]
+    pub role: Option<crate::ConceptRole>,
     /// Parent contracts. All members, constraints, markings and invariants apply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extends: Vec<InterfaceName>,

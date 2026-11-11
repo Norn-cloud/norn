@@ -1,0 +1,7 @@
+{
+  "code": "ledger.unit.duplicate_unit_term",
+  "message": "ontology unit term `{term}` is bound by more than one pack-local unit",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

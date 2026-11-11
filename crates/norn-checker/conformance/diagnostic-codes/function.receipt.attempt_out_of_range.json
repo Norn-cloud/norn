@@ -1,0 +1,7 @@
+{
+  "code": "function.receipt.attempt_out_of_range",
+  "message": "attempt {attempt} is outside 1..={maxAttempts}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

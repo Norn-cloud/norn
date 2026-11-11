@@ -1,0 +1,7 @@
+{
+  "code": "consistency.mapping.non_total",
+  "message": "{element} never reaches the target",
+  "severity": "warning",
+  "since": "0.2.0",
+  "tier": "T3"
+}

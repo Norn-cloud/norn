@@ -160,9 +160,7 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnost
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let mut diagnostics = validate_artifact_unchecked(&normalized)
-        .err()
-        .unwrap_or_default();
+    let mut diagnostics = collect_artifact_diagnostics(&normalized);
     for diagnostic in layout_findings.into_iter().map(layout_finding_to_legacy) {
         if !diagnostics.iter().any(|existing| {
             existing.code == diagnostic.code
@@ -172,16 +170,17 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnost
             diagnostics.push(diagnostic);
         }
     }
-    if diagnostics.is_empty() {
-        Ok(())
-    } else {
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
         Err(diagnostics)
+    } else {
+        Ok(())
     }
 }
 
-pub(crate) fn validate_artifact_unchecked(
-    artifact: &ArtifactEnvelope,
-) -> Result<(), Vec<Diagnostic>> {
+pub(crate) fn collect_artifact_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     if artifact.ir_version != SUPPORTED_IR_VERSION {
@@ -245,11 +244,7 @@ pub(crate) fn validate_artifact_unchecked(
     );
     validate_kind_payload(artifact, &mut diagnostics);
 
-    if diagnostics.is_empty() {
-        Ok(())
-    } else {
-        Err(diagnostics)
-    }
+    diagnostics
 }
 
 fn layout_finding_to_legacy(diagnostic: crate::Diagnostic) -> Diagnostic {
@@ -342,7 +337,8 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         // and `crate::mapping` (run per document and over the artifact set).
         ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_) => {}
+        | ArtifactPayload::Law(_)
+        | ArtifactPayload::DefinedConcept(_) => {}
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -420,6 +416,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema.validation.invalid_document",
         ArtifactKind::Mapping => "mapping.validation.invalid_document",
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
+        ArtifactKind::DefinedConcept => "defined_concept.validation.invalid_payload",
     }
 }
 
@@ -1193,6 +1190,7 @@ fn validate_action_payload(
             "ledgerCategory",
             "preconditions",
             "slice",
+            "aggregates",
             "derive",
             "commands",
             "writes",
@@ -1201,6 +1199,7 @@ fn validate_action_payload(
             "uiEffects",
             "quantityEffect",
             "createLinks",
+            "synchronousRule",
         ],
         "payload",
         diagnostics,
@@ -1574,6 +1573,7 @@ pub(crate) enum ClosedSchemaUnions {
     /// The declared closed non-null type or null.
     Nullable,
     /// Existing ActionIR input leaves: nullable primitives or bounded JSON.
+    /// ACTION-ACTOR-1 also reserves actor/approved property names at every depth.
     ActionInput,
 }
 
@@ -1663,13 +1663,39 @@ pub(crate) fn validate_closed_schema(
         return;
     }
 
+    if let Some(value) = value
+        && let Err(error) = norn_expr::schema::decimal_refinement(value, path)
+    {
+        diagnostics.push(invalid_diagnostic(code, error.reason, path, artifact_id));
+    }
     let allowed: &[&str] = match schema_type {
+        "number" if matches!(profile.unions, ClosedSchemaUnions::ActionInput) => {
+            &["type", "nornType", "description"]
+        }
+        "number" => &["type", "nornType"],
         "object" => &["type", "properties", "required", "additionalProperties"],
         "array" => &["type", "items"],
-        "string" if profile.string_enums => &["type", "enum"],
+        "string"
+            if profile.string_enums
+                || profile.subject == "ActionIR"
+                    && value.is_some_and(norn_expr::schema::fixed_currency_schema) =>
+        {
+            &["type", "enum"]
+        }
         _ => &["type"],
     };
     reject_unknown_object_fields(schema, allowed, path, diagnostics, artifact_id, code);
+    if schema
+        .get("description")
+        .is_some_and(|description| description.as_string().is_none())
+    {
+        diagnostics.push(invalid_diagnostic(
+            code,
+            "description must be a string",
+            format!("{path}.description"),
+            artifact_id,
+        ));
+    }
 
     match schema_type {
         "object" => {
@@ -1731,6 +1757,16 @@ pub(crate) fn validate_closed_schema(
                 }
             }
             for (field, field_schema) in properties {
+                if matches!(profile.unions, ClosedSchemaUnions::ActionInput)
+                    && matches!(field.as_str(), "actor" | "approved")
+                {
+                    diagnostics.push(invalid_diagnostic(
+                        code,
+                        "ActionIR input reserves actor and approved for authenticated context",
+                        format!("{path}.properties.{field}"),
+                        artifact_id,
+                    ));
+                }
                 validate_closed_schema(
                     Some(field_schema),
                     &format!("{path}.properties.{field}"),
@@ -2223,7 +2259,16 @@ fn validate_setting_typed_value(
     const CODE: &str = "setting.validation.invalid_payload";
     match (value_type, value) {
         (Some("text"), Some(JsonValue::String(_))) => {}
-        (Some("number"), Some(JsonValue::Number(value))) if value.is_finite() => {}
+        (Some("number"), Some(JsonValue::String(value))) => {
+            if let Err(error) = norn_ir::SettingValue::decimal(value) {
+                diagnostics.push(invalid_diagnostic(
+                    "core.values.inexact",
+                    error.to_string(),
+                    "payload.value",
+                    artifact_id,
+                ));
+            }
+        }
         (Some("boolean"), Some(JsonValue::Bool(_))) => {}
         (Some("json"), Some(value)) => {
             validate_json_value(value, "payload.value", diagnostics, artifact_id)
@@ -2236,7 +2281,7 @@ fn validate_setting_typed_value(
         )),
         (Some("number"), Some(_)) => diagnostics.push(invalid_diagnostic(
             CODE,
-            "payload.value must be a finite number for number settings",
+            "payload.value must be an exact decimal string for number settings",
             "payload.value",
             artifact_id,
         )),
@@ -5417,6 +5462,7 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema",
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
+        ArtifactKind::DefinedConcept => "defined_concept",
     }
 }
 

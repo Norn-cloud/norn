@@ -1,0 +1,7 @@
+{
+  "code": "ledger.parameter.duplicate",
+  "message": "duplicate parameter id `{parameterId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.ref_cycle",
+  "message": "ref chain from {name} returns to itself",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

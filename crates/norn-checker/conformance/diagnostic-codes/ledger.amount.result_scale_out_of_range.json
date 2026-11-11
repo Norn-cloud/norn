@@ -1,0 +1,7 @@
+{
+  "code": "ledger.amount.result_scale_out_of_range",
+  "message": "result scale {scale} exceeds maximum {max}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

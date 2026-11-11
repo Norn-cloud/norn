@@ -22,6 +22,10 @@ use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, Span};
 
 /// Diagnostic codes emitted by [`check_property_type_defs`].
 pub mod codes {
+    /// An interface Decimal has no concrete implementor unit/scale.
+    pub const UNIT_BINDING_REQUIRED: &str = "core.values.unit_binding_required";
+    /// Members of one Decimal binding group differ in unit or scale.
+    pub const UNIT_MISMATCH: &str = "core.values.unit_mismatch";
     /// A property type name does not follow the dotted lower-case grammar.
     pub const INVALID_NAME: &str = "property_type.validation.invalid_name";
     /// Two definitions, or a definition and a registry value type, share a name.
@@ -124,6 +128,13 @@ pub fn check_property_type_defs(
     for (index, def) in defs.iter().enumerate() {
         let position = index.to_string();
         let base = [position.as_str()];
+        if def.property_type.contains_decimal_binding() {
+            diagnostics.push(error(
+                codes::UNIT_BINDING_REQUIRED,
+                "Decimal bindings belong only to interface members".to_owned(),
+                span(index, &["type"]),
+            ));
+        }
         check_type_members(&base, &def.property_type, &mut diagnostics);
         check_record_refs(&base, &def.property_type, defs, registry, &mut diagnostics);
         let resolved = match resolve(defs, &local, registry, index) {
@@ -223,8 +234,9 @@ pub(crate) fn check_record_refs(
                     }
                 }
                 PropertyType::Text { .. }
-                | PropertyType::Integer {}
+                | PropertyType::Integer { .. }
                 | PropertyType::Decimal { .. }
+                | PropertyType::DecimalBinding { .. }
                 | PropertyType::Boolean {}
                 | PropertyType::Timestamp { .. }
                 | PropertyType::Date {}
@@ -269,8 +281,9 @@ pub(crate) fn structured_metadata(
                 pending.extend(members.iter().map(|member| &member.property_type));
             }
             PropertyType::Text { .. }
-            | PropertyType::Integer {}
+            | PropertyType::Integer { .. }
             | PropertyType::Decimal { .. }
+            | PropertyType::DecimalBinding { .. }
             | PropertyType::Boolean {}
             | PropertyType::Timestamp { .. }
             | PropertyType::Date {}
@@ -416,6 +429,78 @@ fn resolve<'a>(
     }
 }
 
+/// VAL-ROUND: a decoded policy cannot activate legacy expression arithmetic.
+/// VAL-RATE: reuse one bounded Decimal representation and its shared runtime.
+fn check_rate_site(
+    base: &[&str],
+    scale: u64,
+    unit: Option<&norn_ir::UnitRef>,
+    per_unit: Option<&norn_ir::UnitRef>,
+    currency_source: Option<&norn_ir::metric::DimensionPath>,
+    out: &mut Vec<Diagnostic>,
+) {
+    if let Some(per_unit) = per_unit
+        && (currency_source.is_none()
+            || unit.is_some()
+            || per_unit.code.is_empty()
+            || per_unit.code.chars().any(char::is_whitespace)
+            || scale > 18)
+    {
+        out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires currencySource, a denominator unit, no quantity unit, and scale <= 18".to_owned(), span_at(base, &["type", "perUnit"])));
+    }
+}
+
+fn check_decimal_members(base: &[&str], property_type: &PropertyType, out: &mut Vec<Diagnostic>) {
+    let PropertyType::Decimal {
+        scale,
+        unit,
+        rounding,
+        per_unit,
+        currency_source,
+        ..
+    } = property_type
+    else {
+        return;
+    };
+    check_rate_site(
+        base,
+        scale.0,
+        unit.as_ref(),
+        per_unit.as_ref(),
+        currency_source.as_ref(),
+        out,
+    );
+    if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) && scale.0 > 18 {
+        out.push(error(
+            crate::property_codec::INEXACT,
+            "declared rounding scale exceeds exact profile maximum 18".into(),
+            span_at(base, &["type", "scale"]),
+        ));
+    }
+    if scale.0 > MAX_DECIMAL_SCALE {
+        out.push(error(
+            codes::SCALE_OUT_OF_RANGE,
+            format!(
+                "decimal scale {} exceeds the maximum of {MAX_DECIMAL_SCALE}",
+                scale.0
+            ),
+            span_at(base, &["type", "scale"]),
+        ));
+    }
+    if let Some(unit) = unit
+        && (unit.code.is_empty() || unit.code.chars().any(char::is_whitespace))
+    {
+        out.push(error(
+            codes::INVALID_UNIT,
+            format!(
+                "unit code {:?} must be non-blank without whitespace",
+                unit.code
+            ),
+            span_at(base, &["type", "unit", "code"]),
+        ));
+    }
+}
+
 /// Per-kind member checks of one type (`scale`, `unit`, enum `values`); `base`
 /// is the JSON-pointer prefix of the object holding `type`.
 pub(crate) fn check_type_members(
@@ -424,6 +509,7 @@ pub(crate) fn check_type_members(
     out: &mut Vec<Diagnostic>,
 ) {
     match property_type {
+        PropertyType::DecimalBinding { group } => check_decimal_binding_group(base, group, out),
         PropertyType::Record { members } => {
             if members.is_empty() {
                 out.push(error(
@@ -456,30 +542,7 @@ pub(crate) fn check_type_members(
                 check_type_members(&pointer, &member.property_type, out);
             }
         }
-        PropertyType::Decimal { scale, unit, .. } => {
-            if scale.0 > MAX_DECIMAL_SCALE {
-                out.push(error(
-                    codes::SCALE_OUT_OF_RANGE,
-                    format!(
-                        "decimal scale {} exceeds the maximum of {MAX_DECIMAL_SCALE}",
-                        scale.0
-                    ),
-                    span_at(base, &["type", "scale"]),
-                ));
-            }
-            if let Some(unit) = unit
-                && (unit.code.is_empty() || unit.code.chars().any(char::is_whitespace))
-            {
-                out.push(error(
-                    codes::INVALID_UNIT,
-                    format!(
-                        "unit code {:?} must be non-blank without whitespace",
-                        unit.code
-                    ),
-                    span_at(base, &["type", "unit", "code"]),
-                ));
-            }
-        }
+        PropertyType::Decimal { .. } => check_decimal_members(base, property_type, out),
         PropertyType::Enum { values } => {
             if values.is_empty() {
                 out.push(error(
@@ -508,13 +571,23 @@ pub(crate) fn check_type_members(
             }
         }
         PropertyType::Text { .. }
-        | PropertyType::Integer {}
+        | PropertyType::Integer { .. }
         | PropertyType::Boolean {}
         | PropertyType::Timestamp { .. }
         | PropertyType::Date {}
         | PropertyType::Duration {}
         | PropertyType::JsonExt { .. }
         | PropertyType::Ref { .. } => {}
+    }
+}
+
+fn check_decimal_binding_group(base: &[&str], group: &str, out: &mut Vec<Diagnostic>) {
+    if !matches_grammar(&crate::object_types::MEMBER_ID_GRAMMAR, group) {
+        out.push(error(
+            codes::UNIT_BINDING_REQUIRED,
+            "a Decimal binding requires a nonempty identifier group".to_owned(),
+            span_at(base, &["type", "group"]),
+        ));
     }
 }
 
@@ -556,7 +629,7 @@ pub(crate) fn check_constraints(
             continue;
         };
         match base {
-            Some(PropertyType::Integer {})
+            Some(PropertyType::Integer { .. })
                 if !parsed.fraction.is_empty() || bound.as_str().parse::<i64>().is_err() =>
             {
                 out.push(error(

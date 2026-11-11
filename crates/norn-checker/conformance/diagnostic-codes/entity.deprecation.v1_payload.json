@@ -1,0 +1,7 @@
+{
+  "code": "entity.deprecation.v1_payload",
+  "message": "entity {artifactId} uses the deprecated EntityIR v1 payload form; it is accepted during the migration and lowered to EntityIR v2 on read; author new versions with entityVersion \"2.0\"",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T4"
+}

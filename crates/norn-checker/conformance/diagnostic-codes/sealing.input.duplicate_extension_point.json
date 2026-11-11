@@ -1,0 +1,7 @@
+{
+  "code": "sealing.input.duplicate_extension_point",
+  "message": "extension-point definitions must contain at most one entry per ID",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

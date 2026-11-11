@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.unsatisfiable_constraints",
+  "message": "the constraints that apply to property {property} together admit no value: {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

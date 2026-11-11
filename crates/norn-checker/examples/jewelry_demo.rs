@@ -1,36 +1,66 @@
-//! Admission-only jewelry fallback. Run through scripts/demo/run.sh.
-use std::{
-    collections::BTreeSet,
-    error::Error,
-    io::{Read as _, Write as _},
-};
+//! Admission-only jewelry authoring and rendering correspondence.
+use std::{collections::BTreeSet, error::Error, io::Read as _};
 
 use norn_checker::obligations::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
-use norn_ir::deontic::{RequirementText, RequirementWording};
+use norn_ir::deontic::{
+    DeonticModality, DeonticRule, RequirementTiming, RequirementWording, RuleSourceSpan,
+    StructuredRequirement,
+};
+use norn_ir::requirement_display::RequirementView;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawResponse};
 use serde_json::json;
 
 type DemoResult<T> = Result<T, Box<dyn Error>>;
 
 // TARGET: the profile lacks structured bilingual authoring; https://github.com/Norn-cloud/norn/issues/58
-fn target_wording() -> RequirementWording {
-    let text = |en: &str, ar: &str| RequirementText {
-        en: en.into(),
-        ar: ar.into(),
-    };
-    RequirementWording {
-        scope: text("Each melt in this app", "كل عملية صهر في هذا التطبيق"),
-        activation: text("When the melt is posted", "عندما تكون عملية الصهر مُرحَّلة"),
-        component: text(
+fn target_wording() -> DemoResult<RequirementWording> {
+    let mut wording: RequirementWording =
+        serde_json::from_str(include_str!("../../../fixtures/wording/locales.json"))?;
+    for (tag, scope, activation, component, response) in [
+        (
+            "en",
+            "Each melt in this app",
+            "When the melt is posted",
             "Its fine-metal mass measurements",
-            "قياسات كتلة المعدن الخالص للعملية",
-        ),
-        response: text(
             "Input fine mass equals output fine mass plus recorded fine-metal loss",
+        ),
+        (
+            "ar",
+            "كل عملية صهر في هذا التطبيق",
+            "عندما تكون عملية الصهر مُرحَّلة",
+            "قياسات كتلة المعدن الخالص للعملية",
             "كتلة المعدن الخالص الداخلة تساوي مجموع كتلته الخارجة وكتلة الفاقد المُسجَّل منه",
         ),
+    ] {
+        let entry = wording.0.get_mut(tag).ok_or("missing declared locale")?;
+        entry.scope = scope.into();
+        entry.activation = activation.into();
+        entry.component = component.into();
+        entry.response = response.into();
     }
+    Ok(wording)
+}
+
+// TARGET #58: structured bilingual authoring still needs a Rust adapter to the compiled TS law.
+fn target_requirement(law: LawIR) -> DemoResult<StructuredRequirement> {
+    Ok(StructuredRequirement {
+        norm: DeonticRule {
+            source: RuleSourceSpan {
+                artifact_id: format!("{}.law", law.id),
+                pointer: "/payload".into(),
+                bytes: None,
+            },
+            authority_id: law.owner.clone(),
+            authority_version: "0.1.0".into(),
+            law,
+            modality: DeonticModality::Obligation,
+            exceptions: vec![],
+            defeated_by: vec![],
+        },
+        timing: RequirementTiming::EveryCommittedState,
+        wording: target_wording()?,
+    })
 }
 
 fn authored_law(artifacts: &[ArtifactEnvelope]) -> DemoResult<LawIR> {
@@ -69,30 +99,32 @@ fn refusal_probe(
 fn source(artifacts: &[ArtifactEnvelope]) -> DemoResult<DefinitionSource> {
     Ok(DefinitionSource::parse(
         &serde_json::to_string(artifacts)?,
-        "[]",
+        &serde_json::to_string(&unit_catalog()?)?,
     )?)
 }
 
-fn main() -> DemoResult<()> {
-    let mut stdout = std::io::stdout().lock();
-    let mut input = String::new();
-    std::io::stdin()
-        .take(1_048_577)
-        .read_to_string(&mut input)?;
+fn unit_catalog() -> DemoResult<[ArtifactEnvelope; 1]> {
+    Ok([serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.units.json"
+    ))?])
+}
+
+fn rehearse(input: &str, mut stdout: impl std::io::Write) -> DemoResult<()> {
     if input.len() > 1_048_576 {
         return Err("demo input exceeds 1 MiB".into());
     }
-    let exact = DefinitionSource::parse(&input, "[]")?;
-    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
+    let base = unit_catalog()?;
+    let exact = DefinitionSource::parse(input, &serde_json::to_string(&base)?)?;
+    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(input)?;
     let law = authored_law(&artifacts)?;
     let registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
         registry: &registry,
-        base: &[],
+        base: &base,
         tenant: None,
     };
     let diagnostics = check_artifact_set(&artifacts, &context);
-    if !diagnostics.is_empty() {
+    if diagnostics.iter().any(norn_checker::Diagnostic::is_error) {
         return Err(format!("admission: {diagnostics:?}").into());
     }
     writeln!(
@@ -102,14 +134,20 @@ fn main() -> DemoResult<()> {
     writeln!(stdout, "{}", serde_json::to_string_pretty(&artifacts)?)?;
     writeln!(
         stdout,
-        "TARGET (#58): reviewed EN/AR wording for {} (not the pending #322 renderer):",
+        "TARGET (#58): Rust bilingual authoring adapter for {}; CURRENT: real EN/AR views (display only):",
         law.id
     )?;
-    writeln!(
-        stdout,
-        "{}",
-        serde_json::to_string_pretty(&target_wording())?
-    )?;
+    let requirement = target_requirement(law)?;
+    for locale in ["en", "ar"] {
+        let view = RequirementView {
+            requirement: requirement.clone(),
+            locale: locale.into(),
+        };
+        writeln!(stdout, "{locale:?} direction={}", view.direction()?)?;
+        for slot in view.slots()? {
+            writeln!(stdout, "{} | {}: {}", slot.id, slot.label, slot.text)?;
+        }
+    }
     let authority = ApprovedContract::approve(
         &exact,
         &registry,
@@ -137,9 +175,25 @@ fn main() -> DemoResult<()> {
         "CURRENT: protected-law edit refused: LawChanged (challenge boundary only)"
     )?;
     let refused = check_artifact_set(&refusal_probe(&artifacts, "self.missing == 1")?, &context);
-    if refused.is_empty() {
+    if !refused.iter().any(norn_checker::Diagnostic::is_error) {
         return Err("invalid property binding was admitted".into());
     }
     writeln!(stdout, "CURRENT: invalid law diagnostics: {refused:?}")?;
     Ok(())
+}
+
+fn main() -> DemoResult<()> {
+    let mut input = String::new();
+    std::io::stdin()
+        .take(1_048_577)
+        .read_to_string(&mut input)?;
+    rehearse(&input, std::io::stdout().lock())
+}
+
+#[test]
+fn authored_laws_admit_refuse_and_render_en_ar() -> DemoResult<()> {
+    rehearse(
+        include_str!("../tests/fixtures/jewelry_demo.json"),
+        std::io::stdout().lock(),
+    )
 }

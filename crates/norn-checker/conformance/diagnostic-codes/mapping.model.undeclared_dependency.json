@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.undeclared_dependency",
+  "message": "artifact reference {artifactId} is not a required, exact-version dependency",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

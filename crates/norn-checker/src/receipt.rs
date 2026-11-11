@@ -366,6 +366,7 @@ pub fn check_artifact_set_with_receipt(
         artifacts.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         None,
+        false,
     )
 }
 
@@ -412,6 +413,7 @@ pub fn check_artifact_set_with_flow_source_map(
         artifacts.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         flow_source_map,
+        false,
     )
 }
 
@@ -441,6 +443,7 @@ pub fn check_artifact_set_with_verified_receipt(
         artifacts.identity.clone(),
         &version.identifier_profile,
         version.flow_source_map.as_ref(),
+        true,
     )
 }
 
@@ -499,6 +502,10 @@ pub fn check_artifact_set_for_install_with_flow_source_map(
     check_artifact_set_with_flow_source_map(artifacts, context, limits, flow_source_map)
 }
 
+/// PARAM-WIRE-2: new receipts use the current value profile; verified retained
+/// receipts preserve the profile tag and original source identity.
+const CURRENT_SETTING_VERSION: &str = "0.1";
+
 fn check_artifact_set_with_profile(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
@@ -506,9 +513,20 @@ fn check_artifact_set_with_profile(
     artifact_set: ArtifactSetRef,
     identifier_profile: &str,
     flow_source_map: Option<&FlowSourceMap>,
+    retained: bool,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     let limit_profile = limits.reference()?;
     let mut diagnostics = crate::check_artifact_set(artifacts, context);
+    if !retained {
+        for artifact in artifacts {
+            if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
+            {
+                diagnostics.push(Diagnostic { code: DiagnosticCode::new("setting.validation.invalid_payload"), severity: DiagnosticSeverity::Error,
+                    message: format!("new setting admissions require settingVersion {CURRENT_SETTING_VERSION}; retained value profiles require their verified receipt"),
+                    span: None, artifact_id: Some(artifact.artifact_id.clone()), remediation: Some(DiagnosticRemediation::FixDefinition) });
+            }
+        }
+    }
     if let Some(flow_source_map) = flow_source_map {
         diagnostics.extend(crate::validate_flow_source_map(
             flow_source_map,
@@ -718,7 +736,12 @@ fn verify_receipt(
                 .join("; ")
         ))
     })?;
-    let expected_env = derived_env.reference()?;
+    let version = parsed
+        .type_env
+        .as_ref()
+        .and_then(|reference| norn_expr::env::TypeEnvVersion::from_number(reference.version))
+        .ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
+    let expected_env = derived_env.reference_at_version(version)?;
     if !parsed.type_env.as_ref().is_some_and(|reference| {
         profile_ref_matches(
             reference,
@@ -842,7 +865,9 @@ pub fn recover_legacy_admission_receipt(
         ArtifactSetRef::of(artifacts, base)?,
         IDENTIFIER_ADMISSION_PROFILE,
         None,
+        false,
     )?;
+    let current_sha256 = checked.receipt.content_sha256()?;
 
     if checked.receipt.admitted {
         let bytes = checked.receipt.canonical_json()?;
@@ -861,6 +886,7 @@ pub fn recover_legacy_admission_receipt(
         ArtifactSetRef::of(artifacts, base)?,
         HISTORICAL_IDENTIFIER_PROFILE,
         None,
+        true,
     )?;
 
     let limit_profile = limits.reference()?;
@@ -868,7 +894,20 @@ pub fn recover_legacy_admission_receipt(
         .map_err(|errors| {
             invalid_receipt(format!("cannot derive receipt environment: {errors:?}"))
         })?
-        .reference()?;
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+        .map_err(|_error| ReceiptError::ReceiptHashMismatch {
+            expected: expected_sha256.to_owned(),
+            actual: current_sha256.clone(),
+        })?;
+    if checked.receipt.admitted {
+        let mut historical_current = checked.receipt;
+        historical_current.type_env = Some(type_env.clone());
+        let recovered = String::from_utf8(historical_current.canonical_json()?)
+            .map_err(|error| invalid_receipt(format!("recovered receipt is not UTF-8: {error}")))?;
+        if admission_receipt_sha256(&recovered)? == expected_sha256 {
+            return Ok(recovered);
+        }
+    }
     let warnings: Vec<Diagnostic> = historical_check
         .diagnostics
         .iter()
@@ -909,7 +948,7 @@ pub fn recover_legacy_admission_receipt(
 
     Err(ReceiptError::ReceiptHashMismatch {
         expected: expected_sha256.to_owned(),
-        actual: checked.receipt.content_sha256()?,
+        actual: current_sha256,
     })
 }
 
@@ -937,7 +976,41 @@ pub fn derive_type_env(
         object_types: &layer.object_types,
         extensions: &layer.extensions,
     };
-    ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))
+    let mut env =
+        ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
+    for artifact in base.iter().chain(artifacts) {
+        if matches!(
+            &artifact.payload,
+            norn_ir::ArtifactPayload::Rule(_) | norn_ir::ArtifactPayload::Action(_)
+        ) {
+            let payload_value = artifact.payload.to_json_value();
+            let Some(payload) = payload_value.as_object() else {
+                continue;
+            };
+            for member in ["inputSchema", "outputSchema"] {
+                if let Some(schema) = payload.get(member) {
+                    let name = format!(
+                        "exact.{}.{}.{}",
+                        artifact.artifact_id, artifact.version, member
+                    );
+                    let bound = if matches!(&artifact.payload, norn_ir::ArtifactPayload::Action(_))
+                        && member == "inputSchema"
+                    {
+                        env.bind_exact_action_schema(&name, schema)
+                    } else {
+                        env.bind_exact_schema(&name, schema)
+                    };
+                    env = bound.map_err(|reason| {
+                        vec![norn_expr::EnvError::Unresolved {
+                            site: name,
+                            name: reason,
+                        }]
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(env)
 }
 
 fn has_errors(diagnostics: &[Diagnostic]) -> bool {
@@ -946,7 +1019,7 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
         .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
 }
 
-fn hash_serde_json(value: &serde_json::Value) -> Result<String, CanonicalJsonError> {
+pub(crate) fn hash_serde_json(value: &serde_json::Value) -> Result<String, CanonicalJsonError> {
     // Re-canonicalized under Norn1, so key order and number spelling do not
     // matter.
     let bytes = norn_canonical::canonical_json_of(value)?;
@@ -1789,7 +1862,7 @@ mod tests {
             .expect("historical full-envelope identity");
         let type_env = derive_type_env(&artifacts, &base, &limits)
             .expect("definition environment")
-            .reference()
+            .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
             .expect("environment reference");
         let historical = CheckReceipt {
             checker: CHECKER_NAME.to_owned(),
@@ -1837,5 +1910,81 @@ mod tests {
             LEGACY_INLINE_LAYOUT_CHECKER_VERSION
         );
         assert_eq!(verified.receipt_format(), LEGACY_RECEIPT_FORMAT);
+    }
+}
+
+#[cfg(test)]
+mod retained_setting_tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "retained profile correspondence"
+    )]
+    use super::*;
+    #[test]
+    fn tagged_historical_settings_recheck_only_with_unchanged_verified_source() {
+        let raw = RuntimeValue::from_json_text(include_str!(
+            "../../../fixtures/ir/retail-reorder-threshold.setting.json"
+        ))
+        .expect("immutable original");
+        let sources = ReceiptSources::new(std::slice::from_ref(&raw), &[]).expect("source");
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        assert_eq!(
+            check_artifact_set_with_receipt(&sources, &context, &limits)
+                .expect("current admission")
+                .receipt
+                .admitted,
+            CURRENT_SETTING_VERSION == "0.1"
+        );
+        let mut old = check_artifact_set_with_profile(
+            &sources.artifacts,
+            &context,
+            &limits,
+            sources.identity.clone(),
+            HISTORICAL_IDENTIFIER_PROFILE,
+            None,
+            true,
+        )
+        .expect("historical validation")
+        .receipt;
+        assert!(old.admitted);
+        old.checker_version = "0.1.0".into();
+        old.expr_profile = "norn-zen/5".into();
+        old.artifact_set =
+            ArtifactSetRef::of_legacy(&sources.artifacts, &[]).expect("original identity");
+        let body =
+            String::from_utf8(old.legacy_canonical_json().expect("historical body")).expect("UTF8");
+        let digest = admission_receipt_sha256(&body).expect("digest");
+        let token = verify_admission_receipt_sources(&body, &digest, &[raw], &[], &limits)
+            .expect("verified historical authority");
+        assert!(
+            check_artifact_set_with_verified_receipt(&sources, &context, &limits, &token)
+                .expect("recheck")
+                .receipt
+                .admitted
+        );
+        let mut changed = sources.artifacts;
+        changed[0].name.push_str(" edited");
+        let changed = changed
+            .iter()
+            .map(|a| norn_ir::runtime::encode(a).expect("source"))
+            .collect::<Vec<_>>();
+        let changed = ReceiptSources::new(&changed, &[]).expect("edited source");
+        assert!(
+            check_artifact_set_with_verified_receipt(&changed, &context, &limits, &token).is_err()
+        );
+        assert_eq!(
+            check_artifact_set_for_install(&changed, &context, &limits, Some(&token))
+                .expect("changed admission")
+                .receipt
+                .admitted,
+            CURRENT_SETTING_VERSION == "0.1"
+        );
     }
 }

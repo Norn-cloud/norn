@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.marking.unknown",
+  "message": "marking reference {id} has no declaration in the base or candidate set",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

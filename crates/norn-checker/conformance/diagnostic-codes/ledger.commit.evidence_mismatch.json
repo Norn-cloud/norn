@@ -1,0 +1,7 @@
+{
+  "code": "ledger.commit.evidence_mismatch",
+  "message": "commit evidence does not match the prepared posting: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

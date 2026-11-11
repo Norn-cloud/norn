@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.override_computed",
+  "message": "property {property} overrides the one {owner} declares; a computed property is never overridden, and an override is never computed",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

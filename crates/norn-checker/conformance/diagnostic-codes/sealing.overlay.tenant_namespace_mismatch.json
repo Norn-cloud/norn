@@ -1,0 +1,7 @@
+{
+  "code": "sealing.overlay.tenant_namespace_mismatch",
+  "message": "additive customization node and scope must belong to the declared tenant namespace",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

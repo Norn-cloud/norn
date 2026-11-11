@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.flow_source_map.invalid_mapping",
+  "message": "flow source map contains an invalid or duplicate mapping: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

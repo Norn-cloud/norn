@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.path_property_violated",
+  "message": "a declared path to {target} avoids {via}; structural trace [transition, state]: {trace}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.duplicate_lifecycle",
+  "message": "property {property} already has a lifecycle on this type",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

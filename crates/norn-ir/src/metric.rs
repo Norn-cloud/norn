@@ -12,7 +12,9 @@ use crate::{
 };
 
 /// A property reached by zero or more declared directional link roles.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DimensionPath {
     /// Forward or inverse roles, in traversal order; empty means the root object.
@@ -683,6 +685,12 @@ pub struct QuestionIR {
 #[must_use]
 pub fn metric_ir_schema() -> Schema {
     schema_for!(crate::osi::MetricIR)
+}
+
+/// JSON Schema for one named metric definition.
+#[must_use]
+pub fn metric_definition_schema() -> Schema {
+    schema_for!(MetricDefinition)
 }
 
 /// JSON Schema for the standalone question vocabulary.

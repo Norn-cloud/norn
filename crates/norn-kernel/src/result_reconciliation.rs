@@ -549,6 +549,7 @@ impl Acceptance {
             effects,
             links: Vec::new(),
             link_reads: Vec::new(),
+            predicate_reads: Vec::new(),
         })
     }
 }

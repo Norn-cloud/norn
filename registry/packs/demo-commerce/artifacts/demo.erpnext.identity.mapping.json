@@ -1,0 +1,107 @@
+{
+  "artifactId": "demo.erpnext.identity.mapping",
+  "dependencies": [
+    {
+      "artifactId": "demo.erpnext.identity.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "demo.commerce.SourceIdentity.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "demo.commerce.CatalogEntry.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "demo.commerce.Shipment.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "ERPNext explicit demo identities",
+  "namespace": "demo",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "demo.commerce.SourceIdentity.interface"
+    ],
+    "maps": [
+      {
+        "id": "catalog",
+        "ignoredFields": [
+          {
+            "field": "item_code",
+            "reason": "SKU is evidence, never a cross-system identity or a Holding."
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.custom_catalog_ref"
+          }
+        ],
+        "source": {
+          "dataset": "Item"
+        },
+        "sourceRecord": "'Item/' + input.name",
+        "subject": "input.custom_catalog_ref",
+        "target": {
+          "entity": "demo.commerce.CatalogEntry.entity",
+          "interface": "demo.commerce.SourceIdentity.interface"
+        }
+      },
+      {
+        "gaps": [
+          {
+            "member": "canonical_event",
+            "note": "Requires admitted canonical shipment promotion; never deplete stock from each source independently.",
+            "reason": "deferred"
+          }
+        ],
+        "id": "shipment",
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.custom_shipment_ref"
+          }
+        ],
+        "source": {
+          "dataset": "Delivery Note"
+        },
+        "sourceRecord": "'Delivery Note/' + input.name",
+        "subject": "input.custom_shipment_ref",
+        "target": {
+          "entity": "demo.commerce.Shipment.entity",
+          "interface": "demo.commerce.SourceIdentity.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "demo.erpnext.identity.source",
+      "sha256": "f6874ecd93a6cfb36cb57f66e81ee60e1149b9c6970f1f64505a1052a58935b3",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-commerce/artifacts/demo.erpnext.identity.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

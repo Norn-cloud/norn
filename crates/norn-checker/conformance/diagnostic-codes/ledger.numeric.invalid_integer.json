@@ -1,0 +1,7 @@
+{
+  "code": "ledger.numeric.invalid_integer",
+  "message": "`{value}` is not a signed i128 decimal integer",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -259,6 +259,22 @@
         "kind",
         "payload"
       ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "defined_concept"
+        },
+        "payload": {
+          "$ref": "#/$defs/DefinedConceptPayload"
+        }
+      },
+      "required": [
+        "kind",
+        "payload"
+      ]
     }
   ],
   "required": [
@@ -504,6 +520,58 @@
         "legProperty"
       ]
     },
+    "ActionAggregateInput": {
+      "description": "One bounded aggregate an action's preconditions read by `name`.",
+      "type": "object",
+      "properties": {
+        "aggregate": {
+          "description": "What is computed over the matched objects.",
+          "$ref": "#/$defs/AggregateFunction"
+        },
+        "filter": {
+          "description": "Equality filter: each scalar property must equal the named input\nfield. An empty filter matches every object of the type.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "string"
+            }
+          }
+        },
+        "maxItems": {
+          "description": "Most objects the fold may match; one more refuses the action.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "description": "The precondition environment member holding the result. Unique among\nthe action's aggregates and slice entries.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The type whose stored objects are folded.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "window": {
+          "description": "Optional window over one date or timestamp property.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AggregateWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "objectType",
+        "aggregate",
+        "maxItems"
+      ]
+    },
     "ActionCommand": {
       "description": "One declarative outbound command produced by an action call.",
       "type": "object",
@@ -637,15 +705,19 @@
       ]
     },
     "ActionCreateLink": {
-      "description": "Add an outgoing link alongside an ordinary action's business write.",
+      "description": "Declare a typed link inside the action's checked proposal.",
       "type": "object",
       "properties": {
         "link": {
-          "description": "Link declared on the effect's business object type.",
+          "description": "Link declared on the source object type.",
           "type": "string"
         },
+        "source": {
+          "description": "Optional source written by the same synchronous proposal (TXN-ATOMIC-1).",
+          "$ref": "#/$defs/ActionLinkSource"
+        },
         "targetIdField": {
-          "description": "Input field naming an existing authorized declared-slice object.",
+          "description": "Required input field naming a captured or proposed target.",
           "type": "string"
         },
         "targetType": {
@@ -823,6 +895,25 @@
         "expression"
       ]
     },
+    "ActionLinkSource": {
+      "description": "A declared input-key source for a link within one action proposal.",
+      "type": "object",
+      "properties": {
+        "idField": {
+          "description": "Required string input field containing its identity.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "Concrete type of an object written by the synchronous closure.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "idField"
+      ]
+    },
     "ActionPayload": {
       "type": "object",
       "properties": {
@@ -831,6 +922,12 @@
         },
         "actionId": {
           "type": "string"
+        },
+        "aggregates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAggregateInput"
+          }
         },
         "commands": {
           "type": "array",
@@ -907,6 +1004,9 @@
           "items": {
             "$ref": "#/$defs/SliceDeclaration"
           }
+        },
+        "synchronousRule": {
+          "$ref": "#/$defs/ActionRuleRef"
         },
         "title": {
           "type": "string"
@@ -1040,6 +1140,25 @@
         "scale"
       ]
     },
+    "ActionRuleRef": {
+      "description": "Closed reference to the admitted synchronous writer of an action.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "description": "Exact RuleIR artifact identity.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version; no latest-version resolution.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version"
+      ]
+    },
     "ActionUiEffects": {
       "description": "Versioned, closed declarations for UI-facing effects that cannot be\ninferred from an action's commands, write set, or idempotency flag.",
       "type": "object",
@@ -1098,6 +1217,78 @@
       "required": [
         "entityKind",
         "change"
+      ]
+    },
+    "AggregateFunction": {
+      "description": "The fold computed over the matched objects.",
+      "oneOf": [
+        {
+          "description": "The exact sum of a non-nullable decimal or integer property, held at\nthe property's declared scale. An empty match set sums to zero.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sum"
+            },
+            "property": {
+              "description": "The summed property.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property"
+          ]
+        },
+        {
+          "description": "The number of matched objects.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "count"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "AggregateWindow": {
+      "description": "A window over one date or timestamp property. Both edges and their\ninclusivity are declared; there is no default edge semantics.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "The input field holding the end edge.",
+          "type": "string"
+        },
+        "endInclusive": {
+          "description": "Whether an object exactly at `end` matches.",
+          "type": "boolean"
+        },
+        "property": {
+          "description": "The date or timestamp property the window ranges over.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "start": {
+          "description": "The input field holding the start edge.",
+          "type": "string"
+        },
+        "startInclusive": {
+          "description": "Whether an object exactly at `start` matches.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "start",
+        "end",
+        "startInclusive",
+        "endInclusive"
       ]
     },
     "ApiKeyFormat": {
@@ -1246,6 +1437,11 @@
           "description": "Scoped temporal laws over ZEN predicates.",
           "type": "string",
           "const": "law"
+        },
+        {
+          "description": "Pure classification over existing base identities.",
+          "type": "string",
+          "const": "defined_concept"
         }
       ]
     },
@@ -1517,6 +1713,21 @@
         "packId",
         "packVersion",
         "artifacts"
+      ]
+    },
+    "ConceptRole": {
+      "description": "Semantic role of an ordinary concept, independent of lifecycle presence.",
+      "oneOf": [
+        {
+          "description": "A persistent thing.",
+          "type": "string",
+          "const": "thing"
+        },
+        {
+          "description": "A concept that occurs, runs or terminates in time.",
+          "type": "string",
+          "const": "happening"
+        }
       ]
     },
     "ConnectorAuth": {
@@ -3270,6 +3481,36 @@
         "queue"
       ]
     },
+    "DecideBudget": {
+      "description": "Budget for one warm `decide` (§1 row 1).",
+      "type": "object",
+      "properties": {
+        "cpu_p99_micros": {
+          "description": "Target p99 CPU per decision, in microseconds (qualification target;\nnot enforceable by a clock inside the kernel).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fuel_envelope_micros": {
+          "description": "The CPU envelope the fuel budget is calibrated against, in\nmicroseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fuel_units": {
+          "description": "Deterministic fuel per decision, in Norn ZEN metering units.\nProvisional and uncalibrated until `T3-BUDGET-1`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cpu_p99_micros",
+        "fuel_envelope_micros",
+        "fuel_units"
+      ]
+    },
     "DecimalLiteral": {
       "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
       "type": "string",
@@ -3281,6 +3522,55 @@
       "not": {
         "type": "null"
       }
+    },
+    "DefinedConceptPayload": {
+      "description": "Pack-owned classification; never a writable object store.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "Exact type member in an entity artifact required by this artifact.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "bounds": {
+          "description": "Existing resource vocabulary and units, capped by the admitted profile.",
+          "$ref": "#/$defs/ResourceLimitProfile"
+        },
+        "dependencies": {
+          "description": "Exact member dependencies, including other classifications.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberRef"
+          }
+        },
+        "extensions": {
+          "description": "Reserved versioned extension slots, as on other artifact roots.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "id": {
+          "description": "Qualified classification identity, distinct from the base object kind.",
+          "type": "string"
+        },
+        "predicate": {
+          "description": "A pure Boolean expression over the authorized base snapshot.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "version": {
+          "description": "Definition version; must match its artifact envelope.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "base",
+        "predicate",
+        "dependencies",
+        "bounds"
+      ]
     },
     "DerivedPayload": {
       "type": "object",
@@ -4227,6 +4517,43 @@
         "value"
       ]
     },
+    "EnvelopeLimits": {
+      "description": "Per-decision envelope caps (§1 row 5).\n\nCounts are `u32` and sizes `u64` so the serialized profile is identical on\nnative and `wasm32` hosts. `norn-kernel`'s `step` enforces the counts; the\nhost checks `max_output_bytes` against the bytes it serializes.",
+      "type": "object",
+      "properties": {
+        "max_commands": {
+          "description": "Maximum `perform` effects per decision.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_events": {
+          "description": "Maximum events (facts) per decision.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_output_bytes": {
+          "description": "Maximum serialized metadata/output bytes per decision.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_timers": {
+          "description": "Maximum timer effects (schedule + cancel) per decision.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_output_bytes",
+        "max_events",
+        "max_commands",
+        "max_timers"
+      ]
+    },
     "EvidenceRef": {
       "description": "A content-addressed reference to evidence (raw metadata, a profile\nquery result, a sample file).",
       "type": "object",
@@ -4264,7 +4591,7 @@
       "type": "object",
       "properties": {
         "rounding": {
-          "$ref": "#/$defs/FoldRounding"
+          "$ref": "#/$defs/Rounding"
         },
         "scale": {
           "description": "Quantity-ledger-compatible exact scaled integers; at most 18 places.",
@@ -4301,15 +4628,6 @@
       "enum": [
         "string",
         "integer"
-      ]
-    },
-    "FoldRounding": {
-      "type": "string",
-      "enum": [
-        "refuse",
-        "toward_zero",
-        "half_even",
-        "half_away_from_zero"
       ]
     },
     "GapReason": {
@@ -4410,6 +4728,36 @@
             "kind"
           ]
         }
+      ]
+    },
+    "HelperLimits": {
+      "description": "Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so\nthese only bind a future admission; the helper's fuel is charged to the\nenclosing decision and turn budget.",
+      "type": "object",
+      "properties": {
+        "aggregate_micros_per_decision": {
+          "description": "Aggregate helper CPU per decision, in microseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cpu_p99_micros": {
+          "description": "Target p99 CPU per helper call, in microseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_guest_memory_bytes": {
+          "description": "Maximum guest memory, in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cpu_p99_micros",
+        "aggregate_micros_per_decision",
+        "max_guest_memory_bytes"
       ]
     },
     "HttpMethod": {
@@ -4549,6 +4897,10 @@
             "$ref": "#/$defs/InterfaceProperty"
           }
         },
+        "role": {
+          "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+          "$ref": "#/$defs/ConceptRole"
+        },
         "status": {
           "description": "The definition's resource status. Omitted means `active`.",
           "$ref": "#/$defs/ResourceStatus2"
@@ -4646,6 +4998,26 @@
         "artifactId",
         "version",
         "sha256"
+      ]
+    },
+    "InterpretationFormat": {
+      "description": "Only the interpretation wire format decodes here.",
+      "oneOf": [
+        {
+          "description": "First interpretation contract.",
+          "type": "string",
+          "const": "norn.interpretation/1"
+        }
+      ]
+    },
+    "InterpretationRole": {
+      "description": "A law interpretation is neither source evidence nor term correspondence.",
+      "oneOf": [
+        {
+          "description": "Subject to contract totality and preservation obligations.",
+          "type": "string",
+          "const": "law_interpretation"
+        }
       ]
     },
     "Invariant": {
@@ -5462,6 +5834,43 @@
         "properties"
       ]
     },
+    "LawInterpretationIr": {
+      "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Closed format discriminator.",
+          "$ref": "#/$defs/InterpretationFormat"
+        },
+        "members": {
+          "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberInterpretation"
+          }
+        },
+        "role": {
+          "description": "Explicit semantic role.",
+          "$ref": "#/$defs/InterpretationRole"
+        },
+        "sourceLayer": {
+          "description": "Layer whose contract must be preserved.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        },
+        "targetLayer": {
+          "description": "Layer interpreting that contract.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "role",
+        "sourceLayer",
+        "targetLayer",
+        "members"
+      ]
+    },
     "LawModality": {
       "description": "Scoped temporal vocabulary; nested temporal operators have no wire representation.",
       "oneOf": [
@@ -5791,6 +6200,24 @@
             "kind",
             "id"
           ]
+        },
+        {
+          "description": "Exact retained composition-pack boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "pack"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
         }
       ]
     },
@@ -6103,6 +6530,33 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
     },
+    "LinkImage": {
+      "description": "The source path a [`PathMapping`] assigns to one target link.",
+      "type": "object",
+      "properties": {
+        "concept": {
+          "description": "The target concept declaring the link.",
+          "type": "string"
+        },
+        "link": {
+          "description": "The target link ID.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Forward source link IDs from the image of `concept`; empty is identity.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "concept",
+        "link",
+        "path"
+      ]
+    },
     "LinkMap": {
       "description": "One link rule: the produced object links to the object another map\nproduces with this key (an RML referencing object map with its join).",
       "type": "object",
@@ -6246,8 +6700,8 @@
         "reason"
       ]
     },
-    "MappingPayload": {
-      "description": "The payload of a `mapping` artifact: an interface-scoped mapping\n([`mapping::MappingIr`], T8-MAP-1a).",
+    "MappingIr": {
+      "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
       "type": "object",
       "properties": {
         "entitlements": {
@@ -6289,6 +6743,13 @@
             "$ref": "#/$defs/ObjectMap"
           }
         },
+        "pathMappings": {
+          "description": "Required path preservation obligations over the named entity artifacts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PathMappingBinding"
+          }
+        },
         "source": {
           "description": "The one `source_schema` artifact the mapping reads, pinned by\ncontent hash.",
           "$ref": "#/$defs/SourceBinding"
@@ -6300,6 +6761,19 @@
         "source",
         "interfaces",
         "maps"
+      ]
+    },
+    "MappingPayload": {
+      "description": "The payload of a `mapping` artifact: source-record transforms or a\nseparately checked law interpretation ([`mapping::MappingDocument`]).",
+      "oneOf": [
+        {
+          "description": "Source records produce ordinary entity facts, never inherited laws.",
+          "$ref": "#/$defs/MappingIr"
+        },
+        {
+          "description": "A separately checked interpretation between exact ontology layers.",
+          "$ref": "#/$defs/LawInterpretationIr"
+        }
       ]
     },
     "MappingRelation": {
@@ -6476,6 +6950,242 @@
             "kind"
           ]
         }
+      ]
+    },
+    "Member": {
+      "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id.",
+      "oneOf": [
+        {
+          "description": "The artifact as a whole (an action, a decision, a mapping).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "type"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName"
+          ]
+        },
+        {
+          "description": "A property of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "property": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "property"
+          ]
+        },
+        {
+          "description": "A link of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link"
+            },
+            "link": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "link"
+          ]
+        },
+        {
+          "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "state"
+          ]
+        },
+        {
+          "description": "A declared transition of a type's lifecycle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "transition"
+          ]
+        },
+        {
+          "description": "An object map of a mapping.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_map"
+            },
+            "map": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "map"
+          ]
+        },
+        {
+          "description": "A law.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "law": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "law"
+          ]
+        }
+      ]
+    },
+    "MemberInterpretation": {
+      "description": "One interpretation between exact catalog members, never a coverage claim.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Source type, property, link, lifecycle state or transition identity.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "target": {
+          "description": "Corresponding target identity, resolved within the pinned target layer.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "transform": {
+          "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ]
+    },
+    "MemberRef": {
+      "description": "A member of one exact artifact.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "member": {
+          "$ref": "#/$defs/Member"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "member"
+      ]
+    },
+    "MemoryLimits": {
+      "description": "Working-memory targets (§1 row 4). Allocation metering is `T3-BUDGET-1`.",
+      "type": "object",
+      "properties": {
+        "live_footprint_target_bytes": {
+          "description": "Integrated live-footprint target under the concurrency fixture, in\nbytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_turn_working_bytes": {
+          "description": "Maximum incremental working allocation per admitted turn, in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_turn_working_bytes",
+        "live_footprint_target_bytes"
       ]
     },
     "Multiplicity": {
@@ -6819,6 +7529,10 @@
             "$ref": "#/$defs/KeySpec"
           }
         },
+        "immutable": {
+          "description": "FA-IMM-1: existing instances are append-only; subtypes inherit this flag.",
+          "type": "boolean"
+        },
         "implements": {
           "description": "Interfaces the type implements, in addition to those its supertypes\nimplement. Omitted when empty.",
           "type": "array",
@@ -6871,6 +7585,10 @@
           "items": {
             "$ref": "#/$defs/Property"
           }
+        },
+        "role": {
+          "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+          "$ref": "#/$defs/ConceptRole"
         },
         "status": {
           "description": "The definition's resource status. Omitted means `active` (the\ncanonical form omits it).",
@@ -7561,7 +8279,8 @@
             "customization",
             "setting",
             "business_pack",
-            "policy"
+            "policy",
+            "defined_concept"
           ]
         },
         {
@@ -7689,6 +8408,66 @@
         "pack"
       ]
     },
+    "PathMapping": {
+      "description": "PATH-MAP-1: a declared mapping `F: target -> source` between two concept\ncatalogs. Each target concept names its source concept and each mapped\ntarget link a forward source path; source data moves to the target by\npullback along these paths. Unmapped target links are never produced.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable declaration identity, retained by generated TGDs.",
+          "type": "string"
+        },
+        "links": {
+          "description": "Images of target links. Two images of one link make it non-functional.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkImage"
+          }
+        },
+        "objects": {
+          "description": "Target concept name to source concept name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "objects",
+        "links"
+      ]
+    },
+    "PathMappingBinding": {
+      "description": "Catalog bindings for a required path mapping. Admission binds evidence to\nthe exact envelopes (including equations), and the enclosing MappingIR.",
+      "type": "object",
+      "properties": {
+        "mapping": {
+          "description": "Declared object and link images.",
+          "$ref": "#/$defs/PathMapping"
+        },
+        "sourceEntities": {
+          "description": "Source entity artifact IDs.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "targetEntities": {
+          "description": "Target entity artifact IDs.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sourceEntities",
+        "targetEntities",
+        "mapping"
+      ]
+    },
     "PolicyObligation": {
       "description": "One obligation of an [`ObligationPolicyRoot`].",
       "type": "object",
@@ -7795,6 +8574,10 @@
             "$ref": "#/$defs/MarkingId"
           }
         },
+        "protected": {
+          "description": "FA-PROTECT-1: only sealed rule outputs may write this inherited field.",
+          "type": "boolean"
+        },
         "type": {
           "description": "The value kind: inline, or a shared property type through `ref`.",
           "$ref": "#/$defs/PropertyType"
@@ -7804,6 +8587,91 @@
       "required": [
         "id",
         "type"
+      ]
+    },
+    "PropertyAdditivity": {
+      "description": "METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.\nMissing declarations permit point reads but never authorize aggregation.",
+      "oneOf": [
+        {
+          "description": "No aggregation contract has been declared.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "undeclared"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Summable across entities and time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Summable across entities at a single instant, never across time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "semi_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Requires a separately declared weighting calculation.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "non_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Recompute from the sums of these operands, never average stored ratios.",
+          "type": "object",
+          "properties": {
+            "denominator": {
+              "description": "Denominator property at the same object grain.",
+              "$ref": "#/$defs/PropertyId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "ratio"
+            },
+            "numerator": {
+              "description": "Numerator property at the same object grain.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "numerator",
+            "denominator"
+          ]
+        }
       ]
     },
     "PropertyConstraints": {
@@ -7908,6 +8776,10 @@
           "description": "A signed 64-bit integer.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "Explicit aggregation contract; a missing declaration fails closed.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "kind": {
               "type": "string",
               "const": "integer"
@@ -7922,6 +8794,10 @@
           "description": "An exact decimal with a fixed number of fraction digits, optionally a\nquantity in a declared unit.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "Explicit aggregation contract; units do not imply additivity.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "currencySource": {
               "description": "Authoritative currency path relative to the object holding this amount.\nMonetary decimals declare this instead of a quantity unit. Metrics\nmust verify this source; descriptions and names carry no semantics.",
               "$ref": "#/$defs/DimensionPath"
@@ -7929,6 +8805,14 @@
             "kind": {
               "type": "string",
               "const": "decimal"
+            },
+            "perUnit": {
+              "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`.",
+              "$ref": "#/$defs/UnitRef"
+            },
+            "rounding": {
+              "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+              "$ref": "#/$defs/Rounding"
             },
             "scale": {
               "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",
@@ -7942,6 +8826,25 @@
           "required": [
             "kind",
             "scale"
+          ]
+        },
+        {
+          "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+          "type": "object",
+          "properties": {
+            "group": {
+              "description": "Same-name members in one interface bind identically.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal-binding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group"
           ]
         },
         {
@@ -8424,6 +9327,57 @@
         "value"
       ]
     },
+    "ResourceLimitProfile": {
+      "description": "A versioned resource-limit profile (ruling 2026-09-27 §1).\n\nAll values are v1 qualification targets pending measurement.",
+      "type": "object",
+      "properties": {
+        "decide": {
+          "description": "One warm `decide`.",
+          "$ref": "#/$defs/DecideBudget"
+        },
+        "envelope": {
+          "description": "The per-decision output envelope.",
+          "$ref": "#/$defs/EnvelopeLimits"
+        },
+        "helper": {
+          "description": "An inline custom helper, only if D33 ever admits one.",
+          "$ref": "#/$defs/HelperLimits"
+        },
+        "id": {
+          "description": "Profile family identifier, e.g. `norn.limits`.",
+          "type": "string"
+        },
+        "memory": {
+          "description": "Working memory.",
+          "$ref": "#/$defs/MemoryLimits"
+        },
+        "slice": {
+          "description": "The declared input slice.",
+          "$ref": "#/$defs/SliceLimits"
+        },
+        "turn": {
+          "description": "The whole synchronous cell turn: one aggregate budget.",
+          "$ref": "#/$defs/TurnBudget"
+        },
+        "version": {
+          "description": "Profile version within the family. Any changed value is a new version.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "decide",
+        "turn",
+        "slice",
+        "memory",
+        "envelope",
+        "helper"
+      ]
+    },
     "ResourceLimits": {
       "description": "Resource ceilings of a customization executable.",
       "type": "object",
@@ -8592,6 +9546,16 @@
       "additionalProperties": false,
       "required": [
         "anyOf"
+      ]
+    },
+    "Rounding": {
+      "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+      "type": "string",
+      "enum": [
+        "refuse",
+        "toward_zero",
+        "half_even",
+        "half_away_from_zero"
       ]
     },
     "RuleConditionV1": {
@@ -9383,8 +10347,7 @@
         {
           "properties": {
             "value": {
-              "type": "number",
-              "format": "double"
+              "$ref": "#/$defs/DecimalLiteral"
             },
             "valueType": {
               "const": "number"
@@ -9478,7 +10441,7 @@
       ]
     },
     "SettingValueType": {
-      "description": "The JSON type of a setting's `value`.",
+      "description": "The setting value kind; numbers use exact decimal-string literals.",
       "type": "string",
       "enum": [
         "text",
@@ -9533,6 +10496,84 @@
     "SliceKey": {
       "description": "Where a [`SliceDeclaration`]'s key comes from.",
       "oneOf": [
+        {
+          "description": "A unique effective parameter selected from an earlier authorized link list.",
+          "type": "object",
+          "properties": {
+            "parameter": {
+              "type": "object",
+              "properties": {
+                "defaultFrom": {
+                  "description": "Earlier single-object slice holding an explicit default setting.",
+                  "type": "string"
+                },
+                "effectiveAt": {
+                  "description": "Action input field carrying the declared effective timestamp.",
+                  "$ref": "#/$defs/PropertyId"
+                },
+                "from": {
+                  "description": "Earlier list slice containing the candidate setting facts.",
+                  "type": "string"
+                },
+                "precedence": {
+                  "description": "Explicit scope precedence, highest first.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "businessUnitId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "environmentId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "orgId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tenantId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "workspaceId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "settingKey": {
+                  "description": "Stable parameter key.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "settingKey",
+                "effectiveAt",
+                "precedence"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "parameter"
+          ]
+        },
         {
           "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
           "type": "string",
@@ -9609,6 +10650,43 @@
             "link"
           ]
         }
+      ]
+    },
+    "SliceLimits": {
+      "description": "Bounds on the declared input slice (§1 row 3), enforced while reading.",
+      "type": "object",
+      "properties": {
+        "max_canonical_bytes": {
+          "description": "Maximum canonical input bytes of the slice.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_records": {
+          "description": "Maximum selected records.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_relation_depth": {
+          "description": "Maximum relation depth.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "qualification_ceiling_bytes": {
+          "description": "The byte ceiling a later, measured profile may raise\n`max_canonical_bytes` to. Informational: never enforced in place of\n`max_canonical_bytes`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_canonical_bytes",
+        "max_records",
+        "max_relation_depth",
+        "qualification_ceiling_bytes"
       ]
     },
     "SourceAdapter": {
@@ -10175,6 +11253,10 @@
             "type": "string"
           }
         },
+        "guardRefusalCode": {
+          "description": "GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.\nOmission inherits a parent's diagnostic; guard evidence is retained.",
+          "type": "string"
+        },
         "guards": {
           "description": "Boolean ZEN Expressions over the object's properties, evaluated on\nthe state before the change; the transition may be taken only when\nevery one holds (their conjunction). A subtype that redeclares the\ntransition restates every inherited guard verbatim and may append its\nown, so the declaration it carries is the full effective guard set;\ndropping or replacing an inherited guard is a checker error. A guard\nreads the object through `self`; the checker parses it (T1-ONT-2)\nand types it (T1-EXPR-5, #2523); enforcement at commit is the\nkernel's. Omitted when empty.",
           "type": "array",
@@ -10202,6 +11284,29 @@
       "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TurnBudget": {
+      "description": "Budget for one synchronous cell turn (§1 row 2): one aggregate budget that\nevery triggered decision, validation, and helper debits.",
+      "type": "object",
+      "properties": {
+        "cpu_p99_micros": {
+          "description": "Target p99 active CPU per turn, in microseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fuel_units": {
+          "description": "Deterministic fuel per turn, in Norn ZEN metering units, shared by every\ndecision in the turn. Provisional and uncalibrated until `T3-BUDGET-1`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cpu_p99_micros",
+        "fuel_units"
+      ]
     },
     "TypeCandidate": {
       "description": "A candidate normalized type and who asserted it.",

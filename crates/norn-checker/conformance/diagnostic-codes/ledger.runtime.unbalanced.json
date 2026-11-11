@@ -1,0 +1,7 @@
+{
+  "code": "ledger.runtime.unbalanced",
+  "message": "runtime residual {residual} for unit `{unitId}` layer `{layer}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

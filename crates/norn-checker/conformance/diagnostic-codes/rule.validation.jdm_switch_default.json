@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_switch_default",
+  "message": "switch {nodeId} {problem}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

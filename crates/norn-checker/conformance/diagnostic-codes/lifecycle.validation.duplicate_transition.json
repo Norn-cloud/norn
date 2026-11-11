@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.duplicate_transition",
+  "message": "{from} -> {to} is already declared by another transition",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

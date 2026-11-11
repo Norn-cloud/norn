@@ -1,0 +1,70 @@
+[
+  {
+    "name": "demo.input",
+    "label": "Input",
+    "type": "simple",
+    "type_params": {
+      "expr": "input",
+      "metric_aggregation_params": {
+        "semantic_model": "demo.Conversion",
+        "agg": "sum",
+        "agg_time_dimension": "occurred_at"
+      }
+    },
+    "x-norn": {
+      "irVersion": "0.1",
+      "additivity": {
+        "kind": "additive"
+      },
+      "timeDimension": {
+        "property": "occurred_at"
+      },
+      "owner": "finance",
+      "certified": true
+    }
+  },
+  {
+    "name": "demo.recovered",
+    "label": "Recovered",
+    "type": "simple",
+    "type_params": {
+      "expr": "recovered",
+      "metric_aggregation_params": {
+        "semantic_model": "demo.Conversion",
+        "agg": "sum",
+        "agg_time_dimension": "occurred_at"
+      }
+    },
+    "x-norn": {
+      "irVersion": "0.1",
+      "additivity": {
+        "kind": "additive"
+      },
+      "timeDimension": {
+        "property": "occurred_at"
+      },
+      "owner": "finance",
+      "certified": true
+    }
+  },
+  {
+    "name": "demo.yield",
+    "label": "Yield",
+    "type": "ratio",
+    "type_params": {
+      "numerator": "demo.recovered",
+      "denominator": "demo.input"
+    },
+    "x-norn": {
+      "irVersion": "0.1",
+      "additivity": {
+        "kind": "non_additive"
+      },
+      "timeDimension": {
+        "property": "occurred_at"
+      },
+      "owner": "finance",
+      "certified": true
+    }
+  }
+]

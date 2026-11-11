@@ -716,6 +716,14 @@ impl<'a> Checker<'a, '_> {
             let position = position.to_string();
             let at = [at, &["properties", position.as_str()]].concat();
             check_property_shape(&at, property, catalog, registry, &mut self.out);
+            if property.protected {
+                self.out.push(error(
+                    codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
+                    "protected link properties require sealed link authority, which is not supported"
+                        .to_owned(),
+                    span_at(&at, &["protected"]),
+                ));
+            }
             if !ids.insert(&property.id) {
                 self.out.push(error(
                     codes::DUPLICATE_PROPERTY_ID,
@@ -1335,9 +1343,7 @@ impl<'a> Checker<'a, '_> {
                         return (Some(format!("`self` could not be bound: {error}")), false);
                     }
                 };
-                if let Err(findings) =
-                    norn_expr::check_expression(expression, &bound, &norn_expr::Type::Bool)
-                {
+                if let Err(findings) = expression.check_typed(&bound, &norn_expr::Type::Bool) {
                     return (
                         Some(findings.first().map_or_else(
                             || "expression failed type checking".to_owned(),
@@ -1374,7 +1380,8 @@ impl<'a> Checker<'a, '_> {
                         );
                     }
                 };
-                if norn_expr::check_expression(expression, &property_only, &norn_expr::Type::Bool)
+                if expression
+                    .check_typed(&property_only, &norn_expr::Type::Bool)
                     .is_err()
                 {
                     (

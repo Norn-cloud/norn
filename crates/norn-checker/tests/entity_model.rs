@@ -281,6 +281,11 @@ fn every_code_has_a_negative_case() {
             serde_json::json!({"objectTypes":[{"name":"test.Thing","links":[{"id":"owner","target":"crm.Customer","cardinality":one_of_many,"properties":[{"id":"email","type":{"kind":"text"},"markings":["pii.contact"]}]}]}]}),
         ),
         (
+            codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
+            "/objectTypes/0/links/0/properties/0/protected",
+            serde_json::json!({"objectTypes":[{"name":"test.Thing","links":[{"id":"owner","target":"crm.Customer","cardinality":one_of_many,"properties":[{"id":"marker","type":{"kind":"text"},"protected":true}]}]}]}),
+        ),
+        (
             codes::SHADOWS_BASE,
             "/objectTypes/0/name",
             serde_json::json!({ "objectTypes": [{ "name": "crm.Customer" }] }),
@@ -702,7 +707,7 @@ fn inherited_owned_collection_ids_cannot_be_redeclared_and_effective_views_are_n
         base: base_model,
         tenant: None,
     };
-    let effective = effective_object_types(&model, &context);
+    let effective = effective_object_types(&model, &context).expect("effective view derives");
     let collections = &effective[&1].0.owned_collections;
     assert_eq!(collections.len(), 1);
     assert_eq!(collections[0].max_rows.0, 2);
@@ -1615,6 +1620,45 @@ fn link_properties_follow_the_property_rules() {
 }
 
 #[test]
+fn link_protection_is_refused_for_definitions_and_extensions_until_authority_exists() {
+    for protected in [false, true] {
+        let properties = serde_json::json!([{
+            "id":"marker", "type":{"kind":"text"}, "protected":protected
+        }]);
+        let defined = findings(&serde_json::json!({"objectTypes":[{
+            "name":"test.Thing", "links":[{"id":"owner","target":"crm.Customer",
+                "cardinality":one_of_many(), "properties":properties.clone()}]
+        }]}));
+        assert_eq!(
+            defined,
+            if protected {
+                one(
+                    codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
+                    "/objectTypes/0/links/0/properties/0/protected",
+                )
+            } else {
+                Vec::new()
+            }
+        );
+        let mut extensions = serde_json::to_value(tenant_link_layer().extensions)
+            .expect("fixture extensions serialize");
+        extensions[0]["links"][0]["properties"] = properties;
+        let extended = tenant_findings(&serde_json::json!({"extensions":extensions}));
+        assert_eq!(
+            extended,
+            if protected {
+                one(
+                    codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
+                    "/extensions/0/links/0/properties/0/protected",
+                )
+            } else {
+                Vec::new()
+            }
+        );
+    }
+}
+
+#[test]
 fn tenants_add_namespaced_links_and_only_narrow_base_links() {
     // A tenant subtype narrows an installed link.
     assert_eq!(
@@ -1865,4 +1909,90 @@ fn inverse_roles_cannot_shadow_members_of_descendant_interfaces_without_implemen
             .iter()
             .any(|(code, _)| code == codes::MEMBER_ID_CONFLICT)
     );
+}
+
+// GRAPH-ROLE-1: exercise admission, including interfaces with no implementors.
+fn role_diagnostics(declarations: &[Option<bool>], edges: &[u16]) -> Vec<String> {
+    let interfaces: Vec<_> = declarations
+        .iter()
+        .enumerate()
+        .map(|(i, role)| {
+            let mut def = serde_json::json!({
+                "name": format!("test.Node{i}"),
+                "extends": (0..i).filter(|parent| edges[i] & (1 << parent) != 0)
+                    .map(|parent| format!("test.Node{parent}")).collect::<Vec<_>>()
+            });
+            if let Some(happening) = role {
+                def["role"] = serde_json::json!(if *happening { "happening" } else { "thing" });
+            }
+            def
+        })
+        .collect();
+    let model = serde_json::json!({"interfaces": interfaces});
+    findings(&model)
+        .into_iter()
+        .map(|(code, pointer)| {
+            assert!(model.pointer(&pointer).is_some());
+            code
+        })
+        .collect()
+}
+
+#[test]
+fn graph_role_defaults_inherits_and_refuses_conflicts_without_implementors() {
+    assert!(role_diagnostics(&[None, None], &[0, 1]).is_empty());
+    assert!(role_diagnostics(&[Some(true), None], &[0, 1]).is_empty());
+    assert_eq!(
+        role_diagnostics(&[Some(true), Some(false)], &[0, 1]),
+        ["core.graph.role_mismatch"]
+    );
+    assert_eq!(
+        role_diagnostics(&[Some(true), Some(false), None], &[0, 0, 3]),
+        ["core.graph.role_conflict"]
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn graph_role_dags_match_independent_bitset_oracle(nodes in proptest::collection::vec((proptest::option::of(proptest::bool::ANY), proptest::num::u16::ANY), 1..12)) {
+        let (roles, edges): (Vec<_>, Vec<_>) = nodes.into_iter().unzip();
+        let mut expected: Vec<Option<Result<bool, &str>>> = Vec::new();
+        for (i, declared) in roles.iter().enumerate() {
+            let parents: Option<Vec<_>> = (0..i).filter(|p| edges[i] & (1 << p) != 0).map(|p| expected[p].and_then(Result::ok)).collect();
+            let Some(parents) = parents else { expected.push(None); continue; };
+            let bits = parents.iter().fold(0_u8, |bits, role| bits | if *role { 2 } else { 1 });
+            expected.push(Some(if bits == 3 {
+                Err("core.graph.role_conflict")
+            } else if declared.is_some_and(|role| bits != 0 && bits != if role { 2 } else { 1 }) {
+                Err("core.graph.role_mismatch")
+            } else {
+                Ok(declared.unwrap_or(bits == 2))
+            }));
+        }
+        let refusals: Vec<_> = expected.into_iter().flatten().filter_map(Result::err).collect();
+        proptest::prop_assert_eq!(role_diagnostics(&roles, &edges), refusals);
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn protected_fields_cannot_be_weakened_anywhere_in_a_subtype_chain(flags in proptest::collection::vec(proptest::prelude::any::<bool>(), 1..9)) {
+        let definitions: Vec<_> = flags.iter().enumerate().map(|(index, protected)| {
+            let mut definition = serde_json::json!({"name":format!("test.Level{index}"),
+                "properties":[{"id":"system", "type":{"kind":"integer"}, "protected":protected}]});
+            if let Some(parent) = index.checked_sub(1) { definition["extends"] = serde_json::json!(format!("test.Level{parent}")); }
+            definition
+        }).collect();
+        let layer = Layer::from_json(&serde_json::json!({"objectTypes":definitions}));
+        let base = Layer::default();
+        let registry = BTreeSet::new();
+        let context = EntityContext { catalog: &[], registry: &registry, base: base.model(), tenant: None };
+        proptest::prop_assert!(check_entity_model(&layer.model(), &context).is_empty());
+        let effective = effective_object_types(&layer.model(), &context).expect("effective view derives");
+        for index in 0..flags.len() {
+            let protected = effective[&index].0.property("system").expect("effective property").protected();
+            proptest::prop_assert_eq!(protected, flags[..=index].iter().any(|flag| *flag));
+        }
+    }
 }

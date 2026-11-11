@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.uncacheable_profile",
+  "message": "profile {profile} is not qualified for content-based reuse; declare cache \"none\"",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

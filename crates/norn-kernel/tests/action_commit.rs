@@ -388,6 +388,25 @@ fn call<'a>(action: &'a ActionRoot, so_number: &str, key: &str) -> ActionCall<'a
 }
 
 #[test]
+fn synchronous_rule_never_degrades_to_the_primary_effect() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let mut action = approve();
+    action.synchronous_rule = Some(norn_ir::ActionRuleRef {
+        artifact_id: "demo.effects.rule".to_owned(),
+        version: "1.0.0".to_owned(),
+    });
+    let refusal = commit_action(
+        &mut NoReadOrCommit,
+        &catalog,
+        &call(&action, "SO-1", "rule"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refusal.code(), "action.unsupported_effect");
+}
+
+#[test]
 fn overlong_idempotency_key_is_refused_before_any_host_read_or_commit() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
@@ -2499,6 +2518,97 @@ impl CellHost for BaseCollisionBeforeFirstCandidate {
     }
 }
 
+/// A host on which a rival naming-series create commits just before the first commit it is given.
+struct RivalNamingCreate {
+    cell: Cell,
+    types: Vec<ObjectTypeDef>,
+    action: ActionRoot,
+    injected: bool,
+}
+
+impl CellHost for RivalNamingCreate {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = Infallible;
+
+    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
+        self.cell.load(key)
+    }
+
+    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
+        self.cell.load_link(key)
+    }
+
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "This test fixture must panic when the rival create fails rather than simulate a recoverable domain refusal"
+    )]
+    fn commit(
+        &mut self,
+        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
+    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        if !self.injected {
+            self.injected = true;
+            let catalog = TypeCatalog::new(&self.types);
+            let rival = naming_call(&self.action, "ACME", "rival", 1_767_225_600_000);
+            let outcome = commit_action(&mut self.cell, &catalog, &rival, &Allow).unwrap();
+            assert_eq!(outcome_key(outcome), "SO-ACME-2025-00001");
+        }
+        CellHost::commit(&mut self.cell, commit)
+    }
+
+    fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, Self::Error> {
+        self.cell.perform()
+    }
+
+    fn observe(&mut self) -> Result<Option<Observed<JsonObject>>, Self::Error> {
+        self.cell.observe()
+    }
+
+    fn clock(&mut self) -> Result<Option<DueTimer<JsonObject>>, Self::Error> {
+        self.cell.clock()
+    }
+
+    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
+        self.cell.publish(receipt)
+    }
+}
+
+#[test]
+fn a_losing_create_of_an_immutable_naming_series_type_retries_with_the_next_number() {
+    for gap_policy in ["gapless_within_commit", "allow_gaps"] {
+        let mut types = naming_series_types(gap_policy, "year");
+        types[0].immutable = true;
+        let catalog = TypeCatalog::new(&types);
+        let action = naming_series_action("commerce.named_order.create.immutable_race");
+        let mut host = RivalNamingCreate {
+            cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+                .with_types(types.clone()),
+            types: types.clone(),
+            action: action.clone(),
+            injected: false,
+        };
+        // Both calls select SO-ACME-2025-00001, absent when each read it. The rival commits
+        // first; the loser's absent-expecting create is a retryable conflict, not an
+        // immutability refusal, so it allocates the next number.
+        let call = naming_call(&action, "ACME", "loser", 1_767_225_600_000);
+        let outcome = commit_action(&mut host, &catalog, &call, &Allow).unwrap();
+        assert_eq!(outcome_key(outcome), "SO-ACME-2025-00002", "{gap_policy}");
+        assert!(host.injected, "the rival create committed first");
+        assert_eq!(host.cell.ledger().len(), 2);
+        for key in ["SO-ACME-2025-00001", "SO-ACME-2025-00002"] {
+            assert!(
+                host.cell
+                    .load(&FactKey::new("commerce.NamedOrder", key))
+                    .unwrap()
+                    .exists(),
+                "{key}"
+            );
+        }
+    }
+}
+
 #[test]
 fn inherited_naming_series_candidate_cas_catches_concurrent_base_create() {
     for gap_policy in ["gapless_within_commit", "allow_gaps"] {
@@ -3398,6 +3508,53 @@ fn owned_series_add(row_id: &str) -> Value {
 }
 
 #[test]
+fn owned_quantity_intent_refuses_hosts_without_combined_admission() {
+    let definitions = owned_series_types(false, false);
+    let catalog = TypeCatalog::new(&definitions);
+    let mut action = owned_series_action();
+    let mut schema = serde_json::to_value(&action.input_schema).unwrap();
+    schema["properties"]["versions"] = json!({"type": "array", "items": {
+        "type": "object", "properties": {
+            "account": {"type": "string"}, "unit": {"type": "string"},
+            "layer": {"type": "string"}, "version": {"type": "integer"}
+        }, "required": ["account", "unit", "layer", "version"], "additionalProperties": false
+    }});
+    schema["properties"]["reservation"] = json!({"type": "string"});
+    schema["properties"]["posting"] = json!({"type": "string"});
+    action.input_schema = serde_json::from_value(schema).unwrap();
+    action.quantity_effect = Some(
+        serde_json::from_value(json!({
+            "ledgerId": "stock", "balanceVersionsField": "versions",
+            "operation": {"kind": "post_reservation", "reservationIdField": "reservation",
+                "postingIdField": "posting"}
+        }))
+        .unwrap(),
+    );
+    let mut request = owned_series_call(
+        &action,
+        "unsupported-quantity",
+        "0",
+        &json!({"name": "ORDER-1", "company": "ACME"}),
+        &json!([owned_series_add("row-c")]),
+    );
+    request.input.extend(
+        serde_json::from_value::<JsonObject>(json!({
+            "versions": [], "reservation": "hold", "posting": "posted"
+        }))
+        .unwrap(),
+    );
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(definitions.clone());
+    let refusal = refuse_owned_series_atomically(&mut cell, &catalog, &request);
+    assert!(
+        matches!(&refusal,
+        ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { reason })
+            if reason == "observation authorization did not match its prepared commit"),
+        "{refusal:?}"
+    );
+}
+
+#[test]
 fn owned_row_expressions_share_action_fuel_and_refuse_atomically() {
     use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
     use norn_kernel::{EnvelopeLimits, RefusalCategory, ResourceLimitProfile};
@@ -4019,6 +4176,86 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
     );
 }
 
+#[test]
+fn owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused() {
+    let action = owned_series_action();
+    let mut definitions = owned_series_types(false, false);
+    let mut base = serde_json::to_value(&definitions[1]).unwrap();
+    base["properties"].as_array_mut().unwrap().push(json!({
+        "id":"system_value", "type":{"kind":"text"}, "protected":true, "default":"initial"
+    }));
+    definitions[1] = serde_json::from_value(base).unwrap();
+    let catalog = TypeCatalog::new(&definitions);
+    for supplied in [false, true] {
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(definitions.clone());
+        let mut row = owned_series_add("row-a");
+        if supplied {
+            row["values"]["system_value"] = json!("caller");
+        }
+        let request = owned_series_call(
+            &action,
+            "defaults",
+            "0",
+            &json!({"name":"ORDER-1", "company":"ACME"}),
+            &json!([row]),
+        );
+        let result = commit_action(&mut cell, &catalog, &request, &Allow);
+        if supplied {
+            assert!(result.is_err());
+            assert!(cell.ledger().is_empty());
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            let child = cell
+                .load(&FactKey::new(OWNED_SERIES_CHILD, "row-a"))
+                .unwrap();
+            assert_eq!(
+                child.values.unwrap().get("system_value"),
+                Some(&JsonValue::String("initial".into()))
+            );
+        }
+    }
+}
+
+#[test]
+fn owned_row_actions_refuse_protected_framework_identity_and_order() {
+    let action = owned_series_action();
+    for property in ["row_id", "idx"] {
+        let mut definitions = owned_series_types(false, false);
+        definitions[1]
+            .properties
+            .iter_mut()
+            .find(|candidate| candidate.id.as_str() == property)
+            .unwrap()
+            .protected = true;
+        let catalog = TypeCatalog::new(&definitions);
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(definitions.clone());
+        let request = owned_series_call(
+            &action,
+            "protected-framework",
+            "0",
+            &json!({"name":"ORDER-1", "company":"ACME"}),
+            &json!([owned_series_add("row-a")]),
+        );
+        let refusal = commit_action(&mut cell, &catalog, &request, &Allow).unwrap_err();
+        assert_eq!(refusal.code(), "action.unsupported_effect");
+        assert!(cell.ledger().is_empty());
+        assert!(
+            !cell
+                .load(&FactKey::new(OWNED_SERIES_CHILD, "row-a"))
+                .unwrap()
+                .exists()
+        );
+        assert!(
+            !cell
+                .load(&FactKey::new("commerce.NamedOrder", "ORDER-1"))
+                .unwrap()
+                .exists()
+        );
+    }
+}
+
 norn_testkit::proptest::proptest! {
     #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
     #[test]
@@ -4033,17 +4270,203 @@ norn_testkit::proptest::proptest! {
         let action: ActionRoot = serde_json::from_value(payload).unwrap();
         let types = order_types(); let catalog = TypeCatalog::new(&types);
         let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        seed(&mut cell, ORDER, "SO-1", "draft");
+        let seeded = cell.ledger().len();
         let mut request = call(&action, "SO-1", "receipt-effect");
         request.input.insert("receipt".to_owned(), JsonValue::String(reference));
         let reference = norn_kernel::receipt_binding::ReceiptReference::parse(&JsonValue::String(format!("sha256:{}", "a".repeat(64)))).unwrap();
         let manifest = norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)));
         let unresolved = cell.resolve_accepted_receipt(&reference, &manifest).unwrap().is_none();
         norn_testkit::proptest::prop_assert!(unresolved);
-        let refused = matches!(commit_action(&mut cell, &catalog, &request, &Allow), Err(ActionRefusal::UnsupportedEffect { .. }));
-        norn_testkit::proptest::prop_assert!(refused);
-        norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
+        // RECEIPT-EFFECT-1: a host without receipt support refuses; a
+        // malformed reference refuses before any host lookup.
+        let refused = commit_action(&mut cell, &catalog, &request, &Allow).map(|_| ()).unwrap_err();
+        norn_testkit::proptest::prop_assert!(matches!(
+            refused.code(),
+            "action.receipt_effect_unsupported" | "action.receipt_reference_invalid"
+        ), "{}", refused.code());
+        norn_testkit::proptest::prop_assert_eq!(cell.ledger().len(), seeded);
         request.input.insert("receipt".to_owned(), JsonValue::Object(JsonObject::new()));
-        norn_testkit::proptest::prop_assert!(commit_action(&mut cell, &catalog, &request, &Allow).is_err());
-        norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
+        let refused = commit_action(&mut cell, &catalog, &request, &Allow).map(|_| ()).unwrap_err();
+        norn_testkit::proptest::prop_assert!(matches!(
+            refused.code(),
+            "action.invalid_input" | "action.receipt_body_forbidden"
+        ), "{}", refused.code());
+        norn_testkit::proptest::prop_assert_eq!(cell.ledger().len(), seeded);
     }
+}
+
+fn synchronous_writer() -> norn_kernel::SynchronousRule {
+    let artifacts: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/action-writer.json")).unwrap();
+    let artifact = artifacts
+        .iter()
+        .find(|artifact| artifact["artifactId"] == "example.atomic.writer.rule")
+        .unwrap();
+    let root = serde_json::from_value(artifact["payload"].clone()).unwrap();
+    norn_kernel::SynchronousRule::admit(
+        norn_ir::ActionRuleRef {
+            artifact_id: "example.atomic.writer.rule".into(),
+            version: "1.0.0".into(),
+        },
+        &root,
+        &BTreeMap::new(),
+        norn_decisions::DecisionBinding {
+            profile_id: "norn-zen/6".into(),
+            environment_hash: "test".into(),
+        },
+    )
+    .unwrap()
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn synchronous_writer_is_atomic_authorized_and_replay_bound(actor in "agent:[a-z]{1,20}") {
+        let types = order_types();
+        let rules = [synchronous_writer()];
+        let catalog = TypeCatalog::new(&types).with_action_rules(&rules);
+        let mut action = approve_with_submit_command("input.so_number");
+        action.synchronous_rule = Some(norn_ir::ActionRuleRef {artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into()});
+        action.writes.push(norn_ir::ActionWrite {entity_kind:"commerce.Quote".into(),change:norn_ir::WriteChange::Created});
+        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        let order = seed(&mut cell, ORDER, "SO-1", "draft");
+        let mut request = call(&action, "SO-1", "atomic-rule"); request.actor = actor.clone();
+        commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
+        assert_eq!(cell.ledger().len(), 2);
+        assert_eq!(cell.ledger().last().unwrap().written.len(), 3);
+        assert_eq!(status(&cell, &order), Some(JsonValue::String("approved".into())));
+        assert!(cell.load(&FactKey::new("commerce.Quote", actor)).unwrap().exists());
+        assert_eq!(cell.outbox().len(), 1);
+        assert!(matches!(commit_action(&mut cell, &catalog, &request, &Allow).unwrap(), ActionOutcome::Replayed {..}));
+        request.scope.insert("orgId".into(), "different".into());
+        assert_refused(&mut cell, &catalog, &request, &Allow, "action.idempotency_conflict");
+        request.scope = scope();
+        let mut denied = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        seed(&mut denied, ORDER, "SO-1", "draft");
+        struct DenyQuote;
+        impl ActionAuthorizer for DenyQuote {
+            fn authorize(&self, r: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+                if r.target.object_type.as_str() == "commerce.Quote" { Err(ActionDenial::Forbidden { reason:"fixture".into() }) } else { Ok(()) }
+            }
+        }
+        assert_refused(&mut denied, &catalog, &request, &DenyQuote, "action.permission_denied");
+        assert!(denied.outbox().is_empty());
+        action.writes.retain(|write| write.entity_kind == ORDER);
+        assert_refused(&mut denied, &catalog, &call(&action, "SO-1", "uncovered"), &Allow, "core.txn.unchecked_writer");
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn rule_receipts_preserve_optional_binding_metadata(binding in "[a-f0-9]{64}") {
+        let types = order_types();
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        seed(&mut cell, ORDER, "SO-1", "draft");
+        let action = approve();
+        let ActionOutcome::Committed { mut record, .. } = commit_action(&mut cell, &catalog, &call(&action, "SO-1", "receipt"), &Allow).unwrap() else { unreachable!() };
+        assert!(record.rule_binding.is_none());
+        record.rule_binding = Some(binding);
+        let mut values: JsonObject = serde_json::from_value(serde_json::to_value(&record).unwrap()).unwrap();
+        assert_eq!(norn_kernel::ActionCallRecord::from_values(&values), Some(record));
+        values.insert("ruleBinding".into(), JsonValue::Null);
+        assert_eq!(norn_kernel::ActionCallRecord::from_values(&values).map(|record| record.rule_binding), Some(None));
+        values.insert("ruleBinding".into(), JsonValue::Bool(true));
+        assert!(norn_kernel::ActionCallRecord::from_values(&values).is_none());
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn synchronous_rule_fuel_errors_keep_the_limit_category(limit in norn_testkit::proptest::prelude::any::<u64>(), used in norn_testkit::proptest::prelude::any::<u64>()) {
+        let refusal: ActionRefusal<()> = norn_decisions::DecisionError::BudgetExhausted { limit, used }.into();
+        norn_testkit::proptest::prop_assert_eq!(refusal.code(), "action.expression_budget_exceeded");
+        norn_testkit::proptest::prop_assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
+        norn_testkit::proptest::prop_assert!(matches!(refusal, ActionRefusal::ExpressionBudgetExceeded { limit: actual } if actual == norn_kernel::limits::ResourceLimitProfile::norn_limits_v1().turn.fuel_units), "the full action fuel ceiling is preserved");
+    }
+}
+
+// TXN-ATOMIC-1 / TXN-CLOSED-1: both directions connect the same proposed objects.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn synchronous_links_share_the_fact_commit_and_refuse_dangling_endpoints(id in "[A-Z]{1,12}") {
+        let mut types = order_types();
+        types[0] = types[1].clone();
+        types[0].name = norn_ir::ObjectTypeName(ORDER.to_owned());
+        for (index, link, target) in [(0, "quote", "commerce.Quote"), (1, "order", ORDER)] {
+            types[index].links.push(serde_json::from_value(json!({"id":link,"target":target,"cardinality":{"to":"one","from":"many"}})).unwrap());
+        }
+        let rules = [synchronous_writer()];
+        let catalog = TypeCatalog::new(&types).with_action_rules(&rules);
+        let mut action = approve();
+        action.synchronous_rule = Some(norn_ir::ActionRuleRef {artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into()});
+        action.writes.push(norn_ir::ActionWrite {entity_kind:"commerce.Quote".into(),change:norn_ir::WriteChange::Created});
+        action.create_links = serde_json::from_value(json!([
+            {"link":"quote","targetType":"commerce.Quote","targetIdField":"so_number"},
+            {"source":{"objectType":"commerce.Quote","idField":"so_number"},"link":"order","targetType":ORDER,"targetIdField":"so_number"}
+        ])).unwrap();
+        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone()).with_types(types.clone());
+        let order = seed(&mut cell, ORDER, &id, "draft");
+        let mut request = call(&action, &id, "atomic-links"); request.actor = id.clone();
+        commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
+        let quote = FactKey::new("commerce.Quote", &id);
+        assert!(cell.load_link(&LinkKey::new(order.clone(), "quote", quote.clone())).unwrap().exists());
+        assert!(cell.load_link(&LinkKey::new(quote, "order", order)).unwrap().exists());
+        assert_eq!(cell.ledger().len(), 2);
+        assert!(matches!(commit_action(&mut cell, &catalog, &request, &Allow).unwrap(), ActionOutcome::Replayed {..}));
+        action.create_links[0].target_type = "commerce.SalesOrder".into();
+        let mut refused = Cell::new(|c: &Command<JsonObject>| c.payload.clone()).with_types(types.clone());
+        seed(&mut refused, ORDER, &id, "draft");
+        let mut request = call(&action, &id, "dangling-links"); request.actor = id;
+        assert_refused(&mut refused, &catalog, &request, &Allow, "core.txn.unchecked_writer");
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn excessive_link_closure_refuses_before_host_io(count in 17usize..65) {
+        let types = order_types();
+        let catalog = TypeCatalog::new(&types);
+        let mut action = approve();
+        action.create_links = vec![norn_ir::ActionCreateLink {source: None, link:"quote".into(),target_type:"commerce.Quote".into(),target_id_field:"so_number".into()}; count];
+        let refusal = commit_action(&mut NoReadOrCommit, &catalog, &call(&action, "SO-1", "too-many-links"), &Allow).unwrap_err();
+        norn_testkit::proptest::prop_assert_eq!(refusal.code(), "core.txn.unchecked_writer");
+    }
+}
+
+#[test]
+fn retained_direct_law_keeps_naming_counter_seed_and_allocation_available() {
+    let types = naming_series_types("gapless_within_commit", "year");
+    let mut artifacts: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).unwrap();
+    let law = &mut artifacts[0];
+    law["artifactId"] = json!("commerce.company.law");
+    law["dependencies"][0]["artifactId"] = json!("commerce.NamedOrder.entity");
+    law["payload"]["subject"] = json!("commerce.NamedOrder");
+    law["payload"]["scope"] = json!({"root":{"kind":"entity","id":"commerce.NamedOrder"},"objectTypes":["commerce.NamedOrder"]});
+    law["payload"]["response"] = json!({"kind":"predicate","expression":"self.company == ''"});
+    let laws = vec![serde_json::from_value(law.clone()).unwrap()];
+    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone())
+        .with_governing_laws(laws.clone());
+    let seed = NamingCounterSeed {
+        object_type: ObjectTypeName("commerce.NamedOrder".to_owned()),
+        key_name: norn_ir::KeyName("primary".to_owned()),
+        scope: BTreeMap::from([(PropertyId("company".to_owned()), "ACME".to_owned())]),
+        period: "2025".to_owned(),
+        current: 37,
+    };
+    assert!(
+        norn_kernel::naming_series::install_naming_counter_seeds(&mut cell, &catalog, &[seed])
+            .unwrap()
+            .is_some()
+    );
+    let action = naming_series_action("commerce.named_order.create");
+    let call = naming_call(&action, "ACME", "retained-law-counter", 1_767_225_600_000);
+    assert_eq!(
+        outcome_key(commit_action(&mut cell, &catalog, &call, &Allow).unwrap()),
+        "SO-ACME-2025-00038"
+    );
+    assert_eq!(cell.ledger().len(), 2);
 }

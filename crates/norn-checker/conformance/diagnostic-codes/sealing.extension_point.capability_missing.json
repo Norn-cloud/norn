@@ -1,0 +1,7 @@
+{
+  "code": "sealing.extension_point.capability_missing",
+  "message": "operation lacks the capabilities its extension point grants: {capabilities}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

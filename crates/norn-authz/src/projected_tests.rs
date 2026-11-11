@@ -1437,3 +1437,114 @@ fn explain_bounds_related_row_diagnostics_and_reports_omissions() {
         reversed_explanation.entitlement_evaluation.enforced_matches
     );
 }
+
+fn synchronous_writer_projection(bound: bool) -> CedarSchemaProjection {
+    let types: Vec<norn_ir::ObjectTypeDef> = [
+        json!({"name":"commerce.Order"}),
+        json!({"name":"commerce.Target"}),
+        json!({"name":"commerce.TargetChild","extends":"commerce.Target"}),
+        json!({"name":"commerce.Unmentioned"}),
+    ]
+    .into_iter()
+    .map(|value| serde_json::from_value(value).expect("resource type"))
+    .collect();
+    let mut action = json!({
+        "actionId":"orders.read","scopeRequired":["org"],"idempotent":true,"ledgered":true,
+        "inputSchema":{},"outputSchema":{},
+        "effectProgram":{"kind":"fire_transition","objectIdField":"id","objectKind":"commerce.Order","entityArtifactId":"commerce.Order.entity","entityArtifactVersion":"1.0.0","lifecycle":"status","transition":"approve"},
+        "writes":[{"entityKind":"commerce.Order","change":"modified"},{"entityKind":"commerce.Target","change":"created"}]
+    });
+    if bound {
+        action["synchronousRule"] = json!({"artifactId":"commerce.writer.rule","version":"1.0.0"});
+    }
+    norn_projections::project_cedar_schema_with_catalog(
+        &types,
+        &[],
+        &[],
+        &[serde_json::from_value(action).expect("action")],
+    )
+}
+
+fn synchronous_writer_policy() -> AccessIr {
+    let rules = ["commerce.Order", "commerce.Target", "commerce.TargetChild"]
+        .into_iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            json!({
+                "ruleId":format!("writer_{i}"),"actions":["orders.read"],"resourceType":kind,
+                "scope":{"dimensions":["org"]},"allOf":[{"role":{"anyOf":["Writer"]}}]
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::from_value(json!({"accessVersion":"0.1","policyId":"writers.access","rules":rules}))
+        .expect("writer policy")
+}
+
+#[test]
+fn synchronous_writer_schema_preserves_every_real_pdp_conjunct() {
+    let projection = synchronous_writer_projection(true);
+    let policies = crate::compile(&schema(&projection), &synchronous_writer_policy())
+        .expect("primary and secondary policies are possible");
+    let authorizer = pdp(policies.clone());
+    for kind in ["commerce.Order", "commerce.Target", "commerce.TargetChild"] {
+        let mut request = pdp_request(BTreeMap::new(), "unused", pdp_scope("o1"), &["Writer"]);
+        request.resource.object_type = kind.to_owned();
+        request.resource.attributes.clear();
+        assert_eq!(authorizer.decide(&request), PdpDecision::Allow, "{kind}");
+        let mut wrong_role = request.clone();
+        wrong_role.principal.roles.clear();
+        assert!(
+            matches!(authorizer.decide(&wrong_role), PdpDecision::Deny(_)),
+            "role remains mandatory"
+        );
+        let mut wrong_resource_scope = request.clone();
+        wrong_resource_scope.resource.scope = pdp_scope("other");
+        assert!(
+            matches!(
+                authorizer.decide(&wrong_resource_scope),
+                PdpDecision::Deny(_)
+            ),
+            "resource scope remains mandatory"
+        );
+        let mut wrong_grant_scope = request.clone();
+        wrong_grant_scope.scope = Some(pdp_scope("other"));
+        assert!(
+            matches!(authorizer.decide(&wrong_grant_scope), PdpDecision::Deny(_)),
+            "grant scope remains mandatory"
+        );
+        assert!(
+            matches!(
+                Pdp::new(policies.clone(), &[])
+                    .expect("empty grants")
+                    .decide(&request),
+                PdpDecision::Deny(_)
+            ),
+            "grant remains mandatory"
+        );
+        let empty: AccessIr =
+            serde_json::from_value(json!({"accessVersion":"0.1","policyId":"empty","rules":[]}))
+                .expect("empty policy");
+        let no_policy =
+            pdp(crate::compile(&schema(&projection), &empty).expect("empty policy compiles"));
+        assert!(
+            matches!(no_policy.decide(&request), PdpDecision::Deny(_)),
+            "policy remains mandatory"
+        );
+        request.resource.object_type = "commerce.Unmentioned".to_owned();
+        assert!(
+            matches!(authorizer.decide(&request), PdpDecision::Deny(_)),
+            "unmentioned resource type remains denied"
+        );
+    }
+}
+
+#[test]
+fn unbound_writer_policy_is_still_refused_by_the_real_cedar_validator() {
+    let projection = synchronous_writer_projection(false);
+    let error = crate::compile(&schema(&projection), &synchronous_writer_policy())
+        .expect_err("unbound secondary writers are not authorization targets");
+    assert!(
+        error.has(AuthzCode::PolicyInvalid) || error.has(AuthzCode::PolicyLint),
+        "{error}"
+    );
+}

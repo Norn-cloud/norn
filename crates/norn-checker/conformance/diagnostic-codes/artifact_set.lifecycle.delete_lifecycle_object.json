@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.lifecycle.delete_lifecycle_object",
+  "message": "the decision may delete {objectType}, which has a declared lifecycle; delete then create would reset its status without a transition",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

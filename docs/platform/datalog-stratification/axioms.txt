@@ -1,0 +1,22 @@
+'Norn.DatalogStratification.foldMax_bounds' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.foldMax_least' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.foldMax_machine_bound' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.fresh_tail' depends on axioms: [propext]
+'Norn.DatalogStratification.assign_preserves' depends on axioms: [propext]
+'Norn.DatalogStratification.assign_covers' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.assign_cross_bounds' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.internalOK_positive' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.construct_covers' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.construct_sound' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.stratify_sound' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.positive_edge' depends on axioms: [propext]
+'Norn.DatalogStratification.negative_edge' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.path_weight_monotone' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.closed_path_weight_zero' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.negative_edge_no_return' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.successful_no_negative_cycle' depends on axioms: [propext, Quot.sound]
+'Norn.DatalogStratification.budget_abort' does not depend on any axioms
+'Norn.DatalogStratification.negative_self_refused' does not depend on any axioms
+'Norn.DatalogStratification.missing_predecessor_refused' does not depend on any axioms
+'Norn.DatalogStratification.overflowing_increment_refused' does not depend on any axioms
+'Norn.DatalogStratification.positive_cycle_admitted' does not depend on any axioms

@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_unknown_column",
+  "message": "row {rowId} has a cell for {columnId}, which is not a column of the table",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

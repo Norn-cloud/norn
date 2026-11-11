@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.deep_hierarchy",
+  "message": "object type {name} has {depth} supertypes ({chain}), more than {max}; prefer interfaces or composition",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

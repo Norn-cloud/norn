@@ -1,0 +1,7 @@
+{
+  "code": "ledger.amount.constant_scale_exceeds_result",
+  "message": "constant scale {scale} exceeds result scale {resultScale}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

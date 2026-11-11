@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.import_gap",
+  "message": "Interchange import requires explicit ontology or calculation semantics.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

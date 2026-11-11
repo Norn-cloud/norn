@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.invalid_entitlement_grantee",
+  "message": "entitlement grantee kind and object type must match a canonical identity type",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "function.invocation.freshness_shape",
+  "message": "{freshness} freshness needs {requirement}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

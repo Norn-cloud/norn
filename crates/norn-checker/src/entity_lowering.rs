@@ -81,6 +81,8 @@ pub fn lower_entity_v1(v1: &EntityRootV1) -> EntityRootV2 {
     EntityRootV2 {
         entity_version: EntityIrVersion::V2_0,
         object_type: ObjectTypeDef {
+            immutable: false,
+            role: None,
             name: ObjectTypeName(v1.object_kind.clone()),
             description: None,
             status: norn_ir::ResourceStatus::default(),
@@ -108,6 +110,7 @@ pub fn lower_entity_v1(v1: &EntityRootV1) -> EntityRootV2 {
 #[must_use]
 pub fn lower_field_v1(name: &str, field: &EntityFieldV1) -> Property {
     Property {
+        protected: false,
         id: PropertyId(name.to_owned()),
         description: None,
         property_type: lower_field_type_v1(field),
@@ -128,7 +131,9 @@ pub fn lower_field_type_v1(field: &EntityFieldV1) -> PropertyType {
         EntityFieldV1::Text { .. } | EntityFieldV1::String { .. } => {
             PropertyType::Text { format: None }
         }
-        EntityFieldV1::Integer { .. } => PropertyType::Integer {},
+        EntityFieldV1::Integer { .. } => PropertyType::Integer {
+            additivity: norn_ir::PropertyAdditivity::Undeclared {},
+        },
         EntityFieldV1::Number { .. } => json_of_type("number"),
         EntityFieldV1::Boolean { .. } => PropertyType::Boolean {},
         EntityFieldV1::Object { .. } => json_of_type("object"),

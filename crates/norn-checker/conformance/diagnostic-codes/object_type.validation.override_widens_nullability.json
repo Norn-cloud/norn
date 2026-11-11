@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.override_widens_nullability",
+  "message": "property {property} is nullable, but the property {owner} declares is not; an override may only narrow",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

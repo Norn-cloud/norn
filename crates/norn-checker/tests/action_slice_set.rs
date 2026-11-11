@@ -116,6 +116,25 @@ fn related_records_inherited_catalog_types_and_derivation_refinement_are_admitte
     assert_eq!(findings(documents()), []);
 }
 
+#[test]
+fn described_decimal_action_schema_is_admitted_but_unknown_constraints_refuse() {
+    let mut documents = documents();
+    documents[4]["payload"]["inputSchema"]["properties"]["amount"] = json!({
+        "type": "number", "nornType": {"kind": "decimal", "scale": 2},
+        "description": "Exact decimal text"
+    });
+    assert_eq!(findings(documents.clone()), []);
+    for (key, value) in [("maximum", json!(1)), ("description", json!(false))] {
+        let mut invalid = documents.clone();
+        invalid[4]["payload"]["inputSchema"]["properties"]["amount"][key] = value;
+        assert!(
+            findings(invalid)
+                .iter()
+                .any(|diagnostic| { diagnostic.code == "action.validation.invalid_schema" })
+        );
+    }
+}
+
 fn cost_documents(expression: &str, with_slice: bool) -> Vec<Value> {
     let mut documents = documents();
     let action = &mut documents[4]["payload"];

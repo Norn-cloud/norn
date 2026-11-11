@@ -35,6 +35,15 @@
 //! (T8-ID-1), links (no instance representation of a v2 link exists), and
 //! invariants (they need ZEN Expression evaluation at commit).
 
+/// ID-UNIQUE-1: one canonical key binding per declaring root, scope and world.
+pub const IDENTITY_COLLISION: &str = "core.identity.collision";
+
+/// ID-STABLE-1: ordinary authoring cannot restore a deleted identity.
+pub const IDENTITY_REUSE: &str = "core.identity.reuse";
+/// Actionable guidance shared by every authored identity-reuse refusal.
+pub const IDENTITY_REUSE_MESSAGE: &str =
+    "this identity was deleted; restore it explicitly or use a new identity";
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
@@ -170,7 +179,9 @@ impl EffectiveObjectType {
                 let mut effective = EffectiveProperty::new(
                     property,
                     match &property.property_type {
-                        PropertyType::Ref { .. } => EffectiveKind::Unresolved,
+                        PropertyType::Ref { .. } | PropertyType::DecimalBinding { .. } => {
+                            EffectiveKind::Unresolved
+                        }
                         base @ (PropertyType::Text { .. }
                         | PropertyType::Integer { .. }
                         | PropertyType::Decimal { .. }
@@ -215,6 +226,7 @@ impl EffectiveObjectType {
                     PropertyType::Text { .. }
                     | PropertyType::Integer { .. }
                     | PropertyType::Decimal { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Boolean { .. }
                     | PropertyType::Timestamp { .. }
                     | PropertyType::Date { .. }
@@ -309,9 +321,16 @@ pub enum EffectiveKind {
     Unresolved,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum WriteAuthority {
+    RulesOnly,
+    CallersAndRules,
+}
+
 /// One effective property with every constraint set that applies to it.
 #[derive(Debug, Clone)]
 pub struct EffectiveProperty {
+    write_authority: WriteAuthority,
     /// The property id: the key in object payloads.
     pub id: PropertyId,
     /// The resolved type.
@@ -355,6 +374,16 @@ pub enum InstanceError {
 }
 
 impl EffectiveProperty {
+    pub(crate) fn protect(&mut self) {
+        self.write_authority = WriteAuthority::RulesOnly;
+    }
+
+    /// Whether only declared rule outputs may write this property.
+    #[must_use]
+    pub const fn protected(&self) -> bool {
+        matches!(self.write_authority, WriteAuthority::RulesOnly)
+    }
+
     /// Resolved members of the closed record, including referenced constraints.
     pub(crate) fn record_members(&self) -> &[Self] {
         &self.record_members
@@ -404,6 +433,11 @@ impl EffectiveProperty {
                 property.default.clone()
             },
             computed,
+            write_authority: if property.protected {
+                WriteAuthority::RulesOnly
+            } else {
+                WriteAuthority::CallersAndRules
+            },
             patterns,
             record_members: Vec::new(),
         }
@@ -445,6 +479,7 @@ impl EffectiveProperty {
             }
             *remaining = remaining.saturating_sub(1);
             let property = norn_ir::Property {
+                protected: false,
                 id: member.id.clone(),
                 description: None,
                 property_type: member.property_type.clone(),
@@ -555,16 +590,17 @@ impl EffectiveProperty {
             }
             PropertyType::Record { .. }
             | PropertyType::Text { .. }
-            | PropertyType::Integer {}
+            | PropertyType::Integer { .. }
             | PropertyType::Boolean {}
             | PropertyType::Enum { .. }
             | PropertyType::Timestamp { .. }
             | PropertyType::Date {}
             | PropertyType::JsonExt { schema: None } => false,
             PropertyType::JsonExt { .. } => json_ext_type(base).is_none(),
-            PropertyType::Decimal { .. } | PropertyType::Duration {} | PropertyType::Ref { .. } => {
-                true
-            }
+            PropertyType::Decimal { .. }
+            | PropertyType::Duration {}
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Ref { .. } => true,
         };
         if unsupported_kind {
             return Some(match base {
@@ -580,6 +616,7 @@ impl EffectiveProperty {
                 | PropertyType::Duration { .. }
                 | PropertyType::Enum { .. }
                 | PropertyType::Record { .. }
+                | PropertyType::DecimalBinding { .. }
                 | PropertyType::Ref { .. }) => format!(
                     "property kind '{}' on '{id}' (instance encoding is T3-NUM-1, #2770)",
                     other.kind().as_str()
@@ -633,7 +670,7 @@ impl EffectiveProperty {
                 | Value::Array(_)
                 | Value::Object(_) => Err(InstanceError::TypeMismatch("enum")),
             },
-            PropertyType::Integer {} => {
+            PropertyType::Integer { .. } => {
                 let integer =
                     integer_literal(value).ok_or(InstanceError::TypeMismatch("integer"))?;
                 self.check_bounds(&integer.to_string())
@@ -674,6 +711,7 @@ impl EffectiveProperty {
             }
             other @ (PropertyType::Decimal { .. }
             | PropertyType::Duration { .. }
+            | PropertyType::DecimalBinding { .. }
             | PropertyType::Ref { .. }) => Err(InstanceError::Unsupported(format!(
                 "property kind '{}' on '{}'",
                 other.kind().as_str(),
@@ -700,6 +738,8 @@ impl EffectiveProperty {
                 ))
             };
         }
+        let materialized = self.round_runtime_value(value)?;
+        let value = materialized.as_ref();
         let EffectiveKind::Base(base) = &self.kind else {
             return Err(InstanceError::Unsupported(format!(
                 "an unresolved type on '{}'",
@@ -737,7 +777,7 @@ impl EffectiveProperty {
                 Some(text) if values.iter().any(|entry| entry.value == text) => Ok(()),
                 _ => Err(InstanceError::TypeMismatch("enum")),
             },
-            PropertyType::Integer {} => {
+            PropertyType::Integer { .. } => {
                 let Some(integer) = value.as_i64() else {
                     return Err(InstanceError::TypeMismatch("integer"));
                 };
@@ -780,21 +820,64 @@ impl EffectiveProperty {
             PropertyType::JsonExt { .. } => {
                 self.check_runtime_json(value, closed_json_schema, base)
             }
-            other @ (PropertyType::Duration { .. } | PropertyType::Ref { .. }) => {
-                Err(InstanceError::Unsupported(format!(
-                    "property kind '{}' on '{}'",
-                    other.kind().as_str(),
-                    self.id.as_str()
-                )))
-            }
+            other @ (PropertyType::Duration { .. }
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Ref { .. }) => Err(InstanceError::Unsupported(format!(
+                "property kind '{}' on '{}'",
+                other.kind().as_str(),
+                self.id.as_str()
+            ))),
         }
     }
 
-    /// Canonicalize a valid timestamp runtime value for storage. Invalid source
-    /// strings are preserved so observation admission can record them as
+    /// VAL-ROUND: materialize explicit Decimal rounding before checking stored bounds.
+    fn round_runtime_value<'v>(
+        &self,
+        value: &'v RuntimeValue,
+    ) -> Result<std::borrow::Cow<'v, RuntimeValue>, InstanceError> {
+        let EffectiveKind::Base(
+            site @ PropertyType::Decimal {
+                rounding: Some(mode),
+                ..
+            },
+        ) = &self.kind
+        else {
+            return Ok(std::borrow::Cow::Borrowed(value));
+        };
+        if *mode == norn_ir::Rounding::Refuse || value.is_null() {
+            return Ok(std::borrow::Cow::Borrowed(value));
+        }
+        let inexact = |reason: String| {
+            InstanceError::ConstraintViolation(format!(
+                "{}: {reason}",
+                crate::property_codec::INEXACT
+            ))
+        };
+        let number = value
+            .as_decimal()
+            .ok_or(InstanceError::TypeMismatch("decimal"))?
+            .canonical()
+            .parse::<norn_expr::Number>()
+            .map_err(|reason| inexact(reason.to_string()))?;
+        let rounded = norn_expr::rescale_decimal(site, &number)
+            .map_err(|reason| inexact(reason.to_string()))?;
+        let decimal = rounded
+            .as_str()
+            .parse()
+            .map_err(|reason| inexact(format!("{reason}")))?;
+        Ok(std::borrow::Cow::Owned(RuntimeValue::Number(decimal)))
+    }
+
+    /// Canonicalize Decimal sites and valid timestamps for storage. Invalid source
+    /// values are preserved so observation admission can record them as
     /// quality findings; strict commit admission rejects them separately.
     #[must_use]
     pub fn canonical_runtime_value(&self, value: &RuntimeValue) -> RuntimeValue {
+        if matches!(self.kind, EffectiveKind::Base(PropertyType::Decimal { .. })) {
+            return self
+                .round_runtime_value(value)
+                .map_or_else(|_| value.clone(), std::borrow::Cow::into_owned);
+        }
         if matches!(self.kind, EffectiveKind::Base(PropertyType::Record { .. })) {
             let RuntimeValue::Object(values) = value else {
                 return value.clone();
@@ -886,14 +969,20 @@ impl EffectiveProperty {
             && let (
                 EffectiveKind::Base(PropertyType::Decimal {
                     unit: previous_unit,
+                    currency_source: previous_currency,
+                    per_unit: previous_per,
                     ..
                 }),
                 EffectiveKind::Base(PropertyType::Decimal {
                     unit: candidate_unit,
+                    currency_source: candidate_currency,
+                    per_unit: candidate_per,
                     ..
                 }),
             ) = (&previous.kind, &self.kind)
-            && previous_unit != candidate_unit
+            && (previous_unit != candidate_unit
+                || previous_currency != candidate_currency
+                || previous_per != candidate_per)
         {
             return Err(InstanceError::Unsupported(format!(
                 "decimal unit changed from {previous_unit:?} to {candidate_unit:?}; stored value needs an explicit conversion"
@@ -915,20 +1004,28 @@ impl EffectiveProperty {
         self.check_runtime_value(value)
     }
 
-    /// Whether `self` and `previous` admit the same effective values. Exact
+    /// Whether `self` and `previous` have the same value and aggregation contracts. Exact
     /// comparison of conjunctive constraints is conservative when equivalent
     /// patterns have different spellings.
     #[must_use]
     pub fn same_contract(&self, previous: &Self) -> bool {
+        self.same_contract_by(previous, same_effective_kind)
+    }
+
+    fn same_contract_by(
+        &self,
+        previous: &Self,
+        same_kind: fn(&EffectiveKind, &EffectiveKind) -> bool,
+    ) -> bool {
         self.nullable == previous.nullable
-            && same_effective_kind(&self.kind, &previous.kind)
+            && same_kind(&self.kind, &previous.kind)
             && effective_constraints_equal(&self.constraints, &previous.constraints)
             && self.record_members.len() == previous.record_members.len()
             && self.record_members.iter().all(|member| {
                 previous
                     .record_members
                     .iter()
-                    .any(|old| old.id == member.id && member.same_contract(old))
+                    .any(|old| old.id == member.id && member.same_contract_by(old, same_kind))
             })
     }
 
@@ -943,12 +1040,12 @@ impl EffectiveProperty {
                 !previous
                     .record_members
                     .iter()
-                    .any(|old| old.id == member.id && member.same_contract(old))
+                    .any(|old| old.id == member.id && member.same_contract_by(old, same_value_kind))
             })
         {
             reasons.push("record member contract changed".to_owned());
         }
-        if !same_effective_kind(&self.kind, &previous.kind)
+        if !same_value_kind(&self.kind, &previous.kind)
             && kind_narrows(&self.kind, &previous.kind) != Some(false)
         {
             reasons.push("property type became narrower or changed".to_owned());
@@ -990,14 +1087,15 @@ impl EffectiveProperty {
     ) -> Result<RuntimeValue, norn_ir::RuntimeValueError> {
         match (&self.kind, literal) {
             (
-                EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. }),
+                EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }),
                 JsonValue::String(text),
             ) => text.parse::<norn_ir::Decimal>().map(RuntimeValue::Number),
-            (EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. }), _) => {
-                Err(norn_ir::RuntimeValueError::InvalidJson {
-                    message: "numeric IR defaults must be exact decimal strings".to_owned(),
-                })
-            }
+            (
+                EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }),
+                _,
+            ) => Err(norn_ir::RuntimeValueError::InvalidJson {
+                message: "numeric IR defaults must be exact decimal strings".to_owned(),
+            }),
             (EffectiveKind::Base(PropertyType::Record { .. }), JsonValue::Object(values)) => values
                 .iter()
                 .map(|(name, value)| {
@@ -1037,11 +1135,11 @@ impl EffectiveProperty {
         }
         let value = match (&self.kind, &default.0) {
             // An integer default is an exact decimal string in IR.
-            (EffectiveKind::Base(PropertyType::Integer {}), JsonValue::String(text)) => text
+            (EffectiveKind::Base(PropertyType::Integer { .. }), JsonValue::String(text)) => text
                 .parse::<i64>()
                 .map(Value::from)
                 .map_err(|_out_of_range| InstanceError::TypeMismatch("integer"))?,
-            (EffectiveKind::Base(PropertyType::Integer {}), _) => {
+            (EffectiveKind::Base(PropertyType::Integer { .. }), _) => {
                 return Err(InstanceError::TypeMismatch("integer"));
             }
             (EffectiveKind::Base(PropertyType::Record { .. }), literal) => {
@@ -1154,27 +1252,71 @@ fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> Effectiv
     }
 }
 
+/// VAL-ROUND: compare effective contracts, including the default refusal mode.
 fn same_effective_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
+    if let (EffectiveKind::Base(left), EffectiveKind::Base(right)) = (left, right) {
+        if matches!(
+            (left, right),
+            (PropertyType::Record { .. }, PropertyType::Record { .. })
+        ) {
+            return left == right;
+        }
+        if left.additivity() != right.additivity() {
+            return false;
+        }
+    }
+    same_value_kind(left, right)
+}
+
+fn same_value_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
     match (left, right) {
-        (EffectiveKind::Base(left), EffectiveKind::Base(right)) => match (left, right) {
-            (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
-                enum_values(left) == enum_values(right)
-            }
-            (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
-            _ => left == right,
-        },
+        (EffectiveKind::Base(left), EffectiveKind::Base(right)) => {
+            same_base_value_kind(left, right)
+        }
         (EffectiveKind::Registry(left), EffectiveKind::Registry(right)) => left == right,
         (EffectiveKind::Unresolved, EffectiveKind::Unresolved) => true,
         _ => false,
     }
 }
 
+fn same_base_value_kind(left: &PropertyType, right: &PropertyType) -> bool {
+    match (left, right) {
+        (PropertyType::Decimal { .. }, PropertyType::Decimal { .. }) => {
+            base_kind_narrows(left, right) == Some(true)
+                && base_kind_narrows(right, left) == Some(true)
+        }
+        (PropertyType::Integer { .. }, PropertyType::Integer { .. })
+        | (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
+        (PropertyType::Record { members: left }, PropertyType::Record { members: right }) => {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|(left, right)| {
+                    left.id == right.id
+                        && left.constraints == right.constraints
+                        && same_base_value_kind(&left.property_type, &right.property_type)
+                })
+        }
+        (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
+            enum_values(left) == enum_values(right)
+        }
+        _ => left == right,
+    }
+}
+
+/// METRIC-ADDITIVITY-MIGRATION: aggregation semantics never narrow stored values.
 fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<bool> {
     let (EffectiveKind::Base(candidate), EffectiveKind::Base(previous)) = (candidate, previous)
     else {
         return None;
     };
+    base_kind_narrows(candidate, previous)
+}
+
+fn base_kind_narrows(candidate: &PropertyType, previous: &PropertyType) -> Option<bool> {
     match (candidate, previous) {
+        (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => Some(true),
+        (PropertyType::Record { .. }, PropertyType::Record { .. }) => {
+            same_base_value_kind(candidate, previous).then_some(true)
+        }
         (PropertyType::Text { format: candidate }, PropertyType::Text { format: previous }) => {
             match (candidate, previous) {
                 (_, None) => Some(true),
@@ -1199,13 +1341,24 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
                 scale: candidate_scale,
                 unit: candidate_unit,
                 currency_source: candidate_currency,
+                rounding: candidate_rounding,
+                per_unit: candidate_per_unit,
+                ..
             },
             PropertyType::Decimal {
                 scale: previous_scale,
                 unit: previous_unit,
                 currency_source: previous_currency,
+                rounding: previous_rounding,
+                per_unit: previous_per_unit,
+                ..
             },
-        ) if candidate_unit == previous_unit && candidate_currency == previous_currency => {
+        ) if candidate_per_unit == previous_per_unit
+            && candidate_unit == previous_unit
+            && candidate_currency == previous_currency
+            && candidate_rounding.unwrap_or(norn_ir::Rounding::Refuse)
+                == previous_rounding.unwrap_or(norn_ir::Rounding::Refuse) =>
+        {
             Some(candidate_scale.0 <= previous_scale.0)
         }
         (
@@ -1484,7 +1637,7 @@ impl EffectiveKey {
                         let steps = self.normalize.get(id).map_or(&[][..], Vec::as_slice);
                         Some(KeyComponent::Text(normalize_text(text, steps)))
                     }
-                    (PropertyType::Integer {}, value) => {
+                    (PropertyType::Integer { .. }, value) => {
                         integer_literal(value).map(KeyComponent::Integer)
                     }
                     (PropertyType::Boolean {}, Value::Bool(value)) => {
@@ -1555,6 +1708,7 @@ pub struct EffectiveCatalog {
     interface_names: BTreeSet<String>,
     links_by_name: BTreeMap<String, Vec<EffectiveLink>>,
     lineages: BTreeMap<String, Vec<ObjectTypeName>>,
+    conserved_metric_terms: BTreeMap<String, BTreeSet<PropertyId>>,
 }
 
 /// Codes whose findings depend on the layer an artifact is installed in.
@@ -1567,6 +1721,29 @@ pub(crate) const LAYER_DEPENDENT: &[&str] = &[
 ];
 
 impl EffectiveCatalog {
+    // Admission evidence stays separate from the value/model contract carried
+    // into the existing compute plan and checked again by the native cell.
+    pub(crate) fn record_conserved_metric_terms(
+        &mut self,
+        object_type: &str,
+        terms: &BTreeSet<PropertyId>,
+    ) {
+        self.conserved_metric_terms
+            .entry(object_type.to_owned())
+            .or_default()
+            .extend(terms.iter().cloned());
+    }
+
+    pub(crate) fn is_conserved_metric_term(
+        &self,
+        object_type: &str,
+        property: &PropertyId,
+    ) -> bool {
+        self.conserved_metric_terms
+            .get(object_type)
+            .is_some_and(|terms| terms.contains(property))
+    }
+
     /// Build the catalog of `artifacts` (see the type docs).
     #[must_use]
     pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Self {
@@ -1582,7 +1759,7 @@ impl EffectiveCatalog {
         artifacts: &[ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
     ) -> Self {
-        let findings: Vec<Diagnostic> = check_artifact_set_entity_model(
+        let mut findings: Vec<Diagnostic> = check_artifact_set_entity_model(
             artifacts,
             &EntityArtifactSetContext {
                 registry,
@@ -1617,7 +1794,15 @@ impl EffectiveCatalog {
             base: EntityModel::EMPTY,
             tenant: None,
         };
-        let mut effective = effective_object_types(&layer.as_model(), &context);
+        // A refused effective view is a blocking finding on every artifact; the
+        // catalog never serves an empty view as if no type were registered.
+        let mut effective = match effective_object_types(&layer.as_model(), &context) {
+            Ok(effective) => effective,
+            Err(refusal) => {
+                findings.push(refusal.diagnostic());
+                BTreeMap::new()
+            }
+        };
         let owners = Owners::new(&layer, artifacts);
         let blocking = |dependencies: &BTreeSet<&str>| {
             findings.iter().find(|finding| {
@@ -1892,6 +2077,40 @@ mod tests {
             .into_iter()
             .next()
             .expect("one property")
+    }
+
+    #[test]
+    fn val_round_omission_and_explicit_refuse_have_the_same_contract() {
+        for scale in 0..=28 {
+            let omitted = effective_property(
+                serde_json::json!({"id":"amount","type":{"kind":"decimal","scale":scale}}),
+            );
+            let explicit = effective_property(
+                serde_json::json!({"id":"amount","type":{"kind":"decimal","scale":scale,"rounding":"refuse"}}),
+            );
+            for (a, b) in [(&omitted, &explicit), (&explicit, &omitted)] {
+                assert!(a.same_contract(b));
+                assert!(a.narrowing_reasons_from(b).is_empty());
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn additivity_changes_preserve_values_but_change_the_plan_contract(integer in proptest::bool::ANY, scale in 0u64..=28, nested in proptest::bool::ANY) {
+            let mut kind = if integer { serde_json::json!({"kind":"integer"}) }
+                else { serde_json::json!({"kind":"decimal","scale":scale}) };
+            let property = |kind| if nested {
+                serde_json::json!({"id":"payload","type":{"kind":"record","members":[{"id":"amount","type":kind}]}})
+            } else { serde_json::json!({"id":"amount","type":kind}) };
+            let previous = effective_property(property(kind.clone()));
+            kind["additivity"] = serde_json::json!({"kind":"additive"});
+            let candidate = effective_property(property(kind));
+            proptest::prop_assert!(!candidate.same_contract(&previous));
+            proptest::prop_assert!(candidate.narrowing_reasons_from(&previous).is_empty());
+            let value = RuntimeValue::from_json_text(if nested { r#"{"amount":1}"# } else { "1" }).expect("exact value");
+            proptest::prop_assert!(candidate.check_runtime_value_from(&previous, &value).is_ok());
+        }
     }
 
     #[test]
@@ -2201,5 +2420,40 @@ mod tests {
         );
         assert!(status.check_runtime_value(&RuntimeValue::Null).is_err());
         assert_eq!(note.check_runtime_value(&RuntimeValue::Null), Ok(()));
+    }
+}
+
+#[cfg(test)]
+mod declared_rounding_tests {
+    use super::*;
+    proptest::proptest! {
+        #[test]
+        fn val_round_materialization_is_idempotent_and_bounds_use_stored_value(coefficient in -10000_i32..10000) {
+            let property: norn_ir::Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
+            let effective = EffectiveProperty::from_declared_property(&property,&[]);
+            let number = format!("{}{}.{:03}", if coefficient < 0 {"-"} else {""}, coefficient.abs()/1000, coefficient.abs()%1000);
+            let original = RuntimeValue::from_json_text(&number).expect("number");
+            let stored = effective.canonical_runtime_value(&original);
+            proptest::prop_assert_eq!(&effective.canonical_runtime_value(&stored), &stored);
+            proptest::prop_assert_eq!(effective.check_runtime_value(&original), effective.check_runtime_value(&stored));
+        }
+    }
+
+    #[test]
+    fn val_round_checks_quantized_bounds_and_preserves_invalid_evidence() {
+        let property: norn_ir::Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
+        let effective = EffectiveProperty::from_declared_property(&property, &[]);
+        let input = RuntimeValue::from_json_text("1.005").expect("decimal");
+        assert!(
+            effective.check_runtime_value(&input).is_err(),
+            "1.01 exceeds the stored bound"
+        );
+        assert_eq!(
+            effective.canonical_runtime_value(&input),
+            RuntimeValue::from_json_text("1.01").expect("rounded")
+        );
+        let invalid = RuntimeValue::String("not a decimal".into());
+        assert!(effective.check_runtime_value(&invalid).is_err());
+        assert_eq!(effective.canonical_runtime_value(&invalid), invalid);
     }
 }

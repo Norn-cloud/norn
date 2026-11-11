@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.invalid_transition_id",
+  "message": "transition id {id} must match [a-z][a-z0-9_]*",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

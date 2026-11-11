@@ -1,0 +1,51 @@
+{
+  "artifactId": "core.analytics.restatement_policy.law",
+  "dependencies": [
+    {
+      "artifactId": "core.analytics.Restatement.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Approve complete restatement generations",
+  "namespace": "core",
+  "payload": {
+    "id": "core.analytics.restatement_policy",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core.analytics",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/restatement.ts"
+    },
+    "rationale": "RESTATE-HISTORY-1 / OUTPUT-ATOMIC: the host stages every authenticated slice before reviewer approval; activation selects the complete bundle without rewriting posted history.",
+    "response": {
+      "invariantId": "complete_candidate",
+      "kind": "invariant",
+      "objectType": "core.analytics.Restatement"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.analytics.Restatement"
+      ],
+      "root": {
+        "id": "core.analytics.Restatement",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.analytics.Restatement"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.restatement_policy.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

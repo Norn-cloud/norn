@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.flow_source_map.invalid_edge",
+  "message": "edge {from} -> {to} must reference steps in the same flow",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

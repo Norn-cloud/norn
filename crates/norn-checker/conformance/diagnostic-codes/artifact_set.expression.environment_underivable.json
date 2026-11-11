@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.expression.environment_underivable",
+  "message": "the ZEN Expression type environment of the artifact set cannot be derived: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -63,14 +63,18 @@
 #![forbid(unsafe_code)]
 
 mod admit;
+mod aggregate;
 mod convert;
 mod error;
 mod evaluate;
+mod fold;
 mod schema;
+mod step;
 
 pub use admit::{
     AdmittedDecision, DecisionBinding, ENGINE_TAG, MAX_SUB_DECISION_CLOSURE, MAX_SUB_DECISION_DEPTH,
 };
+pub use aggregate::{AggregateError, fold_aggregate};
 pub use convert::{value_from_canonical, value_from_runtime, value_to_canonical, value_to_runtime};
 pub use error::{AdmissionError, DecisionError, StrictSite};
 pub use evaluate::{

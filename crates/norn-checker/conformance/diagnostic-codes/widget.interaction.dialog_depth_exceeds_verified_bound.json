@@ -1,0 +1,7 @@
+{
+  "code": "widget.interaction.dialog_depth_exceeds_verified_bound",
+  "message": "dialog nesting exceeds the stacked dialogs the renderer interaction statechart is verified for: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

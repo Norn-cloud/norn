@@ -17,6 +17,22 @@ pub const MAX_PARAMETERS: usize = 100;
 /// Maximum SQL statement length in bytes in the admitted host subset.
 pub const MAX_STATEMENT_BYTES: usize = 100_000;
 
+/// How a sequence of reads on one engine knows it saw a single snapshot
+/// (HOST-READ-2). Every engine declares one; there is no default, so a
+/// wrapper cannot inherit a guarantee it does not provide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadIsolation {
+    /// [`SqlEngine::read_cache_revision`] returns `Some` outside a
+    /// transaction, and equal revisions imply unchanged database contents,
+    /// including writes by other connections. A reader that finds `None`
+    /// must refuse rather than assume stability.
+    Revisioned,
+    /// The engine's connection is the only one to its database and every read
+    /// path runs synchronously, without yielding, so nothing can write between
+    /// two reads of one call. Only the Durable Object engine declares this.
+    ExclusiveSynchronous,
+}
+
 /// An owned SQLite value, shared by native and portable hosts.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlValue {
@@ -142,6 +158,31 @@ pub trait SqlEngine {
     /// The closure's error, or a backend begin/commit/rollback error.
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X>;
 
+    /// SQLite `GLOB` patterns of tables the host platform keeps in the same
+    /// database (Durable Object metadata, replication state). They are never
+    /// cell state: a database holding only them is fresh. Native SQLite has none.
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// How a sequence of reads knows it saw one snapshot; required, so every
+    /// engine states it.
+    fn read_isolation(&self) -> ReadIsolation;
+
+    /// Optional connection-local revision for disposable verified read caches.
+    /// Equal revisions must imply unchanged database contents on this connection,
+    /// including local writes/rollbacks and commits by other connections.
+    /// Hosts without this capability return `None`; no cache survives their read boundary.
+    /// Return `None` while uncommitted state could later roll back without
+    /// changing the token. Native engines only offer revisions in autocommit mode.
+    /// This is a host optimization, not an extension of admitted SQL.
+    ///
+    /// # Errors
+    /// Backend revision-read failures refuse cached access.
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        Ok(None)
+    }
+
     /// Decode the first row; absence is an error.
     ///
     /// # Errors
@@ -262,6 +303,10 @@ pub enum NoEngine {}
 
 #[cfg(not(feature = "native"))]
 impl SqlEngine for NoEngine {
+    fn read_isolation(&self) -> ReadIsolation {
+        match *self {}
+    }
+
     fn execute(&self, _sql: &str, _params: &[SqlValue]) -> Result<(), CellError> {
         match *self {}
     }
@@ -401,6 +446,22 @@ impl rusqlite::types::ToSql for SqlValue {
 
 #[cfg(feature = "native")]
 impl SqlEngine for NativeEngine {
+    fn read_isolation(&self) -> ReadIsolation {
+        ReadIsolation::Revisioned
+    }
+
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        if !self.conn.is_autocommit() {
+            return Ok(None);
+        }
+        let external: i64 = self
+            .conn
+            .query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        let external = u64::try_from(external)
+            .map_err(|_negative| CellError::OutOfRange("SQLite cache revision"))?;
+        Ok(Some((self.conn.total_changes(), external)))
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);

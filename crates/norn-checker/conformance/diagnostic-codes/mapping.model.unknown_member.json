@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.unknown_member",
+  "message": "{objectType} has no {what} {member}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

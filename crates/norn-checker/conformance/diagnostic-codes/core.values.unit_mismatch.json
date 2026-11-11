@@ -1,0 +1,7 @@
+{
+  "code": "core.values.unit_mismatch",
+  "message": "VAL-UNIT-1 / VAL-DECIMAL-BIND-1: unit requires a visible exact core catalog pin and admitted UCUM code; interface Decimal groups require the same unit and scale; conversion must be explicit",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

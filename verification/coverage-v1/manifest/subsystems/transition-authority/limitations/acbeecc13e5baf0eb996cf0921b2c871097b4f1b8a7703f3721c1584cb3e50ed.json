@@ -1,0 +1,4 @@
+{
+  "order": 8,
+  "value": "Only pure replay clock contracts are provided; host injection is deferred. SqliteCell retains its own logical time controlled by advance_to. No theorem about wall-clock accuracy or monotonicity is claimed."
+}

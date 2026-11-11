@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.redundant_member_prefix",
+  "message": "member {id} of {name} repeats the type name as a prefix; the type already qualifies it",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

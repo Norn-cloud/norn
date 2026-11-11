@@ -1,0 +1,7 @@
+{
+  "code": "sealing.overlay.tenant_namespace_required",
+  "message": "additive tenant customization requires a tenant namespace",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.duplicate_map",
+  "message": "map id {id} is declared twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

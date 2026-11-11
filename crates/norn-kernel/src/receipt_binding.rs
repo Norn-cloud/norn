@@ -5,7 +5,7 @@
 use crate::result_reconciliation::Acceptance;
 use norn_ir::{
     RuntimeValue,
-    function::{Digest, FunctionOutcome, FunctionReceipt},
+    function::{Digest, FunctionOutcome, FunctionReceipt, RunRef},
 };
 use serde::de::DeserializeOwned;
 
@@ -106,15 +106,118 @@ pub enum ReceiptBindingError<E> {
     Store(E),
 }
 
+/// RECEIPT-EFFECT-1: why an action call cannot consume its receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReceiptRefusal {
+    /// The input supplied a body, not a reference.
+    BodyForbidden,
+    /// The reference is not a content digest.
+    ReferenceInvalid,
+    /// The host does not support receipt effects, or the acceptance needs
+    /// fences this path has not qualified.
+    EffectUnsupported,
+    /// No accepted receipt is visible under this reference.
+    Unknown,
+    /// An earlier action consumed the receipt.
+    Replayed,
+    /// The receipt's pins disagree with its acceptance or declaration.
+    BindingMismatch,
+    /// The receipt is not an accepted success.
+    NotAccepted,
+    /// The accepted summary does not fit the declared bindings.
+    ResultType,
+    /// The receipt belongs to another run or generation.
+    RunMismatch,
+    /// The receipt's delivery is no longer pending at commit.
+    NotPending,
+}
+
+impl ReceiptRefusal {
+    /// Stable `action.receipt_*` code.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::BodyForbidden => "action.receipt_body_forbidden",
+            Self::ReferenceInvalid => "action.receipt_reference_invalid",
+            Self::EffectUnsupported => "action.receipt_effect_unsupported",
+            Self::Unknown => "action.receipt_unknown",
+            Self::Replayed => "action.receipt_replayed",
+            Self::BindingMismatch => "action.receipt_binding_mismatch",
+            Self::NotAccepted => "action.receipt_not_accepted",
+            Self::ResultType => "action.receipt_result_type",
+            Self::RunMismatch => "action.receipt_run_mismatch",
+            Self::NotPending => "action.receipt_not_pending",
+        }
+    }
+
+    /// The refusal's category: an unknown receipt is indistinguishable from
+    /// an invisible one; consumption races are conflicts.
+    #[must_use]
+    pub const fn category(self) -> crate::refusal::RefusalCategory {
+        use crate::refusal::RefusalCategory;
+        match self {
+            Self::Unknown => RefusalCategory::Visibility,
+            Self::Replayed | Self::NotPending => RefusalCategory::Conflict,
+            Self::BodyForbidden
+            | Self::ReferenceInvalid
+            | Self::EffectUnsupported
+            | Self::BindingMismatch
+            | Self::NotAccepted
+            | Self::ResultType
+            | Self::RunMismatch => RefusalCategory::Invalid,
+        }
+    }
+}
+
+impl<E> ReceiptBindingError<E> {
+    /// The receipt refusal, or the host failure, which is never a refusal.
+    ///
+    /// # Errors
+    /// The host's own failure ([`ReceiptBindingError::Store`]).
+    pub fn into_refusal(self) -> Result<ReceiptRefusal, E> {
+        match self {
+            Self::Unknown => Ok(ReceiptRefusal::Unknown),
+            Self::Replayed => Ok(ReceiptRefusal::Replayed),
+            Self::Mismatch | Self::Canonical(_) => Ok(ReceiptRefusal::BindingMismatch),
+            Self::NotAccepted => Ok(ReceiptRefusal::NotAccepted),
+            Self::ResultType => Ok(ReceiptRefusal::ResultType),
+            Self::Store(error) => Err(error),
+        }
+    }
+}
+
+impl From<ReferenceError> for ReceiptRefusal {
+    fn from(error: ReferenceError) -> Self {
+        match error {
+            ReferenceError::BodyForbidden => Self::BodyForbidden,
+            ReferenceError::InvalidDigest => Self::ReferenceInvalid,
+        }
+    }
+}
+
 /// A checked digest/result pair, retaining reconciliation reads for the commit.
 #[derive(Debug)]
 pub struct ReceiptBinding<T> {
     digest: Digest,
     result: T,
     acceptance: Acceptance,
+    run: RunRef,
+    manifest: Digest,
 }
 
 impl<T> ReceiptBinding<T> {
+    /// The authenticated receipt's `Run` and generation.
+    #[must_use]
+    pub const fn run(&self) -> &RunRef {
+        &self.run
+    }
+
+    /// The Function manifest the authenticated receipt executed.
+    #[must_use]
+    pub const fn manifest(&self) -> &Digest {
+        &self.manifest
+    }
+
     /// Move the typed result and its exact receipt/acceptance pins into preparation.
     #[must_use]
     pub fn into_parts(self) -> (Digest, T, Acceptance) {
@@ -158,6 +261,13 @@ pub fn bind_receipt<T: DeserializeOwned, S: AcceptedReceiptStore>(
         || record.generation.0 != receipt.run.generation
         || record.attempt != receipt.attempt
         || acceptance.state.generation != record.generation
+        // The delivery it consumes is this command's result at this
+        // generation, never another pending delivery (RECEIPT-CONSUME-1).
+        || acceptance.consumed
+            != (crate::cell_host::Consumed::Result {
+                command: record.command.clone(),
+                generation: record.generation,
+            })
         || acceptance.state.cancelled
         || acceptance.state.accepted.as_ref().is_none_or(|accepted| {
             accepted.receipt != digest
@@ -176,5 +286,7 @@ pub fn bind_receipt<T: DeserializeOwned, S: AcceptedReceiptStore>(
         digest,
         result,
         acceptance: acceptance.clone(),
+        run: receipt.run.clone(),
+        manifest: receipt.manifest.clone(),
     })
 }

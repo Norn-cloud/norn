@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.empty_key",
+  "message": "key {key} declares no properties",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

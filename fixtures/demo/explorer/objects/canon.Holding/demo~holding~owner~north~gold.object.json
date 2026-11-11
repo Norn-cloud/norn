@@ -1,0 +1,17 @@
+{
+  "objectType": "canon.Holding",
+  "id": "demo/holding/owner/north/gold",
+  "scope": "org_demo/dev",
+  "version": 2,
+  "values": {
+    "cost_currency": "USD",
+    "currency": null,
+    "location": "north",
+    "quantity": 200,
+    "quantity_basis": "available",
+    "resource_code": "GOLD",
+    "stock_cost": 9000,
+    "unit": "g",
+    "valuation_method": null
+  }
+}

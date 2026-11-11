@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.invalid_pattern",
+  "message": "pattern {pattern} does not compile: {error}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

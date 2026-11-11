@@ -1,0 +1,60 @@
+{
+  "bundleDigest": "6ec08e5b9fc6375526a98b96eeff65f402fbad558e4df418ed603f32b3017980",
+  "sourceRecordRef": {
+    "system": "synthetic-erpnext",
+    "record": "Item/erpnext/demo/Item/SYN-ERPNEXT-item"
+  },
+  "documentRef": {
+    "system": "synthetic-erpnext",
+    "record": "SYN-ERPNEXT-item"
+  },
+  "documentDigest": "f756bcab0ec98eb3d7150a66abe66436dea99887521fa34c4dfa3486cf797c09",
+  "mappingPin": {
+    "artifactId": "erpnext.three.mapping",
+    "version": "0.1.0",
+    "sha256": "ddbf31d0eb71c45a8f9be84583b3c1ea4b2151f4e289245425f88fafc024780a"
+  },
+  "fieldProvenance": {
+    "code": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Item/erpnext/demo/Item/SYN-ERPNEXT-item"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "item.code",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "code"
+      ]
+    },
+    "id": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Item/erpnext/demo/Item/SYN-ERPNEXT-item"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "item.id",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref"
+      ]
+    },
+    "label": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Item/erpnext/demo/Item/SYN-ERPNEXT-item"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "item.label",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "label"
+      ]
+    }
+  }
+}

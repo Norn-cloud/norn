@@ -23,7 +23,8 @@
 use std::collections::BTreeSet;
 
 use norn_checker::{
-    Diagnostic, check_object_type_defs, check_property_type_defs, object_types::codes,
+    Diagnostic, DiagnosticSeverity, EntityContext, EntityModel, Span, check_entity_model,
+    check_object_type_defs, check_property_type_defs, object_types::codes,
     property_types::codes as property_codes,
 };
 use norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES;
@@ -147,6 +148,116 @@ fn the_fixtures_are_valid_against_the_fixture_catalog() {
                     .unwrap_or_else(|error| panic!("{} compiles: {error}", computed.as_str()));
             }
         }
+    }
+}
+
+fn inherited_identity_definitions() -> Vec<ObjectTypeDef> {
+    let mut root: ObjectTypeDef =
+        serde_json::from_str(object_type!("sku")).expect("typed source fixture");
+    root.name = norn_ir::ObjectTypeName("identity.Root".to_owned());
+    root.properties
+        .retain(|property| property.id.as_str() == "sku_code");
+    root.properties[0].property_type = norn_ir::PropertyType::Text { format: None };
+    root.links.clear();
+    let mut child = root.clone();
+    child.name = norn_ir::ObjectTypeName("identity.Child".to_owned());
+    child.extends = Some(root.name.clone());
+    child.properties.clear();
+    child.identity.clear();
+    let mut sibling = child.clone();
+    sibling.name = norn_ir::ObjectTypeName("identity.Sibling".to_owned());
+    vec![root, child, sibling]
+}
+
+/// ID-COLLISION admission: sibling keys retain their declaring root and ordered normalization.
+#[test]
+fn id_collision_admission_preserves_inherited_key_root_and_normalization() {
+    let definitions = inherited_identity_definitions();
+    assert!(check_object_type_defs(&definitions, &[], &BTreeSet::new()).is_empty());
+    let template: norn_ir::ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+    ))
+    .expect("artifact fixture");
+    let artifacts = definitions
+        .iter()
+        .map(|definition| {
+            let mut artifact = template.clone();
+            artifact.artifact_id = format!("{}.entity", definition.name.as_str());
+            artifact.namespace = "identity".to_owned();
+            artifact.payload = norn_ir::ArtifactPayload::Entity(
+                serde_json::from_value(
+                    serde_json::to_value(norn_ir::EntityRootV2 {
+                        entity_version: norn_ir::EntityIrVersion::V2_0,
+                        object_type: definition.clone(),
+                        mutation_authority: None,
+                        extensions: None,
+                    })
+                    .expect("typed payload"),
+                )
+                .expect("entity payload"),
+            );
+            artifact
+        })
+        .collect::<Vec<_>>();
+    let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts);
+    for name in ["identity.Root", "identity.Child", "identity.Sibling"] {
+        let object = catalog
+            .object_type_named(name)
+            .expect("known type")
+            .expect("admitted type");
+        assert_eq!(object.keys.len(), 1);
+        let key = &object.keys[0];
+        assert_eq!(key.declared_by, definitions[0].name);
+        assert_eq!(key.name.as_str(), "primary");
+        assert_eq!(key.components, definitions[0].identity[0].properties);
+        assert_eq!(
+            key.normalize[&key.components[0]],
+            vec![
+                norn_ir::Normalization::Trim,
+                norn_ir::Normalization::Uppercase
+            ]
+        );
+        let input = serde_json::json!({"sku_code": " aBc "});
+        assert_eq!(
+            key.value(object, input.as_object().expect("object")),
+            Some(vec![norn_checker::KeyComponent::Text("ABC".to_owned())])
+        );
+        assert_eq!(input["sku_code"], " aBc ");
+    }
+}
+
+/// ID-COLLISION admission retains its public declaration codes; occupancy is checked at commit.
+#[test]
+fn id_collision_admission_refuses_inherited_key_redeclaration_with_stable_codes() {
+    let mut definitions = inherited_identity_definitions();
+    let inherited = definitions[0].identity[0].clone();
+    definitions[1].identity.push(inherited);
+    for steps in [
+        vec![
+            norn_ir::Normalization::Trim,
+            norn_ir::Normalization::Uppercase,
+        ],
+        vec![norn_ir::Normalization::Lowercase],
+    ] {
+        definitions[1].identity[0]
+            .rule
+            .as_mut()
+            .expect("declared rule")
+            .normalize[0]
+            .steps = steps;
+        let findings = check_object_type_defs(&definitions, &[], &BTreeSet::new());
+        assert!(findings.iter().any(|finding| {
+            finding.code.as_str() == codes::DUPLICATE_KEY_NAME
+                && finding
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.pointer == "/1/identity/0/name")
+        }));
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code.as_str() != norn_checker::IDENTITY_COLLISION)
+        );
     }
 }
 
@@ -411,7 +522,48 @@ fn every_code_has_a_negative_case() {
             ),
         ),
     ];
-    let covered: BTreeSet<&str> = cases.iter().map(|(code, _, _)| *code).collect();
+    // Exercise the real model validator before including its observed code in
+    // coverage. This catalog exceeds the 4,096 registered-type profile and
+    // contains a self-cycle with descendants; no ancestry pass may follow it.
+    let budget_defs: Vec<ObjectTypeDef> = (0..4_097)
+        .map(|index| {
+            serde_json::from_value(serde_json::json!({
+                "name": format!("test.T{index:04}"), "extends": "test.T0000",
+            }))
+            .expect("budget negative case decodes")
+        })
+        .collect();
+    let budget_registry = registry();
+    let budget_findings = check_entity_model(
+        &EntityModel {
+            object_types: &budget_defs,
+            ..EntityModel::EMPTY
+        },
+        &EntityContext {
+            catalog: &[],
+            registry: &budget_registry,
+            base: EntityModel::EMPTY,
+            tenant: None,
+        },
+    );
+    assert_eq!(budget_findings.len(), 1);
+    let budget_finding = budget_findings.first().expect("observed budget refusal");
+    assert_eq!(
+        budget_finding.code.as_str(),
+        "object_type.validation.inheritance_budget_exhausted"
+    );
+    assert_eq!(budget_finding.severity, DiagnosticSeverity::Error);
+    assert_eq!(budget_finding.span, Some(Span::pointer("/objectTypes")));
+    assert!(
+        budget_finding
+            .message
+            .contains("catalog validation stopped before ancestry resolution")
+    );
+    let covered: BTreeSet<&str> = cases
+        .iter()
+        .map(|(code, _, _)| *code)
+        .chain(std::iter::once(budget_finding.code.as_str()))
+        .collect();
     let registered: BTreeSet<&str> = norn_checker::codes::REGISTRY
         .iter()
         .map(|entry| entry.code)

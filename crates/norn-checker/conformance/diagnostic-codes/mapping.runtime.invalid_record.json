@@ -1,0 +1,7 @@
+{
+  "code": "mapping.runtime.invalid_record",
+  "message": "map {map}: field {field} {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

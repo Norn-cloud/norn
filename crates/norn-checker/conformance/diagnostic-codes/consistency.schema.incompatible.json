@@ -1,0 +1,7 @@
+{
+  "code": "consistency.schema.incompatible",
+  "message": "no {relation} tuple can be mapped: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

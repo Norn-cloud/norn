@@ -44,6 +44,8 @@ pub enum Schema {
     Integer,
     /// An exact decimal number.
     Number,
+    /// VAL-EXACT-1: the existing Decimal value contract.
+    Decimal(crate::Type),
     /// A boolean.
     Boolean,
     /// The null value.
@@ -131,13 +133,20 @@ impl Schema {
         let schema_type = type_value
             .as_string()
             .ok_or_else(|| Violation::new(path, "a closed schema requires one explicit type"))?;
-        if action_input && schema_type == "string" && schema.contains_key("enum") {
+        if action_input
+            && schema_type == "string"
+            && schema.contains_key("enum")
+            && !fixed_currency_schema(value)
+        {
             return Err(Violation::new(
                 path,
                 "ActionIR input string schemas do not admit enum",
             ));
         }
+        let decimal = decimal_expression_type(value)?;
         let allowed: &[&str] = match schema_type {
+            "number" if action_input => &["type", "nornType", "description"],
+            "number" => &["type", "nornType"],
             "object" => &["type", "properties", "required", "additionalProperties"],
             "array" => &["type", "items"],
             "string" => &["type", "enum"],
@@ -148,6 +157,12 @@ impl Schema {
                 path,
                 format!("`{unknown}` is not admitted in a closed `{schema_type}` schema"),
             ));
+        }
+        if schema
+            .get("description")
+            .is_some_and(|description| description.as_string().is_none())
+        {
+            return Err(Violation::new(path, "description must be a string"));
         }
         let child = depth.saturating_add(1);
         match schema_type {
@@ -168,7 +183,7 @@ impl Schema {
                 Some(values) => Ok(Self::String(Some(parse_enum(values, path)?))),
             },
             "integer" => Ok(Self::Integer),
-            "number" => Ok(Self::Number),
+            "number" => Ok(decimal.map_or(Self::Number, Self::Decimal)),
             "boolean" => Ok(Self::Boolean),
             "null" => Ok(Self::Null),
             other => Err(Violation::new(
@@ -265,6 +280,7 @@ impl Schema {
             | Self::String(_)
             | Self::Integer
             | Self::Number
+            | Self::Decimal(_)
             | Self::Boolean
             | Self::Null
             | Self::Json
@@ -281,10 +297,58 @@ impl Schema {
             | Self::String(_)
             | Self::Integer
             | Self::Number
+            | Self::Decimal(_)
             | Self::Boolean
             | Self::Null
             | Self::Json
             | Self::Nullable(_) => None,
+        }
+    }
+
+    /// VAL-EXACT-1: decode action wire decimals without a floating-point intermediate.
+    /// Other fields retain their values; the closed schema checks them afterward.
+    ///
+    /// # Errors
+    /// Refuses non-string decimals, invalid literals and excess scale.
+    pub fn decode_action_input(
+        &self,
+        value: norn_ir::RuntimeValue,
+        path: &str,
+    ) -> Result<norn_ir::RuntimeValue, Violation> {
+        use norn_ir::{Decimal, RuntimeValue};
+        match (self, value) {
+            (Self::Decimal(_), RuntimeValue::String(text)) => {
+                let decimal = Decimal::parse(&text)
+                    .map_err(|_error| Violation::new(path, "invalid decimal text"))?;
+                let decoded = RuntimeValue::Number(decimal);
+                let value =
+                    Value::try_from(&decoded).map_err(|e| Violation::new(path, e.to_string()))?;
+                self.check(&value, path)?;
+                Ok(RuntimeValue::Number(decimal))
+            }
+            (Self::Decimal(_), _) => {
+                Err(Violation::new(path, "decimal input requires a JSON string"))
+            }
+            (Self::Object { properties, .. }, RuntimeValue::Object(members)) => members
+                .into_iter()
+                .map(|(name, value)| {
+                    let value = match properties.get(&name) {
+                        Some(schema) => {
+                            schema.decode_action_input(value, &format!("{path}.{name}"))?
+                        }
+                        None => value,
+                    };
+                    Ok((name, value))
+                })
+                .collect::<Result<_, _>>()
+                .map(RuntimeValue::Object),
+            (Self::Array(items), RuntimeValue::Array(values)) => values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| items.decode_action_input(value, &format!("{path}[{index}]")))
+                .collect::<Result<_, _>>()
+                .map(RuntimeValue::Array),
+            (_, value) => Ok(value),
         }
     }
 
@@ -326,6 +390,16 @@ impl Schema {
             | (Self::Boolean, Value::Bool(_))
             | (Self::Null | Self::Nullable(_), Value::Null)
             | (Self::Json, _) => Ok(()),
+            (Self::Decimal(site), Value::Number(number)) => {
+                let mut exact = crate::check::decimal_destination(site)
+                    .ok_or_else(|| Violation::new(path, "invalid Decimal schema"))?;
+                if let norn_ir::PropertyType::Decimal { rounding, .. } = &mut exact {
+                    *rounding = None;
+                }
+                crate::rescale_decimal(&exact, number)
+                    .map(|_| ())
+                    .map_err(|e| Violation::new(path, e.to_string()))
+            }
             (Self::Nullable(inner), actual) => inner.check(actual, path),
             (Self::String(Some(allowed)), Value::String(text)) => {
                 if allowed.contains(text) {
@@ -353,10 +427,187 @@ impl Schema {
             Self::String(_) => "a string",
             Self::Integer => "an integer",
             Self::Number => "a number",
+            Self::Decimal(_) => "a declared exact decimal",
             Self::Boolean => "a boolean",
             Self::Null => "null",
             Self::Json => "a JSON value",
             Self::Nullable(_) => "a nullable value",
+        }
+    }
+}
+
+/// Whether a string schema declares one fixed ISO-spelled currency code.
+#[must_use]
+pub fn fixed_currency_schema(value: &JsonValue) -> bool {
+    value
+        .as_object()
+        .and_then(|schema| schema.get("enum"))
+        .and_then(JsonValue::as_array)
+        .is_some_and(|values| {
+            values.len() == 1
+                && values
+                    .first()
+                    .and_then(JsonValue::as_string)
+                    .is_some_and(|code| {
+                        code.len() == 3 && code.bytes().all(|c| c.is_ascii_uppercase())
+                    })
+        })
+}
+
+/// VAL-EXACT-1: select refinement admission only when a schema declares an exact site.
+#[must_use]
+pub fn contains_exact_annotation(value: &JsonValue) -> bool {
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        if let Some(schema) = value.as_object() {
+            if schema.contains_key("nornType") {
+                return true;
+            }
+            if let Some(properties) = schema.get("properties").and_then(JsonValue::as_object) {
+                pending.extend(properties.values());
+            }
+            if let Some(items) = schema.get("items") {
+                pending.push(items);
+            }
+        }
+    }
+    false
+}
+
+/// VAL-EXACT-1: decode only the existing strict Decimal representation.
+///
+/// # Errors
+/// Refuses annotations on other schema kinds, unknown fields or invalid Decimal sites.
+pub fn decimal_refinement(
+    value: &JsonValue,
+    path: &str,
+) -> Result<Option<norn_ir::PropertyType>, Violation> {
+    let Some(schema) = value.as_object() else {
+        return Ok(None);
+    };
+    let Some(annotation) = schema.get("nornType") else {
+        return Ok(None);
+    };
+    if schema.get("type").and_then(JsonValue::as_string) != Some("number") {
+        return Err(Violation::new(path, "nornType requires type:number"));
+    }
+    let site: norn_ir::PropertyType = annotation
+        .decode()
+        .map_err(|reason| Violation::new(path, reason))?;
+    let norn_ir::PropertyType::Decimal {
+        scale,
+        unit,
+        currency_source,
+        per_unit,
+        ..
+    } = &site
+    else {
+        return Err(Violation::new(path, "nornType must be Decimal"));
+    };
+    if currency_source.as_ref().is_some_and(|source| {
+        source.property.as_str().trim().is_empty()
+            || source
+                .links
+                .iter()
+                .any(|link| link.as_str().trim().is_empty())
+    }) || scale.0 > 18
+        || unit.is_some() && currency_source.is_some()
+        || per_unit.is_some() && (unit.is_some() || currency_source.is_none())
+        || unit
+            .iter()
+            .chain(per_unit.iter())
+            .any(|u| u.code.is_empty() || u.code.chars().any(char::is_whitespace))
+    {
+        return Err(Violation::new(path, "invalid bounded Decimal refinement"));
+    }
+    Ok(Some(site))
+}
+
+/// The expression type of an already validated Decimal schema refinement.
+///
+/// # Errors
+/// Returns the same strict decoder findings as [`decimal_refinement`].
+pub fn decimal_expression_type(value: &JsonValue) -> Result<Option<crate::Type>, Violation> {
+    match decimal_refinement(value, "nornType")? {
+        None => Ok(None),
+        Some(norn_ir::PropertyType::Decimal {
+            scale,
+            unit,
+            currency_source,
+            per_unit,
+            rounding,
+            ..
+        }) => Ok(Some(crate::Type::Decimal {
+            scale: scale.0,
+            unit,
+            currency_source,
+            per_unit,
+            rounding: rounding.unwrap_or(norn_ir::Rounding::Refuse),
+        })),
+        Some(_) => Err(Violation::new("nornType", "expected Decimal")),
+    }
+}
+
+impl Schema {
+    /// VAL-EXACT-1: retain refinements in the same env/2 record graph.
+    #[must_use]
+    pub fn expression_type(
+        &self,
+        name: &str,
+        records: &mut BTreeMap<String, BTreeMap<String, crate::Type>>,
+    ) -> crate::Type {
+        use crate::Type;
+        match self {
+            Self::Object {
+                properties,
+                required,
+            } => {
+                let fields = properties
+                    .iter()
+                    .map(|(key, schema)| {
+                        let ty = schema.expression_type(
+                            &format!("{name}/field:{}", key.replace('~', "~0").replace('/', "~1")),
+                            records,
+                        );
+                        (
+                            key.clone(),
+                            if required.contains(key) {
+                                ty
+                            } else {
+                                ty.optional()
+                            },
+                        )
+                    })
+                    .collect();
+                records.insert(name.to_owned(), fields);
+                Type::Record(name.to_owned())
+            }
+            Self::Array(item) => {
+                self::Schema::expression_type(item, &format!("{name}/item"), records).list()
+            }
+            Self::Nullable(item) => item.expression_type(name, records).optional(),
+            Self::String(Some(values)) => Type::enumeration(values.clone()),
+            Self::String(None) => Type::text(),
+            Self::Integer => Type::Integer,
+            Self::Number => Type::Number,
+            Self::Decimal(ty) => ty.clone(),
+            Self::Null | Self::Json => Type::Json,
+            Self::Boolean => Type::Bool,
+        }
+    }
+    /// Whether this contract contains a declared exact site.
+    #[must_use]
+    pub fn has_exact(&self) -> bool {
+        match self {
+            Self::Decimal(_) => true,
+            Self::Object { properties, .. } => properties.values().any(Self::has_exact),
+            Self::Array(item) | Self::Nullable(item) => item.has_exact(),
+            Self::String(_)
+            | Self::Integer
+            | Self::Number
+            | Self::Boolean
+            | Self::Null
+            | Self::Json => false,
         }
     }
 }
@@ -443,6 +694,211 @@ const fn value_name(value: &Value) -> &'static str {
     }
 }
 
+/// The exact closed input and output contracts of an ordered-fold helper.
+///
+/// # Errors
+/// Refuses malformed item or accumulator schemas and non-record roots.
+pub fn fold_step_schemas(fold: &norn_ir::jdm::OrderedFold) -> Result<(Schema, Schema), Violation> {
+    let item = Schema::parse(&JsonValue::Object(fold.item_schema.clone()), "fold.item")?;
+    let accumulator = Schema::parse(
+        &JsonValue::Object(fold.accumulator_schema.clone()),
+        "fold.accumulator",
+    )?;
+    if item.properties().is_none() || accumulator.properties().is_none() {
+        return Err(Violation::new(
+            "orderedFold",
+            "item and accumulator must be closed records",
+        ));
+    }
+    Ok((
+        Schema::Object {
+            properties: BTreeMap::from([
+                ("accumulator".into(), accumulator.clone()),
+                ("item".into(), item),
+                ("index".into(), Schema::Integer),
+            ]),
+            required: ["accumulator", "item", "index"].map(str::to_owned).into(),
+        },
+        accumulator,
+    ))
+}
+
+/// Whether a helper graph stays inside the non-nested ordered-step fragment.
+#[must_use]
+pub fn fold_step_graph_supported(graph: &norn_ir::jdm::JdmGraph) -> bool {
+    use norn_ir::jdm::{JdmExecutionMode::Loop, JdmNode};
+    graph.nodes.iter().all(|node| match node {
+        JdmNode::DecisionNode { content, .. } => {
+            content.ordered_fold.is_none() && content.execution_mode != Some(Loop)
+        }
+        JdmNode::ExpressionNode { content, .. } => content.execution_mode != Some(Loop),
+        JdmNode::DecisionTableNode { content, .. } => content.execution_mode != Some(Loop),
+        JdmNode::InputNode { .. } | JdmNode::OutputNode { .. } | JdmNode::SwitchNode { .. } => true,
+        JdmNode::FunctionNode { .. } | JdmNode::CustomNode { .. } => false,
+    })
+}
+
+/// The catalog's builtin records and property-backed fields, as the starting
+/// record set for an action environment.
+fn catalog_input_records(
+    catalog: Option<&crate::ZenTypeEnv>,
+) -> BTreeMap<String, BTreeMap<String, crate::Type>> {
+    use crate::{FieldSource, RecordKind};
+    catalog.map_or_else(BTreeMap::new, |catalog| {
+        catalog
+            .records()
+            .iter()
+            .map(|(name, record)| {
+                (
+                    name.clone(),
+                    record
+                        .fields
+                        .iter()
+                        .filter(|(_, field)| {
+                            record.kind == RecordKind::Builtin
+                                || matches!(field.source, FieldSource::Property { .. })
+                        })
+                        .map(|(name, field)| (name.clone(), field.ty.clone()))
+                        .collect(),
+                )
+            })
+            .collect()
+    })
+}
+
+/// VAL-EXACT-1: one action environment for admission and runtime binding.
+/// `completed` identifies the ordered derivation prefix already materialized.
+///
+/// # Errors
+/// Refuses invalid closed schemas or unresolved catalog/slice records.
+pub fn action_environment(
+    action: &norn_ir::ActionRoot,
+    catalog: Option<&crate::ZenTypeEnv>,
+    completed: usize,
+) -> Result<crate::ZenTypeEnv, String> {
+    action_environment_with(action, catalog, completed, false)
+}
+
+/// ACTION-ACTOR-1: the environment of one derivation, with the same `actor`
+/// binding checker admission uses. Values come only from the authenticated call.
+///
+/// # Errors
+/// Returns the reason the action input or a completed derivation cannot be typed.
+pub fn action_derivation_environment(
+    action: &norn_ir::ActionRoot,
+    completed: usize,
+) -> Result<crate::ZenTypeEnv, String> {
+    action_environment_with(action, None, completed, true)
+}
+
+/// #1105: each aggregate is a count (an integer) or a sum typed as its
+/// summed property, read as `aggregates.<name>`.
+fn aggregate_types(
+    action: &norn_ir::ActionRoot,
+    records: &BTreeMap<String, BTreeMap<String, crate::Type>>,
+) -> Result<BTreeMap<String, crate::Type>, String> {
+    let mut aggregates = BTreeMap::new();
+    for aggregate in &action.aggregates {
+        let ty = match &aggregate.aggregate {
+            norn_ir::AggregateFunction::Count {} => crate::Type::Integer,
+            norn_ir::AggregateFunction::Sum { property } => records
+                .get(aggregate.object_type.as_str())
+                .and_then(|record| record.get(property.as_str()))
+                .cloned()
+                .ok_or("unresolved action aggregate property")?,
+        };
+        aggregates.insert(aggregate.name.clone(), ty);
+    }
+    Ok(aggregates)
+}
+
+fn action_environment_with(
+    action: &norn_ir::ActionRoot,
+    catalog: Option<&crate::ZenTypeEnv>,
+    completed: usize,
+    principal: bool,
+) -> Result<crate::ZenTypeEnv, String> {
+    use crate::{EnvOptions, Type, ZenTypeEnv};
+    let schema = Schema::parse_action(&JsonValue::Object(action.input_schema.clone()), "input")
+        .map_err(|e| e.reason)?;
+    let mut records = catalog_input_records(catalog);
+    let root = schema.expression_type("exact.action.input", &mut records);
+    let Type::Record(name) = root else {
+        return Err("action input must be a record".into());
+    };
+    let mut fields = records.remove(&name).ok_or("missing action input record")?;
+    let properties = schema.properties().ok_or("missing input fields")?;
+    for derivation in action.derive.iter().filter(|step| !step.input_required) {
+        let target = fields
+            .get_mut(&derivation.field)
+            .ok_or("unknown derivation target")?;
+        *target = target.clone().optional();
+    }
+    for derivation in action.derive.iter().take(completed) {
+        let target = properties
+            .get(&derivation.field)
+            .ok_or("unknown derivation target")?;
+        fields.insert(
+            derivation.field.clone(),
+            target.expression_type(
+                &format!("exact.action.target.{}", derivation.field),
+                &mut records,
+            ),
+        );
+    }
+    let mut slice = BTreeMap::new();
+    for entry in action.slice.iter().filter(|_| catalog.is_some()) {
+        if !records.contains_key(entry.object_type.as_str()) {
+            return Err("unresolved action slice type".into());
+        }
+        let mut ty = Type::Record(entry.object_type.as_str().to_owned());
+        if entry.is_list() {
+            ty = ty.list();
+        }
+        if entry.optional {
+            ty = ty.optional();
+        }
+        slice.insert(entry.name.clone(), ty);
+    }
+    let slice_record = "exact.action.slice".to_owned();
+    records.insert(slice_record.clone(), slice);
+    let aggregates = aggregate_types(action, &records)?;
+    let aggregate_record = "exact.action.aggregates".to_owned();
+    let declares_aggregates = !aggregates.is_empty();
+    if declares_aggregates {
+        records.insert(aggregate_record.clone(), aggregates);
+    }
+    let build = if principal {
+        ZenTypeEnv::action_derivation_with_records
+    } else {
+        ZenTypeEnv::input_only_with_records
+    };
+    let mut env =
+        build(records, fields.clone(), EnvOptions::default()).map_err(|e| e.to_string())?;
+    env = env
+        .bind_operand("slice", Type::Record(slice_record))
+        .map_err(|e| e.to_string())?;
+    if declares_aggregates {
+        env = env
+            .bind_operand("aggregates", Type::Record(aggregate_record))
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(ty) = catalog.and_then(|env| env.variables().get("self")) {
+        env = env
+            .bind_operand("self", ty.clone())
+            .map_err(|e| e.to_string())?;
+    }
+    for (name, ty) in fields {
+        // A declared `aggregates` operand keeps its name; the input field
+        // stays reachable as `input.aggregates`.
+        if name != "input" && name != "slice" && !(declares_aggregates && name == "aggregates") {
+            env = env.bind_operand(&name, ty).map_err(|e| e.to_string())?;
+        }
+    }
+    crate::check::validate_exact_environment(&env, "exact.action")?;
+    Ok(env)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Schema;
@@ -526,6 +982,42 @@ mod tests {
 
     fn num(text: &str) -> Value {
         Value::Number(text.parse::<Number>().unwrap())
+    }
+
+    #[test]
+    fn action_decimal_wire_is_exact_text_and_bounded_by_scale() {
+        use norn_ir::{Decimal, RuntimeValue};
+        let wire: JsonValue =
+            serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#)
+                .unwrap();
+        assert!(Schema::parse(&wire, "amount").is_ok());
+        let schema = Schema::parse_action(&wire, "amount").unwrap();
+        for text in ["0", "125.50", "-2.01", "9007199254740993.25"] {
+            let decoded = schema
+                .decode_action_input(RuntimeValue::String(text.into()), "amount")
+                .unwrap();
+            assert_eq!(decoded, RuntimeValue::Number(Decimal::parse(text).unwrap()));
+            assert!(
+                schema
+                    .check(&Value::try_from(&decoded).unwrap(), "amount")
+                    .is_ok()
+            );
+        }
+        for bad in [
+            RuntimeValue::Number(Decimal::from(125_u64)),
+            RuntimeValue::Null,
+            RuntimeValue::String("1.001".into()),
+            RuntimeValue::String("NaN".into()),
+            RuntimeValue::String("99999999999999999999999999999999999".into()),
+        ] {
+            assert!(schema.decode_action_input(bad, "amount").is_err());
+        }
+        let mut invalid = wire.as_object().unwrap().clone();
+        invalid.insert(
+            "nornType".into(),
+            serde_json::from_str(r#"{"kind":"decimal","scale":19}"#).unwrap(),
+        );
+        assert!(Schema::parse_action(&JsonValue::Object(invalid), "amount").is_err());
     }
 
     #[test]

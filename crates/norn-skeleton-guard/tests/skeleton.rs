@@ -311,7 +311,13 @@ fn guard_detects_rusqlite_outside_norn_cell() {
 
 #[test]
 fn guard_confines_workers_rs_to_the_cloudflare_adapter() {
-    let v = check_dependencies(&with_dep("norn-api", "worker"));
+    let host = check_dependencies(&with_dep("norn-api", "worker"));
+    assert!(
+        rules_of(&host).contains(&"single-owner"),
+        "{}",
+        render(&host)
+    );
+    let v = check_dependencies(&with_dep("norn-kernel", "worker"));
     assert!(rules_of(&v).contains(&"single-owner"), "{}", render(&v));
     assert!(rules_of(&v).contains(&"ring0-unlisted"), "{}", render(&v));
     let v = check_dependencies(&metadata());
@@ -1578,4 +1584,35 @@ fn machine_boundaries_match_dependency_policy() {
         assert_eq!(doc["dev_only_norn"], serde_json::json!(rule.dev_only_norn));
         assert_eq!(doc["third_party"], serde_json::json!(rule.third_party));
     }
+}
+
+#[test]
+fn symcc_has_exactly_one_direct_owner() {
+    assert!(check_dependencies(&with_dep("norn-authz", "cedar-policy-symcc")).is_empty());
+    for owner in ["norn-kernel", "norn-checker", "norn-cli", "norn-cell"] {
+        let violations = check_dependencies(&with_dep(owner, "cedar-policy-symcc"));
+        assert!(
+            rules_of(&violations).contains(&"single-owner"),
+            "{}",
+            render(&violations)
+        );
+    }
+}
+
+#[test]
+fn datalog_contract_has_no_checker_or_host_dependency_permission() {
+    for dependency in ["norn-checker", "norn-kernel", "norn-cell"] {
+        let violations = check_dependencies(&with_dep("norn-datalog", dependency));
+        assert!(
+            rules_of(&violations).contains(&"norn-edge"),
+            "{}",
+            render(&violations)
+        );
+    }
+    let violations = check_dependencies(&with_dep("norn-datalog", "tokio"));
+    assert!(
+        rules_of(&violations).contains(&"ring0-host"),
+        "{}",
+        render(&violations)
+    );
 }

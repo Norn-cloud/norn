@@ -10,6 +10,7 @@
 //! | `_norn_perform_claim` | one durable claim per command generation, committed before external dispatch | commit |
 //! | `_norn_timer` | one pending timer and its incarnation (the scheduling commit); the `clock` queue, whose earliest `due` is the host alarm | commit |
 //! | `_norn_run` | one `perform` execution and its outcome, and the commit that consumed it | perform; commit |
+//! | `_norn_flow_run` | one admitted flow run: its flow, generation, current lifecycle state and version, and its start and last-write commits (RUN-LEDGER-1, `flow_run`) | commit |
 //! | `_norn_inbox` | one ingested observation (the `observe` queue) and the commit that consumed it | ingest; commit |
 //! | `_norn_version` | the highest version ever assigned to an object id within its type hierarchy (keyed by root type), so versions never repeat across delete, recreate, or a change of subtype | commit |
 //! | `_norn_link_version` | one link row `(link table, source, target)` ever written: its link id, its endpoint types as last written, and its version, bumped by every add or remove, so it never repeats across remove and re-add (#3013) | commit |
@@ -28,10 +29,9 @@
 use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 
-/// Pre-alpha format /7 binds exact values and durable markings on top of
-/// main's pending-link indexes (/4), quantity v2 and cell-wide clock (/6).
-/// Stores /2 through /6 must be recreated, never upgraded in place.
-pub const STORE_FORMAT: &str = "norn.cell.store/7";
+/// Pre-alpha format /8 binds producing receipts to exact incarnation digests.
+/// Stores /2 through /7 must be recreated, never upgraded in place.
+pub const STORE_FORMAT: &str = "norn.cell.store/8";
 /// Reverse index of pending relation intents, maintained with their records.
 pub(crate) const PENDING_LINK_INDEX: &str = "_norn_pending_link";
 
@@ -427,6 +427,8 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("seq")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/commit" ON "_norn_ledger" ("commit_seq")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/finding_sequence" ON "_norn_ledger" ("world", json_extract("event", '$.fact.id'), "seq", "commit_seq") WHERE json_extract("event", '$.op') = 'data_quality_finding'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/finding_subject" ON "_norn_ledger" ("world", json_extract("event", '$.fact.subjects[0].objectType'), json_extract("event", '$.fact.subjects[0].key')) WHERE json_extract("event", '$.op') = 'data_quality_finding'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/quantity_latest" ON "_norn_ledger"
       ("world", json_extract("event", '$.request.ledgerId'), "seq" DESC)
       WHERE json_extract("event", '$.type')='quantity.transition'"#,
@@ -580,6 +582,8 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("world", "root_type", "id", "version")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/commit" ON "_norn_fact_values" ("world", "commit_seq", "root_type", "id", "version")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/key_frontier" ON "_norn_fact_values" ("world", "id", "commit_seq", "root_type", "version")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/root_frontier" ON "_norn_fact_values" ("world", "root_type", "commit_seq", "id", "version")"#,
     MARKING_SUBJECT_DDL,
     MARKING_SUBJECT_INDEX_DDL,
     MARKING_CURRENT_DDL,

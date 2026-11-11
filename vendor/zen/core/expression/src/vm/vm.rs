@@ -58,14 +58,66 @@ impl VM {
         self.stack.clear();
         self.scopes.clear();
 
+        let policy = self
+            .meter
+            .as_ref()
+            .filter(|meter| !meter.exact_arithmetic())
+            .and_then(|m| m.arithmetic().map(|p| (m, p)));
+        if let Some((meter, profile)) = policy {
+            check_scaled_value(scope.base(), meter, profile)?;
+            for (_, local) in scope.locals() {
+                check_scaled_value(local, meter, profile)?;
+            }
+        }
         #[allow(unused_mut)]
         let mut inner = VMInner::new(bytecode, &mut self.stack, &mut self.scopes);
         {
             inner.meter = self.meter.as_ref();
         }
 
-        inner.run(scope)
+        let output = inner.run(scope)?;
+        if let Some((meter, profile)) = policy {
+            check_scaled_value(&output, meter, profile)?;
+        }
+        Ok(output)
     }
+}
+
+fn check_scaled_value(
+    value: &Variable,
+    meter: &crate::meter::Meter,
+    profile: crate::scaled::ScaledArithmetic,
+) -> VMResult<()> {
+    let mut pending = vec![value.clone()];
+    while let Some(value) = pending.pop() {
+        meter.charge(1).map_err(BudgetExhausted)?;
+        match value {
+            Number(number) => {
+                profile.coefficient(number).map_err(|message| OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: message.into(),
+                })?;
+            }
+            Array(items) => {
+                let items = items.borrow();
+                meter.charge(items.len() as u64).map_err(BudgetExhausted)?;
+                pending.extend(items.iter().cloned());
+            }
+            Object(fields) => {
+                let fields = fields.borrow();
+                meter.charge(fields.len() as u64).map_err(BudgetExhausted)?;
+                pending.extend(fields.values().cloned());
+            }
+            Null | Bool(_) | String(_) => {}
+            Dynamic(_) => {
+                return Err(OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: "unsupported profiled value".into(),
+                })
+            }
+        }
+    }
+    Ok(())
 }
 
 struct VMInner<'parent_ref, 'bytecode_ref> {
@@ -73,6 +125,7 @@ struct VMInner<'parent_ref, 'bytecode_ref> {
     stack: &'parent_ref mut Vec<Variable>,
     bytecode: &'bytecode_ref [Opcode],
     ip: u32,
+    exact_sites: Vec<Option<crate::scaled::ScaledArithmetic>>,
     meter: Option<&'parent_ref crate::meter::Meter>,
 }
 
@@ -84,6 +137,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
     ) -> Self {
         Self {
             ip: 0,
+            exact_sites: Vec::new(),
             scopes,
             stack,
             bytecode,
@@ -120,8 +174,200 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             self.ip += 1;
 
             self.charge(op)?;
+            if let Some(meter) = self.meter.filter(|m| {
+                m.arithmetic().is_some()
+                    || m.exact_arithmetic()
+                    || self.exact_sites.last().is_some_and(Option::is_some)
+            }) {
+                let exact = meter.exact_arithmetic()
+                    || self.exact_sites.last().is_some_and(Option::is_some);
+                let arithmetic = self
+                    .exact_sites
+                    .last()
+                    .copied()
+                    .flatten()
+                    .or_else(|| meter.arithmetic());
+                let next = self.bytecode.get(self.ip as usize);
+                let at_rescale = arithmetic.is_some()
+                    && (next.is_none()
+                        || matches!(next, Some(Opcode::Rescale { .. }))
+                        || (matches!(next, Some(Opcode::Negate))
+                            && matches!(
+                                self.bytecode.get(self.ip as usize + 1),
+                                None | Some(Opcode::Rescale { .. })
+                            )));
+                let failure = |message: &str| OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: message.into(),
+                };
+                match op {
+                    Opcode::Add
+                        if exact
+                            && matches!(
+                                (self.peek(1), self.peek(0)),
+                                (Some(String(_)), Some(String(_)))
+                            ) => {}
+                    Opcode::Add | Opcode::Subtract | Opcode::Multiply | Opcode::Divide => {
+                        let (Number(b), Number(a)) = (self.pop()?, self.pop()?) else {
+                            return Err(failure("scaled arithmetic requires numbers"));
+                        };
+                        let name = match op {
+                            Opcode::Add => "Add",
+                            Opcode::Subtract => "Subtract",
+                            Opcode::Multiply => "Multiply",
+                            _ => "Divide",
+                        };
+                        let result = if exact && name != "Divide" {
+                            crate::scaled::ScaledArithmetic::exact_binary(name, a, b)
+                        } else {
+                            let mut profile = self
+                                .exact_sites
+                                .last()
+                                .copied()
+                                .flatten()
+                                .or_else(|| meter.arithmetic())
+                                .ok_or_else(|| {
+                                    failure(
+                                        "division requires a declared result scale and rounding",
+                                    )
+                                })?;
+                            if exact {
+                                // VAL-ROUND: only a final result may use destination rounding.
+                                if usize::try_from(self.ip).ok() != Some(self.bytecode.len())
+                                    && !matches!(
+                                        self.bytecode.get(self.ip as usize),
+                                        Some(Opcode::Rescale { .. })
+                                    )
+                                {
+                                    profile.rounding = crate::scaled::Rounding::Refuse;
+                                }
+                                profile.divide(a, b)
+                            } else {
+                                profile.binary(name, a, b)
+                            }
+                        };
+                        self.push(Number(result.map_err(failure)?));
+                        continue;
+                    }
+                    Opcode::In if exact => {
+                        return Err(failure("membership outside the exact arithmetic profile"))
+                    }
+                    Opcode::Negate if exact && !at_rescale => {
+                        if let Some(Number(number)) = self.peek(0) {
+                            crate::scaled::ScaledArithmetic::exact_result_scale(
+                                "Add",
+                                number.scale(),
+                                0,
+                            )
+                            .map_err(failure)?;
+                        }
+                    }
+                    Opcode::Equal | Opcode::Compare(_) if exact => {
+                        if let (Some(Number(a)), Some(Number(b))) = (self.peek(1), self.peek(0)) {
+                            crate::scaled::ScaledArithmetic::exact_compare(*a, *b)
+                                .map_err(failure)?;
+                        }
+                    }
+                    Opcode::PushNumber(n) => {
+                        if exact && !at_rescale {
+                            crate::scaled::ScaledArithmetic::exact_result_scale(
+                                "Add",
+                                n.scale(),
+                                0,
+                            )
+                            .map_err(failure)?;
+                        } else if !exact {
+                            meter
+                                .arithmetic()
+                                .ok_or_else(|| failure("missing arithmetic site"))?
+                                .coefficient(*n)
+                                .map_err(failure)?;
+                        }
+                    }
+                    Opcode::Modulo | Opcode::Exponent | Opcode::CallMethod { .. } => {
+                        return Err(failure("operation outside the scaled arithmetic profile"));
+                    }
+                    Opcode::CallFunction {
+                        kind:
+                            crate::functions::FunctionKind::Internal(
+                                crate::functions::InternalFunction::String,
+                            ),
+                        ..
+                    } if matches!(self.peek(0), Some(String(_))) => {}
+                    Opcode::CallFunction { kind, .. }
+                        if !matches!(
+                            kind,
+                            crate::functions::FunctionKind::Internal(
+                                crate::functions::InternalFunction::Len
+                                    | crate::functions::InternalFunction::Flatten
+                            )
+                        ) =>
+                    {
+                        return Err(failure("function outside the scaled arithmetic profile"));
+                    }
+                    _ => {}
+                }
+            }
 
             match op {
+                Opcode::ExactSite { scale, rounding } => {
+                    let inherited = self
+                        .exact_sites
+                        .last()
+                        .copied()
+                        .flatten()
+                        .or_else(|| self.meter.and_then(|meter| meter.arithmetic()));
+                    let site = crate::scaled::ScaledArithmetic::rounding_site(
+                        *scale,
+                        *rounding,
+                        inherited,
+                        self.meter.is_some_and(|meter| meter.exact_arithmetic()),
+                    )
+                    .map_err(|reason| OpcodeErr {
+                        opcode: "ExactSite".into(),
+                        message: reason.into(),
+                    })?;
+                    if site.is_some() && self.meter.is_none() {
+                        return Err(OpcodeErr {
+                            opcode: "ExactSite".into(),
+                            message: "unmetered exact site".into(),
+                        });
+                    }
+                    self.exact_sites.push(site);
+                }
+                Opcode::Rescale { scale } => {
+                    let value = self.pop()?;
+                    let result = if let Some(Some(site)) = self.exact_sites.last() {
+                        let Number(value) = value else {
+                            return Err(OpcodeErr {
+                                opcode: "Rescale".into(),
+                                message: "numeric operand required".into(),
+                            });
+                        };
+                        Number(site.rescale(value).map_err(|reason| OpcodeErr {
+                            opcode: "Rescale".into(),
+                            message: reason.into(),
+                        })?)
+                    } else {
+                        let args = [value, Number((*scale).into())];
+                        FunctionRegistry::get_definition(&crate::functions::FunctionKind::Internal(
+                            crate::functions::InternalFunction::Round,
+                        ))
+                        .ok_or_else(|| OpcodeErr {
+                            opcode: "Rescale".into(),
+                            message: "round unavailable".into(),
+                        })?
+                        .call(Arguments(&args))
+                        .map_err(|error| OpcodeErr {
+                            opcode: "Rescale".into(),
+                            message: error.to_string(),
+                        })?
+                    };
+                    self.push(result);
+                }
+                Opcode::ExactSiteEnd => {
+                    self.exact_sites.pop();
+                }
                 Opcode::PushNull => self.push(Null),
                 Opcode::PushBool(b) => self.push(Bool(*b)),
                 Opcode::PushNumber(n) => self.push(Number(*n)),
@@ -1091,6 +1337,23 @@ impl VMInner<'_, '_> {
             return Ok(());
         };
 
+        // Legacy round(value, scale) retains its previous push-scale/call fuel.
+        match op {
+            Opcode::ExactSite { rounding, .. }
+                if rounding.is_none()
+                    && !meter.exact_arithmetic()
+                    && self.exact_sites.last().is_none_or(Option::is_none) =>
+            {
+                return Ok(())
+            }
+            Opcode::ExactSiteEnd if self.exact_sites.last().is_some_and(Option::is_none) => {
+                return Ok(())
+            }
+            Opcode::Rescale { .. } if self.exact_sites.last().is_some_and(Option::is_none) => {
+                return meter.charge(4).map_err(crate::vm::VMError::BudgetExhausted)
+            }
+            _ => {}
+        }
         let mut steps = 0;
         let data = self.data_cost(op, meter.remaining(), &mut steps);
         meter.record_scan(steps);

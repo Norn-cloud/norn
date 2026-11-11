@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.resolution.missing_dependency",
+  "message": "required {kind} {artifactId} version {version} is neither in the artifact set nor installed",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

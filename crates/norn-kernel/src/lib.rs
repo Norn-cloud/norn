@@ -53,6 +53,7 @@
 )]
 
 pub mod action;
+mod action_aggregate;
 pub mod action_commit;
 pub mod authz;
 mod authz_action;
@@ -62,14 +63,24 @@ mod decider;
 pub mod decision_commit;
 mod effect;
 mod envelope;
+pub mod flow_identity;
+pub mod governing_laws;
+mod guard_diagnostic;
 pub mod limits;
 pub mod naming_series;
+mod partition_slice;
+pub mod predicate_read;
+pub use partition_slice::{PartitionSlice, load_partition_slice};
+mod synchronous_rule;
+pub use norn_decisions::DecisionBinding;
+pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
 mod observations;
 pub mod quantity;
 pub mod receipt_binding;
 pub mod refusal;
 pub mod result_reconciliation;
 pub mod snapshot_observe;
+pub mod timer_schedule;
 mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
 // contract used to bind exact observation continuation payloads.
@@ -93,8 +104,9 @@ pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,
     FactWrite, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkState,
-    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, Provenance,
-    SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
+    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateObject,
+    PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance, SerializationLane,
+    WrittenLinkVersion, WrittenVersion, check_commit,
 };
 pub use decider::{
     Decider, Decision, DecisionOf, EnvelopeKind, Step, StepError, StepOf, StepResult, fold, replay,
@@ -122,3 +134,8 @@ pub use observations::{CommitId, Entropy, LogicalTime, Observations, World, Worl
 pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory};
 
 mod action_quantity;
+
+/// Conservative ownership boundary for cell-local atomic execution.
+pub mod execution_profile;
+
+mod profile_ownership;

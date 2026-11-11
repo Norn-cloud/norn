@@ -594,7 +594,7 @@ impl<'a, 'n> Estimator<'a, 'n> {
     /// The fewest canonical bytes a value of `ty` takes.
     fn min_bytes(ty: &T) -> u64 {
         match ty {
-            T::Number => 1,
+            T::Number(_) => 1,
             T::Null | T::Bool => 4,
             T::Str(Some(values)) => {
                 2_u64.saturating_add(values.iter().map(|v| len64(v.len())).min().unwrap_or(0))
@@ -641,7 +641,7 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 val.size = val.size.at_least_one();
                 val
             }
-            T::Null | T::Bool | T::Number => Val::scalar(),
+            T::Null | T::Bool | T::Number(_) => Val::scalar(),
             T::Str(Some(values)) => Val {
                 size: Lin::constant(values.iter().map(|v| len64(v.len())).max().unwrap_or(0)),
                 origin,
@@ -1027,8 +1027,14 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 ..Val::default()
             },
             FunctionKind::Internal(InternalFunction::Tokens) => {
-                let max_count = literal_u64(arguments.get(2).copied(), 256);
-                let max_length = literal_u64(arguments.get(3).copied(), 256);
+                let max_count = literal_u64(
+                    arguments.get(2).copied(),
+                    len64(zen_expression::functions::MAX_TOKEN_COUNT),
+                );
+                let max_length = literal_u64(
+                    arguments.get(3).copied(),
+                    len64(zen_expression::functions::MAX_TOKEN_BYTES),
+                );
                 let input_bytes = self.total(&first);
                 let count = if max_length == 0 {
                     0
@@ -1048,7 +1054,10 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 }
             }
             FunctionKind::Internal(InternalFunction::Take) => {
-                let max_scalars = literal_u64(arguments.get(1).copied(), 16_384);
+                let max_scalars = literal_u64(
+                    arguments.get(1).copied(),
+                    len64(zen_expression::functions::MAX_TAKE_SCALARS),
+                );
                 let output_bytes = self.total(&first).min(max_scalars.saturating_mul(4));
                 cost.add(&Lin::constant(output_bytes));
                 Val::sized(Lin::constant(output_bytes))
@@ -1077,7 +1086,9 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 );
                 let separator_bytes = self.total(&separator).saturating_mul(separators);
                 Val::sized(Lin::constant(
-                    item_bytes.saturating_add(separator_bytes).min(16_384),
+                    item_bytes
+                        .saturating_add(separator_bytes)
+                        .min(len64(zen_expression::functions::MAX_JOIN_BYTES)),
                 ))
             }
             FunctionKind::Internal(_) | FunctionKind::Deprecated(_) | FunctionKind::Closure(_) => {

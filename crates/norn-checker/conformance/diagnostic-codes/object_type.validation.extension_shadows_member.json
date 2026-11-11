@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.extension_shadows_member",
+  "message": "extension {member} {id} shadows the member of the same id that {owner} declares on {type}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

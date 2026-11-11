@@ -1,0 +1,7 @@
+{
+  "code": "ledger.leg.empty_layer",
+  "message": "layer must be non-empty",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

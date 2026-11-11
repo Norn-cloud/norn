@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.default_not_initial",
+  "message": "the default {state} of {property} is not an initial state",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

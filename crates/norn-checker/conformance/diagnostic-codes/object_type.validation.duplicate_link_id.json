@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.duplicate_link_id",
+  "message": "link id {link} is declared twice, as a link or a property, in one declaration",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

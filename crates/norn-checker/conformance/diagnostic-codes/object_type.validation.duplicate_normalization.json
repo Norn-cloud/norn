@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.duplicate_normalization",
+  "message": "component {property} is normalized twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

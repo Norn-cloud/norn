@@ -1,0 +1,7 @@
+{
+  "code": "mapping.runtime.evaluation_failed",
+  "message": "map {map}: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

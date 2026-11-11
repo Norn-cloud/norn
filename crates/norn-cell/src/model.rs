@@ -8,7 +8,8 @@ use norn_checker::{
     EffectiveLink, EffectiveObjectType, EntityContext, EntityModel, effective_object_types,
 };
 use norn_ir::{
-    InterfaceDef, Lifecycle, Link, ObjectTypeDef, Property, PropertyKind, PropertyTypeDef,
+    ArtifactEnvelope, ArtifactKind, InterfaceDef, LawIR, Lifecycle, Link, ObjectTypeDef, Property,
+    PropertyKind, PropertyTypeDef,
 };
 use norn_projections::sqlite_ddl::{
     ID_COLUMN, SCOPE_COLUMN, TYPE_COLUMN, WORLD_COLUMN, quote_identifier,
@@ -185,6 +186,30 @@ fn append_binding_indexes(
     Ok(())
 }
 
+fn canonical_law_artifacts(
+    artifacts: &[ArtifactEnvelope],
+) -> Result<Vec<ArtifactEnvelope>, CellError> {
+    let mut laws: Vec<_> = artifacts
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Law)
+        .cloned()
+        .collect();
+    laws.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    for artifact in &laws {
+        let _: LawIR =
+            serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
+    }
+    if laws
+        .windows(2)
+        .any(|pair| matches!(pair, [a, b] if a.artifact_id == b.artifact_id))
+    {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "duplicate governing law artifact".to_owned(),
+        ));
+    }
+    Ok(laws)
+}
+
 /// Hash object/property definitions and invariant-bearing interfaces, including
 /// semantics absent from projected DDL.
 #[derive(Serialize)]
@@ -201,6 +226,8 @@ struct ReplayDefinitions<'a> {
     /// this field preserves hashes for snapshots that predate binding indexes.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     binding_indexes: Vec<BindingIndexSpec>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    law_artifacts: Vec<ArtifactEnvelope>,
 }
 
 /// A direct property used by an admitted list binding's sort or filter.
@@ -246,6 +273,7 @@ pub struct Model {
     ddl_sql: String,
     ddl_hash: String,
     definitions_hash: String,
+    law_artifacts: Vec<ArtifactEnvelope>,
 }
 
 impl Model {
@@ -253,7 +281,11 @@ impl Model {
     ///
     /// # Errors
     ///
-    /// [`CellError::Projection`] when the types do not project.
+    /// [`CellError::Projection`] when the types do not project, and
+    /// [`CellError::EffectiveViewRefused`] when the effective view of the
+    /// types cannot be derived (more than 4,096 object types, or another
+    /// inheritance classification budget): the model is refused rather than
+    /// admitted with an empty view.
     pub fn new(input: &SqliteDdlInput<'_>) -> Result<Self, CellError> {
         Self::new_with_interfaces(input, &[])
     }
@@ -262,14 +294,28 @@ impl Model {
         input: &SqliteDdlInput<'_>,
         interfaces: &[InterfaceDef],
     ) -> Result<Self, CellError> {
-        Self::new_with_binding_indexes(input, interfaces, &[])
+        Self::new_with_binding_indexes(input, interfaces, &[], &[])
     }
 
     fn new_with_binding_indexes(
         input: &SqliteDdlInput<'_>,
         interfaces: &[InterfaceDef],
         binding_indexes: &[BindingIndexSpec],
+        law_artifacts: &[ArtifactEnvelope],
     ) -> Result<Self, CellError> {
+        let model =
+            Self::project_with_binding_indexes(input, interfaces, binding_indexes, law_artifacts)?;
+        crate::identity::validate_model(&model.effective_objects, input.object_types)?;
+        Ok(model)
+    }
+
+    fn project_with_binding_indexes(
+        input: &SqliteDdlInput<'_>,
+        interfaces: &[InterfaceDef],
+        binding_indexes: &[BindingIndexSpec],
+        law_artifacts: &[ArtifactEnvelope],
+    ) -> Result<Self, CellError> {
+        let law_artifacts = canonical_law_artifacts(law_artifacts)?;
         let mut schema = project_sqlite_ddl(input)?;
         let defs: BTreeMap<String, &ObjectTypeDef> = input
             .object_types
@@ -326,6 +372,7 @@ impl Model {
                 (!invariant_interfaces.is_empty()).then_some(invariant_interfaces)
             },
             binding_indexes: binding_indexes.clone(),
+            law_artifacts: law_artifacts.clone(),
         })?;
         let registry = std::collections::BTreeSet::new();
         let entity_model = EntityModel {
@@ -340,7 +387,7 @@ impl Model {
             tenant: None,
         };
         let (effective_objects, effective_links) =
-            effective_object_types(&entity_model, &entity_context)
+            effective_object_types(&entity_model, &entity_context)?
                 .into_values()
                 .fold(
                     (BTreeMap::new(), BTreeMap::new()),
@@ -362,6 +409,7 @@ impl Model {
             ddl_sql,
             ddl_hash,
             definitions_hash,
+            law_artifacts,
         })
     }
 
@@ -421,7 +469,70 @@ impl Model {
             },
             interfaces,
             binding_indexes,
+            &[],
         )
+    }
+
+    /// OBS-EVIDENCE-1: retain laws from the admitted artifact set, never an observation payload.
+    /// Install admission checks this exact set against the canonical definition version.
+    ///
+    /// # Errors
+    /// Malformed/duplicate laws or an invalid entity projection.
+    pub fn with_governing_laws(self, artifacts: &[ArtifactEnvelope]) -> Result<Self, CellError> {
+        Self::new_with_binding_indexes(
+            &SqliteDdlInput {
+                object_types: &self.object_types().cloned().collect::<Vec<_>>(),
+                property_types: &self.property_types,
+            },
+            &self.interfaces,
+            &self.binding_indexes,
+            artifacts,
+        )
+    }
+
+    /// Exact retained law envelopes, available to effective-instance resolution.
+    #[must_use]
+    pub fn law_artifacts(&self) -> &[ArtifactEnvelope] {
+        &self.law_artifacts
+    }
+
+    /// OBS-LEGACY-1: missing historical law retention cannot borrow current authority.
+    pub(crate) fn check_governing_laws(&self, canonical_set: &str) -> Result<(), CellError> {
+        let artifacts = serde_json::from_str::<Vec<ArtifactEnvelope>>(canonical_set)?;
+        let expected = canonical_law_artifacts(&artifacts)?;
+        if self.law_artifacts.is_empty() && !expected.is_empty() {
+            return Err(CellError::LegacyLawSnapshot);
+        }
+        if self.law_artifacts != expected {
+            return Err(CellError::DefinitionReceiptInvalid(
+                "retained governing laws differ from the installed artifact set".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// LAW-COMPLETE-1 / LAW-SUPPORTED-1: CP2 resolves exact direct entity laws only.
+    ///
+    /// # Errors
+    /// Unknown type, malformed law, or applicable inherited/effective scope unsupported until B2.
+    pub fn governing_laws(&self, object_type: &str) -> Result<Vec<ArtifactEnvelope>, CellError> {
+        self.entry(object_type)?;
+        norn_kernel::TypeCatalog::new(self.object_types())
+            .with_interfaces(self.interfaces())
+            .with_governing_laws(&self.law_artifacts)
+            .governing_laws(&norn_ir::ObjectTypeName(object_type.to_owned()))
+            .map(|laws| laws.into_iter().cloned().collect())
+            .map_err(|error| match error {
+                norn_kernel::governing_laws::LawEvaluationError::UnsupportedUntilB2(law_id) => {
+                    CellError::UnsupportedLawScope { law_id }
+                }
+                other @ (norn_kernel::governing_laws::LawEvaluationError::Unsupported(_)
+                | norn_kernel::governing_laws::LawEvaluationError::Invalid(_)
+                | norn_kernel::governing_laws::LawEvaluationError::BudgetExceeded
+                | norn_kernel::governing_laws::LawEvaluationError::Violated(_)) => {
+                    CellError::DefinitionReceiptInvalid(other.to_string())
+                }
+            })
     }
 
     /// The projected schema.
@@ -471,6 +582,45 @@ impl Model {
     /// The definition of `object_type`.
     pub(crate) fn def(&self, object_type: &str) -> Result<&ObjectTypeDef, CellError> {
         Ok(&self.entry(object_type)?.def)
+    }
+
+    pub(crate) fn identity_objects(&self) -> impl Iterator<Item = &EffectiveObjectType> {
+        self.effective_objects.values()
+    }
+
+    pub(crate) fn validate_identity_profile(&self) -> Result<(), CellError> {
+        crate::identity::validate_model(&self.effective_objects, self.object_types())
+    }
+
+    pub(crate) fn query_contract(&self, name: &str) -> Result<&EffectiveObjectType, CellError> {
+        self.effective_objects
+            .get(name)
+            .ok_or_else(|| CellError::UnknownObjectType(name.to_owned()))
+    }
+
+    /// The effective properties of `object_type`, inherited ones included,
+    /// in declaration order, each with its resolved local type (`None` for a
+    /// registry or unresolved type, whose definition is not available here).
+    ///
+    /// # Errors
+    /// The type is not in this model.
+    pub fn effective_property_types(
+        &self,
+        object_type: &str,
+    ) -> Result<Vec<(String, Option<norn_ir::PropertyType>)>, CellError> {
+        Ok(self
+            .query_contract(object_type)?
+            .properties
+            .iter()
+            .map(|property| {
+                let resolved = match &property.kind {
+                    norn_checker::entity_instance::EffectiveKind::Base(kind) => Some(kind.clone()),
+                    norn_checker::entity_instance::EffectiveKind::Registry(_)
+                    | norn_checker::entity_instance::EffectiveKind::Unresolved => None,
+                };
+                (property.id.as_str().to_owned(), resolved)
+            })
+            .collect())
     }
 
     /// Every object type of the model (#3018: the kernel's `TypeCatalog`
@@ -717,6 +867,7 @@ impl Model {
             property_types: self.property_types.clone(),
             interfaces: self.interfaces.clone(),
             binding_indexes: self.binding_indexes.clone(),
+            law_artifacts: self.law_artifacts.clone(),
         }
     }
 
@@ -726,11 +877,29 @@ impl Model {
     ///
     /// [`CellError::Projection`] when the snapshot does not project.
     pub fn from_snapshot(snapshot: &ModelDefinitionSnapshot) -> Result<Self, CellError> {
-        Self::from_definitions_with_binding_indexes(
-            &snapshot.object_types,
-            &snapshot.property_types,
+        Self::new_with_binding_indexes(
+            &SqliteDdlInput {
+                object_types: &snapshot.object_types,
+                property_types: &snapshot.property_types,
+            },
             &snapshot.interfaces,
             &snapshot.binding_indexes,
+            &snapshot.law_artifacts,
+        )
+    }
+
+    /// ID-NORMALIZED-RETAINED: reconstruct pinned metadata without new admission.
+    pub(crate) fn from_retained_snapshot(
+        snapshot: &ModelDefinitionSnapshot,
+    ) -> Result<Self, CellError> {
+        Self::project_with_binding_indexes(
+            &SqliteDdlInput {
+                object_types: &snapshot.object_types,
+                property_types: &snapshot.property_types,
+            },
+            &snapshot.interfaces,
+            &snapshot.binding_indexes,
+            &snapshot.law_artifacts,
         )
     }
 
@@ -969,7 +1138,7 @@ impl Model {
     }
 }
 
-/// The entity-only portion of an admitted definition set needed by the cell
+/// The entity and governing-law portion of an admitted definition set needed by the cell
 /// store to rebuild historic projected models during export restore.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -986,6 +1155,9 @@ pub struct ModelDefinitionSnapshot {
     /// Older snapshots omit this because they had no binding property indexes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub binding_indexes: Vec<BindingIndexSpec>,
+    /// Exact governing `LawIR` artifacts; included in the model hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub law_artifacts: Vec<ArtifactEnvelope>,
 }
 
 #[cfg(test)]

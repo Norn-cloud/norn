@@ -1137,7 +1137,7 @@ class FileWalk {
       const string = this.every(receiver, (t) => !!(t.flags & ts.TypeFlags.StringLike))
       const array = this.checker.isArrayType(receiver) || this.checker.isTupleType(receiver)
       const arity = ["toLowerCase", "toUpperCase", "trim"].includes(name) ? 0 : 1
-      if ((string && ["toLowerCase", "toUpperCase", "trim", "includes", "startsWith", "endsWith"].includes(name) || array && name === "includes") && call.arguments.length === arity) {
+      if ((string && ["toLowerCase", "toUpperCase", "trim", "includes", "startsWith", "endsWith"].includes(name) || array && (name === "includes" || (name === "concat" && call.arguments[0] !== undefined && this.checker.isArrayType(this.typeOf(call.arguments[0]))))) && call.arguments.length === arity) {
         this.expr(callee.expression, ctx)
         for (const a of call.arguments) this.expr(a, ctx)
         return

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import pathlib
 import re
@@ -52,6 +53,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
 APALACHE_VERSION = "0.56.1"
+PINNED_JVM_ARGS = "-Xms256m -Xmx4096m -XX:ActiveProcessorCount=4 -XX:+ExitOnOutOfMemoryError"
+PINNED_JVM_GC_ARGS = "-XX:+UseG1GC -XX:G1PeriodicGCInterval=30000 -XX:+G1PeriodicGCInvokesConcurrent"
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 300
 SERVER_READY_TIMEOUT_SECONDS = 120
 # If the server has not begun a check this long after Quint connected, and
@@ -154,6 +157,8 @@ def scrubbed_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     environment = dict(os.environ if base is None else base)
     for name in SCRUBBED_ENVIRONMENT:
         environment.pop(name, None)
+    environment["JVM_ARGS"] = PINNED_JVM_ARGS
+    environment["JVM_GC_ARGS"] = PINNED_JVM_GC_ARGS
     return environment
 
 
@@ -541,6 +546,8 @@ def run_quint_apalache(
 ) -> QuintRun:
     """Run `argv` (a `quint verify ... --backend apalache` command) under the policy."""
 
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise HarnessError("attempt timeout must be finite and positive")
     argv = list(argv)
     if len(argv) < 2 or pathlib.Path(argv[0]).name != "quint" or argv[1] != "verify":
         raise HarnessError(f"not a quint verify command: {argv!r}")
@@ -575,6 +582,7 @@ def run_quint_apalache(
     server = ApalacheServer(home, environment, log)
     try:
         clear_result()
+        log(f"[apalache] JVM_ARGS={PINNED_JVM_ARGS}; JVM_GC_ARGS={PINNED_JVM_GC_ARGS}")
         server.start()
         for number in range(1, MAX_ATTEMPTS + 1):
             log(f"[attempt {number}/{MAX_ATTEMPTS}] {label} on 127.0.0.1:{server.port} (timeout {timeout_seconds:.0f}s)")
@@ -583,12 +591,13 @@ def run_quint_apalache(
             attempts.append(attempt)
             log(
                 f"[attempt {number}/{MAX_ATTEMPTS}] {label}: {attempt.classification} "
-                f"(exit={attempt.returncode}, {attempt.seconds:.1f}s)"
+                f"(exit={attempt.returncode}, {attempt.seconds:.1f}s; "
+                f"PASS #0={attempt.check_started}; The outcome is={attempt.server_outcomes})"
             )
             if attempt.classification not in RETRYABLE and attempt.classification != "timeout":
                 break
             if attempt.classification == "timeout":
-                log(f"[timeout] {label} exceeded {timeout_seconds:.0f}s; timeouts are not retried")
+                log(f"[timeout] [unknown] {label} exceeded {timeout_seconds:g}s; timeouts are not retried")
                 log(server.log_tail())
                 break
             if number == MAX_ATTEMPTS:
@@ -640,7 +649,7 @@ def main() -> int:
             emit=lambda line: print(line, flush=True),
         )
     except HarnessError as error:
-        print(f"[harness] {error}", file=sys.stderr, flush=True)
+        print(f"[harness] [unknown] {error}", file=sys.stderr, flush=True)
         return 125
     return run.returncode
 

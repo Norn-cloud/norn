@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.command_environment_underivable",
+  "message": "outbound command expressions require an object input schema with a derivable expression environment",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.unknown_target_map",
+  "message": "link {link} joins to map {map}, which the mapping does not declare",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

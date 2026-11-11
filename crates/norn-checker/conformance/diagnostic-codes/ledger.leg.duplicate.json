@@ -1,0 +1,7 @@
+{
+  "code": "ledger.leg.duplicate",
+  "message": "duplicate leg id `{legId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

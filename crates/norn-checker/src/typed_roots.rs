@@ -73,10 +73,10 @@ use norn_expr::{
     check_expression_with_root_bounds,
 };
 use norn_ir::{
-    ActionCommand, ActionCommandOperation, ActionInputDerivation, ActionRoot, ArtifactDependency,
-    ArtifactEnvelope, ArtifactKind, ArtifactPayload, Diagnostic, DiagnosticRemediation,
-    DiagnosticSeverity, JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile, SliceDeclaration,
-    SliceKey, ZenExpression,
+    ActionAggregateInput, ActionCommand, ActionCommandOperation, ActionInputDerivation, ActionRoot,
+    ArtifactDependency, ArtifactEnvelope, ArtifactKind, ArtifactPayload, Diagnostic,
+    DiagnosticRemediation, DiagnosticSeverity, JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile,
+    SliceDeclaration, SliceKey, ZenExpression,
 };
 
 use crate::envelope::{
@@ -172,6 +172,22 @@ fn validate_action_transaction_members(
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
+    if let Some(pin) = decode_member!(
+        norn_ir::ActionRuleRef,
+        payload,
+        "synchronousRule",
+        ACTION_CODE,
+        diagnostics,
+        artifact_id
+    ) && (pin.artifact_id.trim().is_empty() || pin.version.trim().is_empty())
+    {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            "synchronousRule needs a nonempty artifactId and exact version",
+            "payload.synchronousRule",
+            artifact_id,
+        ));
+    }
     if payload.contains_key("createLinks") {
         let _ = decode_member!(
             Vec<norn_ir::ActionCreateLink>,
@@ -241,6 +257,7 @@ pub(crate) fn validate_action_typed_members(
 
     let derivations = validate_action_derivations(payload, diagnostics, artifact_id);
     validate_action_slice(payload, &derivations, diagnostics, artifact_id);
+    validate_action_aggregates(payload, &derivations, diagnostics, artifact_id);
     let precondition_cost = validate_action_preconditions(payload, diagnostics, artifact_id);
     let turn_fuel = ResourceLimitProfile::norn_limits_v1().turn.fuel_units;
     if derivations.cost.saturating_add(precondition_cost) > turn_fuel {
@@ -372,6 +389,15 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
+            SliceKey::Parameter { .. } => {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    "parameter slice execution is not qualified in this cut",
+                    format!("{path}.key"),
+                    artifact_id,
+                ));
+                0
+            }
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
@@ -425,6 +451,94 @@ fn validate_action_slice(
                 format!("{path}.optional"),
                 artifact_id,
             ));
+        }
+    }
+}
+
+/// Validate an action's bounded aggregate inputs (#1105): names, bounds, and
+/// the input fields they read. Object types and property kinds are checked
+/// over the artifact set ([`crate::action_set`]).
+fn validate_action_aggregates(
+    payload: &BTreeMap<String, JsonValue>,
+    derivations: &ActionDerivationCheck,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    let Some(aggregates) = decode_member!(
+        Vec<ActionAggregateInput>,
+        payload,
+        "aggregates",
+        ACTION_CODE,
+        diagnostics,
+        artifact_id
+    ) else {
+        return;
+    };
+    let limits = ResourceLimitProfile::norn_limits_v1().slice;
+    let total_items = aggregates.iter().fold(0_u64, |total, aggregate| {
+        total.saturating_add(u64::from(aggregate.max_items))
+    });
+    if total_items > u64::from(limits.max_records) {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            format!(
+                "aggregates may match {total_items} objects in total, above the profile's slice record cap of {}",
+                limits.max_records
+            ),
+            "payload.aggregates",
+            artifact_id,
+        ));
+    }
+    let slice_names: BTreeSet<&str> = payload
+        .get("slice")
+        .and_then(JsonValue::as_array)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| entry.as_object()?.get("name")?.as_string())
+        .collect();
+    let mut names = BTreeSet::new();
+    for (index, aggregate) in aggregates.iter().enumerate() {
+        let path = format!("payload.aggregates[{index}]");
+        if !is_action_member_name(&aggregate.name)
+            || slice_names.contains(aggregate.name.as_str())
+            || !names.insert(aggregate.name.as_str())
+        {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                format!(
+                    "aggregate name {:?} is empty, repeated, or also a slice entry",
+                    aggregate.name
+                ),
+                format!("{path}.name"),
+                artifact_id,
+            ));
+        }
+        if aggregate.max_items == 0 {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                "aggregate maxItems must be at least 1",
+                format!("{path}.maxItems"),
+                artifact_id,
+            ));
+        }
+        for field in aggregate.input_fields() {
+            if action_input_field_type(payload.get("inputSchema"), field).is_none() {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    format!("aggregate input field {field:?} is not declared in inputSchema"),
+                    path.clone(),
+                    artifact_id,
+                ));
+            } else if !action_input_key_is_guaranteed(payload, field, derivations) {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    format!(
+                        "aggregate input field {field:?} may be absent; require its final input value"
+                    ),
+                    path.clone(),
+                    artifact_id,
+                ));
+            }
         }
     }
 }
@@ -656,10 +770,7 @@ fn validate_action_derivation_steps(
             ));
             continue;
         };
-        let Some(environment) = fields
-            .clone()
-            .and_then(|fields| ZenTypeEnv::input_only(fields, EnvOptions::default()).ok())
-        else {
+        let Some(environment) = fields.clone().and_then(action_derivation_environment) else {
             diagnostics.push(invalid_diagnostic(
                 codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
                 "derivation expressions require an object input schema with a derivable expression environment",
@@ -757,11 +868,13 @@ fn validate_action_preconditions(
             artifact_id,
         ));
     }
-    if payload
-        .get("slice")
-        .and_then(JsonValue::as_array)
-        .is_none_or(<[JsonValue]>::is_empty)
-    {
+    let declares = |member: &str| {
+        payload
+            .get(member)
+            .and_then(JsonValue::as_array)
+            .is_some_and(|entries| !entries.is_empty())
+    };
+    if !declares("slice") && !declares("aggregates") {
         return check_action_input_preconditions(payload, preconditions, diagnostics, artifact_id);
     }
     0
@@ -805,13 +918,15 @@ fn check_action_input_preconditions(
     aggregate_cost
 }
 
-/// Type-check action preconditions over the resolved slice object records.
-/// Entity type resolution belongs to the artifact-set checker; this helper
-/// only assembles the closed ZEN environment and checks boolean expressions.
+/// Type-check action preconditions over the resolved slice object records
+/// and aggregate result types. Entity type resolution belongs to the
+/// artifact-set checker; this helper only assembles the closed ZEN
+/// environment and checks boolean expressions.
 pub(crate) fn check_action_slice_preconditions(
     root: &ActionRoot,
     records: BTreeMap<String, BTreeMap<String, Type>>,
     slice_fields: BTreeMap<String, Type>,
+    aggregate_fields: BTreeMap<String, Type>,
     artifact_id: Option<&str>,
 ) -> Vec<Diagnostic> {
     if root.preconditions.is_empty() {
@@ -831,10 +946,12 @@ pub(crate) fn check_action_slice_preconditions(
             artifact_id,
         )];
     }
-    let Some(environment) = action_slice_environment(root, &schema, records, slice_fields) else {
+    let Some(environment) =
+        action_slice_environment(root, &schema, records, slice_fields, aggregate_fields)
+    else {
         return vec![invalid_diagnostic(
             codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
-            "preconditions require every declared slice object to have a resolved, closed property record",
+            "preconditions require every declared slice object and aggregate to have a resolved, closed type",
             "payload.slice",
             artifact_id,
         )];
@@ -943,7 +1060,7 @@ fn action_post_derivation_fields(
     let mut fields = action_input_fields(schema, &optional, &required)?;
     let mut cost = 0_u64;
     for step in derive {
-        let environment = ZenTypeEnv::input_only(fields.clone(), EnvOptions::default()).ok()?;
+        let environment = action_derivation_environment(fields.clone())?;
         let expected = action_input_field_type(Some(schema), &step.field)?;
         let expression = Expression::compile(step.expression.as_str()).ok()?;
         let checked = check_expression_with_root_bounds(
@@ -968,10 +1085,15 @@ fn action_slice_environment(
     input_schema: &JsonValue,
     mut records: BTreeMap<String, BTreeMap<String, Type>>,
     slice_fields: BTreeMap<String, Type>,
+    aggregate_fields: BTreeMap<String, Type>,
 ) -> Option<ZenTypeEnv> {
     let (fields, _) = action_post_derivation_fields(input_schema, &root.derive)?;
     let slice_record = "norn:ActionSlice".to_owned();
     records.insert(slice_record.clone(), slice_fields);
+    let aggregate_record = "norn:ActionAggregates".to_owned();
+    if !root.aggregates.is_empty() {
+        records.insert(aggregate_record.clone(), aggregate_fields);
+    }
     let mut environment = ZenTypeEnv::input_only_with_records(
         records,
         fields,
@@ -981,6 +1103,11 @@ fn action_slice_environment(
     environment = environment
         .bind_operand("slice", Type::Record(slice_record))
         .ok()?;
+    if !root.aggregates.is_empty() {
+        environment = environment
+            .bind_operand("aggregates", Type::Record(aggregate_record))
+            .ok()?;
+    }
     bind_flat_input_aliases(environment)
 }
 
@@ -1253,12 +1380,21 @@ fn action_input_environment(
     }
 }
 
+// ACTION-ACTOR-1: only the authenticated principal identity is available here.
+// Other general actor members have no trusted action-call binding and refuse typing.
+fn action_derivation_environment(fields: BTreeMap<String, Type>) -> Option<ZenTypeEnv> {
+    ZenTypeEnv::action_derivation_with_records(BTreeMap::new(), fields, EnvOptions::default()).ok()
+}
+
 fn bind_flat_input_aliases(mut environment: ZenTypeEnv) -> Option<ZenTypeEnv> {
     let input = environment.record(INPUT_RECORD)?;
     let aliases: Vec<(String, Type)> = input
         .fields
         .iter()
         .filter(|(name, _)| name.as_str() != "input" && name.as_str() != "slice")
+        // A declared operand (`aggregates` when the action declares any)
+        // keeps its name; the input field stays reachable as `input.<name>`.
+        .filter(|(name, _)| !environment.variables().contains_key(name.as_str()))
         .map(|(name, field)| (name.clone(), field.ty.clone()))
         .collect();
     for (name, ty) in aliases {
@@ -1300,7 +1436,10 @@ fn action_input_fields(
 }
 
 /// Translate an action schema property to its final value type.
-fn action_input_field_type(input_schema: Option<&JsonValue>, field: &str) -> Option<Type> {
+pub(crate) fn action_input_field_type(
+    input_schema: Option<&JsonValue>,
+    field: &str,
+) -> Option<Type> {
     let properties = input_schema?.as_object()?.get("properties")?.as_object()?;
     action_schema_type(properties.get(field)?)
 }
@@ -1391,6 +1530,9 @@ fn is_action_member_name(value: &str) -> bool {
 /// profile's types. An object is opaque because `ZenTypeEnv::input_only` has
 /// no nested-record declarations; an unknown type fails closed.
 pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
+    if let Ok(Some(ty)) = norn_expr::schema::decimal_expression_type(schema) {
+        return Some(ty);
+    }
     let schema = schema.as_object()?;
     let type_value = schema.get("type")?;
     if let Some(members) = type_value.as_array() {
@@ -1416,7 +1558,15 @@ pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
         return None;
     }
     match type_value.as_string()? {
-        "string" => Some(Type::text()),
+        "string" => match schema.get("enum").and_then(JsonValue::as_array) {
+            Some(values) => Some(Type::enumeration(
+                values
+                    .iter()
+                    .map(JsonValue::as_string)
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            None => Some(Type::text()),
+        },
         "integer" => Some(Type::Integer),
         "number" => Some(Type::Number),
         "boolean" => Some(Type::Bool),
@@ -1469,6 +1619,7 @@ struct ActionExpressionSite<'a> {
     limits: &'a ResourceLimitProfile,
 }
 
+/// VAL-UNIT: retain informational unit inference at the action admission boundary.
 fn check_action_expression_with_cost(
     source: &ZenExpression,
     expected: &Type,
@@ -1504,7 +1655,15 @@ fn check_action_expression_with_cost(
         limits,
         &action_expression_root_bounds(environment),
     ) {
-        Ok(checked) => Some(checked.cost().units()),
+        Ok(checked) => {
+            for note in checked.notes() {
+                let mut diagnostic =
+                    invalid_diagnostic(note.code, note.message.clone(), path, artifact_id);
+                diagnostic.severity = norn_ir::DiagnosticSeverity::Info;
+                diagnostics.push(diagnostic);
+            }
+            Some(checked.cost().units())
+        }
         Err(findings) => {
             for finding in findings {
                 diagnostics.push(invalid_diagnostic(
@@ -1605,6 +1764,30 @@ pub fn validate_rule_ir_v2_payload(
             "payload.defaults",
             artifact_id,
         ));
+    }
+    if let Ok(text) = serde_json::to_string(payload)
+        && let Ok(root) = serde_json::from_str::<norn_ir::RuleRoot>(&text)
+    {
+        match norn_expr::graph::bind(&root) {
+            Err(reason) => diagnostics.push(invalid_diagnostic(
+                "core.values.inexact",
+                reason,
+                "payload.graph",
+                artifact_id,
+            )),
+            Ok(bindings) => {
+                for note in bindings.into_iter().flat_map(|binding| binding.notes) {
+                    let mut diagnostic =
+                        invalid_diagnostic(note.code, note.message, "payload.graph", artifact_id);
+                    diagnostic.severity = if note.code == "core.values.literal_unit" {
+                        norn_ir::DiagnosticSeverity::Info
+                    } else {
+                        norn_ir::DiagnosticSeverity::Error
+                    };
+                    diagnostics.push(diagnostic);
+                }
+            }
+        }
     }
     reject_rule_side_effect_fields(payload, diagnostics, artifact_id);
     crate::jdm_profile::validate_rule_contract(payload, diagnostics, artifact_id);
@@ -1722,7 +1905,7 @@ macro_rules! check_root {
 
 /// Check that a payload its kind validator accepted decodes into the strict
 /// typed root of an Access, Widget, Connector, Customization, View, Setting,
-/// `BusinessPack`, Entity, or Relation artifact. See the module docs.
+/// `BusinessPack`, Entity, Relation, or `DefinedConcept` artifact. See the module docs.
 pub(crate) fn check_typed_root(
     payload: &ArtifactPayload,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1808,6 +1991,16 @@ pub(crate) fn check_typed_root(
         ArtifactPayload::SourceSchema(_) | ArtifactPayload::Mapping(_) => {
             check_document_root(payload, &object, diagnostics, artifact_id);
         }
+        ArtifactPayload::DefinedConcept(_) => {
+            if let Err(error) = crate::defined_concepts::decode(payload) {
+                diagnostics.push(invalid_diagnostic(
+                    "defined_concept.validation.invalid_payload",
+                    error,
+                    "payload",
+                    artifact_id,
+                ));
+            }
+        }
         ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
     }
 }
@@ -1849,7 +2042,21 @@ fn check_document_root(
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
-    if matches!(payload, ArtifactPayload::Mapping(_)) {
+    if matches!(payload, ArtifactPayload::Mapping(_))
+        && object.get("format").is_some_and(
+            |value| matches!(value, JsonValue::String(format) if format == "norn.interpretation/1"),
+        )
+    {
+        check_root!(
+            norn_ir::mapping::LawInterpretationIr,
+            "mapping.validation.invalid_document",
+            object,
+            diagnostics,
+            artifact_id,
+            members {}
+            arrays {}
+        );
+    } else if matches!(payload, ArtifactPayload::Mapping(_)) {
         check_root!(
             norn_ir::mapping::MappingIr,
             "mapping.validation.invalid_document",
@@ -2784,6 +2991,110 @@ mod tests {
     }
 
     #[test]
+    fn action_actor_binding_is_typed_and_unsupported_principal_claims_refuse() {
+        let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["preconditions"] = json!([]);
+        action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"code":{"type":"string"}},"required":["code"]});
+        action["payload"]["derive"] = json!([
+            {"field":"code","expression":"actor.subjectId","inputRequired":false}
+        ]);
+        assert_eq!(findings(action.clone()), []);
+        let mut decimal = action.clone();
+        let amount = json!({"type":"number","nornType":{"kind":"decimal","scale":2}});
+        for field in ["amount", "base", "discount"] {
+            decimal["payload"]["inputSchema"]["properties"][field] = amount.clone();
+        }
+        decimal["payload"]["inputSchema"]["required"] = json!(["code", "base", "discount"]);
+        decimal["payload"]["derive"] = json!([{"field":"amount",
+            "expression":"actor.subjectId == 'person:vip' ? input.discount : input.base",
+            "inputRequired":false}]);
+        assert_eq!(findings(decimal), []);
+        for unsupported in ["actor.roles", "actor.agentSessionId", "actor.approved"] {
+            action["payload"]["derive"][0]["expression"] = json!(unsupported);
+            assert!(has(
+                &findings(action.clone()),
+                "action.validation.invalid_payload",
+                "payload.derive[0].expression"
+            ));
+        }
+    }
+
+    fn action_with_nested_input_field(field: &str, arrays: &[bool]) -> (Value, String) {
+        let mut schema = json!({"type":"object","additionalProperties":false,
+            "properties":{(field):{"type":"string"}},"required":[field]});
+        let mut path = format!(".properties.{field}");
+        for array in arrays {
+            if *array {
+                schema = json!({"type":"array","items":schema});
+                path = format!(".items{path}");
+            } else {
+                schema = json!({"type":"object","additionalProperties":false,
+                    "properties":{"node":schema},"required":["node"]});
+                path = format!(".properties.node{path}");
+            }
+        }
+        let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["preconditions"] = json!([]);
+        action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"details":schema},"required":["details"]});
+        (
+            action,
+            format!("payload.inputSchema.properties.details{path}"),
+        )
+    }
+
+    #[test]
+    fn action_actor_reserved_input_schemas_refuse_at_nested_object_and_array_paths() {
+        for arrays in [vec![], vec![false], vec![true], vec![true, false, true]] {
+            for field in ["actor", "approved", "subjectId", "recorded_by"] {
+                let (action, path) = action_with_nested_input_field(field, &arrays);
+                let found = findings(action);
+                if matches!(field, "actor" | "approved") {
+                    assert_eq!(
+                        found,
+                        [("action.validation.invalid_schema".to_owned(), path)]
+                    );
+                } else {
+                    assert!(found.is_empty(), "{found:?}");
+                }
+            }
+        }
+        for field in ["actor", "approved"] {
+            let mut action = fixture(ACTION_FIXTURE);
+            action["payload"]["preconditions"] = json!([]);
+            action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+                "properties":{(field):{"type":"string"}},"required":[field]});
+            action["payload"]["derive"] = json!([
+                {"field":field,"expression":"actor.subjectId","inputRequired":false}
+            ]);
+            assert!(has(
+                &findings(action),
+                "action.validation.invalid_schema",
+                &format!("payload.inputSchema.properties.{field}")
+            ));
+        }
+        let (mut action, _) = action_with_nested_input_field("recorded_by", &[]);
+        action["payload"]["outputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"actor":{"type":"string"},"approved":{"type":"boolean"}}});
+        assert!(findings(action).is_empty());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn action_actor_reserved_schema_names_refuse_under_generated_containers(
+            field in proptest::sample::select(vec!["actor", "approved", "subjectId", "recorded_by"]),
+            arrays in proptest::collection::vec(proptest::bool::ANY, 0..12),
+        ) {
+            let (action, path) = action_with_nested_input_field(field, &arrays);
+            let expected = if matches!(field, "actor" | "approved") {
+                vec![("action.validation.invalid_schema".to_owned(), path)]
+            } else { vec![] };
+            proptest::prop_assert_eq!(findings(action), expected);
+        }
+    }
+
+    #[test]
     fn action_derivations_are_ordered_typed_and_require_consistent_input_flags() {
         let mut action = fixture(ACTION_FIXTURE);
         action["payload"]["inputSchema"] = json!({
@@ -3078,6 +3389,7 @@ mod tests {
                 &root,
                 records.clone(),
                 slice_fields.clone(),
+                BTreeMap::new(),
                 None,
             )
             .is_empty()
@@ -3089,6 +3401,7 @@ mod tests {
             &invalid,
             records,
             slice_fields,
+            BTreeMap::new(),
             Some("fashion.set-season-brand"),
         );
         assert!(
@@ -3631,7 +3944,7 @@ mod tests {
     }
 
     #[test]
-    fn ordered_fold_declarations_fail_closed_before_execution_support() {
+    fn ordered_fold_declarations_admit_only_the_supported_closed_profile() {
         let mut rule = rule_with_sub_decision();
         let fold = json!({
             "semanticsVersion": "1.0",
@@ -3647,15 +3960,25 @@ mod tests {
             "arithmetic": {"scale": 0, "rounding": "refuse"}
         });
         rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
+        rule["payload"]["graph"]["nodes"][4]["content"]["inputField"] = json!("slice.items");
         let actual = findings(rule.clone());
-        assert!(
-            has(
-                &actual,
-                "rule.validation.ordered_fold_unsupported",
+        assert!(actual.is_empty(), "{actual:?}");
+        // FOLD-ORDER-1: collection selection is mandatory and explicit.
+        for selector in [None, Some(json!("")), Some(json!("  "))] {
+            let mut bad = rule.clone();
+            let content = bad["payload"]["graph"]["nodes"][4]["content"]
+                .as_object_mut()
+                .unwrap();
+            content.remove("inputField");
+            if let Some(selector) = selector {
+                content.insert("inputField".into(), selector);
+            }
+            assert!(has(
+                &findings(bad),
+                "rule.validation.ordered_fold_invalid",
                 "payload.graph.nodes[4].content.orderedFold"
-            ),
-            "{actual:?}"
-        );
+            ));
+        }
         for (member, invalid) in [
             ("maxItems", json!(0)),
             ("maxAccumulatorBytes", json!(0)),

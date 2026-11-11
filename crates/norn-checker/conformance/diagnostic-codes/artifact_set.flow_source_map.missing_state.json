@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.flow_source_map.missing_state",
+  "message": "state id {stateId} is not declared by a mapped entity artifact",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

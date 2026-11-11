@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.terminal_has_transition",
+  "message": "transition {id} leaves the terminal state {state}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.invalid_entitlement_map",
+  "message": "entitlement map {map} has an invalid declaration",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

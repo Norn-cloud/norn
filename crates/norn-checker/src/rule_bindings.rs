@@ -118,6 +118,10 @@ pub(crate) fn validate_rule_bindings(
             );
         }
         match &entry.key {
+            SliceKey::Parameter { .. } => invalid(
+                "parameter selection is not supported for rule bindings".into(),
+                &format!("{path}.key"),
+            ),
             SliceKey::TriggerObject => {
                 // Every trigger must name an object of exactly this type, so
                 // the key is never applied to an unrelated type.
@@ -257,7 +261,8 @@ pub(crate) fn validate_rule_bindings(
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
-            | SliceKey::Property { .. } => "object",
+            | SliceKey::Property { .. }
+            | SliceKey::Parameter { .. } => "object",
         };
         // A link list holds object records; triggerChanges holds strings.
         let items = member
@@ -272,7 +277,8 @@ pub(crate) fn validate_rule_bindings(
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
-            | SliceKey::Property { .. } => None,
+            | SliceKey::Property { .. }
+            | SliceKey::Parameter { .. } => None,
         };
         if kind != Some(expected) || expected_items.is_some_and(|expected| items != Some(expected))
         {
@@ -429,6 +435,40 @@ fn snapshot_property_schema_error(
     member: &JsonValue,
     property: &EffectiveProperty,
 ) -> Option<String> {
+    if let EffectiveKind::Base(
+        expected @ PropertyType::Decimal {
+            rounding, per_unit, ..
+        },
+    ) = &property.kind
+    {
+        let declared = norn_expr::schema::decimal_refinement(member, "snapshot")
+            .ok()
+            .flatten();
+        if let Some(mut declared) = declared {
+            let mut expected = expected.clone();
+            if let (
+                PropertyType::Decimal { rounding: a, .. },
+                PropertyType::Decimal { rounding: b, .. },
+            ) = (&mut expected, &mut declared)
+            {
+                *a = Some(norn_ir::Rounding::effective(*a));
+                *b = Some(norn_ir::Rounding::effective(*b));
+            }
+            if declared != expected {
+                return Some(format!(
+                    "{} must retain its exact Decimal bindings",
+                    property.id.as_str()
+                ));
+            }
+        } else if per_unit.is_some()
+            || rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse)
+        {
+            return Some(format!(
+                "{} requires nornType at its declared exact site",
+                property.id.as_str()
+            ));
+        }
+    }
     if let EffectiveKind::Base(PropertyType::JsonExt { schema }) = &property.kind {
         return snapshot_json_schema_error(member, property, schema.as_ref());
     }
@@ -456,12 +496,12 @@ fn snapshot_property_schema_error(
             | PropertyType::Date {}
             | PropertyType::Duration {},
         ) => Some("string"),
-        EffectiveKind::Base(PropertyType::Integer {}) => Some("integer"),
+        EffectiveKind::Base(PropertyType::Integer { .. }) => Some("integer"),
         EffectiveKind::Base(PropertyType::Decimal { .. }) => Some("number"),
         EffectiveKind::Base(PropertyType::Boolean {}) => Some("boolean"),
         EffectiveKind::Base(PropertyType::Record { .. }) => Some("object"),
         EffectiveKind::Base(PropertyType::JsonExt { .. }) => None,
-        EffectiveKind::Base(PropertyType::Ref { .. })
+        EffectiveKind::Base(PropertyType::Ref { .. } | PropertyType::DecimalBinding { .. })
         | EffectiveKind::Registry(_)
         | EffectiveKind::Unresolved => {
             return Some(format!(

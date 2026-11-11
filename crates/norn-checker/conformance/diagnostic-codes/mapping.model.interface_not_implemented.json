@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.interface_not_implemented",
+  "message": "{objectType} does not implement the interface artifact {interface}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

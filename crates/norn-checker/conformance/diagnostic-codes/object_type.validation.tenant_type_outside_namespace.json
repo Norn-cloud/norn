@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.tenant_type_outside_namespace",
+  "message": "tenant object type {type} must be named in the tenant namespace, such as {example}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

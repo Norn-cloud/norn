@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.unknown_ref",
+  "message": "ref {name} names no property type in the catalog or registry",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
