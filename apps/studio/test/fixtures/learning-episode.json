@@ -1,0 +1,71 @@
+{
+  "contract": "Episode values as requested on #1208 (comment 6794882106), inside the served NornObjectRecord envelope. Replace with a fixture the learning pack's route test writes once the pack serves learning.Episode.",
+  "records": [
+    {
+      "objectType": "learning.Episode", "id": "ep_demo_overridden", "scope": "org_demo/analytics", "version": 3,
+      "values": {
+        "decision": {
+          "id": "dec_7Hq2", "receiptHash": "sha256:5f0c9a1e7b2d4c6a8e0f1b3d5c7a9e2f4b6d8c0a1e3f5b7d9c2a4e6f8b0d1c3a", "commitSeq": 4812, "recordedAtMs": 1794390000000,
+          "question": "Release the held shipment?", "risk": "high",
+          "options": [{ "id": "keep", "label": "Keep holding" }, { "id": "release", "label": "Release it" }, { "id": "release_partial", "label": "Release half, hold the rest" }],
+          "choice": "release", "note": "Customer paid the overdue invoice by phone; remittance arrives tomorrow.", "decidedBy": "a manager"
+        },
+        "run": { "id": "run_restock_7", "generation": 2, "flow": { "ruleId": "demo.release_hold.flow.rule", "version": 4, "title": "Release a credit hold" }, "step": { "id": "ask_manager", "label": null } },
+        "recommendation": {
+          "pick": "keep", "rationale": "The customer is 34 days past terms and over the credit limit by 18%.",
+          "producer": { "receiptHash": "sha256:9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b", "commitSeq": 4807, "functionId": "demo.credit.suggest_release", "manifestPin": "sha256:1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d", "lifecycle": "active" }
+        },
+        "agreement": "overridden",
+        "context": { "definitionGeneration": 12, "asOfCommitSeq": 4806, "subjects": [{ "objectType": "canon.Party", "id": "demo/party/north", "label": "North branch customer" }, { "objectType": "canon.Delivery", "id": "demo/delivery/0042", "label": "Delivery 0042" }] },
+        "ruleOutcomes": [
+          { "lawId": "demo.credit.hold_over_limit", "title": "Hold shipments over the credit limit", "outcome": "blocked", "waiver": { "by": "a manager", "reason": "Payment confirmed by phone", "receiptHash": "sha256:2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c" } },
+          { "lawId": "demo.order.signed", "title": "A shipment needs a signed order", "outcome": "allowed", "waiver": null }
+        ],
+        "outcome": {
+          "state": "recorded", "spec": { "title": "Invoice paid", "within": "14 days" },
+          "record": { "objectType": "demo.PaymentOutcome", "id": "demo/outcome/0042", "receiptHash": "sha256:7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d", "commitSeq": 5120, "recordedAtMs": 1794480000000, "values": [{ "name": "Paid", "display": "Yes" }, { "name": "Days to pay", "display": "2" }] }
+        },
+        "standing": "measured",
+        "triage": null
+      }
+    },
+    {
+      "objectType": "learning.Episode", "id": "ep_demo_accepted", "scope": "org_demo/analytics", "version": 1,
+      "values": {
+        "decision": {
+          "id": "dec_9Kd4", "receiptHash": "sha256:3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d", "commitSeq": 4901, "recordedAtMs": 1794420000000,
+          "question": "Approve the restock order?", "risk": "low",
+          "options": [{ "id": "approve", "label": "Approve" }, { "id": "reject", "label": "Reject" }],
+          "choice": "approve", "note": null, "decidedBy": "you"
+        },
+        "run": { "id": "run_restock_8", "generation": 1, "flow": { "ruleId": "demo.restock.flow.rule", "version": "2", "title": null }, "step": { "id": "approve_order", "label": "Approve the order" } },
+        "recommendation": { "pick": "approve", "rationale": null, "producer": { "receiptHash": "sha256:4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e", "commitSeq": 4899, "functionId": "demo.stock.suggest_restock", "manifestPin": "sha256:5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f", "lifecycle": "shadow" } },
+        "agreement": "accepted",
+        "context": { "definitionGeneration": 12, "asOfCommitSeq": 4898, "subjects": [{ "objectType": "canon.Item", "id": "demo/item/gold", "label": null }] },
+        "ruleOutcomes": [{ "lawId": "demo.stock.reorder_point", "title": "Reorder at the reorder point", "outcome": "allowed", "waiver": null }],
+        "outcome": { "state": "open", "spec": { "title": "Stock back above the reorder point", "within": "7 days" }, "record": null },
+        "standing": "context",
+        "triage": null
+      }
+    },
+    {
+      "objectType": "learning.Episode", "id": "ep_demo_unsuggested", "scope": "org_demo/analytics", "version": 2,
+      "values": {
+        "decision": {
+          "id": "dec_2Lm8", "receiptHash": "sha256:6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a", "commitSeq": 4700, "recordedAtMs": 1794300000000,
+          "question": "Accept the melt loss on this batch?", "risk": "medium",
+          "options": [{ "id": "accept", "label": "Accept the loss" }, { "id": "recheck", "label": "Weigh it again" }],
+          "choice": "accept", "note": "Old stock, known to run light.", "decidedBy": "another decider"
+        },
+        "run": { "id": "run_melt_3", "generation": 1, "flow": { "ruleId": "demo.melt.flow.rule", "version": 1, "title": "Melt a batch" }, "step": { "id": "accept_loss", "label": null } },
+        "recommendation": null,
+        "agreement": "none",
+        "context": { "definitionGeneration": 11, "asOfCommitSeq": 4699, "subjects": [] },
+        "ruleOutcomes": [{ "lawId": "demo.melt.loss_tolerance", "title": "Melt loss within 2%", "outcome": "would_block", "waiver": null }],
+        "outcome": { "state": "overdue", "spec": { "title": "Assay confirms the purity", "within": "14 days" }, "record": null },
+        "standing": "context",
+        "triage": { "verdict": "exception", "reason": "Long-standing supplier; this batch is known to run light.", "curator": "a manager", "atMs": 1794500000000 }
+      }
+    }
+  ]
+}
