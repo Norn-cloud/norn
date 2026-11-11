@@ -37,6 +37,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -54,8 +55,7 @@ def boat(args: argparse.Namespace, *rest: str, **kwargs) -> subprocess.Completed
 
 
 def export(repo: Path, sha: str, into: Path) -> Path:
-    # Its own directory name: a snapshot may hold an older ~/norn checkout, and `boat run
-    # --push` merges into an existing directory of the same name.
+    # Its own directory name: a snapshot may hold an older ~/norn checkout.
     tree = into / "norn-measured"
     tree.mkdir()
     archive = into / "src.tar"
@@ -116,35 +116,50 @@ def starts_record(limits: dict, at: str) -> dict:
     }
 
 
+def sandbox_gone(args, sandbox: str, attempts: int = 5) -> bool:
+    """`boat info` reports not_found; an unreachable API is retried, never read as gone."""
+    for attempt in range(attempts):
+        info = boat(args, "info", sandbox, "--json", capture_output=True)
+        text = (info.stdout + info.stderr).replace(" ", "_").lower()
+        if info.returncode != 0 and "not_found" in text:
+            return True
+        if info.returncode == 0:
+            return False
+        time.sleep(10 * (attempt + 1))
+    return False
+
+
 def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
             names: list[str]) -> tuple[list[dict], list[str], int]:
     """One `boat run` from `snapshot` for the probes `names`; boat deletes the VM when it ends."""
     with tempfile.TemporaryDirectory(prefix="norn-metrics-") as scratch:
-        tree = export(repo, sha, Path(scratch))
-        # The probe runner and list are this script's own copies, so the cron's main
-        # checkout decides what is measured whatever ref is exported.
-        tools = tree / "scripts" / "metrics"
-        tools.mkdir(parents=True, exist_ok=True)
+        # The upload holds the commit's exact tree and, beside it rather than inside it, this
+        # script's own probe runner and list: the cron's main checkout decides what is measured,
+        # and the measured tree is not touched (its gates check every file in it).
+        upload = Path(scratch) / "norn-metrics-run"
+        upload.mkdir()
+        export(repo, sha, upload)
+        tools = upload / "metrics-tools"
+        tools.mkdir()
         for name in ("run_probes.py", "record.py", "record.schema.json"):
             shutil.copyfile(HERE / name, tools / name)
         shutil.copyfile(args.probes, tools / "probes.json")
-        command = ["python3", "scripts/metrics/run_probes.py"]
+        command = ["python3", "metrics-tools/run_probes.py", "--root", "norn-measured",
+                   "--probes", "metrics-tools/probes.json"]
         for name in names:
             command += ["--only", name]
         ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
-                   "--no-env", "--push", str(tree), "-e", "CARGO_INCREMENTAL=0",
+                   "--no-env", "--push", str(upload), "-e", "CARGO_INCREMENTAL=0",
                    "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
                    capture_output=True)
     sys.stderr.write(ran.stderr[-4000:])
     sandbox = next(iter(SANDBOX.findall(ran.stdout + ran.stderr)), None)
     if sandbox:
-        info = boat(args, "info", sandbox, "--json", capture_output=True)
-        gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
+        gone = sandbox_gone(args, sandbox)
         if not gone:
-            boat(args, "delete", sandbox, "--yes")
-            info = boat(args, "info", sandbox, "--json", capture_output=True)
-            gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
-        print(f"sandbox {sandbox} ({snapshot}): {'deleted (boat info: not_found)' if gone else 'STILL PRESENT'}",
+            boat(args, "delete", sandbox, "--yes", capture_output=True)
+            gone = sandbox_gone(args, sandbox)
+        print(f"sandbox {sandbox} ({snapshot}): {'deleted (boat info: not_found)' if gone else 'NOT CONFIRMED DELETED'}",
               file=sys.stderr)
     records, notes = records_from(ran.stdout, sha, date, sandbox, snapshot, args.type)
     return records, notes, ran.returncode

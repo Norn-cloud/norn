@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.only and probe["name"] not in args.only:
             continue
         sys.stderr.write(f"== probe {probe['name']} at {dt.datetime.now(dt.timezone.utc).isoformat()}\n")
-        ok = run_probe(probe, Path(args.root)) and ok
+        ok = run_probe(probe, Path(args.root).resolve()) and ok
     return 0 if ok else 1
 
 

@@ -251,15 +251,21 @@ def git(repo: Path, *args: str, data: bytes | None = None, env: dict | None = No
     return result
 
 
-def fetch_tip(repo: Path, remote: str, branch: str) -> str | None:
-    """Fetch the branch into refs/remotes/<remote>/<branch>; None when it does not exist yet."""
-    probe = git(repo, *_auth_config(), "ls-remote", "--exit-code", remote, f"refs/heads/{branch}", check=False)
-    if probe.returncode == 2:
-        return None
-    if probe.returncode != 0:
-        raise RuntimeError(f"git ls-remote {remote} failed: {probe.stderr.decode(errors='replace').strip()}")
-    git(repo, *_auth_config(), "fetch", "--quiet", "--no-tags", remote,
-        f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}")
+def fetch_tip(repo: Path, remote: str, branch: str, attempts: int = 4) -> str | None:
+    """Fetch the branch into refs/remotes/<remote>/<branch>; None when it does not exist yet.
+    A network failure (DNS, reset) is retried with backoff before it is raised."""
+    for attempt in range(attempts):
+        probe = git(repo, *_auth_config(), "ls-remote", "--exit-code", remote, f"refs/heads/{branch}", check=False)
+        if probe.returncode == 2:
+            return None
+        fetched = probe.returncode == 0 and git(
+            repo, *_auth_config(), "fetch", "--quiet", "--no-tags", remote,
+            f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}", check=False).returncode == 0
+        if fetched:
+            break
+        if attempt == attempts - 1:
+            raise RuntimeError(f"git ls-remote/fetch {remote} failed: {probe.stderr.decode(errors='replace').strip()}")
+        time.sleep(5 * 2 ** attempt)
     return git(repo, "rev-parse", f"refs/remotes/{remote}/{branch}^{{commit}}").stdout.decode().strip()
 
 

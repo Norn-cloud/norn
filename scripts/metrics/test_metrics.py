@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -203,12 +204,14 @@ class Store(unittest.TestCase):
 
     def test_cli_add_builds_a_record_from_flags(self):
         git(self.a, "commit", "--quiet", "--allow-empty", "-m", "base")
-        code = record.main(["add", "--repo", str(self.a), "--metric", "tests.rust.count", "--value", "3279",
-                            "--unit", "count", "--statistic", "single", "--commit", "HEAD", "--by", "L-metrics",
-                            "--runner", "local", "--workload", "method=grep", "--caveats", "static count",
-                            "--source", "https://github.com/Norn-cloud/norn/pull/1", "--no-report"])
+        with unittest.mock.patch.object(record, "now_utc", lambda: "2026-11-11T15:00:00Z"):
+            code = record.main(["add", "--repo", str(self.a), "--metric", "tests.rust.count", "--value", "3279",
+                                "--unit", "count", "--statistic", "single", "--commit", "HEAD", "--by", "L-metrics",
+                                "--runner", "local", "--workload", "method=grep", "--caveats", "static count",
+                                "--source", "https://github.com/Norn-cloud/norn/pull/1", "--no-report"])
         self.assertEqual(code, 0)
-        stored = json.loads(git(self.remote, "show", "metrics:metrics/" + record.now_utc()[:7] + ".jsonl"))
+        stored = json.loads(git(self.remote, "show", "metrics:metrics/2026-11.jsonl"))
+        self.assertEqual((stored["measured_at"], stored["recorded_at"]), ("2026-11-11T15:00:00Z", "2026-11-11T15:00:00Z"))
         self.assertEqual(stored["value"], 3279)
         self.assertEqual(stored["commit"]["sha"], git(self.a, "rev-parse", "HEAD"))
         self.assertEqual(stored["workload"], {"method": "grep"})
@@ -306,7 +309,8 @@ class Probes(unittest.TestCase):
     def test_probe_output_becomes_valid_records(self):
         import boat_nightly
         import run_probes
-        with tempfile.TemporaryDirectory() as root:
+        frozen = "2026-11-11T15:00:00Z"
+        with tempfile.TemporaryDirectory() as root, unittest.mock.patch.object(record, "now_utc", lambda: frozen):
             (Path(root) / "present").write_text("")
             probes = [
                 {"name": "absent", "requires": ["missing"], "run": "true", "caveats": "c"},
@@ -334,8 +338,9 @@ class Probes(unittest.TestCase):
         self.assertEqual(sorted(r["metric"] for r in rows), ["boat.starts.used_24h", "fork.cow.create.f20.p50",
                                                             "proof.gate.all.s", "proof.gate.kani_ledger_a.s"])
         schema = record.load_schema()
+        self.assertEqual({r["measured_at"] for r in rows if r["metric"] != "boat.starts.used_24h"}, {frozen})
         for row in rows:
-            row = record.complete(row)
+            row = record.complete(row, "2026-11-11T15:30:00Z")
             self.assertEqual(record.record_errors(row, schema), [], row["metric"])
         fork = next(r for r in rows if r["metric"].startswith("fork."))
         self.assertEqual(fork["workload"], {"bench": "b", "forks": 20, "boat_snapshot": "snap", "boat_sandbox": "bx_abcdefgh"})
