@@ -459,4 +459,73 @@ mod tests {
         }
         Ok(())
     }
+    /// FORK-EVIDENCE-1 with CELL-ID-1: a fork carries its parent's cell
+    /// binding. It exports main's commits up to the horizon under that
+    /// binding, refuses its own commits before any binding check, still
+    /// refuses a record bound to another cell, and its exportable prefix
+    /// rebuilds a main store (no pin) under the parent's identity.
+    #[test]
+    fn a_fork_exports_under_its_parents_cell_binding() -> Result<(), CellError> {
+        let model = Model::new(&SqliteDdlInput {
+            object_types: &[],
+            property_types: &[],
+        })?;
+        let empty = || CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "s".to_owned(),
+            ..CommitBatch::default()
+        };
+        let missing = || CellError::Engine("expected a record".to_owned());
+        let mut main = CellStore::open_in_memory(model)?;
+        main.commit(&empty())?;
+        main.commit(&empty())?;
+        let id = main.cell_id()?.ok_or_else(missing)?;
+        let base = main.verified_head()?;
+        let mut fork = main.fork("what-if", &base)?;
+        assert_eq!(fork.cell_id()?, Some(id.clone()));
+        fork.require_cell_id(&id)?;
+
+        let mut records = Vec::new();
+        for seq in 1..=base.commits {
+            let record = fork.export_record(seq)?.ok_or_else(missing)?;
+            assert_eq!(Some(&record), main.export_record(seq)?.as_ref());
+            assert_eq!(
+                crate::cell_identity::from_bindings(&record.bindings)?,
+                Some(id.clone())
+            );
+            records.push(record);
+        }
+
+        // A fork-minted commit carries the same binding but is never
+        // evidence: the fence refuses it before the binding is read.
+        fork.commit(&empty())?;
+        let minted = base.commits + 1;
+        assert!(fork.local_export_record(minted)?.is_some());
+        assert!(matches!(
+            fork.export_record(minted),
+            Err(CellError::ForkEvidenceForbidden)
+        ));
+
+        // Its exportable prefix rebuilds a main store under the same identity.
+        let rebuilt = CellStore::rebuild_export_history(
+            NativeEngine::open_in_memory()?,
+            &records,
+            &records.last().ok_or_else(missing)?.hash()?,
+        )?;
+        assert_eq!(rebuilt.fork_pin(), None);
+        assert_eq!(rebuilt.cell_id()?, Some(id));
+        // The binding check still applies inside the fork.
+        fork.conn.execute(
+            &format!(
+                "UPDATE \"{}\" SET \"value\" = ?1 WHERE \"key\" = 'binding:cell_id'",
+                crate::system::META
+            ),
+            &[SqlValue::Text("0".repeat(32))],
+        )?;
+        assert!(matches!(
+            fork.export_record(1),
+            Err(CellError::BindingMismatch { .. })
+        ));
+        Ok(())
+    }
 }
