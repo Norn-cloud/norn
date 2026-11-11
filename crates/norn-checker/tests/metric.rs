@@ -967,6 +967,88 @@ fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
     );
 }
 
+/// QUERY-FANOUT: one Holding whose `tags` link is many-to-many.
+fn holding_fanout_fixture() -> (Vec<MetricDefinition>, QuestionIR, EffectiveCatalog) {
+    let mut ontology: Vec<Value> = serde_json::from_str(ONTOLOGY).expect("ontology");
+    let template = ontology.swap_remove(0);
+    let artifact = |object_type: Value| {
+        let name = object_type["name"].clone();
+        let mut artifact = template.clone();
+        artifact["artifactId"] = json!(format!("{}.entity.v2", name.as_str().expect("name")));
+        artifact["namespace"] = json!("example");
+        artifact["name"] = name;
+        artifact["provenance"]["sourcePath"] = json!("synthetic:query-fanout");
+        artifact["payload"]["objectType"] = object_type;
+        artifact
+    };
+    let holding = json!({"name":"example.Holding","properties":[
+        {"id":"value","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"},"additivity":{"kind":"additive"}}},
+        {"id":"observed_at","type":{"kind":"timestamp","timezone":"utc"}}
+    ],"links":[{"id":"tags","target":"example.Tag","cardinality":{"to":"many","from":"many","required":false}}]});
+    let tag = json!({"name":"example.Tag","properties":[{"id":"label","type":{"kind":"text"}}]});
+    let catalog = catalog(&json!([artifact(holding), artifact(tag)]).to_string());
+    let (mut measure, mut question) = sales();
+    measure["name"] = json!("example.holding_value");
+    measure["type_params"]["expr"] = json!("value");
+    measure["type_params"]["metric_aggregation_params"]["semantic_model"] =
+        json!("example.Holding");
+    measure["x-norn"]["timeDimension"] = json!({"property":"observed_at"});
+    measure["x-norn"]["defaultFilters"] = json!([]);
+    measure["x-norn"]
+        .as_object_mut()
+        .expect("policy")
+        .remove("currency");
+    question
+        .as_object_mut()
+        .expect("question")
+        .remove("compare");
+    question["name"] = json!("example.holding_total");
+    question["objectSet"] = json!("example.Holding");
+    question["aggregate"] = json!([{"metric":"example.holding_value"}]);
+    question["groupBy"] = json!([]);
+    (vec![decode(&measure)], decode(&question), catalog)
+}
+
+/// QUERY-GRAIN-1 (QUERY-FANOUT): one holding worth 80 linked to two tags totals 80
+/// at holding grain, in grams; grouping by the expanded tag grain refuses.
+#[test]
+fn query_grain_fanout_holding_80_with_two_tags_totals_80_and_expanded_grain_refuses() {
+    use norn_checker::metric::compute::{AMBIGUOUS_GRAIN, admit, contribution::project};
+    let (definitions, question, catalog) = holding_fanout_fixture();
+    let plan = admit(&definitions, &question, &catalog, 100).expect("holding grain");
+    assert_eq!(plan.grain().as_str(), "example.Holding");
+    let [sum] = plan.sums() else {
+        panic!("one measure")
+    };
+    assert!(sum.filters.is_empty(), "no link traversal at root grain");
+    assert!(
+        matches!(&sum.property.kind, norn_checker::EffectiveKind::Base(
+        norn_ir::PropertyType::Decimal { unit: Some(unit), .. }
+    ) if unit.code == "g")
+    );
+    // The plan projects each root identity once; its two tags are not part of the row.
+    let holding = std::collections::BTreeMap::from([
+        ("value".into(), norn_ir::RuntimeValue::from(80_i64)),
+        (
+            "observed_at".into(),
+            norn_ir::RuntimeValue::from("2026-10-23T00:00:00Z"),
+        ),
+    ]);
+    let contribution = project(&plan, &holding)
+        .expect("project")
+        .expect("in window");
+    assert_eq!(contribution.bucket, norn_ir::RuntimeValue::Null);
+    assert_eq!(contribution.amounts, vec![Some(80_000_000)], "80 at 1e-6");
+
+    let mut expanded = question;
+    expanded.dimensions = vec![decode(
+        &json!({"path":{"links":["tags"],"property":"label"}}),
+    )];
+    let findings = admit(&definitions, &expanded, &catalog, 100).expect_err("expanded grain");
+    assert_code(&findings, codes::FAN_OUT);
+    assert_code(&findings, AMBIGUOUS_GRAIN);
+}
+
 proptest::proptest! {
     #[test]
     fn compute_deterministic_ratio_lowering_ignores_definition_order(reverse in proptest::bool::ANY, rotation in 0usize..3, filter_key in 0u32..32, max_items in 1u32..=1000) {
