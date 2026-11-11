@@ -5,6 +5,8 @@ pub mod evidence;
 pub mod finite;
 /// Typed presentation of actual law guarantees and explicit missing evidence.
 pub mod guarantees;
+/// Translation-preservation goals and their proof status.
+pub mod translation;
 
 use crate::members::present_non_null;
 use crate::{IrVersion01, ProvenanceSource, ZenExpression};
@@ -242,6 +244,16 @@ pub enum LawResponse {
         property: String,
         /// Transition member id.
         transition_id: String,
+    },
+    /// TRANSLATION-PRESERVES-1: the subject is the source contract, the law's
+    /// condition is admission, and `self` in each assignment is the source record.
+    TranslationPreserves {
+        /// Exact target object type, the target contract.
+        target_type: String,
+        /// Total executable map from target property id to ZEN over the source.
+        assignments: std::collections::BTreeMap<String, ZenExpression>,
+        /// The named observation this law protects.
+        observation: translation::TranslationObservation,
     },
 }
 
