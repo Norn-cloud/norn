@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,941 records across 144 metrics. Each series runs in the order of the
+1,942 records across 144 metrics. Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -111,7 +111,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `proof.gate.artifact_governance_extraction.s` | 95 | s (single) | boat | 1 | 95 / 95 | ▁ | `328a1a1aa3` | [link](https://github.com/Norn-cloud/norn/pull/1244) |
 | `proof.gate.checker-certificates-correspondence.s` | 177 | s (single) | boat | 1 | 177 / 177 | ▁ | `12bf2239d4` | [link](https://github.com/Norn-cloud/norn/pull/1232) |
 | `proof.gate.checker_certificates.s` | 210 | s (single) | boat | 2 | 210 / 345 | █▁ | `bf2905c1cd` | [link](https://github.com/Norn-cloud/norn/pull/1234) |
-| `proof.gate.exact-arith-correspondence.s` | 4,663 | s (single) | boat | 5 | 1,596 / 4,663 | ▁▁▄▂█ | `4c07a094ad` | [link](https://github.com/Norn-cloud/norn/commit/15fe63ff988cfcb8050c02391372a21e4c9aa983) |
+| `proof.gate.exact-arith-correspondence.s` | 1,690 | s (single) | boat | 6 | 1,596 / 4,663 | ▁▁▄▂█▁ | `15fe63ff98` | [link](https://github.com/Norn-cloud/norn/commit/15fe63ff988cfcb8050c02391372a21e4c9aa983) |
 | `proof.gate.exact_arith.s` | 1,039 | s (single) | boat | 3 | 647 / 1,058 | ▁██ | `79d8c106b9` | thread |
 | `proof.gate.kernel_binding.s` | 236 | s (single) | boat | 1 | 236 / 236 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_commit.s` | 301 | s (single) | boat | 1 | 301 / 301 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
@@ -275,7 +275,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.gate.artifact_governance_extraction.s`: Second run on the same VM: the first run (197 s, cold build of norn-ir) failed only on a workspace-path check caused by a symlinked checkout; this run reused that build. One run. Two default (8 GiB) VMs became unresponsive on this gate.
 - `proof.gate.checker-certificates-correspondence.s`: one run, wall clock incl. Mathlib/Aeneas olean import and every mutant re-extraction; same VM ran the four gates sequentially; Lean import is IO-bound on 8 GB (about 40-100 s per process)
 - `proof.gate.checker_certificates.s`: With 17 native_decide refutation vectors added, yet faster than the 345 s run; no explanation given. measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
-- `proof.gate.exact-arith-correspondence.s`: parallel experiment, 3 workers: mutant phase 3584 s vs 1565 s serial full (2.1x slower); limit is memory not cores (MemAvailable fell to ~4.6 GiB, kswapd active, lazily hydrated snapshot disk re-read; 88 cargo package-cache lock waits); baseline phase 1079 s on a cold VM; superseded, never on a PR
+- `proof.gate.exact-arith-correspondence.s`: single sample; full mode re-extracts all 3 fragments and re-checks all 5 proofs per mutant (mutant phase 1565 s, 40-217 s each); ran second on a warm VM after the affected run; serial, so wall time is linear in mutants
 - `proof.gate.exact_arith.s`: Larger scope than the 1058 s run yet faster; no explanation given. The sha is the branch head the lane named. VM type not restated. Cold or warm tool caches not stated. One run. Source is a coordinator-thread message, not on GitHub.
 - `proof.gate.kernel_binding.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_commit.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
