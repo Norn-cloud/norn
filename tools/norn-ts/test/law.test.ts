@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { L, S, X } from "../src/builder/index.ts"
+import { E, L, S, X } from "../src/builder/index.ts"
 import { canonicalJson } from "../src/canonical.ts"
 import { compileDefinitionFiles, compileDefinitions } from "../src/compiler/definitions.ts"
 import { fromStatement, toStatement, parseSentence, renderSentence, serializeStatement, parseStatement, renderCounterexample } from "../src/law-statement.ts"
@@ -70,4 +70,65 @@ test("predicate builder reuses the existing typed ZEN expression renderer", () =
 test("counterexamples quote the precise witness without proof claims", () => {
   const rendered = renderCounterexample(goldens[0]!.payload, { state: { status: "shipped", paid: false }, trace: ["submit", "ship"], reason: "An unpaid order reached shipped" })
   expect(rendered).toContain("An unpaid order reached shipped"); expect(rendered).toContain("submit → ship"); expect(rendered).toContain("erpnext.no_unpaid_ship")
+})
+
+// A1 (#1176): closures, `sum` and calendar-day helpers render the norn-zen/6
+// forms (`crates/norn-expr/README.md`) and the Rust checker admits them in laws.
+describe("closures, sum and day helpers", () => {
+  const line = S.record({ amount: S.integer, sku: S.text() })
+  const entry = S.record({ status: S.text(["draft", "posted"]), issue_date: S.text(), due_date: S.text(), lines: S.array(line) })
+  const lineType = E.objectType({ name: "books.JournalLine", title: "Journal line", version: "0.1.0", properties: [E.property("amount", E.integer), E.property("sku", E.text())] })
+  const entryType = E.objectType({
+    name: "books.JournalEntry", title: "Journal entry", version: "0.1.0",
+    properties: [E.property("status", E.enumeration("draft", "posted")), E.property("issue_date", E.date), E.property("due_date", E.date)],
+    links: [{ id: "lines", target: lineType.name, cardinality: { to: "many", from: "one" }, inverse: "entry" }],
+  })
+  const self = (...path: string[]) => X.ref("self", ...path)
+  const cases: ReadonlyArray<readonly [string, X.Expr, string]> = [
+    ["balanced", X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "amount"))), X.lit(0)), "sum(map(self.lines as l, l.amount)) == 0"],
+    ["no_zero_lines", X.all(self("lines"), "l", (l) => X.ne(X.ref("l", "amount"), X.lit(0))), "all(self.lines as l, l.amount != 0)"],
+    ["has_sku", X.some(self("lines"), "l", (l) => X.call("startsWith", X.ref("l", "sku"), X.lit("SKU-"))), "some(self.lines as l, startsWith(l.sku, 'SKU-'))"],
+    ["none_negative", X.none(self("lines"), "l", X.lt(X.ref("l", "amount"), X.lit(0))), "none(self.lines as l, l.amount < 0)"],
+    ["one_big", X.one(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(1000))), "one(self.lines as l, l.amount > 1000)"],
+    ["few_lines", X.le(X.count(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(0))), X.lit(50)), "count(self.lines as l, l.amount > 0) <= 50"],
+    ["filtered", X.ge(X.call("len", X.filter(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(0)))), X.lit(1)), "len(filter(self.lines as l, l.amount > 0)) >= 1"],
+    // Nested closures bind distinct aliases; the inner list is a literal, as two nested to-many closures exceed the cost bound.
+    ["nested", X.all(self("lines"), "a", (a) => X.some(X.list(X.lit("SKU-"), X.lit("SVC-")), "p", (p) => X.call("startsWith", X.ref("a", "sku"), p))), "all(self.lines as a, some(['SKU-', 'SVC-'] as p, startsWith(a.sku, p)))"],
+    ["terms", X.le(X.daysBetween(self("issue_date"), self("due_date")), X.lit(30)), "days_between(date(self.issue_date), date(self.due_date)) <= 30"],
+    ["due_by", X.ge(X.addDays(self("issue_date"), X.lit(30)), X.call("date", self("due_date"))), "add_days(date(self.issue_date), 30) >= date(self.due_date)"],
+    ["posted_balanced", X.or(X.ne(self("status"), X.lit("posted")), X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "amount"))), X.lit(0))), "(self.status != 'posted') or (sum(map(self.lines as l, l.amount)) == 0)"],
+  ]
+
+  test("render the norn-zen/6 closure, sum and day forms", () => {
+    for (const [, expression, zen] of cases) expect(L.zenPredicate(expression, entry)).toBe(zen)
+    expect(X.typeOf(X.map(self("lines"), "l", (l) => X.ref("l", "sku")), new Map([["self", { zen: "self", schema: entry }]]))).toEqual(S.array(S.text()))
+    // A parsed date is not wrapped twice.
+    expect(L.zenPredicate(X.le(X.daysBetween(X.call("date", self("issue_date")), X.addDays(self("due_date"), X.lit(-1))), X.lit(0)), entry)).toBe("days_between(date(self.issue_date), add_days(date(self.due_date), -1)) <= 0")
+  })
+
+  test("refuse what norn-zen/6 refuses, before the checker sees it", () => {
+    const refuse = (expression: () => X.Expr, message: RegExp) => expect(() => L.zenPredicate(expression(), entry)).toThrow(message)
+    refuse(() => X.some(self("status"), "l", X.lit(true)), /iterates a list/)
+    refuse(() => X.some(self("lines"), "l", X.ref("l", "amount")), /body must be Boolean/)
+    refuse(() => X.eq(X.call("len", X.map(self("lines"), "l", X.lit(null))), X.lit(0)), /map body must not be null/)
+    refuse(() => X.some(self("lines"), "self", X.lit(true)), /plain identifier/)
+    refuse(() => X.some(self("lines"), "not-an-ident", X.lit(true)), /plain identifier/)
+    refuse(() => X.some(self("lines"), "l", (l) => X.some(self("lines"), "l", X.eq(X.ref("l", "sku"), X.ref("l", "sku")))), /shadows a binding/)
+    refuse(() => X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "sku"))), X.lit(0)), /sum expects a list of numbers/)
+    refuse(() => X.le(X.call("days_between", self("issue_date"), self("due_date")), X.lit(1)), /parsed dates/)
+    refuse(() => X.ge(X.addDays(self("issue_date"), X.lit("x")), X.call("date", self("due_date"))), /whole number of days/)
+    refuse(() => X.ge(X.addDays(self("issue_date"), X.lit(1)), X.call("timestamp", self("due_date"))), /qualified for numbers only/)
+  })
+
+  test("the Rust checker admits every rendered law", () => {
+    if (!checker) return
+    const entities = [lineType, entryType].map((def) => { const r = E.lowerEntity(def, options); if (!r.ok) throw new Error(JSON.stringify(r.diagnostics)); return r.artifact })
+    const laws = cases.map(([name, expression]) => L.lowerLaw(L.law({
+      id: `books.JournalEntry.${name}.law`, title: name, version: "0.1.0",
+      law: { lawVersion: "0.1", id: `books.JournalEntry.${name}`, owner: "books", severity: "error", rationale: name, provenance: { source: "authoring_sdk" }, scope: { root: { kind: "app", id: "books" }, objectTypes: ["books.JournalEntry"] }, subject: "books.JournalEntry", modality: { kind: "always" }, response: { kind: "predicate", expression: L.zenPredicate(expression, entry) } },
+      dependencies: [{ artifactId: "books.JournalEntry.entity", kind: "entity", version: "0.1.0", required: true }],
+    }), options).artifact)
+    const checked = checker.checkArtifactSet([...entities, ...laws])
+    expect(checked.diagnostics.diagnostics).toEqual([]); expect(checked.admitted).toBe(true)
+  }, 30_000)
 })

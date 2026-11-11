@@ -26,12 +26,16 @@ import {
   record as recordSchema,
 } from "./schema.ts"
 
+export type CallFn = "concat" | "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore" | "date" | "timestamp" | "sum" | "days_between" | "add_days"
+/** norn-zen/6 closures (`crates/norn-expr/README.md`): the body sees the element under `alias`. */
+export type ClosureFn = "some" | "all" | "none" | "one" | "filter" | "count" | "map"
 export type CompareOp = "==" | "!=" | "<" | "<=" | ">" | ">="
 export type LogicalOp = "and" | "or"
 
 export type Expr =
   | { readonly _tag: "Binary"; readonly op: "+" | "-" | "*" | "/" | "%" | "in"; readonly left: Expr; readonly right: Expr }
-  | { readonly _tag: "Call"; readonly fn: "concat" | "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore" | "date" | "timestamp"; readonly args: ReadonlyArray<Expr> }
+  | { readonly _tag: "Call"; readonly fn: CallFn; readonly args: ReadonlyArray<Expr> }
+  | { readonly _tag: "Closure"; readonly fn: ClosureFn; readonly list: Expr; readonly alias: string; readonly body: Expr }
   | { readonly _tag: "Conditional"; readonly condition: Expr; readonly yes: Expr; readonly no: Expr }
   | { readonly _tag: "Coalesce"; readonly value: Expr; readonly fallback: Expr }
   | { readonly _tag: "Unsafe"; readonly text: string; readonly schema: ValueSchema }
@@ -48,6 +52,43 @@ export const call = (fn: Extract<Expr, { _tag: "Call" }>["fn"], ...args: Expr[])
 export const conditional = (condition: Expr, yes: Expr, no: Expr): Expr => ({ _tag: "Conditional", condition, yes, no })
 export const coalesce = (value: Expr, fallback: Expr): Expr => ({ _tag: "Coalesce", value, fallback })
 export const unsafeZen = (text: string, schema: ValueSchema): Expr => ({ _tag: "Unsafe", text, schema })
+
+/** `sum(list of numbers)`; zen sums an empty list to 0. */
+export const sum = (list: Expr): Expr => call("sum", list)
+/** A calendar date operand: raw date text is parsed through `date(...)`, as norn-zen/6 requires. */
+const asDate = (value: Expr): Expr => (temporalKind(value) === "date" ? value : call("date", value))
+/** `days_between(start, end)` = signed calendar days `end - start`; operands are parsed as dates. */
+export const daysBetween = (start: Expr, end: Expr): Expr => call("days_between", asDate(start), asDate(end))
+/** `add_days(date, days)`: a parsed date, comparable with other parsed dates. */
+export const addDays = (date: Expr, days: Expr): Expr => call("add_days", asDate(date), days)
+
+const RESERVED_ALIASES: ReadonlySet<string> = new Set(["self", "actor", "input", "slice", "event", "and", "or", "not", "in", "true", "false", "null", "as"])
+/**
+ * A closure over `list`. `body` receives the element as a reference to
+ * `alias`, which renders as zen's `as` alias, so nested closures never rely on
+ * the innermost-only `#`.
+ */
+export function closure(fn: ClosureFn, list: Expr, alias: string, body: Expr | ((element: Expr) => Expr)): Expr {
+  if (!IDENT.test(alias) || RESERVED_ALIASES.has(alias)) throw new ExprError("NORN-FLOW-EXPRESSION", `closure alias ${JSON.stringify(alias)} must be a plain identifier other than ${[...RESERVED_ALIASES].join(", ")}`)
+  return { _tag: "Closure", fn, list, alias, body: typeof body === "function" ? body(ref(alias)) : body }
+}
+type ClosureBuilder = (list: Expr, alias: string, body: Expr | ((element: Expr) => Expr)) => Expr
+const closureOf = (fn: ClosureFn): ClosureBuilder => (list, alias, body) => closure(fn, list, alias, body)
+export const some = closureOf("some")
+export const all = closureOf("all")
+export const none = closureOf("none")
+export const one = closureOf("one")
+export const filter = closureOf("filter")
+export const count = closureOf("count")
+export const map = closureOf("map")
+
+/** The parsed temporal kind of `expr`, if it is a parsed date or timestamp value. */
+export function temporalKind(expr: Expr): "date" | "timestamp" | undefined {
+  if (expr._tag !== "Call") return undefined
+  if (expr.fn === "date" || expr.fn === "add_days") return "date"
+  if (expr.fn === "timestamp") return "timestamp"
+  return undefined
+}
 
 export const lit = (value: string | number | boolean | null): Expr => ({ _tag: "Literal", value })
 /** A read of `name` (a binding in scope) and a declared property path below it. */
@@ -189,6 +230,17 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
         if (typeof merged === "string") throw new ExprError("NORN-FLOW-EXPRESSION", merged)
         return array(merged)
       }
+      if (expr.fn === "sum") {
+        if (args.length !== 1 || args[0]?.type !== "array" || !isNumeric(args[0].items)) throw new ExprError("NORN-FLOW-EXPRESSION", "sum expects a list of numbers")
+        return numberSchema
+      }
+      if (expr.fn === "days_between" || expr.fn === "add_days") {
+        if (args.length !== 2) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects 2 arguments`)
+        const dates = expr.fn === "days_between" ? expr.args : expr.args.slice(0, 1)
+        if (dates.some((arg) => temporalKind(arg) !== "date")) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects parsed dates; build it with ${expr.fn === "days_between" ? "daysBetween" : "addDays"}`)
+        if (expr.fn === "add_days" && !isNumeric(args[1]!)) throw new ExprError("NORN-FLOW-EXPRESSION", `add_days adds a whole number of days, not ${String(args[1]!.type)}`)
+        return expr.fn === "days_between" ? integer : text()
+      }
       if (expr.fn === "len") {
         if (args.length !== 1 || (args[0]?.type !== "string" && args[0]?.type !== "array")) throw new ExprError("NORN-FLOW-EXPRESSION", "length expects a string or array")
         return integer
@@ -196,6 +248,19 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
       const arity = ["lower", "upper", "trim", "date", "timestamp"].includes(expr.fn) ? 1 : 2
       if (args.length !== arity || args.some((a) => a.type !== "string")) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects ${arity} string arguments`)
       return arity === 1 ? text() : boolean
+    }
+    case "Closure": {
+      const list = typeOf(expr.list, scope)
+      if (list.type !== "array") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} iterates a list, not ${String(list.type)}`)
+      if (scope.has(expr.alias)) throw new ExprError("NORN-FLOW-EXPRESSION", `closure alias ${expr.alias} shadows a binding in scope; rename it`)
+      const inner: Scope = new Map([...scope, [expr.alias, { zen: expr.alias, schema: list.items }]])
+      const body = typeOf(expr.body, inner)
+      if (expr.fn === "map") {
+        if (body.type === "null" || Array.isArray(body.type)) throw new ExprError("NORN-FLOW-EXPRESSION", "a map body must not be null")
+        return array(body)
+      }
+      if (body.type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", `a ${expr.fn} body must be Boolean, not ${String(body.type)}`)
+      return expr.fn === "filter" ? list : expr.fn === "count" ? integer : boolean
     }
     case "Conditional": {
       if (typeOf(expr.condition, scope).type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", "conditional expects a boolean condition")
@@ -229,6 +294,8 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
         if (!comparable) {
           throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.op} compares scalars of one type, not ${left.type} and ${right.type}`)
         }
+      } else if (temporalKind(expr.left) !== undefined && temporalKind(expr.left) === temporalKind(expr.right)) {
+        // Same-kind parsed temporal values order semantically (norn-zen/6).
       } else if (!isNumeric(left) || !isNumeric(right)) {
         throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.op} is qualified for numbers only, not ${left.type} and ${right.type}`)
       }
@@ -275,6 +342,10 @@ export function render(expr: Expr, scope: Scope): string {
       : expr.fn === "dateBefore"
       ? `date(${render(expr.args[0]!, scope)}) < date(${render(expr.args[1]!, scope)})`
       : `${expr.fn}(${expr.args.map((arg) => render(arg, scope)).join(", ")})`
+    case "Closure": {
+      const inner: Scope = new Map([...scope, [expr.alias, { zen: expr.alias, schema: closureElement(expr, scope) }]])
+      return `${expr.fn}(${operand(expr.list, scope)} as ${expr.alias}, ${render(expr.body, inner)})`
+    }
     case "Conditional": return `${operand(expr.condition, scope)} ? ${operand(expr.yes, scope)} : ${operand(expr.no, scope)}`
     case "Coalesce": return `${operand(expr.value, scope)} ?? ${operand(expr.fallback, scope)}`
     case "Literal":
@@ -293,11 +364,17 @@ export function render(expr: Expr, scope: Scope): string {
   }
 }
 
+function closureElement(expr: Extract<Expr, { _tag: "Closure" }>, scope: Scope): ValueSchema {
+  const list = typeOf(expr.list, scope)
+  if (list.type !== "array") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} iterates a list, not ${String(list.type)}`)
+  return list.items
+}
+
 function operand(expr: Expr, scope: Scope): string {
   const text = render(expr, scope)
   // `dateBefore` is a call in the AST but renders as a comparison, so it is
   // a compound operand like any other (#1109).
-  const atomic = ["Literal", "Ref", "List", "Record", "Call"].includes(expr._tag)
+  const atomic = ["Literal", "Ref", "List", "Record", "Call", "Closure"].includes(expr._tag)
     && !(expr._tag === "Call" && expr.fn === "dateBefore")
   return atomic ? text : `(${text})`
 }
