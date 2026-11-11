@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,934 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,935 records across 140 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -106,6 +106,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
+| `proof.gate.artifact_governance_extraction.s` | 95 | s (single) | boat | 1 | 95 / 95 | ▁ | `328a1a1aa3` | [link](https://github.com/Norn-cloud/norn/pull/1244) |
 | `proof.gate.checker-certificates-correspondence.s` | 177 | s (single) | boat | 1 | 177 / 177 | ▁ | `12bf2239d4` | [link](https://github.com/Norn-cloud/norn/pull/1232) |
 | `proof.gate.checker_certificates.s` | 210 | s (single) | boat | 2 | 210 / 345 | █▁ | `bf2905c1cd` | [link](https://github.com/Norn-cloud/norn/pull/1234) |
 | `proof.gate.exact_arith.s` | 1,920 | s (single) | boat | 5 | 647 / 1,920 | ▁▃▃▆█ | `ded6070871` | [link](https://github.com/Norn-cloud/norn/pull/1221) |
@@ -265,6 +266,7 @@ What limits each metric's latest value, in the measurer's words.
 - `fork.proto.storage_vs_full.f100`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
 - `fork.proto.storage_vs_full.f1000`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
 - `fork.proto.storage_vs_full.f20`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
+- `proof.gate.artifact_governance_extraction.s`: Second run on the same VM: the first run (197 s, cold build of norn-ir) failed only on a workspace-path check caused by a symlinked checkout; this run reused that build. One run. Two default (8 GiB) VMs became unresponsive on this gate.
 - `proof.gate.checker-certificates-correspondence.s`: one run, wall clock incl. Mathlib/Aeneas olean import and every mutant re-extraction; same VM ran the four gates sequentially; Lean import is IO-bound on 8 GB (about 40-100 s per process)
 - `proof.gate.checker_certificates.s`: With 17 native_decide refutation vectors added, yet faster than the 345 s run; no explanation given. measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
 - `proof.gate.exact_arith.s`: single sample; gate script alone (timed in-wrapper); mutants run serially at ~70 s each (0-160 s), ~250 s fixed setup+extraction+proofs, so wall time is linear in mutant count; same host class as the 1596 s record
