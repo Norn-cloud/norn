@@ -303,35 +303,6 @@
         "0.1"
       ]
     },
-    "JsonValue": {
-      "anyOf": [
-        {
-          "type": "null"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "number",
-          "format": "double"
-        },
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        }
-      ]
-    },
     "LinkId": {
       "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
       "type": "string",
@@ -479,8 +450,7 @@
           "$ref": "#/$defs/DimensionPath"
         },
         "value": {
-          "description": "Exact runtime literal checked against the effective property contract.",
-          "$ref": "#/$defs/JsonValue"
+          "description": "Exact runtime literal checked against the effective property contract."
         }
       },
       "additionalProperties": false,

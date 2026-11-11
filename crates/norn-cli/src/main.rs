@@ -3,6 +3,7 @@ use std::io::{BufRead as _, Write as _};
 mod eval;
 mod mcp;
 mod remote;
+mod source;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -20,6 +21,8 @@ enum Command {
     Mcp,
     /// Discover and invoke a remote server's live MCP catalog.
     Remote(remote::RemoteArgs),
+    /// Read a configured source and print sealed raw observations.
+    Source(source::SourceArgs),
     /// List the available human operations and their input schemas.
     #[command(
         long_about = "List the available human operations and their input schemas. Returns tools and a catalogDigest, with at most 32 tools per page. Follow nextCursor using --cursor until it is absent. A cursor is bound to this working directory and catalog; restart without it after a revision. Only installed backends appear; discovery never installs definitions."
@@ -41,7 +44,8 @@ enum Command {
         #[arg(long)]
         context: PathBuf,
     },
-    /// Evaluate an admitted standalone decision over JSON-lines stdin.
+    /// Evaluate an admitted decision, with its sub-decision closure, over
+    /// JSON-lines stdin.
     Eval {
         /// Directory of definition envelopes.
         #[arg(long)]
@@ -61,13 +65,26 @@ enum Command {
     },
     /// Print generated core IR and checker `OpenAPI` components.
     Openapi,
+    /// Print the HOST-TREE-1 source-tree digest of a directory.
+    #[command(
+        long_about = "Print the HOST-TREE-1 source-tree digest of a directory (FUNCTION-HOST-1's implementation.digest for a built-in crate). Every regular file below the directory counts, except entries whose name starts with '.' and directories named 'target'. Symlinks and non-UTF-8 names refuse. Run it on a clean checkout."
+    )]
+    SourceDigest {
+        /// The source tree's root directory (for a built-in, its crate directory).
+        dir: PathBuf,
+    },
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dispatch maps every CLI subcommand to its handler"
+)]
 fn run(command: Command) -> Result<(String, bool), String> {
     match command {
         Command::Mcp => mcp::serve(),
         Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
+        Command::Source(args) => source::execute(&args),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))
             .map_err(|error| error.to_string()),
@@ -122,22 +139,41 @@ fn run(command: Command) -> Result<(String, bool), String> {
                 .ok_or("missing checker digest")?;
             let decision = eval::OfflineDecision::prepare(
                 &artifacts,
+                &input,
                 &exact_payloads,
                 receipt,
                 digest,
                 &rule,
             )?;
+            let mut accepted = 0_u64;
+            let mut refused = 0_u64;
             for line in std::io::stdin().lock().lines() {
                 let line = line.map_err(|error| error.to_string())?;
+                let digest = decision.closure_digest();
                 let response = match decision.run(&line, units) {
-                    Ok(output) => format!("{{\"ok\":true,\"output\":{output}}}"),
-                    Err(error) => serde_json::json!({"ok":false,"error":error}).to_string(),
+                    Ok(output) => {
+                        accepted = accepted.checked_add(1).ok_or("eval counter overflow")?;
+                        format!(
+                            "{{\"ok\":true,\"closureDigest\":\"{digest}\",\"output\":{output}}}"
+                        )
+                    }
+                    Err(error) => {
+                        refused = refused.checked_add(1).ok_or("eval counter overflow")?;
+                        serde_json::json!({"ok":false,"closureDigest":digest,"error":error})
+                            .to_string()
+                    }
                 };
                 writeln!(std::io::stdout().lock(), "{response}")
                     .map_err(|error| error.to_string())?;
             }
-            Ok((String::new(), true))
+            writeln!(
+                std::io::stderr().lock(),
+                "norn eval: {accepted} accepted, {refused} refused"
+            )
+            .map_err(|error| error.to_string())?;
+            Ok((String::new(), refused == 0))
         }
+        Command::SourceDigest { dir } => source_digest(&dir).map(|document| (document, true)),
         Command::Check { artifacts, context } => {
             let artifacts =
                 std::fs::read_to_string(artifacts).map_err(|error| error.to_string())?;
@@ -152,6 +188,65 @@ fn run(command: Command) -> Result<(String, bool), String> {
             ))
         }
     }
+}
+
+/// HOST-TREE-1: read every counted file below `root` and digest the tree.
+fn source_digest(root: &std::path::Path) -> Result<String, String> {
+    fn walk(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        files: &mut Vec<(String, Vec<u8>)>,
+    ) -> Result<(), String> {
+        let mut entries = std::fs::read_dir(dir)
+            .map_err(|error| format!("{}: {error}", dir.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name
+                .to_str()
+                .ok_or_else(|| format!("non-UTF-8 name under {}", dir.display()))?;
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if name.starts_with('.') || (kind.is_dir() && name == "target") {
+                continue;
+            }
+            let path = entry.path();
+            if kind.is_symlink() {
+                return Err(format!("{}: symlinks are refused", path.display()));
+            }
+            if kind.is_dir() {
+                walk(root, &path, files)?;
+            } else if kind.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|error| error.to_string())?
+                    .components()
+                    .map(|part| {
+                        part.as_os_str()
+                            .to_str()
+                            .ok_or_else(|| format!("{}: non-UTF-8 name", path.display()))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join("/");
+                let bytes =
+                    std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+                files.push((relative, bytes));
+            } else {
+                return Err(format!("{}: not a regular file", path.display()));
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(root, root, &mut files)?;
+    let digest = norn_ir::source_tree::source_tree_digest(
+        files
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({ "digest": digest.0, "files": files.len() }).to_string())
 }
 
 fn main() -> ExitCode {
@@ -169,5 +264,138 @@ fn main() -> ExitCode {
             let _written = writeln!(std::io::stderr().lock(), "norn: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "HOST-TREE-EXCLUDE fixture assertions"
+)]
+mod tests {
+    //! HOST-TREE-EXCLUDE: the walk's exclusion order (Core 07, HOST-TREE-1).
+    use std::path::{Path, PathBuf};
+
+    /// A fresh directory holding `src/lib.rs`, removed on drop.
+    struct Tree(PathBuf);
+
+    impl Tree {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("norn-host-tree-{name}-{}", std::process::id()));
+            let _stale = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            std::fs::write(root.join("src/lib.rs"), b"//! crate\n").unwrap();
+            Self(root)
+        }
+
+        fn write(&self, path: &str, bytes: &[u8]) {
+            let path = self.0.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+
+        fn digest(&self) -> Result<String, String> {
+            super::source_digest(&self.0)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _cleaned = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn hidden_entries_and_target_directories_are_skipped_at_any_depth() {
+        let base = Tree::new("base").digest().unwrap();
+        let tree = Tree::new("skipped");
+        tree.write(".hidden", b"x");
+        tree.write(".git/config", b"x");
+        tree.write("src/.cache/blob", b"x");
+        tree.write("target/debug/out", b"x");
+        tree.write("src/target/nested", b"x");
+        assert_eq!(tree.digest().unwrap(), base);
+    }
+
+    #[test]
+    fn a_file_named_target_counts() {
+        let base = Tree::new("file-base").digest().unwrap();
+        let tree = Tree::new("file");
+        tree.write("src/target", b"x");
+        assert_ne!(tree.digest().unwrap(), base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hidden_symlink_is_skipped_and_any_other_symlink_refuses() {
+        use std::os::unix::fs::symlink;
+        let base = Tree::new("link-base").digest().unwrap();
+        let hidden = Tree::new("hidden-link");
+        symlink(
+            hidden.path().join("src/lib.rs"),
+            hidden.path().join(".link"),
+        )
+        .unwrap();
+        symlink(hidden.path().join("src"), hidden.path().join("src/.dir")).unwrap();
+        assert_eq!(
+            hidden.digest().unwrap(),
+            base,
+            "a hidden symlink is never followed"
+        );
+        // A hidden directory is never visited: what it holds would refuse.
+        let unvisited = Tree::new("hidden-dir");
+        std::fs::create_dir_all(unvisited.path().join(".git")).unwrap();
+        symlink(
+            unvisited.path().join("src"),
+            unvisited.path().join(".git/link"),
+        )
+        .unwrap();
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let name = std::ffi::OsStr::from_bytes(b"\xff");
+            // Some filesystems refuse non-UTF-8 names themselves.
+            let _optional = std::fs::write(unvisited.path().join(".git").join(name), b"x");
+        }
+        assert_eq!(
+            unvisited.digest().unwrap(),
+            base,
+            "nothing below a hidden directory is read or refused"
+        );
+        for name in ["link", "target"] {
+            let tree = Tree::new(&format!("visible-{name}"));
+            symlink(tree.path().join("src"), tree.path().join(name)).unwrap();
+            let refused = tree.digest().unwrap_err();
+            assert!(
+                refused.contains("symlinks are refused"),
+                "{name}: {refused}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_that_is_neither_a_directory_nor_a_file_refuses() {
+        let tree = Tree::new("socket");
+        let _socket = std::os::unix::net::UnixListener::bind(tree.path().join("src/sock")).unwrap();
+        let refused = tree.digest().unwrap_err();
+        assert!(refused.contains("not a regular file"), "{refused}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_name_refuses_even_when_hidden() {
+        use std::os::unix::ffi::OsStrExt;
+        let tree = Tree::new("non-utf8");
+        let name = std::ffi::OsStr::from_bytes(b".\xff");
+        if std::fs::write(tree.path().join(name), b"x").is_err() {
+            return; // the filesystem refuses non-UTF-8 names itself
+        }
+        assert!(tree.digest().unwrap_err().contains("non-UTF-8"));
     }
 }

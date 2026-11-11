@@ -7,7 +7,7 @@ use crate::{
 };
 use norn_checker::metric::compute::{QuestionPlan, contribution::project};
 use norn_ir::ResourceLimitProfile;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Private complete generation; restart explicitly rebuilds from the cell.
 #[derive(Clone)]
@@ -20,6 +20,8 @@ pub struct IncrementalQuestion {
     rebuilt: bool,
     receipt_pin: Option<String>,
     knowledge: Option<crate::KnowledgeCutoff>,
+    source_pins: BTreeMap<String, String>,
+    finding_members: BTreeSet<String>,
 }
 impl IncrementalQuestion {
     /// Rebuild all bounded inputs before publishing a complete generation.
@@ -52,15 +54,19 @@ impl IncrementalQuestion {
         knowledge: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
-        let snapshot = store.question_snapshot_at(plan, context, knowledge, visible)?;
+        let (snapshot, source_pins, receipt_pin) =
+            store.question_snapshot_at_with(plan, context, knowledge, visible, |snapshot, _| {
+                let reader = store.read();
+                let pins = reader.question_source_pins(&snapshot.finding_members)?;
+                let receipt = reader
+                    .receipt_at(snapshot.result.revision.commits)?
+                    .map(|r| r.hash);
+                Ok((snapshot, pins, receipt))
+            })?;
         let mut totals = Totals::default();
         for (_, value) in snapshot.contributions.values() {
             totals.adjust(value, false)?;
         }
-        let receipt_pin = store
-            .read()
-            .receipt_at(snapshot.result.revision.commits)?
-            .map(|r| r.hash);
         let mut result = snapshot.result;
         result.engine = Engine::Ivm;
         Ok(Self {
@@ -72,6 +78,8 @@ impl IncrementalQuestion {
             rebuilt: true,
             receipt_pin,
             knowledge,
+            source_pins,
+            finding_members: snapshot.finding_members,
         })
     }
     /// Last atomically published generation.
@@ -108,6 +116,7 @@ impl IncrementalQuestion {
     }
 
     /// RESTATE-HISTORY-1: retract/replace only receipt-changed members at the next slice.
+    /// ASOF-KNOWLEDGE-1: maintenance retains the declared `AsOf` instant.
     /// This maintains a private cache; governed activation and durable outputs are separate.
     /// # Errors
     /// Backward/skipped frontiers, changed authority/interpretation or any source refusal.
@@ -121,6 +130,13 @@ impl IncrementalQuestion {
         let prior = self
             .knowledge
             .ok_or_else(|| refused("core.world.invalid_restatement"))?;
+        if matches!(
+            self.plan.question().freshness,
+            norn_ir::metric::FreshnessPolicy::AsOf { .. }
+        ) && !super::asof_matches(&self.plan, cutoff.recorded_at.as_millis())
+        {
+            return Err(refused("core.compute.stale_input"));
+        }
         if !crate::history_selection::next_known_slice(
             prior.frontier,
             prior.recorded_at.as_millis(),
@@ -186,7 +202,6 @@ impl IncrementalQuestion {
         head: &crate::LedgerHead,
     ) -> Result<BTreeSet<String>, CellError> {
         let reader = store.read();
-        let old = &self.result.context;
         let stale = || refused("core.compute.stale_input");
         let mut changed = BTreeSet::new();
         if head != &self.result.revision {
@@ -213,24 +228,28 @@ impl IncrementalQuestion {
                         })
                         .map(|w| w.key.clone()),
                 );
+                changed.extend(
+                    reader
+                        .question_finding_keys(&receipt)?
+                        .into_iter()
+                        .filter(|id| self.members.contains(id)),
+                );
             }
         }
-        changed.extend(
-            old.exclusions
-                .keys()
-                .chain(context.exclusions.keys())
-                .filter(|id| old.exclusions.get(*id) != context.exclusions.get(*id))
-                .cloned(),
-        );
         Ok(changed)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "receipt and source invalidation publish one staged generation"
+    )]
     fn apply<E: SqlEngine>(
         &mut self,
         store: &CellStore<E>,
         context: QueryContext,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<(), CellError> {
+        let mut exclusions = self.result.exclusions.clone();
         let definition_pin = self.check_binding(store, &context)?;
         let stale = || refused("core.compute.stale_input");
         let reader = store.read();
@@ -242,48 +261,74 @@ impl IncrementalQuestion {
         } else {
             (verified, None)
         };
-        let changed = self.changed_keys(store, &context, &head)?;
+        let mut changed = self.changed_keys(store, &context, &head)?;
+        let receipt_changed = changed.clone();
+        let mut source_pins = BTreeMap::new();
         let mut history = reader.history_read_seeded(receipt);
-        for id in changed {
-            if let Some((_, previous)) = self.contributions.remove(&id) {
-                self.totals.adjust(&previous, true)?;
+        for refresh_source in [false, true] {
+            if refresh_source {
+                // QUERY-ENGINE-1: inbox evidence can change without a canonical receipt.
+                source_pins = reader.question_source_pins(&self.finding_members)?;
+                changed.extend(
+                    self.source_pins
+                        .keys()
+                        .chain(source_pins.keys())
+                        .filter(|id| {
+                            !receipt_changed.contains(*id)
+                                && self.finding_members.contains(*id)
+                                && self.source_pins.get(*id) != source_pins.get(*id)
+                        })
+                        .cloned(),
+                );
             }
-            let record = if let Some(cutoff) = self.knowledge {
-                super::historical::historical_record(
-                    &mut history,
-                    &context.world,
-                    self.plan.grain().as_str(),
-                    &id,
-                    cutoff,
-                    store.model().model_hash(),
-                    &mut budget,
-                )?
-            } else {
-                reader.object_with_budget(
-                    &context.world,
-                    self.plan.grain().as_str(),
-                    &id,
-                    &mut budget,
-                )?
-            };
-            match record {
-                BudgetedRead::Found(record) => {
-                    if record.scope != context.scope {
-                        return Err(stale());
-                    }
-                    self.members.insert(id.clone());
-                    if visible(&record)?
-                        && !context.exclusions.contains_key(&id)
-                        && let Some(value) = project(&self.plan, &record.values).map_err(refused)?
-                    {
-                        self.totals.adjust(&value, false)?;
-                        self.contributions.insert(id, (record.version, value));
-                    }
+            for id in std::mem::take(&mut changed) {
+                self.finding_members.remove(&id);
+                exclusions.remove(&id);
+                if let Some((_, previous)) = self.contributions.remove(&id) {
+                    self.totals.adjust(&previous, true)?;
                 }
-                BudgetedRead::Missing => {
-                    self.members.remove(&id);
+                let selected = if let Some(cutoff) = self.knowledge {
+                    super::historical::historical_record(
+                        &mut history,
+                        &context.world,
+                        self.plan.grain().as_str(),
+                        &id,
+                        cutoff,
+                        store.model().model_hash(),
+                        &mut budget,
+                    )?
+                } else {
+                    reader.object_with_budget(
+                        &context.world,
+                        self.plan.grain().as_str(),
+                        &id,
+                        &mut budget,
+                    )?
+                };
+                match selected {
+                    BudgetedRead::Found(record) => {
+                        let authorized = context.include_record(
+                            &reader,
+                            &record,
+                            self.knowledge.map(|c| c.frontier),
+                            &mut exclusions,
+                            &mut self.finding_members,
+                            visible,
+                        )?;
+                        self.members.insert(id.clone());
+                        if authorized
+                            && let Some(value) =
+                                project(&self.plan, &record.values).map_err(refused)?
+                        {
+                            self.totals.adjust(&value, false)?;
+                            self.contributions.insert(id, (record.version, value));
+                        }
+                    }
+                    BudgetedRead::Missing => {
+                        self.members.remove(&id);
+                    }
+                    BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
                 }
-                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
             }
         }
         if self.members.len() > usize::try_from(self.plan.max_items()).map_err(|_n| stale())? {
@@ -291,7 +336,7 @@ impl IncrementalQuestion {
         }
         let mut result = finish(
             &self.plan,
-            context,
+            (context, exclusions),
             head,
             super::historical::query_pin(
                 store.model().model_hash(),
@@ -306,6 +351,8 @@ impl IncrementalQuestion {
         result.engine = Engine::Ivm;
         self.totals.0.retain(|key, _| result.rows.contains_key(key));
         self.receipt_pin = reader.receipt_at(result.revision.commits)?.map(|r| r.hash);
+        source_pins.retain(|id, _| self.members.contains(id));
+        self.source_pins = source_pins;
         self.result = result;
         self.rebuilt = false;
         Ok(())

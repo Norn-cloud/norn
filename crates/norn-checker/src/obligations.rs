@@ -12,15 +12,40 @@ use sha2::{Digest, Sha256};
 
 use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 
+/// Conditional exact-rational conservation certificate checker.
+pub mod conservation;
 /// Exact result identity for generated goals; not proof checking.
 pub mod evidence;
+/// Bounded declaration-to-Quint lowering, without solver execution.
+pub mod finite;
 mod induction;
+/// Conditional lifecycle inventory and finite relations.
+pub mod lifecycle;
+#[cfg(test)]
+mod lifecycle_finite_tests;
+#[cfg(test)]
+mod lifecycle_tests;
+pub mod quint;
+#[cfg(test)]
+mod quint_tests;
+/// Conjunction-only specialisation evidence provenance.
+pub mod specialisation;
+/// Exact symbolic projections of the shared declaration relation.
+pub mod transition;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
-/// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
-/// and induction statements; profile 7 is the distinct inventory-only format.
-/// Profiles 5/6 required NFC at proof ingress.
-pub const GENERATOR_PROFILE: &str = "norn.application-obligations/8";
+/// Profile 9 also binds verified retained-layer authority; profile 8 bound
+/// verbatim source/expression bytes and induction statements without layers.
+pub const GENERATOR_PROFILE: &str = "norn.application-obligations/9";
+
+const INTERPRETATION_GOAL_KINDS: [&str; 6] = [
+    "mapping_totality",
+    "mapping_domain_coverage",
+    "mapping_identity_preservation",
+    "mapping_unit_preservation",
+    "mapping_transition_simulation",
+    "mapping_law_preservation",
+];
 
 /// Why a fixed challenge could not be reconstructed or a submission was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +158,149 @@ impl DefinitionSource {
             base_sources,
         })
     }
+
+    /// Commitment to the original candidate/base UTF-8 documents.
+    #[must_use]
+    pub fn exact_digest(&self) -> &str {
+        &self.exact_digest
+    }
+}
+
+/// One retained layer, with its original source documents and receipt commitment.
+#[derive(Debug, Clone, Copy)]
+pub struct RetainedLayer<'a> {
+    /// Exact candidate/base source documents captured before typed projection.
+    pub source: &'a DefinitionSource,
+    /// Retained commitment to the exact source documents.
+    pub source_sha256: &'a str,
+    /// Stored ordinary admission receipt; no caller-supplied admitted flag.
+    pub receipt: &'a str,
+    /// Retained SHA-256 of the stored receipt.
+    pub receipt_sha256: &'a str,
+}
+
+/// Checked retained authority; only the ordered verifier can construct it.
+#[derive(Debug, Clone)]
+pub struct RetainedLayers {
+    artifacts: Vec<ArtifactEnvelope>,
+    registry: BTreeSet<norn_ir::PropertyTypeName>,
+    exact_digest: String,
+}
+
+impl RetainedLayers {
+    /// LAYER-AUTHORITY-1: recheck each exact layer against verified predecessors.
+    /// Receipt verification is structural evidence, never a law proof or grant.
+    /// # Errors
+    /// Refuses missing, forged, reordered, duplicated or edited retained input,
+    /// failed current admission and aggregate resource limits.
+    pub fn verify(
+        layers: &[RetainedLayer<'_>],
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+    ) -> Result<Self, ChallengeError> {
+        if layers.is_empty() || layers.len() > 64 {
+            return Err(ChallengeError::Limit);
+        }
+        let registry_bytes = registry
+            .iter()
+            .try_fold(0usize, |bytes, name| bytes.checked_add(name.as_str().len()))
+            .ok_or(ChallengeError::Limit)?;
+        if registry.len() > 16_384 || registry_bytes > 65_536 {
+            return Err(ChallengeError::Limit);
+        }
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let profiles = norn_canonical::serialize_json_verbatim(&(registry, &limits))
+            .map_err(|_error| ChallengeError::Closure)?;
+        if profiles.len() > 65_536 {
+            return Err(ChallengeError::Limit);
+        }
+        let mut artifacts = Vec::new();
+        let mut identities = vec![profiles];
+        let mut bytes = 0usize;
+        for layer in layers {
+            bytes = bytes.saturating_add(layer.receipt.len());
+            if bytes > 8_388_608
+                || artifacts.len().saturating_add(layer.source.artifacts.len()) > 16_384
+            {
+                return Err(ChallengeError::Limit);
+            }
+            if layer.source.exact_digest != layer.source_sha256
+                || exact_set(&layer.source.base)? != exact_set(&artifacts)?
+            {
+                return Err(ChallengeError::NotAdmitted);
+            }
+            let context = EntityArtifactSetContext {
+                registry,
+                base: &artifacts,
+                tenant: None,
+            };
+            let receipt_sources = crate::receipt::ReceiptSources::new(
+                &layer.source.receipt_sources,
+                &layer.source.base_sources,
+            )
+            .map_err(|_error| ChallengeError::NotAdmitted)?;
+            let checked = check_artifact_set_with_receipt(&receipt_sources, &context, &limits)
+                .map_err(|_error| ChallengeError::NotAdmitted)?;
+            if !checked.receipt.admitted
+                || checked.diagnostics.iter().any(crate::Diagnostic::is_error)
+            {
+                return Err(ChallengeError::NotAdmitted);
+            }
+            crate::receipt::verify_admission_receipt_sources(
+                layer.receipt,
+                layer.receipt_sha256,
+                &layer.source.receipt_sources,
+                &layer.source.base_sources,
+                &limits,
+            )
+            .map_err(|_error| ChallengeError::NotAdmitted)?;
+            identities.push(layer.source.exact_digest.as_bytes().to_vec());
+            identities.push(layer.receipt_sha256.as_bytes().to_vec());
+            artifacts.extend(layer.source.artifacts.iter().cloned());
+        }
+        exact_set(&artifacts)?;
+        let members: Vec<_> = identities.iter().map(Vec::as_slice).collect();
+        Ok(Self {
+            artifacts,
+            registry: registry.clone(),
+            exact_digest: exact_commitment(b"retained-layers/1", &members)?,
+        })
+    }
+
+    /// Complete definitions reconstructed in verified layer order.
+    #[must_use]
+    pub fn artifacts(&self) -> &[ArtifactEnvelope] {
+        &self.artifacts
+    }
+
+    /// Registry used by current admission of every retained predecessor.
+    #[must_use]
+    pub fn registry(&self) -> &BTreeSet<norn_ir::PropertyTypeName> {
+        &self.registry
+    }
+
+    /// Exact ordered source/receipt identity, separate from Norn1 artifact identity.
+    #[must_use]
+    pub fn exact_digest(&self) -> &str {
+        &self.exact_digest
+    }
+}
+
+fn exact_set(
+    artifacts: &[ArtifactEnvelope],
+) -> Result<BTreeMap<(&str, &str), String>, ChallengeError> {
+    let mut out = BTreeMap::new();
+    for artifact in artifacts {
+        if out
+            .insert(
+                (artifact.artifact_id.as_str(), artifact.version.as_str()),
+                exact_artifact_digest(artifact)?,
+            )
+            .is_some()
+        {
+            return Err(ChallengeError::NotAdmitted);
+        }
+    }
+    Ok(out)
 }
 
 // Protected identities are deliberately separate from ordinary ArtifactRef/Norn1.
@@ -151,7 +319,7 @@ pub(crate) fn exact_artifact_digest(artifact: &ArtifactEnvelope) -> Result<Strin
 // SHA-256 over a fixed versioned prefix followed by u64 big-endian length-framed
 // domain and members. Framing is portable across native/WASM hosts and distinguishes
 // member splits, empty members, and domains without normalizing any input bytes.
-fn exact_commitment(domain: &[u8], members: &[&[u8]]) -> Result<String, ChallengeError> {
+pub(crate) fn exact_commitment(domain: &[u8], members: &[&[u8]]) -> Result<String, ChallengeError> {
     let mut hash = Sha256::new();
     hash.update(b"norn.obligation-exact/1\0");
     for bytes in std::iter::once(domain).chain(members.iter().copied()) {
@@ -262,6 +430,7 @@ fn contains_number(value: &norn_canonical::JsonValue) -> bool {
 /// must obtain it through an explicit approval operation, never from worker output.
 #[derive(Debug, Clone)]
 pub struct ApprovedContract {
+    retained: Option<String>,
     laws: BTreeMap<String, String>,
     reference_contracts: BTreeMap<String, String>,
     semantics: Value,
@@ -288,13 +457,45 @@ impl ApprovedContract {
         assumptions: Value,
         assurance: Value,
     ) -> Result<Self, ChallengeError> {
+        Self::approve_checked(source, registry, None, semantics, assumptions, assurance)
+    }
+
+    /// LAYER-CHALLENGE-1: approve only against independently checked retained input.
+    /// The host authorizes and retains this contract outside candidate control.
+    /// # Errors
+    /// Refuses a mismatched base, failed admission, unsafe profiles or law identity.
+    pub fn approve_retained(
+        source: &DefinitionSource,
+        retained: &RetainedLayers,
+        semantics: Value,
+        assumptions: Value,
+        assurance: Value,
+    ) -> Result<Self, ChallengeError> {
+        Self::approve_checked(
+            source,
+            retained.registry(),
+            Some(retained),
+            semantics,
+            assumptions,
+            assurance,
+        )
+    }
+
+    fn approve_checked(
+        source: &DefinitionSource,
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+        retained: Option<&RetainedLayers>,
+        semantics: Value,
+        assumptions: Value,
+        assurance: Value,
+    ) -> Result<Self, ChallengeError> {
         let artifacts = &source.artifacts;
         let context = &EntityArtifactSetContext {
             registry,
             base: &source.base,
             tenant: None,
         };
-        admit(source, context)?;
+        admit_with_authority(source, context, retained)?;
         for profile in [&semantics, &assumptions, &assurance] {
             if profile.as_object().is_none_or(serde_json::Map::is_empty) {
                 return Err(ChallengeError::MissingProfile);
@@ -310,6 +511,7 @@ impl ApprovedContract {
                 .map_err(|_error| ChallengeError::LossyInput)?;
         }
         Ok(Self {
+            retained: retained.map(|r| r.exact_digest.clone()),
             laws: law_refs(artifacts, context.base)?,
             reference_contracts: reference_contracts(artifacts, context.base)?,
             semantics,
@@ -332,18 +534,114 @@ impl ApprovedContract {
         source: &DefinitionSource,
         registry: &BTreeSet<norn_ir::PropertyTypeName>,
     ) -> Result<Challenge, ChallengeError> {
+        self.challenge_checked(source, registry, None)
+    }
+
+    /// Reconstruct all goals from the approved retained authority and candidate.
+    /// # Errors
+    /// Refuses changed retained identity, base substitution, stale laws or admission.
+    pub fn challenge_retained(
+        &self,
+        source: &DefinitionSource,
+        retained: &RetainedLayers,
+    ) -> Result<Challenge, ChallengeError> {
+        self.challenge_checked(source, retained.registry(), Some(retained))
+    }
+
+    fn challenge_checked(
+        &self,
+        source: &DefinitionSource,
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+        retained: Option<&RetainedLayers>,
+    ) -> Result<Challenge, ChallengeError> {
+        if self.retained.as_deref() != retained.map(RetainedLayers::exact_digest) {
+            return Err(ChallengeError::InvalidSubmission);
+        }
         let artifacts = &source.artifacts;
         let context = &EntityArtifactSetContext {
             registry,
             base: &source.base,
             tenant: None,
         };
-        let receipt = admit(source, context)?;
+        let receipt = admit_with_authority(source, context, retained)?;
         if law_refs(artifacts, context.base)? != self.laws
             || reference_contracts(artifacts, context.base)? != self.reference_contracts
         {
             return Err(ChallengeError::LawChanged);
         }
+        self.build_challenge(source, context, Some(receipt.as_str()), None)
+    }
+
+    /// EDGE-GOALS-1: generate an unknown proposal for structurally conforming edges.
+    /// This does not admit an interpretation, check a proof or grant activation authority.
+    /// # Errors
+    /// Refuses changed retained authority/laws/contracts, incomplete B1 conformance,
+    /// any admission error except the explicit interpretation-unsupported finding,
+    /// or exhausted obligation/byte budgets.
+    pub fn interpretation_challenge(
+        &self,
+        source: &DefinitionSource,
+        retained: &RetainedLayers,
+    ) -> Result<Challenge, ChallengeError> {
+        if self.retained.as_deref() != Some(retained.exact_digest())
+            || exact_set(&source.base)? != exact_set(retained.artifacts())?
+            || law_refs(&source.artifacts, &source.base)? != self.laws
+            || reference_contracts(&source.artifacts, &source.base)? != self.reference_contracts
+        {
+            return Err(ChallengeError::InvalidSubmission);
+        }
+        let context = EntityArtifactSetContext {
+            registry: retained.registry(),
+            base: &source.base,
+            tenant: None,
+        };
+        let findings = crate::check_artifact_set(&source.artifacts, &context);
+        if findings
+            .iter()
+            .any(|d| d.is_error() && d.code.as_str() != "mapping.interpretation.unsupported")
+        {
+            return Err(ChallengeError::NotAdmitted);
+        }
+        let mut edges = Vec::new();
+        let mut edge_bytes = 0usize;
+        for artifact in source
+            .base
+            .iter()
+            .chain(&source.artifacts)
+            .filter(|a| a.kind() == ArtifactKind::Mapping)
+        {
+            if let Ok(norn_ir::mapping::MappingDocument::LawInterpretation(interpretation)) =
+                serde_json::from_value(
+                    serde_json::to_value(artifact.payload.to_json_value())
+                        .map_err(|_error| ChallengeError::Closure)?,
+                )
+            {
+                let identity = exact_artifact_digest(artifact)?;
+                let statement = json!({"artifactId":artifact.artifact_id,"sha256":identity,"interpretation":interpretation,"laws":self.laws});
+                let bytes = norn_canonical::serialize_json_verbatim(&statement)
+                    .map_err(|_error| ChallengeError::Closure)?;
+                edge_bytes = edge_bytes
+                    .saturating_add(bytes.len().saturating_mul(INTERPRETATION_GOAL_KINDS.len()));
+                if edge_bytes > 8_388_608 || edges.len() >= 1_024 {
+                    return Err(ChallengeError::Limit);
+                }
+                edges.push(statement);
+            }
+        }
+        if edges.is_empty() {
+            return Err(ChallengeError::NotAdmitted);
+        }
+        self.build_challenge(source, &context, None, Some(edges.as_slice()))
+    }
+
+    fn build_challenge(
+        &self,
+        source: &DefinitionSource,
+        context: &EntityArtifactSetContext<'_>,
+        receipt: Option<&str>,
+        edges: Option<&[Value]>,
+    ) -> Result<Challenge, ChallengeError> {
+        let artifacts = &source.artifacts;
         let pool: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
         let closure = pool
             .iter()
@@ -352,7 +650,7 @@ impl ApprovedContract {
                 crate::verification::conservative_closure(
                     law,
                     &pool,
-                    registry,
+                    context.registry,
                     Budget {
                         max_nodes: 16_384,
                         max_edges: 131_072,
@@ -378,10 +676,15 @@ impl ApprovedContract {
             return Err(ChallengeError::Limit);
         }
         preflight_goal_bytes(&self.laws, &writers, &boundaries)?;
-        let induction = induction::build(&pool, &self.laws, &writers, &boundaries, registry)?;
-        let body = json!({
+        let mut induction =
+            induction::build(&pool, &self.laws, &writers, &boundaries, context.registry)?;
+        if let Some(edges) = edges {
+            append_edge_goals(&mut induction.goals, edges)?;
+        }
+        let mut body = json!({
             "generator": GENERATOR_PROFILE,
             "admissionReceipt": receipt,
+            "retainedLayers": self.retained,
             "exactSourceDigest": source.exact_digest,
             "closure": closure.as_ref().map(|c| &c.content_digests),
             "writers": writers.iter().map(crate::verification::LawWriter::to_json).collect::<Vec<_>>(),
@@ -394,19 +697,52 @@ impl ApprovedContract {
             "writerStatements": induction.writers,
             "obligations": induction.goals,
         });
-        let bytes = norn_canonical::serialize_json_verbatim(&body)
-            .map_err(|_error| ChallengeError::Closure)?;
-        if bytes.len() > 8_388_608 {
-            return Err(ChallengeError::Limit);
+        if edges.is_some() {
+            let fields = body.as_object_mut().ok_or(ChallengeError::Closure)?;
+            fields.insert("generator".to_owned(), json!("norn.interpretation-goals/1"));
+            fields.insert("admitted".to_owned(), json!(false));
+            fields.insert("assessment".to_owned(), json!("unknown"));
+            fields.insert(
+                "admissionFindings".to_owned(),
+                crate::diagnostics_to_json(&crate::check_artifact_set(artifacts, context)),
+            );
         }
-        norn_canonical::parse_json_verbatim(&bytes).map_err(|_error| ChallengeError::Closure)?;
-        let sha256 = exact_commitment(b"challenge", &[&bytes])?;
-        Ok(Challenge {
-            body,
-            sha256,
-            writers,
-        })
+        finish_challenge(body, writers)
     }
+}
+
+fn append_edge_goals(goals: &mut Vec<Value>, edges: &[Value]) -> Result<(), ChallengeError> {
+    if goals
+        .len()
+        .saturating_add(edges.len().saturating_mul(INTERPRETATION_GOAL_KINDS.len()))
+        > 8_192
+    {
+        return Err(ChallengeError::Limit);
+    }
+    for edge in edges {
+        for kind in INTERPRETATION_GOAL_KINDS {
+            goals.push(json!({"goal":{"kind":kind},"statement":edge,"assessment":"unknown"}));
+        }
+    }
+    Ok(())
+}
+
+fn finish_challenge(
+    body: Value,
+    writers: BTreeSet<crate::verification::LawWriter>,
+) -> Result<Challenge, ChallengeError> {
+    let bytes =
+        norn_canonical::canonical_json_exact_of(&body).map_err(|_error| ChallengeError::Closure)?;
+    if bytes.len() > 8_388_608 {
+        return Err(ChallengeError::Limit);
+    }
+    norn_canonical::parse_json_verbatim(&bytes).map_err(|_error| ChallengeError::Closure)?;
+    let sha256 = exact_commitment(b"challenge", &[&bytes])?;
+    Ok(Challenge {
+        body,
+        sha256,
+        writers,
+    })
 }
 
 fn preflight_goal_bytes(
@@ -477,6 +813,50 @@ fn admit(
             return Err(ChallengeError::NotAdmitted);
         }
     }
+    admit_candidate(source, context)
+}
+
+fn admit_with_authority(
+    source: &DefinitionSource,
+    context: &EntityArtifactSetContext<'_>,
+    retained: Option<&RetainedLayers>,
+) -> Result<String, ChallengeError> {
+    if let Some(retained) = retained {
+        if exact_set(&source.base)? != exact_set(retained.artifacts())?
+            || context.registry != retained.registry()
+        {
+            return Err(ChallengeError::NotAdmitted);
+        }
+        let receipt = admit_candidate(source, context)?;
+        crate::verification::effective_law_instances(
+            &source.artifacts,
+            context,
+            Budget {
+                max_nodes: 16_384,
+                max_edges: 131_072,
+                max_steps: 1_048_576,
+            },
+        )
+        .map_err(|findings| {
+            if findings
+                .iter()
+                .any(|d| d.code.as_str() == crate::verification::codes::UNRESOLVED_SCOPE)
+            {
+                ChallengeError::NotAdmitted
+            } else {
+                ChallengeError::Closure
+            }
+        })?;
+        Ok(receipt)
+    } else {
+        admit(source, context)
+    }
+}
+
+fn admit_candidate(
+    source: &DefinitionSource,
+    context: &EntityArtifactSetContext<'_>,
+) -> Result<String, ChallengeError> {
     let checked = check_artifact_set_with_receipt(
         &crate::receipt::ReceiptSources::new(&source.receipt_sources, &source.base_sources)
             .map_err(|_error| ChallengeError::NotAdmitted)?,

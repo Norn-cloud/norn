@@ -52,7 +52,7 @@
       "description": "Canonical scalar inputs (null, boolean, exact number, string).",
       "type": "object",
       "additionalProperties": {
-        "$ref": "#/$defs/JsonValue"
+        "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
       }
     },
     "manifest": {
@@ -278,35 +278,6 @@
           "description": "Append-only observation (stays historically useful).",
           "type": "string",
           "const": "append_only"
-        }
-      ]
-    },
-    "JsonValue": {
-      "anyOf": [
-        {
-          "type": "null"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "number",
-          "format": "double"
-        },
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          }
         }
       ]
     },

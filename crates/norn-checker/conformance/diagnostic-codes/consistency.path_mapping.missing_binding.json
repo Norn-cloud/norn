@@ -1,0 +1,7 @@
+{
+  "code": "consistency.path_mapping.missing_binding",
+  "message": "Mapped target declares or inherits path equations without a covering preservation binding",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -32,7 +32,7 @@ use norn_ir::{
 use crate::cell_host::{
     CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion,
     FactWrite, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite,
-    OwnedRowsCommitProof, WrittenLinkVersion, WrittenVersion,
+    OwnedRowsCommitProof, PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
 };
 
 /// Maximum complete outgoing link targets a turn may bind as one adjacency
@@ -51,6 +51,11 @@ pub struct CommitModel<'m, 'a> {
 }
 
 impl<'m, 'a> CommitModel<'m, 'a> {
+    /// Whether `object_type` is a stored object type (not an interface).
+    pub(crate) fn is_object_type(self, object_type: &ObjectTypeName) -> bool {
+        self.catalog.contains(object_type)
+    }
+
     /// The model of `catalog`.
     #[must_use]
     pub const fn new(catalog: &'m TypeCatalog<'a>) -> Self {
@@ -180,6 +185,33 @@ pub trait CommitView {
     /// Host failure.
     type Error;
 
+    /// Ownership of a fact and its complete outgoing membership partition.
+    /// Local-only stores resolve every key within their one bound cell. A host
+    /// with external or unresolved dependencies must override this method;
+    /// applicability labels and caller hints are not ownership evidence.
+    ///
+    /// # Errors
+    /// The host cannot resolve ownership under the commit's read snapshot.
+    fn atomic_ownership(
+        &self,
+        _key: &FactKey,
+    ) -> Result<crate::execution_profile::AtomicOwnership, Self::Error> {
+        Ok(crate::execution_profile::AtomicOwnership::Local)
+    }
+
+    /// Ownership of the complete consumed timer, result or observation identity.
+    /// Bound local-only stores own their delivery queues. Hosts that can resolve
+    /// external or unknown queues must override this using snapshot evidence.
+    ///
+    /// # Errors
+    /// Ownership cannot be resolved under the commit's read snapshot.
+    fn consumed_ownership(
+        &self,
+        _consumed: &Consumed,
+    ) -> Result<crate::execution_profile::AtomicOwnership, Self::Error> {
+        Ok(crate::execution_profile::AtomicOwnership::Local)
+    }
+
     /// Whether the consumed delivery is pending.
     ///
     /// # Errors
@@ -244,6 +276,25 @@ pub trait CommitView {
         link: &str,
     ) -> Result<Option<Vec<LinkReadTarget>>, Self::Error> {
         let _ = (source, link);
+        Ok(None)
+    }
+
+    /// Every live object matching `predicate`, as members in canonical key
+    /// order, at most `limit` of them ([`crate::predicate_read`]). Hosts
+    /// enumerate the queried type and apply [`PredicateQuery::matches`].
+    /// `None` means enumeration is incomplete or this host cannot prove the
+    /// set complete (for example, the type spans owners); a commit
+    /// containing a predicate read is then refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host read failure.
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Self::Error> {
+        let _ = (predicate, limit);
         Ok(None)
     }
 
@@ -351,6 +402,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
         // cannot remove or alter any read sealed by kernel preparation.
         || proof.reads().iter().any(|read| !commit.reads.contains(read))
         || proof.link_reads() != commit.link_reads.as_slice()
+        || proof.predicate_reads() != commit.predicate_reads.as_slice()
         || proof.writes().len() != commit.writes.len()
         || proof.links().len() != commit.links.len()
     {
@@ -428,6 +480,20 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     authorization: Option<&ObservationAuthorization>,
     trusted_owned_rows: bool,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
+    let profile = crate::execution_profile::ProfileView::new(view);
+    profile.validate_consumed(commit.consumes.as_ref())?;
+    let result = check_commit_local(commit, model, &profile, authorization, trusted_owned_rows);
+    profile.validate(commit, model)?;
+    result
+}
+
+fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    authorization: Option<&ObservationAuthorization>,
+    trusted_owned_rows: bool,
+) -> Result<CommitVersions, CommitError<V::Error>> {
     if let Some(authorization) = authorization
         && commit.events.len() > authorization.event_limit()
     {
@@ -446,7 +512,25 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    check_versions(commit, model, view)?;
+    // A write that observed an object already present and immutable can never succeed on
+    // retry, so `ImmutableObject` outranks the stale-version `Conflict`. A write whose
+    // expectation differs from the current version (an absent object that a concurrent
+    // create has since made present) is a retryable `Conflict` that `check_versions` reports,
+    // so creates can still re-read and replay or allocate the next number.
+    for write in &commit.writes {
+        let key = model.canonical(&write.key);
+        let concrete = view.concrete(&key).map_err(CommitError::Host)?;
+        if concrete
+            .as_ref()
+            .is_some_and(|concrete| model.catalog.immutable(concrete))
+            && view.version(&key).map_err(CommitError::Host)? == write.expected
+        {
+            return Err(CommitError::ImmutableObject {
+                key: write.key.clone(),
+            });
+        }
+    }
+    check_versions(commit, model, view, authorization)?;
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;
     check_endpoints(commit, model, view, &links)?;
@@ -459,6 +543,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     check_required_links(commit, model, view, authorization)?;
     check_acyclic_links(commit, model, view)?;
     check_invariants(commit, model.catalog, authorization).map_err(|error| match error {
+        InvariantAdmissionError::Law { key, reason } => CommitError::Law { key, reason },
         InvariantAdmissionError::EffectiveValues { key, reason } => {
             CommitError::EffectiveValues { key, reason }
         }
@@ -502,16 +587,19 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
             return Err(CommitError::Law {
                 key: write.key.clone(),
-                reason: crate::governing_laws::LawEvaluationError::Violated(failure.message),
+                reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
             });
         }
     }
     next_versions(commit)
 }
 
-// Outgoing links share the source's authority, not their target's authority.
-// Authored incoming edges remain authored; pending target resolution carries
-// the original source's sealed scope and exact relation intent.
+/// Outgoing links share the source's authority, not their target's authority.
+/// Authored incoming edges remain authored; pending target resolution carries
+/// the original source's sealed scope and exact relation intent.
+///
+/// OBS-LINK-CONVERGE-1: only opaque claim edges share canonical relation authority.
+/// Authored writes retain their namespace and claim-metadata protections.
 #[allow(
     clippy::too_many_lines,
     reason = "one shared boundary fences source ownership, pending intents, and outgoing relations atomically"
@@ -522,6 +610,13 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    if commit.writes.iter().any(|write| {
+        model.canonical(&write.key).object_type.as_str()
+            == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+            && !authorization.is_some_and(|a| a.authorizes_claim_write(write))
+    }) {
+        return Err(CommitError::ObservationAuthorization);
+    }
     if authorization.is_none()
         && commit
             .writes
@@ -531,9 +626,12 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
         return Err(CommitError::ObservationAuthorization);
     }
     check_source_markers(commit, view, authorization)?;
+    let convergent =
+        authorization.map_or_else(Vec::new, ObservationAuthorization::convergent_links);
     let sources: BTreeSet<_> = commit
         .links
         .iter()
+        .filter(|write| !convergent.contains(write))
         .map(|write| model.canonical(&write.key.source))
         .chain(
             authorization
@@ -721,7 +819,7 @@ pub enum InvariantEvaluationError {
     MissingInterface(String),
 }
 
-/// Evaluate every implicit temporal property check and effective invariant of
+/// Evaluate every implicit temporal/decimal property check and effective invariant of
 /// `key` over the exact complete final values using one cumulative per-commit
 /// budget. The caller shares `remaining` across all object writes in the
 /// commit.
@@ -739,10 +837,22 @@ pub fn evaluate_invariants(
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
-    evaluate_invariants_for_class(catalog, key, values, remaining, None)
+    evaluate_invariants_for_class(catalog, key, values, remaining, None, None)
 }
 
-/// Evaluate only integrity invariants and intrinsic temporal property checks.
+/// LAW-COMMIT-1: evaluate a resolved invariant response with the shared value,
+/// expression and fuel semantics, excluding unrelated declarations.
+pub(crate) fn evaluate_named_invariant(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &crate::cell_host::JsonObject,
+    remaining: &mut u64,
+    id: &str,
+) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
+    evaluate_invariants_for_class(catalog, key, values, remaining, None, Some(id))
+}
+
+/// Evaluate only integrity invariants and intrinsic temporal/decimal property checks.
 ///
 /// Command admission uses this path so quality expectations consume no
 /// dispatch or expression fuel. Observation preparation continues to call
@@ -759,6 +869,7 @@ fn evaluate_integrity_invariants(
         values,
         remaining,
         Some(ConstraintClass::Integrity),
+        None,
     )
 }
 
@@ -772,6 +883,7 @@ fn evaluate_invariants_for_class(
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
     class: Option<ConstraintClass>,
+    selected: Option<&str>,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
     let values = catalog
         .effective_object_values(&key.object_type, values)
@@ -782,8 +894,15 @@ fn evaluate_invariants_for_class(
     if let Some(class) = class {
         invariants.retain(|effective| effective.invariant.classification == class);
     }
+    if let Some(id) = selected {
+        invariants.retain(|effective| effective.id.as_str() == id);
+    }
 
-    let mut failures = evaluate_temporal_properties(catalog, key, &values, remaining)?;
+    let mut failures = if selected.is_none() {
+        evaluate_typed_properties(catalog, key, &values, remaining)?
+    } else {
+        Vec::new()
+    };
     if invariants.is_empty() {
         return Ok(failures);
     }
@@ -901,7 +1020,8 @@ fn evaluate_invariants_for_class(
     Ok(failures)
 }
 
-fn evaluate_temporal_properties(
+/// VAL-DECIMAL-SCALE-1: apply the shared runtime decimal domain check, including Record members, before commit.
+fn evaluate_typed_properties(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
@@ -915,7 +1035,12 @@ fn evaluate_temporal_properties(
             !property.computed
                 && matches!(
                     &property.kind,
-                    EffectiveKind::Base(PropertyType::Date {} | PropertyType::Timestamp { .. })
+                    EffectiveKind::Base(
+                        PropertyType::Date {}
+                            | PropertyType::Timestamp { .. }
+                            | PropertyType::Decimal { .. }
+                            | PropertyType::Record { .. }
+                    )
                 )
         })
         .collect::<Vec<_>>();
@@ -925,12 +1050,29 @@ fn evaluate_temporal_properties(
     }
     *remaining = (*remaining).saturating_sub(units);
 
-    Ok(properties
+    properties
         .into_iter()
         .filter_map(|property| {
             let value = values.get(property.id.as_str())?;
-            property.check_runtime_value(value).err().map(|_| {
+            let error = property.check_runtime_value(value).err()?;
+            if let norn_checker::entity_instance::InstanceError::Unsupported(reason) = error {
+                return Some(Err(InvariantEvaluationError::InvalidEffectiveValues(
+                    crate::EffectiveValuesError::Unsupported {
+                        property: property.id.as_str().to_owned(),
+                        feature: reason,
+                    },
+                )));
+            }
+            Some(Ok({
                 let (kind, reason) = match &property.kind {
+                    EffectiveKind::Base(PropertyType::Decimal { .. }) => (
+                        "decimal",
+                        "must satisfy its declared decimal scale and bounds",
+                    ),
+                    EffectiveKind::Base(PropertyType::Record { .. }) => (
+                        "record",
+                        "must satisfy its declared member types and bounds",
+                    ),
                     EffectiveKind::Base(PropertyType::Date {}) => {
                         ("date", "must be a valid calendar date in YYYY-MM-DD form")
                     }
@@ -947,7 +1089,13 @@ fn evaluate_temporal_properties(
                     message: format!("property `{}` must be a valid {kind}", property.id.as_str()),
                     outcome: DataQualityOutcome::NotSatisfied,
                     classification: ConstraintClass::Integrity,
-                    finding_outcome: Some(DataQualityOutcome::InvalidTemporalObservation {
+                    finding_outcome: (!matches!(
+                        &property.kind,
+                        EffectiveKind::Base(
+                            PropertyType::Decimal { .. } | PropertyType::Record { .. }
+                        )
+                    ))
+                    .then(|| DataQualityOutcome::InvalidTemporalObservation {
                         property: property.id.clone(),
                         value: value
                             .as_str()
@@ -955,9 +1103,9 @@ fn evaluate_temporal_properties(
                         reason: reason.to_owned(),
                     }),
                 }
-            })
+            }))
         })
-        .collect())
+        .collect()
 }
 
 /// The existing per-commit invariant evaluation fuel ceiling.
@@ -978,6 +1126,10 @@ fn expression_type_name(value: &ExprValue) -> &'static str {
 }
 
 enum InvariantAdmissionError {
+    Law {
+        key: FactKey,
+        reason: crate::governing_laws::LawEvaluationError,
+    },
     EffectiveValues {
         key: FactKey,
         reason: String,
@@ -1064,6 +1216,20 @@ fn check_invariants<E, C, T>(
             .into_iter()
             .find(|failure| failure.classification == ConstraintClass::Integrity)
         {
+            if let Some(law_failure) =
+                crate::governing_laws::invariant_failure(catalog, &write.key.object_type, &failure)
+                    .map_err(|reason| InvariantAdmissionError::Law {
+                        key: write.key.clone(),
+                        reason,
+                    })?
+            {
+                return Err(InvariantAdmissionError::Law {
+                    key: write.key.clone(),
+                    reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(
+                        law_failure,
+                    )),
+                });
+            }
             return Err(InvariantAdmissionError::Violation {
                 key: Box::new(write.key.clone()),
                 version: catalog
@@ -1237,6 +1403,7 @@ fn check_shape<E, C, T, V: CommitView + ?Sized>(
         }
     }
     check_link_read_shapes(&commit.link_reads, model)?;
+    crate::predicate_read::check_predicate_read_shapes(&commit.predicate_reads, model)?;
     for write in &commit.links {
         let admitted = model
             .link(&write.key.source.object_type, &write.key.link)
@@ -1428,6 +1595,17 @@ pub fn check_commit_identifiers<E, C, T, X>(
             });
         }
     }
+    for read in &commit.predicate_reads {
+        if read.members.len() > crate::predicate_read::MAX_PREDICATE_MEMBERS {
+            return Err(CommitError::InvalidPredicateRead {
+                object_type: read.predicate.object_type.clone(),
+                reason: "too many members",
+            });
+        }
+        for member in &read.members {
+            check_fact_key_identity(&member.key)?;
+        }
+    }
     Ok(())
 }
 
@@ -1484,7 +1662,21 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
+    authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    // ID-STABLE-1: event payloads never establish the per-write observation authority.
+    for write in &commit.writes {
+        if matches!(write.mutation, FactMutation::Put { .. }) {
+            let key = model.canonical(&write.key);
+            let version = view.version(&key).map_err(CommitError::Host)?;
+            let live = view.concrete(&key).map_err(CommitError::Host)?.is_some();
+            if version.has_committed_deletion(live)
+                && !authorization.is_some_and(|proof| proof.authorizes_write(write))
+            {
+                return Err(CommitError::IdentityReuse);
+            }
+        }
+    }
     let expectations = commit
         .reads
         .iter()
@@ -1568,6 +1760,7 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
+    crate::predicate_read::recheck_predicate_reads(&commit.predicate_reads, model, view)?;
     Ok(())
 }
 

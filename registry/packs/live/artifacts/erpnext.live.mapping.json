@@ -1,0 +1,84 @@
+{
+  "artifactId": "erpnext.live.mapping",
+  "dependencies": [
+    {
+      "artifactId": "erpnext.live.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Catalog.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Item.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "ERPNext Items to canonical catalog",
+  "namespace": "erpnext",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "canon.Catalog.interface"
+    ],
+    "maps": [
+      {
+        "id": "item",
+        "ignoredFields": [
+          {
+            "field": "uom",
+            "reason": "Catalog identity has no stock quantity."
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.norn_ref"
+          },
+          {
+            "property": "code",
+            "value": "input.code"
+          },
+          {
+            "property": "label",
+            "value": "input.label"
+          }
+        ],
+        "source": {
+          "dataset": "Item"
+        },
+        "sourceRecord": "input.name",
+        "subject": "input.norn_ref",
+        "target": {
+          "entity": "canon.Item.entity",
+          "interface": "canon.Catalog.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "erpnext.live.source",
+      "sha256": "93c5f945bb2c72b1aa7d8b717a245a21741d748d8b4c065509611e617b7428d2",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/live/artifacts/erpnext.live.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

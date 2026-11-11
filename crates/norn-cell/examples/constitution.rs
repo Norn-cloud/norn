@@ -64,6 +64,7 @@ fn audit_type(mut object: ObjectTypeDef) -> ObjectTypeDef {
     ]
     .into_iter()
     .map(|id| Property {
+        protected: false,
         id: PropertyId(id.into()),
         description: None,
         property_type: PropertyType::JsonExt { schema: None },
@@ -147,7 +148,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                 ]),
                 actor: "driver:operator".into(),
                 input: serde_json::from_value(
-                    json!({"id":"melt", "input_fine_g":input,"output_fine_g":output}),
+                    json!({"id":"melt", "input_fine_g":input.to_string(),"output_fine_g":output.to_string()}),
                 )?,
                 idempotency_key: "convert".into(),
                 object_type: None,
@@ -338,4 +339,9 @@ fn main() -> Result<()> {
         )?
     )?;
     Ok(())
+}
+
+#[test]
+fn constitution_loss_mutation_refusal_and_restoration() -> Result<()> {
+    main()
 }

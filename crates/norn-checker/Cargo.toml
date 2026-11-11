@@ -9,6 +9,18 @@ description = "shared contract/lifecycle diagnostics (ring 0; see AGENTS.md)"
 [lib]
 path = "src/lib.rs"
 
+[features]
+native-proof-driver = []
+
+[[bin]]
+name = "norn-proof-quint"
+path = "src/bin/norn-proof-quint.rs"
+required-features = ["native-proof-driver"]
+
+[[example]]
+name = "jewelry_demo"
+test = true
+
 [[test]]
 name = "canonical_values_kani"
 path = "../../verification/canonical-values-v1/diagnostic_kani.rs"
@@ -35,10 +47,10 @@ regex-lite = "0.1.9"
 serde_json = "1.0.150"
 
 [dev-dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
 # Pinned OSI-schema round-trip validation only; reuses workspace 0.47.0.
 jsonschema = { version = "=0.47.0", default-features = false }
 proptest = "1.11.0"
-serde = { version = "1.0.228", features = ["derive"] }
 
 [lints]
 workspace = true

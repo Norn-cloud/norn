@@ -44,6 +44,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
+use norn_checker::entity_instance::InstanceError;
 use norn_checker::entity_model::{EntityContext, EntityModel};
 use norn_checker::property_codec::{self, PropertyCodecError};
 use norn_checker::{
@@ -69,6 +70,9 @@ use crate::effect::{
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
+
+/// Stable platform rule for an exact retained property-domain declaration.
+pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
 
 /// The object types a cell knows, for resolving effective lifecycles and
 /// property defaults along `extends`.
@@ -295,8 +299,8 @@ impl<'a> TypeCatalog<'a> {
     /// Build the complete stored values for one effective link instance:
     /// preserve submitted values and fill each effective stored property with
     /// its declared default or `null`. Computed properties are omitted.
-    /// Temporal values are checked against their declared type and valid
-    /// timestamps are canonicalized to UTC.
+    /// VAL-DECIMAL-SCALE-1: Decimal and Record domains, including defaults,
+    /// are checked before a link can commit. Valid timestamps normalize to UTC.
     ///
     /// An unknown source type or link returns `submitted` unchanged; callers
     /// that admit link facts must fail closed when the shared shape is absent.
@@ -306,7 +310,8 @@ impl<'a> TypeCatalog<'a> {
     /// Returns [`EffectiveValuesError::Runtime`] when a submitted typed value
     /// or effective default cannot be represented as an exact runtime value,
     /// and [`EffectiveValuesError::ValueType`] when its scalar encoding or
-    /// temporal form does not match the effective property.
+    /// domain does not match the effective property. Unsupported Record members
+    /// return [`EffectiveValuesError::Unsupported`].
     pub fn effective_link_values(
         &self,
         source: &ObjectTypeName,
@@ -342,13 +347,28 @@ impl<'a> TypeCatalog<'a> {
                 .map_err(|error| property_codec_error(name, error))?;
             let value = property_codec::decode(kind, &encoded)
                 .map_err(|error| property_codec_error(name, error))?;
-            if let Some(expected) = temporal_property_expected(property) {
-                property.check_runtime_value(&value).map_err(|_error| {
-                    EffectiveValuesError::ValueType {
-                        property: name.to_owned(),
-                        expected,
-                    }
-                })?;
+            let expected = match &property.kind {
+                EffectiveKind::Base(PropertyType::Decimal { .. }) => Some("valid decimal"),
+                EffectiveKind::Base(PropertyType::Record { .. }) => Some("valid record"),
+                EffectiveKind::Base(_) | EffectiveKind::Registry(_) | EffectiveKind::Unresolved => {
+                    temporal_property_expected(property)
+                }
+            };
+            if let Some(expected) = expected {
+                property
+                    .check_runtime_value(&value)
+                    .map_err(|error| match error {
+                        InstanceError::Unsupported(feature) => EffectiveValuesError::Unsupported {
+                            property: name.to_owned(),
+                            feature,
+                        },
+                        InstanceError::TypeMismatch(_) | InstanceError::ConstraintViolation(_) => {
+                            EffectiveValuesError::ValueType {
+                                property: name.to_owned(),
+                                expected,
+                            }
+                        }
+                    })?;
             }
             let value = property.canonical_runtime_value(&value);
             values.insert(name.to_owned(), value);
@@ -365,7 +385,9 @@ impl<'a> TypeCatalog<'a> {
             .is_some_and(|property| {
                 matches!(
                     &property.kind,
-                    EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. })
+                    EffectiveKind::Base(
+                        PropertyType::Integer { .. } | PropertyType::Decimal { .. }
+                    )
                 )
             })
     }
@@ -487,6 +509,12 @@ impl<'a> TypeCatalog<'a> {
         Ok(declared || temporal)
     }
 
+    pub(crate) fn immutable(&self, object_type: &ObjectTypeName) -> bool {
+        self.ancestry(object_type)
+            .iter()
+            .any(|definition| definition.immutable)
+    }
+
     /// `object_type` and then its supertypes, nearest first. Bounded by the
     /// catalog size, so a cyclic `extends` chain (which the checker rejects)
     /// cannot loop.
@@ -577,6 +605,48 @@ impl<'a> TypeCatalog<'a> {
             .collect())
     }
 
+    /// Owners of the invariants named `id` in the effective contract of the
+    /// object type or interface `name`.
+    ///
+    /// # Errors
+    /// Returns the name of an unknown type or of a missing interface.
+    pub(crate) fn contract_invariant_owners(
+        &self,
+        name: &str,
+        id: &str,
+    ) -> Result<Vec<InvariantOwner>, ObjectTypeName> {
+        if self.types.contains_key(name) {
+            return Ok(self
+                .invariants(&ObjectTypeName(name.to_owned()))?
+                .into_iter()
+                .filter(|item| item.id.as_str() == id)
+                .map(|item| item.owner)
+                .collect());
+        }
+        let interface = self
+            .interfaces
+            .get(name)
+            .copied()
+            .ok_or_else(|| ObjectTypeName(name.to_owned()))?;
+        let lineage = norn_expr::env::interface_lineage(interface, |parent| {
+            self.interfaces.get(parent.as_str()).copied()
+        })
+        .map_err(|missing| ObjectTypeName(missing.0))?;
+        Ok(lineage
+            .into_iter()
+            .filter(|owner| owner.invariants.iter().any(|item| item.id.as_str() == id))
+            .map(|owner| InvariantOwner::Interface(owner.name.clone()))
+            .collect())
+    }
+
+    /// Every retained object type name.
+    pub(crate) fn object_type_names(&self) -> Vec<ObjectTypeName> {
+        self.types
+            .keys()
+            .map(|name| ObjectTypeName((*name).to_owned()))
+            .collect()
+    }
+
     /// Pin an invariant owner to its canonical `EntityIR` declaration content.
     ///
     /// Artifact envelopes are not retained by this kernel catalog, so findings
@@ -608,6 +678,88 @@ impl<'a> TypeCatalog<'a> {
         }))
     }
 
+    /// PROPERTY-RULE-PIN-1 binds the property and its retained declaration closure,
+    /// including inherited, interface, extension and referenced type constraints.
+    /// The closure is conservative: unrelated shared declarations also invalidate it.
+    /// # Errors
+    /// Canonical serialization of the retained declarations failed.
+    pub fn property_domain_rule_ref(
+        &self,
+        object_type: &ObjectTypeName,
+        property: &PropertyId,
+    ) -> Result<Option<DataQualityRuleRef>, norn_ir::canonical::CanonicalJsonError> {
+        let Some(effective) = self.effective_property(object_type, property) else {
+            return Ok(None);
+        };
+        if effective.computed
+            || !matches!(
+                effective.kind,
+                EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Record { .. })
+            )
+        {
+            return Ok(None);
+        }
+        let mut property_types: Vec<_> = self.property_types.unwrap_or(&[]).iter().collect();
+        property_types.sort_by_key(|declaration| &declaration.name);
+        let mut extensions = self
+            .extensions
+            .iter()
+            .map(|declaration| {
+                Ok((
+                    (
+                        &declaration.target,
+                        &declaration.namespace,
+                        norn_ir::canonical::canonical_json_of(declaration)?,
+                    ),
+                    *declaration,
+                ))
+            })
+            .collect::<Result<Vec<_>, norn_ir::canonical::CanonicalJsonError>>()?;
+        extensions.sort_by(|left, right| left.0.cmp(&right.0));
+        let extensions: Vec<_> = extensions
+            .into_iter()
+            .map(|(_, declaration)| declaration)
+            .collect();
+        let declarations = (
+            PROPERTY_DOMAIN_RULE_ID,
+            1_u16,
+            object_type,
+            property,
+            self.ancestry(object_type),
+            self.interfaces.values().collect::<Vec<_>>(),
+            property_types,
+            extensions,
+        );
+        let bytes = norn_ir::canonical::canonical_json_of(&declarations)?;
+        Ok(Some(DataQualityRuleRef::Builtin {
+            id: PROPERTY_DOMAIN_RULE_ID.to_owned(),
+            version: format!(
+                "sha256:{}",
+                norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+            ),
+        }))
+    }
+
+    fn has_property_domain_rule(
+        &self,
+        rule: &DataQualityRuleRef,
+    ) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
+        for definition in self.types.values() {
+            if let Some(effective) = self.effective_type(&definition.name) {
+                for property in &effective.properties {
+                    if self
+                        .property_domain_rule_ref(&definition.name, &property.id)?
+                        .as_ref()
+                        == Some(rule)
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Resolve a finding's classification only when its pinned rule reference
     /// matches the typed owner definition in this catalog.
     ///
@@ -623,13 +775,15 @@ impl<'a> TypeCatalog<'a> {
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
             DataQualityRuleRef::Law { .. } => Ok(crate::governing_laws::classify(self, rule_ref)),
-            DataQualityRuleRef::Builtin { id, version } => {
-                Ok(if is_supported_builtin_rule(id, version) {
+            DataQualityRuleRef::Builtin { id, version } => Ok(
+                if (id == PROPERTY_DOMAIN_RULE_ID && self.has_property_domain_rule(rule_ref)?)
+                    || is_supported_builtin_rule(id, version)
+                {
                     DataQualityRuleClassification::Builtin
                 } else {
                     DataQualityRuleClassification::Unverified
-                })
-            }
+                },
+            ),
             DataQualityRuleRef::Invariant {
                 owner,
                 invariant_id,
@@ -974,6 +1128,60 @@ pub enum FactEvent {
         /// Stable identity of the attempted turn or action call.
         attempt_id: String,
     },
+}
+
+impl<X> CommitError<X> {
+    pub(crate) fn is_invariant_refusal(&self) -> bool {
+        if matches!(self, Self::InvariantViolation { .. }) {
+            return true;
+        }
+        if let Self::Law {
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+            ..
+        } = self
+        {
+            return failure.invariant.is_some();
+        }
+        false
+    }
+
+    pub(crate) fn invariant_refusal_event(&self, attempt_id: String) -> Option<FactEvent> {
+        if let Self::InvariantViolation {
+            key,
+            owner,
+            id,
+            message,
+            outcome,
+            ..
+        } = self
+        {
+            return Some(FactEvent::InvariantRefused {
+                key: key.as_ref().clone(),
+                owner: owner.clone(),
+                id: id.clone(),
+                message: message.clone(),
+                outcome: outcome.as_ref().clone(),
+                attempt_id,
+            });
+        }
+        if let Self::Law {
+            key,
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+        } = self
+        {
+            let bound = failure.invariant.as_ref()?;
+            let invariant = &bound.failure;
+            return Some(FactEvent::InvariantRefused {
+                key: key.clone(),
+                owner: invariant.owner.clone(),
+                id: invariant.id.clone(),
+                message: invariant.message.clone(),
+                outcome: invariant.outcome.clone(),
+                attempt_id,
+            });
+        }
+        None
+    }
 }
 
 // Like FactChange, decode exact runtime values through a plain record. Serde's
@@ -1372,6 +1580,14 @@ pub type PreparedDecision = CellCommit<FactEvent, JsonObject, JsonObject>;
 /// Why a complete effective object value could not be materialized.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EffectiveValuesError {
+    /// A retained property uses semantics the value checker cannot evaluate.
+    #[error("unsupported effective property `{property}`: {feature}")]
+    Unsupported {
+        /// The effective property.
+        property: String,
+        /// The unsupported retained declaration feature.
+        feature: String,
+    },
     /// A submitted value or declared default is not an exact runtime value.
     #[error(transparent)]
     Runtime(#[from] RuntimeValueError),
@@ -1401,6 +1617,29 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// ID-STABLE-1: a deleted identity needs explicit governed restoration.
+    #[error("{message}", message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
+    /// ID-UNIQUE-1: commit refused a normalized business-key collision.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// Declaring key root, without object identities or key values.
+        owner: String,
+        /// Declared key name.
+        key: String,
+    },
+    /// Complete atomic closure includes foreign or unknown ownership.
+    #[error("core.txn.atomic_boundary: dependency {key} is outside the local profile")]
+    AtomicBoundary {
+        /// Non-local or unresolved dependency.
+        key: FactKey,
+    },
+    /// A consumed delivery has foreign or unresolved ownership.
+    #[error("core.txn.atomic_boundary: consumed delivery {consumed} is outside the local profile")]
+    AtomicDeliveryBoundary {
+        /// Complete local delivery identity, including generation or incarnation.
+        consumed: Consumed,
+    },
     /// The turn targets a historical, read-only world.
     #[error("the turn targets a historical, read-only world; nothing can be committed there")]
     ReadOnlyWorld,
@@ -1551,6 +1790,8 @@ pub enum DecisionRefusal<X> {
     /// A guard of the transition is false.
     #[error("{key}: guard `{guard}` of transition {transition} does not hold")]
     GuardFalse {
+        /// Registered guard diagnostic, preserving the underlying failure.
+        diagnostic: Option<&'static str>,
         /// The object.
         key: FactKey,
         /// The transition.
@@ -1563,8 +1804,10 @@ pub enum DecisionRefusal<X> {
         "{key}: guard `{guard}` of transition {transition} could not be evaluated ({reason}); refused fail-closed"
     )]
     GuardError {
+        /// Registered guard diagnostic, preserving the underlying failure.
+        diagnostic: Option<&'static str>,
         /// The object.
-        key: FactKey,
+        key: Box<FactKey>,
         /// The transition.
         transition: String,
         /// The guard source.
@@ -1661,6 +1904,9 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
+                norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
+            }
             Self::ReadOnlyWorld => "decision.read_only_world",
             Self::PerformOutsideMain { .. } => "decision.perform_outside_main",
             Self::EnvelopeExceeded { .. } => "decision.envelope_exceeded",
@@ -1671,6 +1917,8 @@ impl<X> DecisionRefusal<X> {
             Self::SourceOwnedTarget { .. } => "decision.source_owned_target",
             Self::ObjectMissing { .. } => "decision.object_missing",
             Self::ObjectExists { .. } => "decision.object_exists",
+            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
+            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::LifecyclePropertySet { .. } => lifecycle_codes::DIRECT_WRITE,
             Self::ImmutableStateWrite { .. } => lifecycle_codes::IMMUTABLE_STATE_WRITE,
             Self::InvalidInitialState { .. } | Self::NotFromState { .. } => {
@@ -1679,8 +1927,12 @@ impl<X> DecisionRefusal<X> {
             Self::UnknownLifecycle { .. } => lifecycle_codes::NOT_A_LIFECYCLE,
             Self::UnresolvedLifecycle { .. } => "decision.unresolved_lifecycle",
             Self::UnknownTransition { .. } => lifecycle_codes::UNKNOWN_TRANSITION,
-            Self::GuardFalse { .. } => "decision.guard_false",
-            Self::GuardError { .. } => "decision.guard_error",
+            Self::GuardFalse { diagnostic, .. } => {
+                crate::guard_diagnostic::guard_failure_code(*diagnostic, false)
+            }
+            Self::GuardError { diagnostic, .. } => {
+                crate::guard_diagnostic::guard_failure_code(*diagnostic, true)
+            }
             Self::InvalidOutput { .. } => "decision.invalid_output",
             Self::Stale { .. } => "decision.stale_state",
             Self::NotPending { .. } => "decision.not_pending",
@@ -1712,15 +1964,18 @@ impl<X> DecisionRefusal<X> {
             | Self::UnresolvedLifecycle { key, .. }
             | Self::UnknownTransition { key, .. }
             | Self::GuardFalse { key, .. }
-            | Self::GuardError { key, .. }
             | Self::Stale { key, .. }
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
-            | Self::TraversalLimitExceeded { key, .. } => Some(key),
-            Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
-                Some(key.as_ref())
-            }
-            Self::ReadOnlyWorld
+            | Self::TraversalLimitExceeded { key, .. }
+            | Self::AtomicBoundary { key } => Some(key),
+            Self::InvariantViolation { key, .. }
+            | Self::NotFromState { key, .. }
+            | Self::GuardError { key, .. } => Some(key.as_ref()),
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }
@@ -1734,9 +1989,21 @@ impl<X> DecisionRefusal<X> {
     }
 
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
-        let invalid = |reason| Self::InvalidOutput { reason };
+        use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
+
+        // A decision prepares no link writes or set reads, so a link or
+        // read-set refusal means its commit was malformed.
+        if let Some(reason) = Self::read_set_reason(&error) {
+            return Self::InvalidOutput { reason };
+        }
         match error {
+            CommitError::IdentityReuse => Self::IdentityReuse,
+            CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
+            AtomicDeliveryBoundary { consumed } => Self::AtomicDeliveryBoundary { consumed },
             CommitError::Law { key, reason } => Self::Law { key, reason },
+            CommitError::IdentityCollision { owner, key, .. } => {
+                Self::IdentityCollision { owner, key }
+            }
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),
             },
@@ -1748,6 +2015,9 @@ impl<X> DecisionRefusal<X> {
                 actual_bytes,
                 max_bytes,
             } => Self::commit_identifier_refusal(field, actual_bytes, max_bytes),
+            CommitError::ImmutableObject { key } => Self::InvalidOutput {
+                reason: format!("{key} is immutable"),
+            },
             CommitError::NotPending { consumed } => Self::NotPending { consumed },
             CommitError::Conflict {
                 key,
@@ -1758,49 +2028,27 @@ impl<X> DecisionRefusal<X> {
                 expected,
                 current,
             },
-            // A decision writes no links; a link refusal is a malformed commit.
-            CommitError::DuplicateLink { key } => {
-                invalid(format!("link {key} appears twice in one commit"))
-            }
-            CommitError::LinkConflict { key, .. } => {
-                invalid(format!("link {key} changed since the turn read it"))
-            }
-            CommitError::LinkReadConflict { source_key, link } => invalid(format!(
-                "link targets for {source_key} -{link}-> changed since the turn read them"
-            )),
-            CommitError::UnsupportedLinkRead { source_key, link } => invalid(format!(
-                "host cannot verify link targets for {source_key} -{link}->"
-            )),
-            CommitError::DuplicateLinkRead { source_key, link } => invalid(format!(
-                "link targets for {source_key} -{link}-> appear more than once"
-            )),
-            CommitError::LinkReadTooLarge {
-                source_key,
-                link,
-                actual,
-                max,
-            } => Self::link_read_limit_refusal(&source_key, &link, actual, max),
-            CommitError::InvalidLinkRead { source_key, link } => Self::InvalidOutput {
-                reason: format!("link targets for {source_key} -{link}-> are malformed"),
-            },
-            CommitError::DanglingLink { key, missing } => Self::InvalidOutput {
-                reason: format!("link {key} would dangle: {missing} does not exist"),
-            },
-            CommitError::LinkTarget { key } => Self::InvalidOutput {
-                reason: format!("link {key} is not a declared link to an admitted target"),
-            },
-            CommitError::LinkCardinality { key, endpoint } => Self::InvalidOutput {
-                reason: format!("link {key} exceeds its cardinality at {endpoint}"),
-            },
-            CommitError::LinkRequired { parent, link } => Self::InvalidOutput {
-                reason: format!("{parent} has no required link {link}"),
+            // Mapped by `read_set_reason` above; the arm keeps the match exhaustive.
+            read_set @ (CommitError::DuplicateLink { .. }
+            | CommitError::LinkConflict { .. }
+            | CommitError::LinkReadConflict { .. }
+            | CommitError::UnsupportedLinkRead { .. }
+            | CommitError::DuplicateLinkRead { .. }
+            | CommitError::LinkReadTooLarge { .. }
+            | CommitError::InvalidLinkRead { .. }
+            | CommitError::PredicateReadConflict { .. }
+            | CommitError::UnsupportedPredicateRead { .. }
+            | CommitError::InvalidPredicateRead { .. }
+            | CommitError::DanglingLink { .. }
+            | CommitError::LinkTarget { .. }
+            | CommitError::LinkCardinality { .. }
+            | CommitError::LinkRequired { .. }) => Self::InvalidOutput {
+                reason: read_set.to_string(),
             },
             CommitError::TypeMismatch { key, concrete } => Self::InvalidOutput {
                 reason: format!("{key} is live as {}", concrete.as_str()),
             },
-            CommitError::AccountingPosting { key, reason } => {
-                Self::AccountingPosting { key, reason }
-            }
+            AccountingPosting { key, reason } => Self::AccountingPosting { key, reason },
             CommitError::InvariantViolation {
                 key,
                 owner,
@@ -1832,17 +2080,94 @@ impl<X> DecisionRefusal<X> {
         }
     }
 
-    fn link_read_limit_refusal(
+    /// The malformed-commit reason of a link or predicate read-set error;
+    /// `None` for every other commit error.
+    fn read_set_reason(error: &CommitError<X>) -> Option<String> {
+        match error {
+            CommitError::DuplicateLink { key } => {
+                Some(format!("link {key} appears twice in one commit"))
+            }
+            CommitError::LinkConflict { key, .. } => {
+                Some(format!("link {key} changed since the turn read it"))
+            }
+            CommitError::LinkReadConflict { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> changed since the turn read them"
+            )),
+            CommitError::UnsupportedLinkRead { source_key, link } => Some(format!(
+                "host cannot verify link targets for {source_key} -{link}->"
+            )),
+            CommitError::DuplicateLinkRead { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> appear more than once"
+            )),
+            CommitError::LinkReadTooLarge {
+                source_key,
+                link,
+                actual,
+                max,
+            } => Some(Self::link_read_limit_reason(
+                source_key, link, *actual, *max,
+            )),
+            CommitError::InvalidLinkRead { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> are malformed"
+            )),
+            CommitError::PredicateReadConflict { object_type } => Some(format!(
+                "objects matching a predicate over {object_type:?} changed since the turn read them"
+            )),
+            CommitError::UnsupportedPredicateRead { object_type } => Some(format!(
+                "host cannot verify a predicate read over {object_type:?}"
+            )),
+            CommitError::InvalidPredicateRead {
+                object_type,
+                reason,
+            } => Some(format!(
+                "predicate read over {object_type:?} is malformed: {reason}"
+            )),
+            CommitError::DanglingLink { key, missing } => {
+                Some(format!("link {key} would dangle: {missing} does not exist"))
+            }
+            CommitError::LinkTarget { key } => Some(format!(
+                "link {key} is not a declared link to an admitted target"
+            )),
+            CommitError::LinkCardinality { key, endpoint } => {
+                Some(format!("link {key} exceeds its cardinality at {endpoint}"))
+            }
+            CommitError::LinkRequired { parent, link } => {
+                Some(format!("{parent} has no required link {link}"))
+            }
+            CommitError::IdentityReuse
+            | CommitError::AtomicBoundary { .. }
+            | CommitError::AtomicDeliveryBoundary { .. }
+            | CommitError::Law { .. }
+            | CommitError::IdentityCollision { .. }
+            | CommitError::DuplicateKey { .. }
+            | CommitError::OwnedRowsProtected { .. }
+            | CommitError::IdentifierTooLong { .. }
+            | CommitError::ImmutableObject { .. }
+            | CommitError::NotPending { .. }
+            | CommitError::Conflict { .. }
+            | CommitError::TypeMismatch { .. }
+            | CommitError::AccountingPosting { .. }
+            | CommitError::InvariantViolation { .. }
+            | CommitError::InvariantBudgetExceeded { .. }
+            | CommitError::InvariantModel { .. }
+            | CommitError::EffectiveValues { .. }
+            | CommitError::TraversalLimitExceeded { .. }
+            | CommitError::ObservationAuthorization
+            | CommitError::EventLimitExceeded { .. }
+            | CommitError::Overflow
+            | CommitError::Host(_) => None,
+        }
+    }
+
+    fn link_read_limit_reason(
         source_key: &FactKey,
         link: &str,
         actual: usize,
         max: usize,
-    ) -> Self {
-        Self::InvalidOutput {
-            reason: format!(
-                "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
-            ),
-        }
+    ) -> String {
+        format!(
+            "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
+        )
     }
 
     fn commit_identifier_refusal(
@@ -2143,8 +2468,7 @@ fn prepare_decision_with_limits_for<X>(
         writes,
         events,
         effects,
-        links: Vec::new(),
-        link_reads: Vec::new(),
+        ..CellCommit::empty()
     })
 }
 
@@ -2265,6 +2589,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: Vec::new(),
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     match host.commit(commit) {
         Ok(receipt) => {
@@ -2273,35 +2598,14 @@ where
             }
             Ok(receipt)
         }
-        Err(CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        }) => {
-            let refusal = DecisionRefusal::InvariantViolation {
-                key: key.clone(),
-                owner: owner.clone(),
-                version,
-                id: id.clone(),
-                message: message.clone(),
-                outcome: outcome.clone(),
+        Err(error) if error.is_invariant_refusal() => {
+            let Some(event) = error.invariant_refusal_event(turn.id.clone()) else {
+                return Err(DecisionRefusal::from_commit(error));
             };
+            let refusal = DecisionRefusal::from_commit(error);
             let mut refusal_commit = CellCommit::empty();
             refusal_commit.consumes.clone_from(&turn.consumes);
-            refusal_commit.events.push(
-                FactEvent::InvariantRefused {
-                    key: *key,
-                    owner,
-                    id,
-                    message,
-                    outcome: *outcome,
-                    attempt_id: turn.id.clone(),
-                }
-                .into(),
-            );
+            refusal_commit.events.push(event.into());
             match host.commit(refusal_commit) {
                 Ok(_) => Err(refusal),
                 Err(error) => Err(DecisionRefusal::from_commit(error)),
@@ -2466,12 +2770,59 @@ fn apply_change<X>(
     let Some(entry) = working.get_mut(&key) else {
         return Err(DecisionRefusal::NotInSlice { key });
     };
+    let protected = |property: &str| {
+        catalog
+            .effective_type(&key.object_type)
+            .and_then(|effective| effective.property(property))
+            .is_some_and(norn_checker::EffectiveProperty::protected)
+    };
+    let forbidden = match change {
+        FactChange::Create { values, .. } => {
+            origin != AdmissionOrigin::OwnedRows
+                && values.keys().any(|property| protected(property.as_str()))
+        }
+        FactChange::Set { property, .. } => protected(property.as_str()),
+        FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
+        FactChange::Delete { .. } => {
+            catalog
+                .effective_type(&key.object_type)
+                .is_some_and(|effective| {
+                    effective
+                        .properties
+                        .iter()
+                        .any(norn_checker::EffectiveProperty::protected)
+                })
+        }
+    };
+    if forbidden {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!("{key} has protected properties writable only by rules"),
+        });
+    }
+    if slice.get(&key).is_some_and(|state| state.values.is_some())
+        && catalog.immutable(&key.object_type)
+        && !matches!(change, FactChange::Create { .. })
+    {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!("{key} is immutable"),
+        });
+    }
     let event = match change {
         FactChange::Create { values, .. } => {
             if entry.values.is_some() {
                 return Err(DecisionRefusal::ObjectExists { key });
             }
-            let values = with_initial_states(catalog, &key, values)?;
+            let mut values = values.clone();
+            if origin == AdmissionOrigin::Observation {
+                for lifecycle in catalog.lifecycles(&key.object_type).into_values() {
+                    if let [initial] = lifecycle.initial.as_slice() {
+                        values
+                            .entry(lifecycle.property.as_str().to_owned())
+                            .or_insert_with(|| JsonValue::String(initial.clone()));
+                    }
+                }
+            }
+            let values = with_initial_states(catalog, &key, &values)?;
             let values = catalog
                 .effective_object_values(&key.object_type, &values)
                 .map_err(|error| DecisionRefusal::InvalidOutput {
@@ -2686,8 +3037,14 @@ fn check_guards<X>(
     if declared.guards.is_empty() {
         return Ok(());
     }
+    let diagnostic = declared
+        .guard_refusal_code
+        .as_deref()
+        .and_then(norn_checker::codes::lookup)
+        .map(|entry| entry.code);
     let guard_error = |guard: &str, reason: String| DecisionRefusal::GuardError {
-        key: key.clone(),
+        diagnostic,
+        key: Box::new(key.clone()),
         transition: declared.id.as_str().to_owned(),
         guard: guard.to_owned(),
         reason,
@@ -2708,6 +3065,7 @@ fn check_guards<X>(
             Ok(true) => {}
             Ok(false) => {
                 return Err(DecisionRefusal::GuardFalse {
+                    diagnostic,
                     key: key.clone(),
                     transition: declared.id.as_str().to_owned(),
                     guard: guard.as_str().to_owned(),
@@ -2816,4 +3174,77 @@ fn timer<X>(
         due,
         payload: record.clone(),
     })
+}
+
+#[cfg(test)]
+mod field_authority_tests {
+    use super::{
+        AdmissionOrigin, BTreeMap, BTreeSet, FactChange, FactKey, FactSlice, FactVersion,
+        JsonObject, JsonValue, ObjectTypeDef, TypeCatalog, Working, apply_change,
+    };
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test fixtures and assertions require successful setup and existing keys"
+    )]
+    fn protected_delete_then_recreate_is_refused() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = TypeCatalog::new([&object]);
+        let key = FactKey::new("test.Counter", "one");
+        for origin in [
+            AdmissionOrigin::Command,
+            AdmissionOrigin::Observation,
+            AdmissionOrigin::OwnedRows,
+        ] {
+            let values = Some(JsonObject::from([(
+                "total".to_owned(),
+                JsonValue::from(2_i64),
+            )]));
+            let mut working = BTreeMap::from([(
+                key.clone(),
+                Working {
+                    expected: FactVersion(1),
+                    values: values.clone(),
+                    written: false,
+                },
+            )]);
+            for change in [
+                FactChange::Delete {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                },
+                FactChange::Create {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                    values: JsonObject::default(),
+                },
+            ] {
+                let error = apply_change::<std::convert::Infallible>(
+                    &catalog,
+                    &FactSlice::new(),
+                    &mut working,
+                    &change,
+                    origin,
+                    &BTreeSet::new(),
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.code(),
+                    if matches!(change, FactChange::Delete { .. }) {
+                        "decision.invalid_output"
+                    } else {
+                        "decision.object_exists"
+                    }
+                );
+                assert_eq!(working[&key].values, values);
+                assert!(!working[&key].written);
+            }
+        }
+    }
 }

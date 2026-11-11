@@ -10,8 +10,9 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
 /// Gate files pinned to the trusted base, besides every workflow.
-const GATE_FILES: [&str; 11] = [
+const GATE_FILES: [&str; 12] = [
     "scripts/ci/core.sh",
+    "scripts/ci/implementation_receipts.py",
     ".config/nextest.toml",
     "scripts/ci/validate-runner-policy.py",
     "scripts/proof_enrollment.py",
@@ -25,13 +26,18 @@ const GATE_FILES: [&str; 11] = [
 ];
 
 /// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.
-const MERGE_RUNNER: &str = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}";
+/// Boat runs merge groups and same-repository pull requests: a fork head never reaches
+/// a Boat VM. The pull-request arm requires Boat CI's public-repository allowlist
+/// (`boat ci public`): author, actor and re-runner must be that user, so Dependabot or
+/// another user's pull request runs hosted instead of queueing forever. Trusted-policy
+/// jobs stay hosted.
+const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
         || (path == ".github/workflows/ci-policy.yml"
-            && matches!(job, "core" | "plan" | "test" | "phase" | "full")
-            && runner == Some(MERGE_RUNNER))
+            && matches!(job, "core" | "plan" | "test" | "full")
+            && runner == Some(BOAT_RUNNER))
 }
 
 /// The longest merge-queue group the trusted lane walks; longer groups fail closed.
@@ -520,59 +526,98 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn runner_routing_replaces_custom_labels_with_merge_only_boat() {
+    fn runner_routing_rejects_superseded_runner_contracts() {
         let path = ".github/workflows/ci-policy.yml";
         let legacy = r#"${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}"#;
-        for job in ["core", "plan", "test", "phase", "full"] {
+        let merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}";
+        for job in ["core", "plan", "test", "phase", "full", "trusted-policy"] {
+            for runner in ["boat", "self-hosted", legacy, merge_only] {
+                assert!(!super::runner_is_admitted(path, job, Some(runner)));
+            }
+            assert!(super::runner_is_admitted(path, job, Some("ubuntu-24.04")));
+        }
+        assert!(!super::runner_is_admitted(
+            ".github/workflows/other.yml",
+            "core",
+            Some(super::BOAT_RUNNER)
+        ));
+    }
+
+    #[test]
+    fn runner_routing_admits_same_repository_allowlisted_pulls_on_boat() {
+        let path = ".github/workflows/ci-policy.yml";
+        let reject = |job: &str, changed: &str| {
+            assert_ne!(changed, super::BOAT_RUNNER, "no-op mutation");
+            assert!(
+                !super::runner_is_admitted(path, job, Some(changed)),
+                "{job}: {changed}"
+            );
+        };
+        for job in ["core", "plan", "test", "full"] {
             assert!(super::runner_is_admitted(
                 path,
                 job,
-                Some(super::MERGE_RUNNER)
+                Some(super::BOAT_RUNNER)
             ));
             for removed in [
                 "github.event_name == 'merge_group' && ",
-                "vars.NORN_MERGE_RUNNER == 'boat' && ",
+                " && vars.NORN_MERGE_RUNNER == 'boat'",
+                "github.event_name == 'pull_request' && ",
+                // A fork head must never reach a Boat VM.
+                "github.event.pull_request.head.repo.full_name == github.repository && ",
+                " && vars.NORN_PR_RUNNER == 'boat'",
+                // Boat CI runs public-repository jobs only for its allowlisted user.
+                " && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                " && github.actor == 'Youssef-Tarek-Ali-26'",
+                " && github.triggering_actor == 'Youssef-Tarek-Ali-26'",
             ] {
-                let changed = super::MERGE_RUNNER.replace(removed, "");
-                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+                reject(job, &super::BOAT_RUNNER.replace(removed, ""));
             }
             for event in [
-                "pull_request",
                 "pull_request_target",
                 "issue_comment",
                 "push",
                 "workflow_dispatch",
             ] {
-                let changed = super::MERGE_RUNNER.replace("merge_group", event);
-                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
-            }
-            for runner in ["boat", "self-hosted", legacy] {
-                assert!(!super::runner_is_admitted(path, job, Some(runner)));
+                reject(
+                    job,
+                    &super::BOAT_RUNNER.replace("'merge_group'", &format!("'{event}'")),
+                );
+                reject(
+                    job,
+                    &super::BOAT_RUNNER.replace("'pull_request'", &format!("'{event}'")),
+                );
             }
             for (before, after) in [
                 ("== 'boat'", "== 'self-hosted'"),
                 ("|| 'ubuntu-24.04'", "|| 'boat'"),
+                ("== github.repository", "!= ''"),
+                ("vars.NORN_PR_RUNNER", "vars.NORN_MERGE_RUNNER"),
+                ("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
+                (
+                    "github.actor == 'Youssef-Tarek-Ali-26'",
+                    "github.actor != 'dependabot[bot]'",
+                ),
+                (
+                    "github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                    "github.event.pull_request.user.type != 'Bot'",
+                ),
             ] {
-                let changed = super::MERGE_RUNNER.replace(before, after);
-                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+                reject(job, &super::BOAT_RUNNER.replace(before, after));
             }
         }
-        for job in ["trusted-policy", "unknown"] {
+        // Trusted-policy evaluation stays hosted.
+        for job in ["trusted-policy", "phase", "unknown"] {
             assert!(!super::runner_is_admitted(
                 path,
                 job,
-                Some(super::MERGE_RUNNER)
+                Some(super::BOAT_RUNNER)
             ));
         }
         assert!(!super::runner_is_admitted(
-            ".github/workflows/other.yml",
+            ".github/workflows/trusted-merge-group.yml",
             "core",
-            Some(super::MERGE_RUNNER)
-        ));
-        assert!(super::runner_is_admitted(
-            path,
-            "trusted-policy",
-            Some("ubuntu-24.04")
+            Some(super::BOAT_RUNNER)
         ));
     }
 

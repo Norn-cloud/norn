@@ -52,7 +52,7 @@ Evidence: runtime isolation/access enforcement; sampled replay/subscription/thre
 
 Present: `crates/norn-kernel/src/observations.rs`, `crates/norn-cell/src/{history,reactive,reactive_read,migration}.rs`, `crates/norn-ir/src/{view,metric,widget,definition_catalog}.rs`. Metric IR/checking is not a statistical runtime. `norn-metrics` is introduced by open #69, not present at the inspected main. #71 adds historical cursor proof; #97/#103 are WellDB prerequisites with limited evidence. Complete bitemporal queries, IVM/OLAP, publication/lineage/restatement and main-to-fork promotion are target gaps.
 
-## Work breakdown (each PR ≤400 lines; beat 6 demo priority)
+## Work breakdown (one coherent unit per PR; beat 6 demo priority)
 
 1. **Demo priority:** bitemporal question/result envelope and history-at-cursor binding (#71), then ASOF-RESTATE fixtures.
 2. **Demo priority:** contribution lineage projection and source-document drill-down; then authorized LINEAGE-REGION tests.
@@ -67,7 +67,7 @@ ASOF-KNOWLEDGE-1 discovers bounded retained root identities independently of the
 
 ASOF-KNOWLEDGE-1 historical revisions derive event sequence, ledger hash and commit count from the authenticated frontier receipt, including event-free commits. Receipt bytes/rows are admitted before decode; a frontier recorded after the requested knowledge clock refuses temporal leakage. An empty frontier is the real genesis prefix.
 
-ASOF-KNOWLEDGE-1 native historical questions retain the existing admitted exact query algebra, explicit effective window, authenticated knowledge clock/frontier, historical World and exact member versions. Visibility uses current host authorization. The bounded profile requires unchanged retained model/definition interpretation and evaluates existing live/delayed freshness at the selected source clock; the separate AsOf freshness-policy mode remains refused. This read-only query does not authorize a restatement or publish a projection generation.
+ASOF-KNOWLEDGE-1 native historical questions retain the existing admitted exact query algebra, explicit effective window, authenticated knowledge clock/frontier, historical World and exact member versions. Visibility uses current host authorization. The bounded profile requires unchanged retained model/definition interpretation and evaluates existing live/delayed freshness at the selected source clock; AsOf requires an authenticated cutoff whose recorded clock exactly matches its declared instant, including fractional precision. Missing cutoffs refuse unsupported execution; mismatched instants refuse stale input. AsOf preserves coverage checks but has no live heartbeat-age limit. This read-only query does not authorize a restatement or publish a projection generation.
 
 ASOF-KNOWLEDGE-1 reader-bound historical evidence caches admit and authenticate each immutable receipt once per read; all facts still verify their snapshot commitment and exact emitting write. The cache cannot be deserialized or rebound to another reader. Shared receipt bytes are charged when decoded, rather than charging a nonexistent repeated decode for each fact in the same commit.
 
@@ -121,3 +121,28 @@ Earlier source commits do not invalidate the captured staging time; transactiona
 version and clock guards still refuse actual concurrent conflicts.
 
 RESTATE-HISTORY-1 opaque rebuild/candidate capabilities are bound to their originating cell-store instance. Foreign-host preparation/staging refuses before input reads or writes, even when world, scope and slot version coincide. Restart obtains a new capability through authenticated resume and recomputation.
+
+## Authorized numeric source lineage
+
+LINEAGE-SUM-1 / OBS-EVIDENCE-1: an exact numeric trace authenticates each fact
+incarnation through receipt-bound historical evidence, then resolves its source
+edge only through the cell's recomputed input-bundle API. Numeric amounts and
+membership do not grant canonical-value or source disclosure. Independent host
+grants control these two views within the same transaction and decode budget.
+A source edge is explicitly `resolved`, `restricted`, or `unavailable` (no retained
+bundle). Resolved evidence carries the semantic source row and original document
+references, document and bundle digests, exact mapping pin and field provenance.
+Source identity is never inferred from a canonical/CSV key. Catalog metadata
+cannot create another numeric contribution, and document-content access is a
+separate grant. Corrupt or exhausted evidence refuses the entire trace; a
+restricted source never becomes an invented complete explanation. The numeric
+result retains its original definition, time and cursor frontier.
+
+DATA-LINEAGE scenarios use the unchanged scrap-yield CSV through a typed source
+mapping, all four combinations of value/source grants, non-bundle facts,
+redelivery and restart, source-budget exhaustion and corrupt source journal
+refusal. Generated disclosure cases preserve exact sums and member identities.
+
+## Admitted question locale views
+
+**QUESTION-LOCALE-1:** render an already admitted plan through #496's shared complete reviewed locale map, with explicit direction, no fallback and isolated semantic expressions. Every locale retains the original QuestionIR, its canonical digest, stable semantic slot IDs, numerator/denominator quantities and units, population, filters, dimensions, effective-time window and declared knowledge/freshness policy. A separate display binding digest pins metric definitions and numeric contracts. This view neither executes nor authenticates a cutoff; historical results retain their authenticated frontier/receipt-clock provenance through the host seam. AsOf stays AsOf. Named scenarios: generated `question_locale_identity` and `question_locale_identity_refuses_unknown_or_incomplete_wording_and_retains_denominator`. Ambiguity still refuses before plan admission; only Diag's shared typed hook may remove those refusals.

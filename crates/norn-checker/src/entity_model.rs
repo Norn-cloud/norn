@@ -508,6 +508,9 @@ impl<'a, 'r> Checker<'a, 'r> {
                     let mut property = crate::entity_instance::EffectiveProperty::from_resolved(
                         resolved, markings,
                     );
+                    if self.protected(&def.name, &property.id) {
+                        property.protect();
+                    }
                     if let Some(reads) = computed_reads.get(resolved.property.id.as_str()) {
                         property.computed_inputs = reads.fields.iter().cloned().collect();
                         property.computed_reads_all = reads.whole_root;
@@ -893,6 +896,25 @@ impl<'a> Checker<'a, '_> {
             .and_then(|entry| entry.def.extends.as_ref())
             .and_then(|parent| self.types.get_key_value(parent))
             .map(|(parent, _)| *parent)
+    }
+
+    fn protected(&self, name: &ObjectTypeName, property: &PropertyId) -> bool {
+        std::iter::once(name)
+            .chain(self.ancestors(name))
+            .flat_map(|name| {
+                self.types
+                    .get(name)
+                    .into_iter()
+                    .flat_map(|entry| &entry.def.properties)
+                    .chain(
+                        self.extensions
+                            .get(name)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|(_, _, extension)| &extension.properties),
+                    )
+            })
+            .any(|candidate| candidate.id == *property && candidate.protected)
     }
 
     /// The registered supertypes of `name`, nearest first.
@@ -1462,7 +1484,7 @@ impl<'a> Checker<'a, '_> {
                 && child_table
                     .get(&collection.ordering_key)
                     .is_some_and(|property| {
-                        matches!(property.base(), Some(PropertyType::Integer {}))
+                        matches!(property.base(), Some(PropertyType::Integer { .. }))
                             && !ordering_key_admits_dense_positions(property, collection.max_rows.0)
                     })
             {
@@ -1779,6 +1801,7 @@ impl<'a> Checker<'a, '_> {
             .flat_map(|interface| interface.links.iter().map(|link| link.id.as_str()))
             .collect();
 
+        self.check_decimal_bindings(base, &all, table);
         for (position, requirement) in &all {
             let Some(position) = position else { continue };
             let id = &requirement.property.id;
@@ -1826,6 +1849,58 @@ impl<'a> Checker<'a, '_> {
             }
         }
         conflicted
+    }
+
+    /// VAL-DECIMAL-BIND-1: re-resolve same-group units/scales, including inherited contracts.
+    fn check_decimal_bindings(
+        &mut self,
+        base: &[&str],
+        requirements: &[(Option<usize>, Requirement<'a>)],
+        table: &Table<'a>,
+    ) {
+        let mut decimal_bindings = BTreeMap::new();
+        for (position, requirement) in requirements {
+            let PropertyType::DecimalBinding { group } = &requirement.property.property_type else {
+                continue;
+            };
+            let at = position.map_or_else(
+                || span_at(base, &["implements"]),
+                |index| span_at(base, &["implements", &index.to_string()]),
+            );
+            let binding =
+                table
+                    .get(&requirement.property.id)
+                    .and_then(|member| match member.ty.resolution {
+                        TypeResolution::Base(PropertyType::Decimal {
+                            scale,
+                            unit: Some(unit),
+                            ..
+                        }) => Some((scale.0, unit.clone())),
+                        TypeResolution::Base(_)
+                        | TypeResolution::Registry
+                        | TypeResolution::Unresolved { .. } => None,
+                    });
+            let Some(binding) = binding else {
+                self.out.push(error(
+                    crate::property_types::codes::UNIT_BINDING_REQUIRED,
+                    "interface Decimal requires an explicit concrete unit and scale".to_owned(),
+                    at,
+                ));
+                continue;
+            };
+            let key = (requirement.interface, group);
+            if decimal_bindings
+                .get(&key)
+                .is_some_and(|previous| previous != &binding)
+            {
+                self.out.push(error(
+                    crate::property_types::codes::UNIT_MISMATCH,
+                    "interface Decimal group requires the same unit and scale".to_owned(),
+                    at,
+                ));
+            }
+            decimal_bindings.insert(key, binding);
+        }
     }
 
     /// Every requirement a type is held to: those of the interfaces it lists
@@ -2254,7 +2329,18 @@ fn type_narrows(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Option<bool> {
 }
 
 fn base_narrows(narrow: &PropertyType, wide: &PropertyType) -> bool {
+    // A `DecimalBinding` carries no additivity, so the implementor chooses its own.
+    if !matches!(wide, PropertyType::DecimalBinding { .. })
+        && narrow.additivity() != wide.additivity()
+    {
+        return false;
+    }
+
     match (narrow, wide) {
+        (
+            PropertyType::Decimal { unit: Some(_), .. } | PropertyType::DecimalBinding { .. },
+            PropertyType::DecimalBinding { .. },
+        ) => true,
         (PropertyType::Text { format: narrow }, PropertyType::Text { format: wide }) => {
             wide.is_none() || narrow == wide
         }
@@ -2328,6 +2414,27 @@ mod tests {
         };
         assert!(base_narrows(&values(&["a"]), &values(&["a", "b"])));
         assert!(!base_narrows(&values(&["a", "c"]), &values(&["a", "b"])));
-        assert!(!base_narrows(&PropertyType::Integer {}, &text));
+        assert!(!base_narrows(
+            &PropertyType::Integer {
+                additivity: norn_ir::PropertyAdditivity::Undeclared {}
+            },
+            &text
+        ));
+    }
+    #[test]
+    fn metric_additivity_is_preserved_by_numeric_overrides() {
+        use norn_ir::PropertyAdditivity;
+        let balance = PropertyType::Integer {
+            additivity: PropertyAdditivity::SemiAdditive {},
+        };
+        let additive = PropertyType::Integer {
+            additivity: PropertyAdditivity::Additive {},
+        };
+        let undeclared = PropertyType::Integer {
+            additivity: PropertyAdditivity::Undeclared {},
+        };
+        assert!(base_narrows(&balance, &balance));
+        assert!(!base_narrows(&additive, &balance));
+        assert!(!base_narrows(&undeclared, &balance));
     }
 }

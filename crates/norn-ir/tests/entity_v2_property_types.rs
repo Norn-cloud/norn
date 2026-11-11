@@ -30,7 +30,7 @@ macro_rules! fixture {
     };
 }
 
-const FIXTURES: [(&str, &str); 11] = [
+const FIXTURES: [(&str, &str); 12] = [
     fixture!("text"),
     fixture!("integer"),
     fixture!("decimal"),
@@ -42,6 +42,10 @@ const FIXTURES: [(&str, &str); 11] = [
     fixture!("json-ext"),
     fixture!("ref"),
     fixture!("record"),
+    (
+        "decimal-binding",
+        r#"{"name":"a.quantity","type":{"kind":"decimal-binding","group":"quantity"}}"#,
+    ),
 ];
 
 fn canonical(source: &str) -> String {
@@ -247,5 +251,39 @@ fn val_round_uses_the_shared_enum_and_keeps_omission_distinct_from_null() {
         let mut value = value.clone();
         value["rounding"] = invalid;
         assert!(serde_json::from_value::<PropertyType>(value).is_err());
+    }
+}
+
+#[test]
+fn numeric_additivity_defaults_closed_and_round_trips_declared_classes() {
+    use norn_ir::PropertyAdditivity;
+    use serde_json::json;
+    for kind in [
+        json!({"kind":"integer"}),
+        json!({"kind":"decimal","scale":3}),
+    ] {
+        let property: PropertyType = serde_json::from_value(kind.clone()).expect("numeric type");
+        assert_eq!(property.additivity(), &PropertyAdditivity::Undeclared {});
+        assert_eq!(serde_json::to_value(property).expect("encode"), kind);
+        for class in [
+            json!({"kind":"additive"}),
+            json!({"kind":"semi_additive"}),
+            json!({"kind":"non_additive"}),
+            json!({"kind":"ratio","numerator":"recovered","denominator":"input"}),
+        ] {
+            let mut declared = kind.clone();
+            declared["additivity"] = class;
+            let property: PropertyType =
+                serde_json::from_value(declared.clone()).expect("declared class");
+            assert_eq!(serde_json::to_value(property).expect("encode"), declared);
+        }
+        for class in ["undeclared", "additive", "semi_additive", "non_additive"] {
+            let mut extra = kind.clone();
+            extra["additivity"] = json!({"kind": class, "unexpected": true});
+            assert!(serde_json::from_value::<PropertyType>(extra).is_err());
+        }
+        let mut invalid = kind;
+        invalid["additivity"] = json!({"kind":"ratio"});
+        assert!(serde_json::from_value::<PropertyType>(invalid).is_err());
     }
 }

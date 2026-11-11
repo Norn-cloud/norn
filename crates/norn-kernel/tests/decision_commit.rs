@@ -356,6 +356,7 @@ fn decision_result_is_one_prepared_transition() {
         ],
         links: vec![],
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     assert_eq!(prepared, expected);
     // Preparing is pure: the same turn prepares the same commit.
@@ -2392,5 +2393,431 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
             ],
             links_before
         );
+    }
+}
+
+/// Reference pagination adapter: a non-final page cannot satisfy a complete-list read.
+struct PagedFoldHost {
+    cell: Cell,
+    page_size: Option<usize>,
+    prefix_seen: std::cell::Cell<Option<usize>>,
+    evaluations: usize,
+    commits: usize,
+}
+impl CellHost for PagedFoldHost {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = Infallible;
+    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
+        self.cell.load(key)
+    }
+    fn load_bounded(
+        &self,
+        key: &FactKey,
+        bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
+        self.cell.load_bounded(key, bytes)
+    }
+    fn load_link(&self, key: &norn_kernel::LinkKey) -> Result<norn_kernel::LinkState, Self::Error> {
+        self.cell.load_link(key)
+    }
+    fn read_link_targets(
+        &self,
+        source: &FactKey,
+        link: &str,
+        max: usize,
+        bytes: u64,
+    ) -> Result<Option<Vec<norn_kernel::LinkReadTarget>>, Self::Error> {
+        let targets = self.cell.read_link_targets(source, link, max, bytes)?;
+        if let (Some(size), Some(targets)) = (self.page_size, &targets) {
+            self.prefix_seen.set(Some(size.min(targets.len())));
+            if size < targets.len() {
+                return Ok(None);
+            }
+        }
+        Ok(targets)
+    }
+    fn commit(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+    ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
+        self.commits = self.commits.checked_add(1).unwrap();
+        self.cell.commit(commit)
+    }
+    fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> {
+        panic!("enqueue only")
+    }
+    fn observe(&mut self) -> Result<Option<norn_kernel::Observed<Self::Input>>, Self::Error> {
+        panic!("no observations")
+    }
+    fn clock(&mut self) -> Result<Option<norn_kernel::DueTimer<Self::Input>>, Self::Error> {
+        panic!("no timer dispatch")
+    }
+    fn publish(&mut self, _: &norn_kernel::CommitReceipt) -> Result<(), Self::Error> {
+        panic!("no publication")
+    }
+}
+
+/// FOLD-BOUNDS-1 / QUERY-FRESH-1: no prefix result; empty populations stay fenced.
+#[test]
+fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets() {
+    use norn_decisions::{AdmittedDecision, DecisionBinding, evaluate, value_from_runtime};
+    use norn_kernel::{
+        EnvelopeLimits, LinkKey, LinkMutation, LinkWrite, ResourceLimitProfile,
+        load_partition_slice,
+    };
+    use std::collections::BTreeMap;
+    let artifacts: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../norn-decisions/tests/fixtures/typed-ordered-fold.json"
+    ))
+    .unwrap();
+    let rules: BTreeMap<String, norn_ir::RuleRoot> = artifacts
+        .iter()
+        .filter(|a| a["kind"] == "rule")
+        .map(|a| {
+            (
+                a["artifactId"].as_str().unwrap().into(),
+                serde_json::from_value(a["payload"].clone()).unwrap(),
+            )
+        })
+        .collect();
+    let decision = AdmittedDecision::admit(
+        &rules["example.fold.total.rule"],
+        &BTreeMap::from([(
+            "example.fold.step.rule".into(),
+            rules["example.fold.step.rule"].clone(),
+        )]),
+        DecisionBinding {
+            profile_id: "norn-zen/6".into(),
+            environment_hash: "fold-membership".into(),
+        },
+    )
+    .unwrap();
+    let mut definition: ObjectTypeDef = serde_json::from_value(
+        artifacts
+            .iter()
+            .find_map(|a| a["payload"].get("objectType"))
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
+    definition.links.push(serde_json::from_value(json!({"id":"members","target":"example.Accumulation","cardinality":{"from":"many","to":"many"}})).unwrap());
+    let definitions = vec![definition];
+    let catalog = TypeCatalog::new(&definitions);
+    let keys = ["pool", "a", "b", "unrelated"].map(|id| key("example.Accumulation", id));
+    let edge = |target: &FactKey| LinkWrite {
+        key: LinkKey::new(keys[0].clone(), "members", target.clone()),
+        expected: FactVersion::ABSENT,
+        mutation: LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+    };
+    for (count, page_size, insert) in [
+        (0, None, false),
+        (0, Some(1), true),
+        (2, None, false),
+        (2, None, true),
+        (2, Some(0), false),
+        (2, Some(1), false),
+    ] {
+        let mut host = PagedFoldHost {
+            cell: cell().with_types(definitions.clone()),
+            page_size,
+            prefix_seen: std::cell::Cell::new(None),
+            evaluations: 0,
+            commits: 0,
+        };
+        host.cell
+            .commit(CellCommit {
+                writes: keys
+                    .iter()
+                    .zip([99, 2, 3, 99])
+                    .map(|(key, total)| FactWrite {
+                        key: key.clone(),
+                        expected: FactVersion::ABSENT,
+                        mutation: FactMutation::Put {
+                            values: record(json!({"id":key.key,"total":total,"count":0})),
+                        },
+                    })
+                    .collect(),
+                links: keys.iter().skip(1).take(count).map(edge).collect(),
+                ..CellCommit::empty()
+            })
+            .unwrap();
+        let before = visible(&host.cell, &keys);
+        let ledger_before = host.cell.ledger().len();
+        let prepared = (|| -> Result<_, Box<DecisionRefusal<Infallible>>> {
+            let slice = load_partition_slice(
+                &host,
+                &catalog,
+                [keys[3].clone()],
+                &[(keys[0].clone(), "members".into())],
+                ResourceLimitProfile::norn_limits_v1().slice,
+            )?;
+            let members = &slice.partition_reads()[0].targets;
+            assert_eq!(members.len(), count);
+            let items: Vec<_> = members
+                .iter()
+                .map(|member| {
+                    let values = slice.facts()[&member.key.target].values.as_ref().unwrap();
+                    json!({"id":member.key.target.key,"amount":values["total"]})
+                })
+                .collect();
+            let input: RuntimeValue = serde_json::from_value(
+                json!({"items":items,"initial":{"total":0,"count":0,"ids":[],"segments":[]}}),
+            )
+            .unwrap();
+            host.evaluations = host.evaluations.checked_add(1).unwrap();
+            let evaluated = evaluate(
+                &decision,
+                &decision
+                    .validate_slice(value_from_runtime(&input).unwrap())
+                    .unwrap(),
+                &decision
+                    .type_event(norn_expr::Value::object([(
+                        "kind",
+                        norn_expr::Value::from("allocate"),
+                    )]))
+                    .unwrap(),
+                norn_expr::EvaluationBudget::new(2_000_000),
+            )
+            .unwrap();
+            assert_eq!(
+                evaluated.output.commands[0]["state"].as_object().unwrap()["total"],
+                RuntimeValue::from_json_text(if count == 0 { "0" } else { "5" }).unwrap()
+            );
+            let prepared = slice.prepare::<Infallible>(
+                &catalog,
+                &turn("fold-membership"),
+                &evaluated.output,
+                &EnvelopeLimits::V1,
+            )?;
+            assert_eq!(prepared.link_reads, slice.partition_reads());
+            Ok(prepared)
+        })();
+        assert_eq!(
+            host.prefix_seen.get(),
+            page_size.map(|size| size.min(count))
+        );
+        if count == 2 && page_size.is_some() {
+            assert_eq!(prepared.unwrap_err().code(), "decision.invalid_output");
+            assert_eq!(host.prefix_seen.get(), page_size);
+            assert_eq!((host.evaluations, host.commits), (0, 0));
+            assert_eq!(visible(&host.cell, &keys), before);
+            assert_eq!(host.cell.ledger().len(), ledger_before);
+            assert!(host.cell.outbox().is_empty());
+            assert!(host.cell.timers().is_empty());
+            continue;
+        }
+        let prepared = prepared.unwrap();
+        if insert {
+            host.cell
+                .commit(CellCommit {
+                    links: vec![edge(&keys[3])],
+                    ..CellCommit::empty()
+                })
+                .unwrap();
+            let before = visible(&host.cell, &keys);
+            let links_before = host
+                .cell
+                .read_link_targets(&keys[0], "members", 10, 10_000)
+                .unwrap();
+            let ledger_before = host.cell.ledger().len();
+            assert!(host.commit(prepared).is_err());
+            assert_eq!(visible(&host.cell, &keys), before);
+            assert_eq!(host.cell.ledger().len(), ledger_before);
+            assert_eq!(
+                host.cell
+                    .read_link_targets(&keys[0], "members", 10, 10_000)
+                    .unwrap(),
+                links_before
+            );
+            assert!(host.cell.outbox().is_empty());
+        } else {
+            host.commit(prepared).unwrap();
+            assert_eq!(host.cell.ledger().len(), ledger_before + 1);
+            assert_eq!(host.cell.outbox().len(), 1);
+        }
+        assert_eq!((host.evaluations, host.commits), (1, 1));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn declared_guard_diagnostic_preserves_guard_acceptance_and_evidence(amount in -1000_i64..1000) {
+        let mut types = types();
+        types[0].lifecycles[0].transitions[0].guard_refusal_code =
+            Some(norn_checker::lifecycles::codes::PUBLICATION_GUARD.to_owned());
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = cell();
+        let row = key(ORDER, "diagnostic");
+        cell.commit(CellCommit { writes: vec![FactWrite {
+            key: row.clone(), expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values: record(json!({
+                "order_no":"diagnostic", "status":"draft", "approver":"", "amount":amount
+            })) },
+        }], ..CellCommit::empty() }).unwrap();
+        let slice = load_slice(&cell, [row]).unwrap();
+        let command = output(json!({"facts":[transition(ORDER,"diagnostic","submit")], "commands":[], "timers":[]}));
+        let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("alias"), &command);
+        prop_assert_eq!(result.is_ok(), amount > 0);
+        if let Err(error) = result {
+            prop_assert_eq!(error.code(), norn_checker::lifecycles::codes::PUBLICATION_GUARD);
+            let reason = norn_kernel::Refusable::refusal(&error).reason.unwrap();
+            prop_assert_eq!(&reason.values["underlyingCode"], &JsonValue::from("decision.guard_false"));
+            prop_assert_eq!(&reason.values["guard"], &JsonValue::from("self.amount > 0"));
+        }
+    }
+}
+
+#[test]
+fn immutable_objects_use_pre_decision_existence_for_change_sequences() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let catalog = TypeCatalog::new(&definitions);
+    let key = FactKey::new(ORDER, "new-immutable");
+    for change in [
+        json!({"op":"set", "objectType":ORDER, "key":key.key, "property":"amount", "value":2}),
+        json!({"op":"transition", "objectType":ORDER, "key":key.key, "lifecycle":"status", "transition":"submit"}),
+        json!({"op":"delete", "objectType":ORDER, "key":key.key}),
+    ] {
+        let output: DecisionOutput = serde_json::from_value(json!({
+            "facts":[{"op":"create", "objectType":ORDER, "key":key.key,
+                "values":{"order_no":"new-immutable", "amount":1, "status":"draft"}}, change],
+            "commands":[], "timers":[],
+        }))
+        .unwrap();
+        prepare_decision::<Infallible>(&catalog, &FactSlice::new(), &turn("new"), &output)
+            .expect("new instances may reach their final state within one decision");
+        let existing = FactSlice::from([(
+            key.clone(),
+            FactState {
+                version: FactVersion(1),
+                values: Some(record(
+                    json!({"order_no":"new-immutable", "amount":1, "status":"draft"}),
+                )),
+            },
+        )]);
+        let output = DecisionOutput {
+            facts: vec![output.facts[1].clone()],
+            ..output
+        };
+        let error = prepare_decision::<Infallible>(&catalog, &existing, &turn("existing"), &output)
+            .unwrap_err();
+        assert_eq!(error.code(), "decision.invalid_output");
+        assert!(error.to_string().contains("immutable"));
+    }
+}
+
+#[test]
+fn inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let mut host = cell().with_types(definitions);
+    let key = FactKey::new(BIG, "append-only");
+    let values =
+        record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
+    host.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: values.clone(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    let before = visible(&host, std::slice::from_ref(&key));
+    for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: before.0[0].version,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.immutable_object");
+        assert_eq!(visible(&host, std::slice::from_ref(&key)), before);
+    }
+}
+
+#[test]
+fn an_immutable_refusal_outranks_conflict_only_when_the_write_observed_the_object_present() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let mut host = cell().with_types(definitions);
+    let key = FactKey::new(BIG, "append-only");
+    let values =
+        record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
+    host.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: values.clone(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    let observed = host.load(&key).unwrap().version;
+    // A write that read the object present can never succeed, so the permanent
+    // refusal is reported, not a retryable conflict.
+    for mutation in [
+        FactMutation::Put {
+            values: values.clone(),
+        },
+        FactMutation::Delete,
+    ] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: observed,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.immutable_object");
+    }
+    // A create that expected the object absent lost a race with the commit above:
+    // a retryable `Conflict`, so action retry and replay can re-read the winner.
+    for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.conflict");
+    }
+}
+
+proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn immutable_ancestry_controls_every_existing_instance_write(immutable in any::<bool>(), amount in 0_i64..1000) {
+        let mut definitions = types();
+        definitions[0].immutable = immutable;
+        let catalog = TypeCatalog::new(&definitions);
+        for name in [ORDER, BIG] {
+            let key = FactKey::new(name, "existing");
+            let slice = FactSlice::from([(key.clone(), FactState { version: FactVersion(1),
+                values: Some(record(json!({"order_no":"existing", "amount":1, "status":"draft", "approver":""}))) })]);
+            let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("property"),
+                &output(json!({"facts":[set(name, "existing", "amount", &json!(amount))],"commands":[],"timers":[]})));
+            prop_assert_eq!(result.is_err(), immutable);
+        }
     }
 }

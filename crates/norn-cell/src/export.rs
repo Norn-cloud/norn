@@ -254,7 +254,7 @@ impl ExportRecord {
                 return Err(invalid("an install may not also supply an initial model"));
             }
             let installed = &install.installed;
-            let model = Model::from_snapshot(&install.model)?;
+            let model = Model::from_retained_snapshot(&install.model)?;
             if installed.version != increment(head.definitions_version)?
                 || body.definitions_version != installed.version
                 || installed.commit_seq != body.commit_seq
@@ -324,7 +324,7 @@ impl ExportRecord {
                     .initial_model
                     .as_ref()
                     .ok_or_else(|| invalid("version-zero genesis lacks its typed initial model"))?;
-                let model = Model::from_snapshot(snapshot)?;
+                let model = Model::from_retained_snapshot(snapshot)?;
                 if self.model_hash != model.model_hash()
                     || self.ddl_hash != model.ddl_hash()
                     || self.ddl_sql != model.ddl_sql()

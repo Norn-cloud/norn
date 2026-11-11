@@ -1,4 +1,4 @@
-//! Direct governing-law resolution and evaluation on the shared metered expression engine.
+//! Governing-law resolution and evaluation on the shared metered expression engine.
 use crate::decision_commit::DataQualityRuleClassification;
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{EvaluationBudget, Expression, Value};
@@ -24,8 +24,8 @@ pub enum LawEvaluationError {
     #[error("core.laws.unsupported_semantics: governing-law evaluation budget exhausted")]
     BudgetExceeded,
     /// A native write violates a directly attached safety law.
-    #[error("core.laws.violated: {0}")]
-    Violated(String),
+    #[error("core.laws.violated: {}", .0.message)]
+    Violated(Box<LawFailure>),
 }
 impl LawEvaluationError {
     /// Stable Core 05 diagnostic, independent of diagnostic detail.
@@ -53,6 +53,17 @@ pub struct LawFailure {
     pub severity: DataQualitySeverity,
     /// Declared explanation.
     pub message: String,
+    /// Original invariant refusal details for the existing attempt journal.
+    pub invariant: Option<Box<BoundInvariantFailure>>,
+}
+
+/// The invariant outcome and owner pin from the evaluated definition snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundInvariantFailure {
+    /// Exact invariant identity, message and evaluated outcome.
+    pub failure: crate::InvariantFailure,
+    /// Canonical version of the declaration that owns the invariant.
+    pub version: String,
 }
 fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
     let decoded: Result<LawIR, serde::de::value::Error> =
@@ -61,6 +72,8 @@ fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
 }
 impl TypeCatalog<'_> {
     /// LAW-COMPLETE-1: never silently omit an applicable inherited/effective law.
+    /// LAW-INTERFACE-1: a law scoped to exactly one type or interface governs it
+    /// and every type that extends or implements it, once per governed type.
     ///
     /// # Errors
     /// Unknown subject, malformed declaration, or scope unsupported until B2.
@@ -82,6 +95,12 @@ impl TypeCatalog<'_> {
             }
             return Err(LawEvaluationError::Invalid(object_type.as_str().to_owned()));
         }
+        if !self.law_artifacts.is_empty() {
+            // LAW-COMPLETE-1: unresolved interface ancestors cannot hide retained laws.
+            let _ = self
+                .invariants(object_type)
+                .map_err(|missing| LawEvaluationError::Invalid(missing.as_str().to_owned()))?;
+        }
         let is_a = |name: &str| {
             self.lineage(object_type)
                 .iter()
@@ -94,9 +113,9 @@ impl TypeCatalog<'_> {
             if !is_a(&law.subject) && !law.scope.object_types.iter().any(|ty| is_a(ty)) {
                 continue;
             }
-            if law.subject != object_type.as_str()
-                || !matches!(&law.scope.root, LawRoot::Entity(name) if name == object_type.as_str())
-                || law.scope.object_types != [object_type.as_str()]
+            if !is_a(&law.subject)
+                || !matches!(&law.scope.root, LawRoot::Entity(name) if *name == law.subject)
+                || law.scope.object_types != [law.subject.as_str()]
             {
                 return Err(LawEvaluationError::UnsupportedUntilB2(law.id));
             }
@@ -110,7 +129,40 @@ fn supported(law: &LawIR) -> bool {
         && law.scope.lifecycle_states.is_empty()
         && law.scope.commitments.is_empty()
         && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
-        && matches!(law.response, LawResponse::Predicate { .. })
+        && match law.response {
+            LawResponse::Predicate { .. } => true,
+            LawResponse::Invariant { .. } => {
+                matches!(law.modality, LawModality::Always {}) && law.condition.is_none()
+            }
+            LawResponse::Action { .. } | LawResponse::Transition { .. } => false,
+        }
+}
+
+fn invariant_binding<'a>(
+    catalog: &TypeCatalog<'_>,
+    subject: &ObjectTypeName,
+    law: &'a LawIR,
+) -> Result<Option<&'a str>, LawEvaluationError> {
+    let LawResponse::Invariant {
+        object_type,
+        invariant_id,
+    } = &law.response
+    else {
+        return Ok(None);
+    };
+    let owners = |name: &str| {
+        catalog
+            .contract_invariant_owners(name, invariant_id)
+            .map_err(|missing| LawEvaluationError::Invalid(missing.as_str().to_owned()))
+    };
+    let declared = owners(&law.subject)?;
+    if object_type != &law.subject || declared.len() != 1 || owners(subject.as_str())? != declared {
+        return Err(LawEvaluationError::Invalid(format!(
+            "{}: invariant reference is missing, ambiguous or outside its retained subject",
+            law.id
+        )));
+    }
+    Ok(Some(invariant_id))
 }
 fn pin(artifact: &ArtifactEnvelope, law: &LawIR) -> Result<DataQualityRuleRef, LawEvaluationError> {
     let bytes = norn_ir::canonical::canonical_json_of(law)
@@ -124,6 +176,71 @@ fn pin(artifact: &ArtifactEnvelope, law: &LawIR) -> Result<DataQualityRuleRef, L
         ),
     })
 }
+
+fn law_failure(
+    artifact: &ArtifactEnvelope,
+    law: &LawIR,
+    outcome: DataQualityOutcome,
+    invariant: Option<Box<BoundInvariantFailure>>,
+) -> Result<LawFailure, LawEvaluationError> {
+    Ok(LawFailure {
+        refuses_native: true,
+        outcome,
+        rule_ref: pin(artifact, law)?,
+        severity: match law.severity {
+            LawSeverity::Error => DataQualitySeverity::Error,
+            LawSeverity::Warning => DataQualitySeverity::Warning,
+        },
+        message: format!("{}: {}", law.id, law.rationale),
+        invariant,
+    })
+}
+
+fn bind_invariant_failure(
+    catalog: &TypeCatalog<'_>,
+    failure: crate::InvariantFailure,
+) -> Result<Box<BoundInvariantFailure>, LawEvaluationError> {
+    let version = catalog
+        .invariant_owner_version(&failure.owner)
+        .map_err(|error| LawEvaluationError::Invalid(error.to_string()))?
+        .ok_or_else(|| LawEvaluationError::Invalid("invariant owner is unavailable".into()))?;
+    Ok(Box::new(BoundInvariantFailure { failure, version }))
+}
+
+/// LAW-COMMIT-1: preserve the governing law pin when the shared integrity
+/// evaluator has already found the referenced invariant violation.
+pub(crate) fn invariant_failure(
+    catalog: &TypeCatalog<'_>,
+    subject: &ObjectTypeName,
+    failure: &crate::commit_check::InvariantFailure,
+) -> Result<Option<LawFailure>, LawEvaluationError> {
+    if failure.finding_outcome.is_some() {
+        return Ok(None);
+    }
+    for artifact in catalog.governing_laws(subject)? {
+        let law = decode(artifact)?;
+        if !matches!(&law.response, LawResponse::Invariant { invariant_id, .. }
+            if invariant_id == failure.id.as_str())
+            || law.severity != LawSeverity::Error
+        {
+            continue;
+        }
+        if !supported(&law) {
+            return Err(LawEvaluationError::Unsupported(law.id));
+        }
+        invariant_binding(catalog, subject, &law)?;
+        return law_failure(
+            artifact,
+            &law,
+            failure.outcome.clone(),
+            Some(bind_invariant_failure(catalog, failure.clone())?),
+        )
+        .map(Some);
+    }
+    Ok(None)
+}
+
+/// LAW-COMMIT-1 / OBS-EVIDENCE-1: display severity never relaxes governing authority.
 pub(crate) fn classify(
     catalog: &TypeCatalog<'_>,
     rule_ref: &DataQualityRuleRef,
@@ -135,14 +252,14 @@ pub(crate) fn classify(
         if !supported(&law) || pin(artifact, &law).as_ref() != Ok(rule_ref) {
             continue;
         }
-        if catalog
-            .governing_laws(&ObjectTypeName(law.subject.clone()))
-            .is_ok()
-        {
-            return match law.severity {
-                LawSeverity::Error => DataQualityRuleClassification::Integrity,
-                LawSeverity::Warning => DataQualityRuleClassification::Quality,
-            };
+        let governs = |subject: &ObjectTypeName| {
+            catalog.governing_laws(subject).is_ok_and(|laws| {
+                laws.iter()
+                    .any(|retained| std::ptr::eq(*retained, *artifact))
+            }) && invariant_binding(catalog, subject, &law).is_ok()
+        };
+        if catalog.object_type_names().iter().any(governs) {
+            return DataQualityRuleClassification::Integrity;
         }
     }
     DataQualityRuleClassification::Unverified
@@ -173,6 +290,8 @@ pub fn evaluate(
         if !supported(&law) {
             return Err(LawEvaluationError::Unsupported(law.id));
         }
+        let invariant_id = invariant_binding(catalog, &key.object_type, &law)?;
+        let mut invariant_failure = None;
         let activation = match &law.condition {
             Some(expr) => boolean(expr.as_str(), &context, remaining)?,
             None => Ok(true),
@@ -180,30 +299,44 @@ pub fn evaluate(
         let result = match activation {
             Ok(false) => continue,
             Err(outcome) => Err(outcome),
-            Ok(true) => {
-                let LawResponse::Predicate { expression } = &law.response else {
-                    return Err(LawEvaluationError::Unsupported(law.id));
-                };
-                boolean(expression.as_str(), &context, remaining)?.and_then(|value| {
-                    if value == matches!(law.modality, LawModality::Always {}) {
-                        Ok(())
+            Ok(true) => match &law.response {
+                LawResponse::Predicate { expression } => {
+                    boolean(expression.as_str(), &context, remaining)?.and_then(|value| {
+                        if value == matches!(law.modality, LawModality::Always {}) {
+                            Ok(())
+                        } else {
+                            Err(DataQualityOutcome::NotSatisfied)
+                        }
+                    })
+                }
+                LawResponse::Invariant { .. } => {
+                    let id =
+                        invariant_id.ok_or_else(|| LawEvaluationError::Invalid(law.id.clone()))?;
+                    let failures = crate::commit_check::evaluate_named_invariant(
+                        catalog, key, values, remaining, id,
+                    )
+                    .map_err(|error| match error {
+                        crate::commit_check::InvariantEvaluationError::BudgetExceeded => {
+                            LawEvaluationError::BudgetExceeded
+                        }
+                        other @ (crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(_)
+| crate::commit_check::InvariantEvaluationError::MissingInterface(_)) => LawEvaluationError::Invalid(format!("{other:?}")),
+                    })?;
+                    if let Some(failure) = failures.into_iter().next() {
+                        let outcome = failure.outcome.clone();
+                        invariant_failure = Some(bind_invariant_failure(catalog, failure)?);
+                        Err(outcome)
                     } else {
-                        Err(DataQualityOutcome::NotSatisfied)
+                        Ok(())
                     }
-                })
-            }
+                }
+                LawResponse::Action { .. } | LawResponse::Transition { .. } => {
+                    return Err(LawEvaluationError::Unsupported(law.id));
+                }
+            },
         };
         if let Err(outcome) = result {
-            failures.push(LawFailure {
-                refuses_native: law.severity == LawSeverity::Error,
-                outcome,
-                rule_ref: pin(artifact, &law)?,
-                severity: match law.severity {
-                    LawSeverity::Error => DataQualitySeverity::Error,
-                    LawSeverity::Warning => DataQualitySeverity::Warning,
-                },
-                message: format!("{}: {}", law.id, law.rationale),
-            });
+            failures.push(law_failure(artifact, &law, outcome, invariant_failure)?);
         }
     }
     Ok(failures)

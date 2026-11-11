@@ -24,12 +24,15 @@
 // TODO(rust-safety): these downgrades were moved with the code from norn-ir
 // (docs/platform/rust-safety-baseline.md) and keep the same staged burn-down.
 pub mod action_set;
+pub mod agent;
 pub mod artifact_set;
 pub mod classification;
 pub mod codes;
 mod concept_roles;
 pub mod connector_path;
 pub mod consistency;
+/// Conservative action/policy projection for finite control analysis.
+pub mod controls_adapter;
 mod defined_concepts;
 pub mod definition_catalog;
 pub mod definitions_diff;
@@ -55,9 +58,13 @@ pub mod entity_model;
     clippy::large_futures
 )]
 pub mod envelope;
+pub mod exact_rational;
+mod finite;
 pub mod flow_source_map;
 pub mod function;
 mod graph;
+/// Closure-keyed structural admission evidence reuse.
+pub mod incremental;
 pub mod interfaces;
 pub mod jdm_profile;
 pub mod layout;
@@ -84,6 +91,7 @@ pub mod metric_interchange;
 )]
 pub mod posting;
 pub mod table_analysis;
+pub mod tool_effect;
 mod unit_admission;
 mod unit_codes;
 pub use metric::check_metrics_and_questions;
@@ -107,6 +115,9 @@ pub mod obligations;
     clippy::large_futures
 )]
 pub mod ontology;
+pub mod parameter;
+mod parameter_window;
+mod predicate_property;
 pub mod property_codec;
 pub mod property_types;
 #[allow(
@@ -143,17 +154,21 @@ pub mod rule_bindings;
 pub mod sealing;
 mod source_commands;
 pub mod source_schema;
+pub mod tool_ports;
 pub mod typed_roots;
 pub mod ui_interaction;
 pub mod verification;
 pub mod widget_ux;
 
 pub use action_set::{check_action_firing, check_action_set};
+pub use agent::{AgentContext, check_agent};
 pub use artifact_set::{
     ResolvedArtifactSet, check_artifact_set, may_reference, resolve_artifact_set, scope_conflict,
 };
 pub use codes::{CodeEntry, Tier, conformance_manifest};
-pub use definitions_diff::{DefinitionDiff, DefinitionId, Narrowing, diff_definition_sets};
+pub use definitions_diff::{
+    AdditivityChange, DefinitionDiff, DefinitionId, Narrowing, diff_definition_sets,
+};
 pub use diagnostic::{
     DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
     SourceSpan, Span, diagnostics_to_json,
@@ -164,8 +179,8 @@ pub use entity_artifacts::{
 };
 pub use entity_instance::{
     EffectiveCatalog, EffectiveKey, EffectiveKind, EffectiveLifecycle, EffectiveLink,
-    EffectiveObjectType, EffectiveProperty, InstanceError, KeyComponent, Unsupported,
-    normalize_text,
+    EffectiveObjectType, EffectiveProperty, IDENTITY_COLLISION, IDENTITY_REUSE,
+    IDENTITY_REUSE_MESSAGE, InstanceError, KeyComponent, Unsupported, normalize_text,
 };
 pub use entity_lowering::{
     EntityForm, EntityObjectType, LoweredRelation, entity_object_type, entity_v1_deprecation,
@@ -177,6 +192,7 @@ pub use entity_model::{
 };
 pub use envelope::{ArtifactValidation, plan_graph_load, validate_artifact};
 pub use flow_source_map::validate_flow_source_map;
+pub use jdm_profile::{RuleClosure, RuleClosureError, rule_closure};
 pub use layout::{
     PreparedArtifact, extract_inline_layout, hydrate_inline_layout,
     layout_merge_conflict_diagnostic, prepare_artifact_source, prune_layout,
@@ -267,3 +283,6 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
             .collect(),
     }
 }
+
+/// Single-cell execution diagnostic shared with runtime admission.
+pub mod execution_profile;

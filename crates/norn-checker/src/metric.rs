@@ -4,6 +4,9 @@
 //! roles. A successful check is a definition check, never evaluation evidence.
 
 pub mod compute;
+pub mod derive;
+pub mod question_display;
+pub mod restate;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,6 +23,10 @@ use norn_ir::metric::DimensionPath;
 
 /// Stable diagnostic codes for this vocabulary.
 pub mod codes {
+    /// Numeric types without an explicit aggregation contract fail closed.
+    pub const UNDECLARED_ADDITIVITY: &str = "metric.validation.undeclared_additivity";
+    /// Ratios must be recomputed from operand sums, never aggregated as scalars.
+    pub const RATIO_AGGREGATION: &str = "metric.validation.ratio_aggregation";
     /// Calculation semantics outside the admitted pure checker profile.
     pub const UNSUPPORTED_SEMANTICS: &str = "metric.validation.unsupported_semantics";
     /// Norn policy values must be explicit and valid.
@@ -391,7 +398,7 @@ fn is_time(property: &EffectiveProperty) -> bool {
 fn is_numeric(property: &EffectiveProperty) -> bool {
     matches!(
         property.kind,
-        EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. })
+        EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. })
     )
 }
 
@@ -400,7 +407,7 @@ fn is_scalar(property: &EffectiveProperty) -> bool {
         property.kind,
         EffectiveKind::Base(
             PropertyType::Text { .. }
-                | PropertyType::Integer {}
+                | PropertyType::Integer { .. }
                 | PropertyType::Decimal { .. }
                 | PropertyType::Boolean {}
                 | PropertyType::Timestamp { .. }
@@ -434,8 +441,14 @@ impl<'a> Checker<'a> {
         } else {
             at.to_owned()
         };
-        self.out
-            .push(error(code, message.to_owned(), Span::pointer(at)));
+        let mut finding = error(code, message.to_owned(), Span::pointer(at));
+        if matches!(
+            code,
+            codes::UNDECLARED_ADDITIVITY | codes::RATIO_AGGREGATION
+        ) {
+            finding.remediation = Some(crate::DiagnosticRemediation::FixDefinition);
+        }
+        self.out.push(finding);
     }
 
     /// Resolve all concrete targets; polymorphic paths must have the same
@@ -566,6 +579,18 @@ impl<'a> Checker<'a> {
                 let mut operands = Vec::new();
                 for (field, operand) in [("numerator", numerator), ("denominator", denominator)] {
                     if let Some(&(_, referenced)) = self.metrics.get(operand.as_str()) {
+                        if matches!(
+                            referenced.measure,
+                            BoundMeasure::Property {
+                                aggregate: MeasureAggregate::Avg
+                                    | MeasureAggregate::Min
+                                    | MeasureAggregate::Max
+                                    | MeasureAggregate::CountDistinct,
+                                ..
+                            }
+                        ) {
+                            self.reject(codes::RATIO_AGGREGATION, &format!("{at}/measure/{field}"));
+                        }
                         if referenced.time_dimension != metric.time_dimension {
                             self.reject(codes::GRAIN_MISMATCH, &format!("{at}/measure/{field}"));
                         }
@@ -608,6 +633,43 @@ impl<'a> Checker<'a> {
         signature
     }
 
+    fn numeric_additivity(
+        &mut self,
+        root: &str,
+        property: &EffectiveProperty,
+        metric: &BoundMetric,
+        aggregate: MeasureAggregate,
+        at: &str,
+    ) {
+        let EffectiveKind::Base(kind) = &property.kind else {
+            return;
+        };
+        let refusal = match kind.additivity() {
+            norn_ir::PropertyAdditivity::Undeclared {}
+                if self.catalog.is_conserved_metric_term(root, &property.id) =>
+            {
+                None
+            }
+            norn_ir::PropertyAdditivity::Undeclared {} => Some(codes::UNDECLARED_ADDITIVITY),
+            norn_ir::PropertyAdditivity::Ratio { .. } => Some(codes::RATIO_AGGREGATION),
+            norn_ir::PropertyAdditivity::NonAdditive {} => Some(codes::INVALID_ADDITIVITY),
+            norn_ir::PropertyAdditivity::SemiAdditive {}
+                if !matches!(metric.additivity, MetricAdditivity::SemiAdditive { .. })
+                    || aggregate != MeasureAggregate::Sum =>
+            {
+                Some(codes::SEMI_ADDITIVE_TIME)
+            }
+            norn_ir::PropertyAdditivity::SemiAdditive {}
+            | norn_ir::PropertyAdditivity::Additive {} => None,
+        };
+        if let Some(code) = refusal {
+            self.reject(code, &format!("{at}/measure/property"));
+            if let Some(finding) = self.out.last_mut() {
+                finding.remediation = Some(crate::DiagnosticRemediation::FixDefinition);
+            }
+        }
+    }
+
     fn property_metric(
         &mut self,
         metric: &BoundMetric,
@@ -621,6 +683,9 @@ impl<'a> Checker<'a> {
             return None;
         };
         let resolved = property.and_then(|id| object.property(id));
+        if let Some(property) = resolved.filter(|property| is_numeric(property)) {
+            self.numeric_additivity(root, property, metric, aggregate, at);
+        }
         if resolved.is_some_and(|property| {
             matches!(
                 &property.kind,
@@ -806,7 +871,7 @@ impl<'a> Checker<'a> {
                 }
                 EffectiveKind::Base(
                     PropertyType::Text { .. }
-                    | PropertyType::Integer {}
+                    | PropertyType::Integer { .. }
                     | PropertyType::Decimal { .. }
                     | PropertyType::Boolean {}
                     | PropertyType::Timestamp { .. }
@@ -814,6 +879,7 @@ impl<'a> Checker<'a> {
                     | PropertyType::Duration {}
                     | PropertyType::Record { .. }
                     | PropertyType::JsonExt { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Ref { .. },
                 )
                 | EffectiveKind::Unresolved => false,

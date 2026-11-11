@@ -637,6 +637,21 @@ pub struct PendingCommand {
     pub result: Option<Value>,
 }
 
+/// PARKED-1: the SQL form of [`is_parked`] over the stored `command` JSON,
+/// so queue selection skips parked rows without loading them. A string
+/// comparison is false for a non-string or missing member, exactly as
+/// [`norn_builtins::parks`] reads it; [`is_parked`] still re-checks each row.
+const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IS 'norn.decision' AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
+
+/// PARKED-1: whether `command` waits outside the FIFO perform queue.
+#[must_use]
+pub fn is_parked(command: &OutboxCommand) -> bool {
+    command
+        .command
+        .get("payload")
+        .is_some_and(norn_builtins::parks)
+}
+
 /// A pending timer row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -732,14 +747,19 @@ pub(crate) fn active_definition_version(engine: &impl SqlEngine) -> Result<Optio
 pub(crate) fn validate_active_definition_pointer(
     engine: &impl SqlEngine,
 ) -> Result<Option<u64>, CellError> {
-    let active = active_definition_version(engine)?;
-    let latest: Option<i64> = engine.query_optional(
+    // One statement pins both values to the same SQLite snapshot, including
+    // when another CellStore installs definitions on a separate connection.
+    let (active, latest): (Option<i64>, Option<i64>) = engine.query_row(
         &format!(
-            "SELECT \"version\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\" DESC LIMIT 1"
+            "SELECT (SELECT \"version\" FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1), \
+             (SELECT \"version\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\" DESC LIMIT 1)"
         ),
         params![],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
+    let active = active
+        .map(|version| to_u64(version, "definitions version"))
+        .transpose()?;
     let latest = latest
         .map(|version| to_u64(version, "definitions version"))
         .transpose()?;
@@ -1148,6 +1168,8 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     pub(crate) source_disputes_transaction: bool,
     pub(crate) source_disputes:
         Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
+    pub(crate) mapping_plans:
+        Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1225,6 +1247,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             quantity_boundary: None,
             pending_digests: None,
             source_disputes: None,
+            mapping_plans: None,
             source_disputes_transaction: false,
         }
     }
@@ -1244,6 +1267,14 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     ) -> Self {
         self.source_disputes = Some(index);
+        self
+    }
+
+    pub(crate) const fn with_mapping_plans(
+        mut self,
+        plans: &'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>,
+    ) -> Self {
+        self.mapping_plans = Some(plans);
         self
     }
 
@@ -1780,12 +1811,31 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ObjectRecord>, CellError> {
+        let ids = self.type_ids_after(world, object_type, after, limit)?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(record) = self.object(world, object_type, &id)? {
+                out.push(record);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The first `limit` identity keys after `after` of `object_type` (and
+    /// its subtypes) in `world`, in key order. Reads no object values.
+    pub(crate) fn type_ids_after(
+        &self,
+        world: &str,
+        object_type: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<BTreeSet<String>, CellError> {
         let tables = self.model.tables(object_type)?;
         let Some(root) = tables.first() else {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
         };
         if limit == 0 {
-            return Ok(Vec::new());
+            return Ok(BTreeSet::new());
         }
         let safe_max = usize::try_from(MAX_SAFE_INTEGER).unwrap_or(usize::MAX);
         let cap = limit.min(safe_max);
@@ -1832,13 +1882,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 }
             }
         }
-        let mut out = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Some(record) = self.object(world, object_type, &id)? {
-                out.push(record);
-            }
-        }
-        Ok(out)
+        Ok(ids)
     }
 
     /// The model the reader reads.
@@ -3909,16 +3953,105 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     ///
     /// SQL engine or decode errors.
     pub fn pending_commands(&self) -> Result<Vec<PendingCommand>, CellError> {
-        self.outbox_rows("")
+        self.outbox_rows("", params![], "")
     }
 
-    /// The oldest pending command (the next to `perform`), if any.
+    /// The oldest pending command that does not park (the next to
+    /// `perform`), if any. Parked commands never block it (PARKED-1).
+    ///
+    /// Bounded: SQL skips parked rows and reads one row, so a backlog of
+    /// parked commands (or an unreadable result of one) never costs or
+    /// blocks ordinary queue progress.
     ///
     /// # Errors
     ///
     /// SQL engine or decode errors.
     pub fn head_command(&self) -> Result<Option<PendingCommand>, CellError> {
-        Ok(self.outbox_rows(" LIMIT 1")?.into_iter().next())
+        let mut after = 0_i64;
+        loop {
+            let filter = format!("AND \"position\" > ?1 AND NOT {PARKED_SQL}");
+            let Some(row) = self
+                .outbox_rows(&filter, params![after], " LIMIT 1")?
+                .into_iter()
+                .next()
+            else {
+                return Ok(None);
+            };
+            // [`is_parked`] stays the authority; `PARKED_SQL` only narrows.
+            if !is_parked(&row.command) {
+                return Ok(Some(row));
+            }
+            after = to_i64(row.position, "position")?;
+        }
+    }
+
+    /// PARKED-1: pending commands that wait for the cell to resolve them, in
+    /// enqueue order. They are never performed or claimed.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn parked_commands(&self) -> Result<Vec<PendingCommand>, CellError> {
+        Ok(self
+            .outbox_rows(&format!("AND {PARKED_SQL}"), params![], "")?
+            .into_iter()
+            .filter(|row| is_parked(&row.command))
+            .collect())
+    }
+
+    /// The pending result delivery of `command_id` at `generation`: the FIFO
+    /// head, or a parked command, once its result is recorded and until a
+    /// commit consumes it. Reads and decodes only that command's row (and the
+    /// head's, for a non-parked command).
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn pending_result(
+        &self,
+        command_id: &str,
+        generation: u64,
+    ) -> Result<Option<PendingCommand>, CellError> {
+        let Some(row) = self
+            .pending_command(command_id)?
+            .filter(|row| row.command.generation == generation && row.result.is_some())
+        else {
+            return Ok(None);
+        };
+        if is_parked(&row.command) {
+            return Ok(Some(row));
+        }
+        let head = self.head_command()?.map(|head| head.position);
+        Ok((head == Some(row.position)).then_some(row))
+    }
+
+    /// The unconsumed outbox row of `command_id`, if any, read and decoded
+    /// alone (command ids are unique in the outbox).
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn pending_command(&self, command_id: &str) -> Result<Option<PendingCommand>, CellError> {
+        Ok(self
+            .outbox_rows("AND \"command_id\" = ?1", params![command_id], " LIMIT 1")?
+            .into_iter()
+            .next())
+    }
+
+    /// The unconsumed outbox row at `position`, if any, read and decoded alone.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub(crate) fn pending_at(&self, position: u64) -> Result<Option<PendingCommand>, CellError> {
+        Ok(self
+            .outbox_rows(
+                "AND \"position\" = ?1",
+                params![to_i64(position, "position")?],
+                " LIMIT 1",
+            )?
+            .into_iter()
+            .next())
     }
 
     /// Whether `command_id` and `generation` have a durable perform claim.
@@ -3939,12 +4072,17 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(found.is_some())
     }
 
-    fn outbox_rows(&self, limit: &str) -> Result<Vec<PendingCommand>, CellError> {
+    fn outbox_rows(
+        &self,
+        filter: &str,
+        bindings: &[SqlValue],
+        limit: &str,
+    ) -> Result<Vec<PendingCommand>, CellError> {
         let rows = self.conn.query(
             &format!(
-                "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\" FROM \"{OUTBOX}\" WHERE \"consumed_commit_seq\" IS NULL ORDER BY \"position\"{limit}"
+                "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\" FROM \"{OUTBOX}\" WHERE \"consumed_commit_seq\" IS NULL {filter} ORDER BY \"position\"{limit}"
             ),
-            params![],
+            bindings,
         )?;
         let mut out = Vec::new();
         for values in rows {
@@ -4188,11 +4326,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             Consumption::Result {
                 command_id,
                 generation,
-            } => Ok(self.head_command()?.is_some_and(|head| {
-                head.command.command_id == *command_id
-                    && head.command.generation == *generation
-                    && head.result.is_some()
-            })),
+            } => Ok(self.pending_result(command_id, *generation)?.is_some()),
             Consumption::Observation { observation_id } => {
                 let found: Option<i64> = self.conn.query_optional(
                     &format!(

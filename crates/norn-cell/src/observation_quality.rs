@@ -1,7 +1,7 @@
 //! OBS-EVIDENCE-1: durable finding identity and explicit authoritative population filtering.
 use crate::{
     CellError, CommitBatch, ObjectRecord, StoreReader,
-    engine::{SqlEngine, params},
+    engine::{SqlEngine, SqlValue, params},
     read::to_i64,
     system::LEDGER,
 };
@@ -21,6 +21,28 @@ pub struct AuthoritativePage {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// QUERY-ENGINE-1: receipt subjects are invalidation hints, never finding authority.
+    /// The shared record read rechecks findings using the same first-subject lookup.
+    pub(crate) fn question_finding_keys(
+        &self,
+        receipt: &crate::Receipt,
+    ) -> Result<BTreeSet<String>, CellError> {
+        let mut keys = BTreeSet::new();
+        if receipt.body.event_count == 0 {
+            return Ok(keys);
+        }
+        let rows = self.conn.query(
+            &format!("SELECT json_extract(event, '$.fact.subjects[0].key') FROM {LEDGER} WHERE commit_seq = ?1 AND world = ?2 AND json_extract(event, '$.op') = 'data_quality_finding' ORDER BY seq"),
+            params![to_i64(receipt.body.commit_seq, "finding receipt")?, &receipt.body.world],
+        )?;
+        for mut row in rows {
+            if let Some(SqlValue::Text(key)) = row.pop() {
+                keys.insert(key);
+            }
+        }
+        Ok(keys)
+    }
+
     /// OBS-EVIDENCE-1: quarantine is any open integrity finding under its retained model.
     ///
     /// # Errors
@@ -118,6 +140,43 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(findings)
     }
 
+    /// DATA-QUARANTINE: resolve real exclusion pins at the selected knowledge frontier.
+    /// The caller must supply a receipt-authenticated record at that frontier.
+    pub(crate) fn question_findings(
+        &self,
+        world: &str,
+        record: &ObjectRecord,
+        frontier: Option<u64>,
+    ) -> Result<Vec<DataQualityFinding>, CellError> {
+        let mut findings: Vec<_> = self
+            .review_findings_at(
+                world,
+                &record.object_type,
+                &record.id,
+                Some(record),
+                frontier,
+            )?
+            .into_iter()
+            .filter_map(|(finding, quarantines)| {
+                (quarantines && finding.status == DataQualityFindingStatus::Open).then_some(finding)
+            })
+            .collect();
+        self.source_dispute_at(world, &record.object_type, &record.id)?;
+        if world == crate::MAIN_WORLD {
+            let mut source = self.source_conflict_findings(&record.object_type, &record.id)?;
+            source.extend(self.identity_findings(&record.object_type, &record.id)?);
+            if frontier.is_some() && !source.is_empty() {
+                return Err(CellError::ComputeRefused(
+                    "core.world.source_dispute_unqualified",
+                ));
+            }
+            findings.extend(source);
+        }
+        findings.retain(|f| f.status == DataQualityFindingStatus::Open);
+        findings.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(findings)
+    }
+
     fn review_findings(
         &self,
         world: &str,
@@ -125,7 +184,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
     ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
         let current = self.object(world, object_type, key)?;
-        if let Some(record) = &current
+        if let Some(record) = current.as_ref()
             && self
                 .object_at_version(world, object_type, key, record.version)?
                 .as_ref()
@@ -133,16 +192,36 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         {
             return Err(CellError::UnprovenCorrection);
         }
+        self.review_findings_at(world, object_type, key, current.as_ref(), None)
+    }
+
+    // DATA-QUARANTINE / ASOF-KNOWLEDGE-1: recovery uses the selected incarnation.
+    fn review_findings_at(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        current: Option<&ObjectRecord>,
+        frontier: Option<u64>,
+    ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
         let mut after = 0i64;
         loop {
             let sequences = self.conn.query(
-                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 ORDER BY seq LIMIT 64"),
-                params![world, object_type, key, after],
+                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 AND (?5 IS NULL OR commit_seq <= ?5) ORDER BY seq LIMIT 64"),
+                params![world, object_type, key, after, frontier.map(|f| to_i64(f, "finding frontier")).transpose()?],
             )?;
             if sequences.is_empty() {
                 break;
+            }
+            if let Some(record) = current
+                && self
+                    .object_at_version(world, object_type, key, record.version)?
+                    .as_ref()
+                    != Some(record)
+            {
+                return Err(CellError::UnprovenCorrection);
             }
             for values in sequences {
                 let seq: i64 = crate::engine::SqlRow(values).get(0)?;
@@ -167,7 +246,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             == norn_kernel::DataQualityRuleClassification::Integrity
                             || (class == norn_kernel::DataQualityRuleClassification::Builtin
                                 && finding.severity == norn_ir::DataQualitySeverity::Error);
-                        if let Some(record) = &current
+                        if let Some(record) = current
                             && !norn_kernel::snapshot_observe::finding_rule_is_violated(
                                 &catalog,
                                 &FactKey::new(object_type, key),

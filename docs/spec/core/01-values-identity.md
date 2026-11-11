@@ -53,6 +53,14 @@ Unit-bearing entity declarations pin the vocabulary with one required exact-vers
 | TIME-PIN-1 | Explicit effective/recorded time and pinned calendar; admission/commit | `core.values.time_ambiguous` |
 | BLOB-INTEGRITY-1 | Exact retained content or explicit unavailable result; evaluation | `core.values.content_unavailable` |
 
+ID-STABLE-1 distinguishes authored mutation from observation using the existing commit provenance. An authored Create of an identity with a committed deletion refuses `core.identity.reuse` atomically: "this identity was deleted; restore it explicitly or use a new identity". Observed CDC/source-bound reappearance preserves the same source-bound identity, lifts its tombstone and advances its version monotonically. Replay preserves both outcomes and their retained identity/version evidence. Explicit restoration requires a later governed action carrying retained identity evidence (#748); until that action exists, ordinary authoring cannot restore a deleted identity.
+
+ID-RENAME's bounded recorded-history profile retains typed stable-ID references and authenticated snapshots across business-key rename, tombstone, reopen and replay. Opaque IDs and connector aliases are permanently non-reusable; renamed business keys are released for reuse because references bind to stable IDs. Full key-binding intervals require explicit authored `valid_from`, never an inference from recorded time (#871); the governed connector-alias mutation API remains separate (#872). Declaration admission retains `object_type.validation.*` codes; `core.identity.collision` is the commit occupancy code (D22).
+
+The authored boundary is shared kernel `check_commit` with its existing sealed per-write observation authority, plus canonical store `FactChange::Create`. Raw actorless `CellStore::commit(CommitBatch)` and `Put` remain trusted embedding primitives, not authored contracts; authored adapters use the checked boundary. Event JSON cannot establish observation authority, and no `FactMutation` flag is introduced. An authenticated provenance/replay binding for raw paths is the separate C2 follow-up #763.
+
+The `version_kani.rs` harness imports the production deletion/successor core over full `u64` versions and live/absent states. Its scope excludes SQL, source authority and complete replay; those require the native correspondence scenarios below.
+
 Evidence expected: structural codec/schema checks; runtime-enforced uniqueness/reference constraints; sampled transport/replay correspondence; generated arithmetic side conditions over the same exact-number semantics. Do not infer universal identity correctness from a hash function.
 
 The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserves exact coefficient/scale value while removing trailing zeros, and refuses power-of-ten overflow. Proptests cover arbitrary `i128` coefficients and `u8` scales. The standalone `verification/canonical-values-v1/decimal_kani.rs` harness imports those production functions directly: normalization uses signed 8-bit coefficients and scales 0–2; multiplier checks use exponents 0–6 plus the overflow boundary 39. These bounded implementation checks do not prove the full ledger, runtime Decimal parser, rounding semantics or temporal evaluator. Run each harness on Boat with a 300-second bound; an absent verdict remains unknown.
@@ -65,6 +73,10 @@ The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserv
 - **VAL-UNIT-PIN:** Given a decimal UnitRef, the exact visible vocabulary pin and code/system must resolve; missing/wrong/ambiguous pins and unknown/case-changed/system-mismatched units refuse, including inside a record.
 - **ID-COLLISION:** Given two subtypes sharing a key root, when concurrent creates use the same normalized key, then exactly one commits; another tenant may use its own same key.
 - **ID-RENAME:** Given a posted event linked to object A, when A's label/business key changes and is later tombstoned, then historical links still resolve A; reusing A's identity refuses.
+- **ID-RENAME-RETAINED:** A scoped posted reference to A still selects A's original authenticated incarnation after B reuses A's released business key, A is tombstoned with its live edge retired atomically, and authored reuse refuses; deleting with a live edge still present refuses without effects. Reopen and verified export reconstruction preserve the historical reference, while sealed observed reappearance advances A's version without rewriting it. Foreign cell-scope binding, world or historical target subtype refuses.
+- **ID-AUTHORED-RECREATE:** Given a committed deletion, authored creation of the same identity refuses `core.identity.reuse` with the actionable message above and leaves facts, events, effects and receipts unchanged.
+- **ID-OBSERVED-REAPPEAR:** Given a deleted source-bound identity, an authorized observed reappearance retains that identity, lifts the tombstone and advances its high-water version. A subsequent observed delete seals its exact tombstone Put; that retained-identity write without sealed authority refuses.
+- **ID-TOMBSTONE-REPLAY:** Replaying the retained prefix preserves the deleted/reappeared identities and monotonic versions; replaying a refused authored request does not publish a mutation.
 - **TIME-DST:** Given an ambiguous local timestamp without a pinned disambiguation policy, when admitted, then refuse; an explicit earlier/later choice resolves to a retained UTC instant and replays that same instant even after timezone rules change. An already-resolved UTC construction needs no DST choice.
 - **BLOB-MISSING:** Given an archived receipt with unavailable bytes, when requested for recomputation, then expose unavailable evidence and do not synthesize a result.
 
@@ -72,13 +84,17 @@ The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserv
 
 At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `runtime.rs`, `function.rs`; `crates/norn-canonical/src/{lib,number}.rs`; `crates/norn-checker/src/property_codec.rs`; `crates/norn-cell/tests/exact_values.rs`; `crates/norn-kernel/src/observations.rs` are substrate. General stable alias/merge/split history, bitemporal keys and calendar policies are not established. WellDB exact-decimal work #103 is open; its numeric limits must match the shared profile before engine equivalence is claimed.
 
-## Work breakdown (dependency order; each PR ≤400 changed lines)
+## Work breakdown (dependency order; one coherent unit per PR)
 
 1. Freeze shared exact value/unit profile and add VAL-ROUNDTRIP/VAL-ROUND conformance; reuse existing codecs (CI + core laws).
 2. Add scoped stable identity/key-binding contract with ID-COLLISION admission tests; unsupported alias mutations refuse.
 3. Enforce key/alias history and reference fences at commit; add concurrent collision/tombstone tests.
 4. Add temporal/calendar/content-reference pins and TIME-DST/BLOB-MISSING tests; align 06/08 temporal lookup.
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
+
+**VAL-DECIMAL-BIND-1:** An interface `decimal-binding` member obtains its exact unit and scale solely from the implementing type's concrete Decimal declaration, and same-group members require identical units/scales; missing bindings refuse `core.values.unit_binding_required`, mismatches refuse `core.values.unit_mismatch`, with no scalar or sibling-unit fallback.
+
+**VAL-DECIMAL-SCALE-1:** Decimal member checks recurse through stored Records. The shared commit integrity check applies the existing resolved Decimal runtime value validator, including declared scale and bounds, before any proposed writes/events/outbox effects become visible. Balanced values `100 = 99.1999 + 0.8001` refuse at scale 3; exact representable values and insignificant trailing zeros admit. Generated balanced decimal partitions check this boundary independently of conservation arithmetic. Stored link values, including defaults and nested Record members, meet the same domains before commit; unsupported members refuse, and a failure leaves the entire proposal unapplied.
 
 The shared type checker marks actual Decimal reads and declared destinations; typed consumer admission admits derived exact predicates and, within the exact profile, rejects destination-free division or unsupported inexact functions as `core.values.inexact`, and the typed consumer API binds that admission and the shared exact VM to the same environment and source. Constructed Decimal record/list destinations bind each numeric leaf separately; kernel invariants and action/owned-row expressions use the same typed binding, and all object/link/default/migration writers share effective-property materialization.
 
@@ -129,3 +145,32 @@ The format marker is mandatory for portable identity. An old generic binding
 named `cell_id`, even when it contains 32 hexadecimal digits, stays unqualified.
 **CELL-ID-UNVERSIONED** checks that neither open nor binding the marker can adopt
 that history; local replay remains valid and portable export refuses.
+
+ID-UNIQUE-1's bounded native profile reuses `EffectiveKey` and its declared normalization order. The shared SQLite transaction checks complete normalized tuples for every admitted declaring root/key across stored scope/world domains before publishing events, effects or a receipt; reopen and definition activation validate all such domains. Original property bytes and opaque IDs are preserved. This profile supports text/enum/integer/boolean tuple components, at most 16 normalization steps per component, and a cumulative scan of 4,096 keys/4,096 rows and 8 MiB of encoded-plus-normalized key and identity data. Unsupported normalized components or incomplete scans refuse. Entity-resolution policies, alias history and identity restoration are separate contracts; this cut does not activate them or prove their safety.
+
+- **ID-NORMALIZED-ATOMIC:** sibling subtypes with raw-distinct but canonically equal keys cannot both commit; a refusal leaves the entire SQLite dump unchanged. Original source spellings remain stored.
+- **ID-NORMALIZED-DOMAINS:** the same normalized tuple may exist in different stored scopes/worlds; a business-key rename preserves the opaque object ID.
+- **ID-NORMALIZED-COMPOSITE:** typed tuple boundaries prevent concatenation collisions; unsupported normalized components and exhausted scan/step bounds refuse.
+
+This cut's evidence is native runtime conformance and generated ASCII input sampling. The unchanged pure normalization helper is reused directly; the new transaction scan depends on SQL and is not a pure bounded Kani target. These tests do not establish alias history, tombstone restoration, arbitrary Unicode normalization correctness or general identity proofs.
+
+The normalized native profile checks candidate activation with reads only as well as inside the install transaction. A normalized key over a newly added component on an occupied table refuses until backfill-aware identity admission exists; an empty new type is permitted. Candidate checks cover all worlds, including worlds other than the install request's world.
+
+Raw-byte duplicates may refuse earlier through the existing physical unique index and retain its existing transport error; the new canonical collision code covers raw-distinct normalized duplicates. Both paths preserve atomicity. This cut does not qualify a new SQL-constraint error taxonomy.
+
+**ID-NORMALIZED-REOPEN-BOUND:** every commit charges the same complete key/row/byte budget as reopen, including unrelated roots; a commit that would make reopening exceed the profile refuses atomically. Stored byte preflight uses `octet_length` before fetching values.
+
+**ID-NORMALIZED-DISCLOSURE:** an actor-facing action exposes collision details only after the existing collection and object read policies authorize the committed conflicting subjects; unreadable, absent, unknown or over-bound subjects use the fixed visibility refusal. Internal lookup subjects never appear in the safe refusal.
+
+
+**ID-NORMALIZED-RETAINED:** decoding an inactive retained definition preserves its original metadata and hashes without applying a newly introduced admission profile. Verified export reconstruction runs only in a fresh, unpublished engine, binds each retained batch to its original model and receipt, and checks the complete final model/state against the current normalized-key profile before returning or publishing a writable cell. Current commits and candidate installations retain the same fail-closed profile; no serialized replay opt-out exists. A retained prefix may contain formerly accepted normalized duplicates if its final current state removes the collision.
+
+- **ID-NORMALIZED-RETAINED-LOOKUP-PROVISION:** after upgrading away from a retained profile outside current admission bounds, historical definition lookup preserves its exact metadata/hash, and an identical provisioning retry reopens the current admitted model without adding receipts or changing live facts.
+
+The action boundary implements VAL-EXACT-1 with exact decimal JSON strings. It decodes the admitted `number`/`nornType: decimal` schema at scale 0–18, preserves raw caller input for idempotency, and records a distinct effective input whenever decoding changes values. Non-string decimal values, excess scale and non-finite literals refuse as invalid input. MCP projects the same admitted decimal field as a string. Named correspondence scenarios: `decimal_input_preparation_keeps_wire_text_and_exact_execution_value`, `action_decimal_wire_is_exact_text_and_bounded_by_scale`, and the generated-coefficient `exact_action_decimal_wire_matches_the_integer_reference`. The receipt JSON Schema is generated from the kernel's actual record type and checked against it.
+
+Decimal action-input schemas admit a string `description` annotation without changing validation. Other unknown keywords and non-string descriptions refuse. `described_decimal_action_input_prepares_exactly_and_rejects_unknown_constraints` exercises this annotation through kernel input preparation.
+
+VAL-EXACT-1 widget action mappings correspond to this same decimal wire contract: dynamic strings are checked at runtime, while string constants and every member of a string enumeration are checked at admission through the shared decoder. Numeric mappings and malformed or excess-scale literals refuse. `action_mapping_accepts_decimal_text_but_not_numeric_wire_values` and `decimal_mapping_matches_the_shared_decoder` cover this correspondence; mapping admission grants no permission to execute the action.
+
+Runtime JSON schemas describe opaque exact JSON, rather than binary64 values. The generated TypeScript SDK is declarations only; its runtime-value slots remain `unknown` until an exact-number decoder interprets retained source. It supplies no JSON parser. Ordinary JavaScript `JSON.parse` is insufficient for arbitrary-precision receipt consumption. This changes schema guidance, not the canonical numeric wire encoding.
