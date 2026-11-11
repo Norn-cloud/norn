@@ -99,6 +99,38 @@ FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+SCCACHE_START = """set -uo pipefail
+# Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
+# cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+gha=false
+[ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
+export SCCACHE_GHA_ENABLED=$gha
+echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+# A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+# sccache itself fails (it reports `sccache: ...`, e.g. a dead server that cannot
+# restart), compile again with plain rustc; a compiler failure keeps its exit status.
+wrapper="$RUNNER_TEMP/sccache-rustc"
+cat > "$wrapper" <<'WRAPPER'
+#!/usr/bin/env bash
+log=$(mktemp) || exec "$@"
+sccache "$@" 2> "$log"
+status=$?
+if [ "$status" -ne 0 ] && grep -q '^sccache: ' "$log"; then
+  echo "::warning::sccache failed ($(grep -m1 '^sccache: ' "$log")); compiling with plain rustc" >&2
+  rm -f "$log"
+  exec "$@"
+fi
+cat "$log" >&2
+rm -f "$log"
+exit "$status"
+WRAPPER
+chmod +x "$wrapper"
+if sccache --start-server; then
+  echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
+else
+  echo "::warning::sccache server unavailable; compiling with plain rustc"
+fi
+"""
 GATE_PROFILES = {"fast", "full"}
 QUINT_APALACHE_HARNESS = ROOT / "scripts/quint_apalache.py"
 NEGATIVE_CANARIES = ROOT / "verification/coverage-v1/negative_canaries.py"
@@ -536,10 +568,10 @@ await github.rest.repos.createCommitStatus({
     }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
     boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        expected_runner = boat_runner if name in {"core", "test"} else "ubuntu-24.04"
+        expected_runner = boat_runner if name in {"core", "plan", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
-    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
+    cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
         "core": cache_env,
@@ -571,6 +603,8 @@ echo "$plan"''',
         {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.3.14"}},
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
          "with": {"version": "v0.19.0"}},
+        # RUSTC_WRAPPER is set only once the sccache server runs; otherwise plain rustc.
+        {"name": "Start sccache or compile without it", "run": SCCACHE_START},
         {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
          "with": {"cache-targets": False, "shared-key": "cargo-registry",
                   "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
@@ -615,6 +649,19 @@ fi
 df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
 """}
+    # Disposable Boat VMs drop only image content no Norn job uses, then fail fast
+    # unless the bundle has room to build (b1 needs ~50 GiB at peak).
+    boat_cleanup = {"name": "Reclaim Boat runner disk space",
+                    "if": "${{ runner.environment == 'self-hosted' }}",
+                    "run": """set -euo pipefail
+minimum=$((40 * 1024 * 1024))
+available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+df -h /
+docker system prune --all --force
+rustup toolchain uninstall stable nightly-2025-03-01
+df -h /
+[ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
+"""}
     nextest = {"uses": "taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941",
                "with": {"tool": "nextest@0.9.150"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
@@ -639,6 +686,7 @@ df -h /
             if name == "test":
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
             preparation.insert(0, reclaim)
+            preparation.insert(1, copy.deepcopy(boat_cleanup))
             after_checkout = preparation.index(checkout) + 1
             preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
@@ -650,7 +698,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == {"plan": 1, "core": 4, "test": 3}[name],
+        require(len([step for step in job_steps if "run" in step]) == {"plan": 1, "core": 6, "test": 5}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
@@ -719,6 +767,11 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = CORE_RUNNER.read_text()
+    # Bundles may drop only the cargo target dir, between tasks and when disk is low.
+    prune = '    pruned=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Bundle tasks never share build outputs (the planner packs them freely), so\n      # a task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1\n'
+    contained = 'prune_target() {\n  local root target\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  rm -rf -- "$target"\n}\n'
+    require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
+            "bundle may prune only the cargo target dir, between tasks and when disk is low")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.
     browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'

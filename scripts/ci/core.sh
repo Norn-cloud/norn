@@ -252,6 +252,19 @@ PY
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
+# Drops the cargo target dir between bundle tasks (#1059). Only the workspace's own
+# target dir may go: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
+# and anything else (empty, /, $HOME, the workspace or an ancestor, a sibling, a
+# symlink out of the workspace) is refused and left in place.
+prune_target() {
+  local root target
+  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0
+  if [[ $target != "$root/target" ]]; then
+    printf '::warning::refusing to prune %s: only %s/target may be pruned\n' "$target" "$root"
+    return 0
+  fi
+  rm -rf -- "$target"
+}
 bundle_plan() {
   python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'
 import json, sys
@@ -432,8 +445,16 @@ PY
     [[ $# -eq 3 ]] || run_phase usage
     task_lines=$(bundle_plan tasks "$2" "$3")
     [[ $task_lines == phase/test-shards ]] || prepare_inputs
+    pruned=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
+      # Bundle tasks never share build outputs (the planner packs them freely), so
+      # a task may drop the previous task's target dir when disk runs low (#1059).
+      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+        prune_target
+        printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
+      fi
+      pruned=1
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS
