@@ -1,14 +1,11 @@
 {
-  "sha256": "da208f161601d97cd141081f71abcfc8f25bba204cf42ae61e87e44a6604a4df",
-  "origin": "derived",
-  "category": "generated",
+  "sha256": "64275bef72db0a903fd1dcc98a69d4d59b79d615c148b958db92f3dd9c157129",
+  "origin": "authored",
+  "category": "code",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [
-    "crates/norn-checker/tests/table_analysis.rs",
-    "crates/norn-checker/src/table_analysis.rs"
-  ],
+  "parents": [],
   "rights_evidence": [
     {
       "path": "NOTICE",

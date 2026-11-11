@@ -155,6 +155,7 @@ PY
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
+      cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
       ;;
     clippy) cargo clippy --locked --workspace --all-targets -- -D warnings ;;
     doc) RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps ;;

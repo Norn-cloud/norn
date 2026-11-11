@@ -1129,19 +1129,44 @@ fn ratios_prices_and_balances_cannot_be_laundered_through_additive_metrics() {
     }
 }
 
-proptest::proptest! {
-    #[test]
-    fn numeric_additivity_cannot_be_inferred_from_units_or_scale(scale in 0u64..=18, additive in proptest::bool::ANY) {
-        let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
-        let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
-        let amount = properties.iter_mut().find(|p| p["id"] == "weight").expect("weight");
-        amount["type"]["scale"] = json!(scale);
-        if !additive { amount["type"].as_object_mut().expect("type").remove("additivity"); }
-        let (mut metric, question) = sales();
-        metric["type_params"]["expr"] = json!("weight");
-        metric["x-norn"].as_object_mut().expect("extension").remove("currency");
-        let findings = check_metrics_and_questions(&[decode(&metric)], &[decode(&question)], &catalog(&ontology.to_string()));
-        proptest::prop_assert_eq!(findings.iter().any(|d| d.code == codes::UNDECLARED_ADDITIVITY), !additive);
+#[test]
+fn numeric_additivity_cannot_be_inferred_from_units_or_scale() {
+    for scale in 0u64..=18 {
+        for additive in [false, true] {
+            let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+            let properties = ontology[0]["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .expect("properties");
+            let amount = properties
+                .iter_mut()
+                .find(|p| p["id"] == "weight")
+                .expect("weight");
+            amount["type"]["scale"] = json!(scale);
+            if !additive {
+                amount["type"]
+                    .as_object_mut()
+                    .expect("type")
+                    .remove("additivity");
+            }
+            let (mut metric, question) = sales();
+            metric["type_params"]["expr"] = json!("weight");
+            metric["x-norn"]
+                .as_object_mut()
+                .expect("extension")
+                .remove("currency");
+            let findings = check_metrics_and_questions(
+                &[decode(&metric)],
+                &[decode(&question)],
+                &catalog(&ontology.to_string()),
+            );
+            assert_eq!(
+                findings
+                    .iter()
+                    .any(|d| d.code == codes::UNDECLARED_ADDITIVITY),
+                !additive,
+                "scale {scale} additive {additive}"
+            );
+        }
     }
 }
 

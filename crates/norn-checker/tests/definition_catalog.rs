@@ -1381,7 +1381,7 @@ fn check_ref_lifecycle(hops: usize) {
         tenant: None,
     };
     let findings = check_artifact_set(&artifacts, &context);
-    assert!(findings.is_empty(), "{findings:?}");
+    assert!(findings.is_empty(), "hops {hops}: {findings:?}");
     let catalog = project(&artifacts, &[], &registry).expect("projection");
     assert_eq!(
         json!(catalog.properties),
@@ -1390,20 +1390,19 @@ fn check_ref_lifecycle(hops: usize) {
                 "member": { "kind": "property", "typeName": "test.Order", "property": "status" } },
             "computed": false,
             "lifecycle": { "states": ["open", "closed"], "initial": ["open"], "terminal": ["closed"] }
-        }])
+        }]),
+        "hops {hops}"
     );
     assert_eq!(
         catalog,
-        project(&artifacts, &[], &registry).expect("repeat")
+        project(&artifacts, &[], &registry).expect("repeat"),
+        "hops {hops}"
     );
 }
 
 #[test]
-fn admitted_ref_enum_lifecycle_preserves_metadata_and_declaration_identity() {
-    check_ref_lifecycle(1);
-}
-
-proptest::proptest! {
-    #[test]
-    fn enum_alias_chains_preserve_lifecycle_metadata(hops in 1usize..8) { check_ref_lifecycle(hops); }
+fn enum_alias_chains_preserve_lifecycle_metadata() {
+    for hops in 1usize..8 {
+        check_ref_lifecycle(hops);
+    }
 }
