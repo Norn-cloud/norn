@@ -290,6 +290,8 @@ pub enum RequirementRefusal {
     ExceptionHome,
     /// The declared exception tree is malformed.
     ExceptionTree(crate::law_exceptions::ExceptionTreeRefusal),
+    /// An invariant identity cannot be lifted by an exception.
+    ExceptionResponse,
 }
 
 impl RequirementRefusal {
@@ -308,6 +310,7 @@ impl RequirementRefusal {
             Self::PredicateType => "law.model.predicate_type",
             Self::ExceptionHome => crate::law_exceptions::codes::TWO_HOMES,
             Self::ExceptionTree(refusal) => refusal.code(),
+            Self::ExceptionResponse => crate::law_exceptions::codes::UNSUPPORTED_RESPONSE,
         }
     }
 }
@@ -400,6 +403,10 @@ pub fn check_requirement(
             return Err(R::UnsupportedResponse);
         }
     };
+    // As in law admission: an invariant identity is unconditional.
+    if !declared.is_empty() && matches!(law.response, LawResponse::Invariant { .. }) {
+        return Err(R::ExceptionResponse);
+    }
     let cancel = within.and_then(|(w, _millis)| w.cancel.as_ref());
     for predicate in law
         .condition

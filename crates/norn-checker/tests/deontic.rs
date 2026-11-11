@@ -1561,6 +1561,23 @@ fn exceptions_have_one_home_on_a_rule_or_its_law() {
     };
     assert!(view.slots().is_err());
     r.norm.exceptions.clear();
+    // An invariant identity is unconditional: no exception may lift it, from
+    // either home, exactly as law admission refuses it.
+    let mut invariant = r.clone();
+    invariant.norm.law.response = norn_ir::LawResponse::Invariant {
+        object_type: "example.Type".into(),
+        invariant_id: "nonnegative".into(),
+    };
+    let refusal = check_requirement(&invariant, &requirement_env()).expect_err("invariant");
+    assert_eq!(refusal, R::ExceptionResponse);
+    assert_eq!(refusal.code(), codes::UNSUPPORTED_RESPONSE);
+    invariant.norm.exceptions = std::mem::take(&mut invariant.norm.law.exceptions);
+    assert_eq!(
+        check_requirement(&invariant, &requirement_env()),
+        Err(R::ExceptionResponse)
+    );
+    invariant.norm.exceptions.clear();
+    assert_eq!(check_requirement(&invariant, &requirement_env()), Ok(()));
     r.norm.law.exceptions[0].overrides = "missing".into();
     let refusal = check_requirement(&r, &requirement_env()).expect_err("dangling");
     assert_eq!(
@@ -1665,11 +1682,18 @@ fn layer_protection_reads_law_exception_trees_in_both_directions() {
                 tenant: None,
             },
         );
-        let conflict = findings
-            .iter()
-            .any(|d| d.code.as_str() == "consistency.normative.conflict");
+        // Every error is the expected conflict, and one appears exactly when
+        // the child re-enables the base rule; informational notes may remain.
+        let errors: Vec<_> = findings.iter().filter(|d| d.is_error()).collect();
+        assert!(
+            errors
+                .iter()
+                .all(|d| d.code.as_str() == "consistency.normative.conflict"),
+            "base exempt {exempt_base}, re-enabled {reenabled}: {findings:?}"
+        );
         assert_eq!(
-            conflict, reenabled,
+            !errors.is_empty(),
+            reenabled,
             "base exempt {exempt_base}, re-enabled {reenabled}: {findings:?}"
         );
     }
