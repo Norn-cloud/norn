@@ -65,13 +65,14 @@ where
 {
     let law = LawIR::deserialize(deserializer)?;
     if law.timing.is_some()
+        || !law.exceptions.is_empty()
         || !matches!(
             law.modality,
             crate::LawModality::Always {} | crate::LawModality::Never {}
         )
     {
         return Err(serde::de::Error::custom(
-            "theorem-input/0.1 supports only always/never source laws without timing",
+            "theorem-input/0.1 supports only always/never source laws without timing or exceptions",
         ));
     }
     Ok(law)
@@ -85,6 +86,8 @@ fn closed_source_law_schema(schema: &mut schemars::Schema) {
         serde_json::json!([{
             "properties": {"modality": {"properties": {"kind": {"enum": ["always", "never"]}}}},
             "not": {"required": ["timing"]}
+        }, {
+            "not": {"required": ["exceptions"]}
         }]),
     );
 }
@@ -309,6 +312,10 @@ mod tests {
         let source_law = &schema["properties"]["loweredLaw"];
         assert_eq!(source_law["allOf"][0]["not"]["required"], json!(["timing"]));
         assert_eq!(
+            source_law["allOf"][1]["not"]["required"],
+            json!(["exceptions"])
+        );
+        assert_eq!(
             source_law["allOf"][0]["properties"]["modality"]["properties"]["kind"]["enum"],
             json!(["always", "never"])
         );
@@ -330,6 +337,13 @@ mod tests {
 
         let mut invalid = fixture();
         invalid["loweredLaw"]["timing"] = json!({"kind": "within", "millis": "1000"});
+        assert!(serde_json::from_value::<TheoremInput>(invalid).is_err());
+
+        let mut invalid = fixture();
+        invalid["loweredLaw"]["exceptions"] = json!([{
+            "id": "exempt", "overrides": invalid["loweredLaw"]["id"], "condition": "true",
+            "rationale": "exempt", "source": {"artifactId": "a", "pointer": ""}
+        }]);
         assert!(serde_json::from_value::<TheoremInput>(invalid).is_err());
 
         let mut invalid = fixture();

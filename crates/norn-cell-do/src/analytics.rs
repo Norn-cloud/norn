@@ -14,7 +14,7 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 use norn_cell::compute::{QueryContext, Watermark};
 use norn_cell::engine::SqlEngine;
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model, ObjectRecord};
+use norn_cell::{CellStore, CommitBatch, FactWriteRow, ObjectRecord};
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
 use norn_ir::metric::{FreshnessPolicy, MetricAdditivity, MetricType, MetricTypeParams};
@@ -35,6 +35,9 @@ const WORLD: &str = "synthetic-k1";
 /// The recorded K1 observation clock (2026-10-23T00:00:00Z).
 const CLOCK: u64 = 1_792_972_800_000;
 
+/// The core unit catalog the analytics masses are declared in.
+const UNITS: &str = include_str!("../../../registry/core/artifacts/core.units.json");
+
 fn fail(context: &str, error: impl std::fmt::Display) -> SeedError {
     SeedError(format!("{context}: {error}"))
 }
@@ -48,7 +51,11 @@ pub fn analytics_scope() -> CellScope {
     }
 }
 
-fn object_type() -> Result<ObjectTypeDef, SeedError> {
+/// The analytics object type.
+///
+/// # Errors
+/// The declaration does not decode.
+pub fn object_type() -> Result<ObjectTypeDef, SeedError> {
     let mass = json!({"kind":"decimal","additivity":{"kind":"additive"},"scale":3,"unit":{"system":"ucum","code":"g"}});
     serde_json::from_value(json!({"name":TYPE,"properties":[
         {"id":"input","type":mass},
@@ -73,30 +80,49 @@ pub struct Analytics<E: SqlEngine> {
     pub catalog: EffectiveCatalog,
 }
 
-/// Open the analytics cell, loading the K1 conversions on a fresh engine.
+/// Open the analytics cell. Its object type is admitted by the shared
+/// checker and installed as the cell's first governed definitions version,
+/// so retained definitions install through the governed path; then the K1
+/// conversions are loaded once.
+///
+/// A cell opened before it had a definitions version (K1 loaded, no
+/// version) upgrades on open: the same admitted set is installed as v1 in
+/// one ledger commit, after its K1 rows, which are kept. Every later open is
+/// a no-op.
 ///
 /// # Errors
-/// The question no longer admits, or the engine holds a different cell.
+/// The definitions or the question no longer admit, or the engine holds a
+/// different cell.
 pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics<E>, SeedError> {
     let object = object_type()?;
-    let model = Model::from_definitions(std::slice::from_ref(&object), &[])
-        .map_err(|e| fail("model", e))?;
-    let mut store = CellStore::from_engine(engine, model).map_err(|e| fail("open", e))?;
-    // Loaded in one commit: an empty ledger means the load never happened.
+    let units: ArtifactEnvelope = serde_json::from_str(UNITS).map_err(|e| fail("core.units", e))?;
+    // The unit catalog is the trusted base its masses are admitted against.
+    let (model, mut input) = crate::seed::admit_set(&[units, entity(&object, scope)?])?;
+    // At the K1 clock, so an upgraded cell's install never precedes its rows.
+    input.installed_at = CLOCK;
+    let mut store = CellStore::from_engine(engine, model.clone()).map_err(|e| fail("open", e))?;
+    store
+        .bind("scope", &scope.key())
+        .map_err(|e| fail("scope", e))?;
+    let installed = store
+        .read()
+        .installed_definitions(None)
+        .map_err(|e| fail("definitions", e))?;
+    if installed.is_none() {
+        store
+            .install_definitions(model, input, Some(0), &scope.key())
+            .map_err(|e| fail("definitions v1", e))?;
+    }
+    // A fresh cell's first commit is v1 and its second the K1 load; an
+    // upgraded cell's first was the K1 load. One commit means no K1 yet.
     if store
         .verified_head()
         .map_err(|e| fail("ledger", e))?
         .commits
-        == 0
+        == 1
     {
         store
-            .commit(&CommitBatch {
-                world: WORLD.into(),
-                scope: scope.key(),
-                logical_time: CLOCK,
-                writes: conversions()?,
-                ..CommitBatch::default()
-            })
+            .commit(&k1_batch(scope)?)
             .map_err(|e| fail("K1 conversions", e))?;
     }
     let (plan, definitions, catalog) = plan(&object)?;
@@ -106,6 +132,39 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics
         definitions,
         catalog,
     })
+}
+
+/// The one commit that loads the K1 conversions.
+///
+/// # Errors
+/// The fixture rows do not parse.
+pub fn k1_batch(scope: &CellScope) -> Result<CommitBatch, SeedError> {
+    Ok(CommitBatch {
+        world: WORLD.into(),
+        scope: scope.key(),
+        logical_time: CLOCK,
+        writes: conversions()?,
+        ..CommitBatch::default()
+    })
+}
+
+/// The analytics object type as the entity artifact the checker admits.
+fn entity(object: &ObjectTypeDef, scope: &CellScope) -> Result<ArtifactEnvelope, SeedError> {
+    serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": format!("{TYPE}.entity"),
+        "kind": "entity",
+        "namespace": "demo",
+        "name": "Conversion",
+        "version": "0.1.0",
+        "lifecycle": "active",
+        "scope": { "orgId": scope.org_id, "environmentId": scope.environment_id },
+        // VAL-UNIT-1: grams resolve against an exact, required catalog pin.
+        "dependencies": [{ "artifactId": "core.units", "kind": "entity", "required": true, "version": "1.0.0" }],
+        "provenance": { "source": "system", "sourcePath": "crates/norn-cell-do/src/analytics.rs" },
+        "payload": { "entityVersion": "2.0", "objectType": object },
+    }))
+    .map_err(|e| fail("entity artifact", e))
 }
 
 fn conversions() -> Result<Vec<FactWriteRow>, SeedError> {

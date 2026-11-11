@@ -55,6 +55,35 @@ pub fn demo_scope() -> CellScope {
 pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<CellStore<E>, SeedError> {
     let artifacts: Vec<ArtifactEnvelope> =
         serde_json::from_str(DEFINITIONS).map_err(|e| fail("definitions")(&e))?;
+    provision_set(engine, scope, &artifacts)
+}
+
+/// Admit `artifacts` with the shared checker and provision, or reopen, them
+/// on a fresh `engine` as the cell's first governed definitions version.
+///
+/// # Errors
+/// The set does not admit, or the engine holds a different cell.
+pub(crate) fn provision_set<E: SqlEngine>(
+    engine: E,
+    scope: &CellScope,
+    artifacts: &[ArtifactEnvelope],
+) -> Result<CellStore<E>, SeedError> {
+    let (model, input) = admit_set(artifacts)?;
+    let mut store = CellStore::provision_definitions(engine, model, &input, &scope.key())
+        .map_err(|e| fail("provision")(&e))?;
+    seed_rows(&mut store, scope)?;
+    Ok(store)
+}
+
+/// Admit `artifacts` with the shared checker (any `core.` or `std.` artifact
+/// as the retained trusted base): the projected model and the install input
+/// carrying the computed receipt, installed at the fixed logical time.
+///
+/// # Errors
+/// The set does not admit.
+pub(crate) fn admit_set(
+    artifacts: &[ArtifactEnvelope],
+) -> Result<(Model, InstalledDefinitionInput), SeedError> {
     let value = |artifact: &ArtifactEnvelope| {
         serde_json::to_value(artifact)
             .map_err(|e| fail("artifact wire")(&e))
@@ -109,11 +138,35 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<CellStore
         installed_at: INSTALLED_AT,
         layout: None,
     };
-    let mut store =
-        CellStore::provision_definitions(engine, model(&artifacts)?, &input, &scope.key())
-            .map_err(|e| fail("provision")(&e))?;
-    seed_rows(&mut store, scope)?;
-    Ok(store)
+    Ok((model(artifacts)?, input))
+}
+
+/// The normalized model of the set's entity roots and their governing laws.
+fn model(artifacts: &[ArtifactEnvelope]) -> Result<Model, SeedError> {
+    let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
+    for artifact in artifacts
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Entity)
+    {
+        let root: EntityRoot = serde_json::to_value(artifact.payload.to_json_value())
+            .and_then(serde_json::from_value)
+            .map_err(|e| fail(&artifact.artifact_id)(&e))?;
+        match root {
+            EntityRoot::V2(root) => objects.push(root.object_type),
+            EntityRoot::V2Interface(root) => interfaces.push(root.interface),
+            EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
+            EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
+                return Err(SeedError(format!(
+                    "{} is outside the three-systems profile",
+                    artifact.artifact_id
+                )));
+            }
+        }
+    }
+    Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+        .map_err(|e| fail("model")(&e))?
+        .with_governing_laws(artifacts)
+        .map_err(|e| fail("governing laws")(&e))
 }
 
 /// The idempotency key of the demo rows' one commit: a restarted Durable
@@ -193,34 +246,6 @@ fn seed_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &CellScope) -> Resul
         })
         .map(|_outcome| ())
         .map_err(|e| fail("demo rows")(&e))
-}
-
-/// The normalized model of the set's entity roots and their governing laws.
-fn model(artifacts: &[ArtifactEnvelope]) -> Result<Model, SeedError> {
-    let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
-    for artifact in artifacts
-        .iter()
-        .filter(|a| a.kind() == ArtifactKind::Entity)
-    {
-        let root: EntityRoot = serde_json::to_value(artifact.payload.to_json_value())
-            .and_then(serde_json::from_value)
-            .map_err(|e| fail(&artifact.artifact_id)(&e))?;
-        match root {
-            EntityRoot::V2(root) => objects.push(root.object_type),
-            EntityRoot::V2Interface(root) => interfaces.push(root.interface),
-            EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-            EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
-                return Err(SeedError(format!(
-                    "{} is outside the three-systems profile",
-                    artifact.artifact_id
-                )));
-            }
-        }
-    }
-    Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
-        .map_err(|e| fail("model")(&e))?
-        .with_governing_laws(artifacts)
-        .map_err(|e| fail("governing laws")(&e))
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

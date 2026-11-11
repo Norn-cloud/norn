@@ -7,6 +7,7 @@ import { canonicalJson } from "../src/canonical.ts"
 import { compileDefinitionFiles, compileDefinitions } from "../src/compiler/definitions.ts"
 import { fromStatement, toStatement, parseSentence, renderSentence, serializeStatement, parseStatement, renderCounterexample } from "../src/law-statement.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
+import { renderDeontic } from "../src/builder/deontic.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
 const ROOT = join(TOOL_ROOT, "..", "..", "fixtures/law-ir")
@@ -71,6 +72,16 @@ test("predicate builder reuses the existing typed ZEN expression renderer", () =
 test("counterexamples quote the precise witness without proof claims", () => {
   const rendered = renderCounterexample(goldens[0]!.payload, { state: { status: "shipped", paid: false }, trace: ["submit", "ship"], reason: "An unpaid order reached shipped" })
   expect(rendered).toContain("An unpaid order reached shipped"); expect(rendered).toContain("submit → ship"); expect(rendered).toContain("erpnext.no_unpaid_ship")
+})
+
+test("law exceptions never pass through a statement or render from two homes", () => {
+  const law = goldens[0]!.payload
+  const exception = { id: "exempt", overrides: law.id, condition: "true", rationale: "exempt", source: { artifactId: "a", pointer: "" } }
+  const excepted: L.LawIR = { ...law, exceptions: [exception] }
+  expect(() => toStatement(excepted)).toThrow("cannot carry exceptions")
+  const rule = { modality: "obligation", law: excepted, authorityId: "a", authorityVersion: "1", source: exception.source } as const
+  expect(renderDeontic({ ...rule })).toContain(`EXCEPT "exempt" WHEN "true"`)
+  expect(() => renderDeontic({ ...rule, exceptions: [exception] })).toThrow("law.exception.two_homes")
 })
 
 // A1 (#1176): closures, `sum` and calendar-day helpers render the norn-zen/6

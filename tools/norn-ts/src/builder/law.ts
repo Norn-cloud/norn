@@ -17,6 +17,15 @@ export interface LawScope {
   readonly lifecycleStates?: ReadonlyArray<{ readonly objectType: string; readonly property: string; readonly states: ReadonlyArray<string> }>
   readonly commitments?: ReadonlyArray<string>
 }
+/** One declared exception. `overrides` is the law's id or another exception of the same tree;
+ * when the condition holds and nothing overrides it, the overridden node does not apply. */
+export interface LawException {
+  readonly id: string
+  readonly overrides: string
+  readonly condition: string
+  readonly rationale: string
+  readonly source: { readonly artifactId: string; readonly pointer: string; readonly bytes?: { readonly start: number; readonly end: number } }
+}
 export interface LawIR {
   readonly lawVersion: "0.1"
   readonly id: string
@@ -30,6 +39,8 @@ export interface LawIR {
   readonly modality: LawModality
   readonly timing?: LawTiming
   readonly response: LawResponse
+  /** Omit when empty: an explicit `[]` is refused, so a law without exceptions keeps its bytes. */
+  readonly exceptions?: ReadonlyArray<LawException>
 }
 export interface LawDef {
   readonly _tag: "Law"
