@@ -6415,8 +6415,13 @@ fn replay<X>(
     call: &ActionCallRecord,
     key: &str,
 ) -> Result<Option<ActionOutcome>, ActionRefusal<X>> {
-    use crate::replay_decision::{ReplayDecision, decide_replay};
-    let stored = recorded.values.as_ref().map(ActionCallRecord::from_values);
+    use crate::replay_decision::{Recorded, ReplayDecision, decide_replay};
+    let stored = match &recorded.values {
+        None => Recorded::Empty,
+        Some(values) => {
+            ActionCallRecord::from_values(values).map_or(Recorded::Unreadable, Recorded::Record)
+        }
+    };
     match decide_replay(stored, call) {
         ReplayDecision::Fresh => Ok(None),
         ReplayDecision::Replay(record) => Ok(Some(ActionOutcome::Replayed { record })),

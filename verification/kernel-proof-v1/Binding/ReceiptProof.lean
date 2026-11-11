@@ -156,7 +156,7 @@ refuted (`decide` finds the proposition false), not merely left unproved. -/
 
 /-- Decided equality on `Nat`, as the derived `PartialEq` of digests, commands
     and runs. -/
-def natEq : core.cmp.PartialEq Nat Nat := { eq := fun a b => ok (decide (a = b)) }
+def pinEq : core.cmp.PartialEq Nat Nat := { eq := fun a b => ok (decide (a = b)) }
 
 /-- Whether a production Boolean result is `e`. -/
 def boolIs (r : Result Bool) (e : Bool) : Bool :=
@@ -202,7 +202,7 @@ def receiptVectors : List (BindingPins Nat Nat × Bool) :=
     ({ pins₀ with accepted := some ⟨1, 2, 5#u64⟩ }, false) ]
 
 theorem receipt_vectors :
-    receiptVectors.all (fun v => boolIs (pins_bind natEq natEq v.1) v.2) = true := by
+    receiptVectors.all (fun v => boolIs (pins_bind pinEq pinEq v.1) v.2) = true := by
   decide
 
 /-- Whether a production commit result is the expected written one. -/
@@ -236,7 +236,7 @@ def commitVectors : List (CommitPins Nat Nat × Except CommitRefusal Unit) :=
     ({ commit₀ with state_generation := 5#u64 }, .error .runMismatch) ]
 
 theorem commit_vectors :
-    commitVectors.all (fun v => commitIs (commit_pins_bind natEq natEq v.1) v.2) = true := by
+    commitVectors.all (fun v => commitIs (commit_pins_bind pinEq pinEq v.1) v.2) = true := by
   decide
 
 end Norn.Kernel.Binding

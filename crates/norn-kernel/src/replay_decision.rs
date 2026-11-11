@@ -39,6 +39,16 @@ pub(crate) trait RecordedCall {
     fn same_call(&self, call: &Self) -> bool;
 }
 
+/// What an idempotency key holds.
+pub(crate) enum Recorded<R> {
+    /// Nothing was committed under the key.
+    Empty,
+    /// A record that does not decode.
+    Unreadable,
+    /// The committed call's record.
+    Record(R),
+}
+
 /// What a repeated idempotency key decides.
 pub(crate) enum ReplayDecision<R> {
     /// Nothing was committed under the key: run the call.
@@ -49,22 +59,17 @@ pub(crate) enum ReplayDecision<R> {
     Conflict,
 }
 
-/// Decide a call against what its idempotency key holds: `None` when the key
-/// holds nothing, `Some(None)` when it holds a record that does not decode,
-/// and `Some(Some(record))` otherwise.
-pub(crate) fn decide_replay<R: RecordedCall>(
-    recorded: Option<Option<R>>,
-    call: &R,
-) -> ReplayDecision<R> {
+/// Decide a call against what its idempotency key holds.
+pub(crate) fn decide_replay<R: RecordedCall>(recorded: Recorded<R>, call: &R) -> ReplayDecision<R> {
     match recorded {
-        None => ReplayDecision::Fresh,
-        Some(Some(record)) => {
+        Recorded::Empty => ReplayDecision::Fresh,
+        Recorded::Record(record) => {
             if record.same_call(call) {
                 ReplayDecision::Replay(record)
             } else {
                 ReplayDecision::Conflict
             }
         }
-        Some(None) => ReplayDecision::Conflict,
+        Recorded::Unreadable => ReplayDecision::Conflict,
     }
 }

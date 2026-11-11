@@ -95,6 +95,7 @@ expected = {
         "norn_kernel_replay.decide_replay",
     }, {
         "norn_kernel_replay.CallIdentity",
+        "norn_kernel_replay.Recorded",
         "norn_kernel_replay.ReplayDecision",
     }, {"norn_kernel_replay.RecordedCall"}),
     "Receipt": ("norn_kernel_receipt", "crates/norn-kernel/src/receipt_decision.rs", {
@@ -167,20 +168,20 @@ import ReceiptProof
 open Aeneas.Std Norn.Kernel.Binding
 open norn_kernel_replay in
 example {R : Type} (inst : RecordedCall R) (same : R → R → Bool)
-    (hsame : ∀ a b, inst.same_call a b = .ok (same a b)) (stored : Option (Option R)) (call : R) :
-    decide_replay inst stored call = .ok (toDecision (replay same stored call)) :=
+    (hsame : ∀ a b, inst.same_call a b = .ok (same a b)) (stored : Recorded R) (call : R) :
+    decide_replay inst stored call = .ok (toDecision (replay same (storedOf stored) call)) :=
   decide_replay_correspondence inst same hsame stored call
 open norn_kernel_replay in
 example {R : Type} (inst : RecordedCall R) (same : R → R → Bool)
-    (hsame : ∀ a b, inst.same_call a b = .ok (same a b)) (stored : Option (Option R)) (call : R) :
-    decide_replay inst stored call = .ok .Fresh ↔ stored = none :=
+    (hsame : ∀ a b, inst.same_call a b = .ok (same a b)) (stored : Recorded R) (call : R) :
+    decide_replay inst stored call = .ok .Fresh ↔ stored = .Empty :=
   replay_fresh_iff inst same hsame stored call
 open norn_kernel_replay in
 example {R : Type} (inst : RecordedCall R) (same : R → R → Bool)
     (hsame : ∀ a b, inst.same_call a b = .ok (same a b))
-    (stored : Option (Option R)) (call outcome : R) :
+    (stored : Recorded R) (call outcome : R) :
     decide_replay inst stored call = .ok (.Replay outcome) ↔
-      stored = some (some outcome) ∧ same outcome call = true :=
+      stored = .Record outcome ∧ same outcome call = true :=
   replay_returns_recorded inst same hsame stored call outcome
 open norn_kernel_replay in
 example {R A O I B : Type} [DecidableEq A] [DecidableEq O] [DecidableEq I] [DecidableEq B]
@@ -191,7 +192,7 @@ example {R A O I B : Type} [DecidableEq A] [DecidableEq O] [DecidableEq I] [Deci
     (ident : R → CallIdentity A O I B) (inst : RecordedCall R)
     (hinst : ∀ a b, inst.same_call a b = same_call iA iO iI iB (ident a) (ident b))
     (recorded call : R) :
-    decide_replay inst (some (some recorded)) call =
+    decide_replay inst (.Record recorded) call =
       .ok (if callOf (ident recorded) = callOf (ident call) then .Replay recorded else .Conflict) :=
   replay_same_iff iA iO iI iB hA hO hI hB ident inst hinst recorded call
 open norn_kernel_receipt in
@@ -234,9 +235,9 @@ receipt = "crates/norn-kernel/src/receipt_decision.rs"
 mutants = [
     # K6 replay
     ("replay-empty-key-conflicts", replay,
-     "None => ReplayDecision::Fresh,", "None => ReplayDecision::Conflict,"),
+     "Recorded::Empty => ReplayDecision::Fresh,", "Recorded::Empty => ReplayDecision::Conflict,"),
     ("replay-unreadable-record-reexecutes", replay,
-     "Some(None) => ReplayDecision::Conflict,", "Some(None) => ReplayDecision::Fresh,"),
+     "Recorded::Unreadable => ReplayDecision::Conflict,", "Recorded::Unreadable => ReplayDecision::Fresh,"),
     ("replay-different-call-replays", replay,
      "if record.same_call(call) {", "if !record.same_call(call) {"),
     ("replay-ignores-input", replay,

@@ -26,6 +26,15 @@ structure Call (A O I B : Type) where
   ruleBinding : B
   deriving DecidableEq
 
+/-- What an idempotency key holds. -/
+inductive Stored (R : Type) where
+  /-- Nothing was committed under the key. -/
+  | empty
+  /-- A record that does not decode. -/
+  | unreadable
+  /-- The committed call's record. -/
+  | record (recorded : R)
+
 /-- What a repeated idempotency key decides. -/
 inductive Replay (R : Type) where
   /-- Nothing was committed under the key: the call runs. -/
@@ -36,16 +45,14 @@ inductive Replay (R : Type) where
   | conflict
   deriving DecidableEq
 
-/-- K6. `stored` is what the key holds: `none` for nothing, `some none` for a
-    record that does not decode, `some (some r)` for the record `r`. A key that
-    holds the same call (under `same`) replays the recorded call; anything else
-    under the key is a conflict. -/
-def replay {R : Type} (same : R → R → Bool) (stored : Option (Option R)) (call : R) :
-    Replay R :=
+/-- K6. A key that holds nothing runs the call; a key that holds the same call
+    (under `same`) replays the recorded call; anything else under the key,
+    including a record that does not decode, is a conflict. -/
+def replay {R : Type} (same : R → R → Bool) (stored : Stored R) (call : R) : Replay R :=
   match stored with
-  | none => .fresh
-  | some none => .conflict
-  | some (some recorded) => if same recorded call then .replay recorded else .conflict
+  | .empty => .fresh
+  | .unreadable => .conflict
+  | .record recorded => if same recorded call then .replay recorded else .conflict
 
 /-- The same call, compared component by component with the given equalities. -/
 def sameCallWith {A O I B : Type} (eqA : A → A → Bool) (eqO : O → O → Bool)
