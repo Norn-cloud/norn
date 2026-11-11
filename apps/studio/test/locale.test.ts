@@ -99,6 +99,8 @@ test("labels change the words, never the ids: a localized catalog keeps every na
   expect([arabic.name, arabic.fields.map(({ id }) => id)]).toEqual([plain.name, plain.fields.map(({ id }) => id)])
   expect([plain.title, plain.titleLang]).toEqual(["Invoice", "en"])
   expect([arabic.title, arabic.titleLang, arabic.description]).toEqual(["فاتورة", "ar", "فاتورة بيع"])
+  // The envelope name repeating the English title is not a summary in any language.
+  expect([plain.summary, arabic.summary]).toEqual([undefined, undefined])
   const fact = (id: string) => arabic.fields.find((field) => field.id === id)!
   expect([fact("status").label, fact("status").labelLang]).toEqual(["الحالة", "ar"])
   expect([fact("number").label, fact("number").labelLang]).toEqual(["number", "en"])
