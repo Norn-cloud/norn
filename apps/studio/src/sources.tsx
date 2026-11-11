@@ -131,7 +131,7 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
           <TableCell className="font-medium">
             <span lang={field.labelLang ?? "en"}>{field.label ?? field.id.replaceAll("_", " ")}</span>
             {field.optional && <span className="text-muted-foreground"> (optional)</span>}
-            {technical && <Iso className="ms-2 font-mono text-xs text-muted-foreground">{field.id}</Iso>}
+            {technical && <> <Iso className="font-mono text-xs text-muted-foreground">{field.id}</Iso></>}
           </TableCell>
           <TableCell className="whitespace-normal text-muted-foreground">
             {field.valueLabels !== undefined && field.valueLabels.size > 0
