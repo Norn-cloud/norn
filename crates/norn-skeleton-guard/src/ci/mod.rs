@@ -131,14 +131,14 @@ fn concurrency_error(path: &str, document: &yaml::Value) -> Option<String> {
 
 /// A same-repository pull request that fell back to hosted runners says so on its
 /// checks; fork pull requests run hosted by design and stay quiet.
-const HOSTED_PR_WARNING: &str = r##"name: Warn that pull request CI fell back to hosted runners
+const HOSTED_PR_WARNING: &str = r#"name: Warn that pull request CI fell back to hosted runners
 if: ${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}
 run: |
   echo "::warning title=PR CI on hosted runners::PR CI is running on hosted runners: the repository variable NORN_PR_RUNNER is not 'boat', so this same-repository pull request fell back from Boat."
-"##;
+"#;
 
 /// Boat's base image has only `libclang-18.so.18`; clang-sys loads `libclang.so`.
-const BOAT_LIBCLANG: &str = r##"name: Make libclang loadable on Boat runners
+const BOAT_LIBCLANG: &str = r#"name: Make libclang loadable on Boat runners
 if: ${{ runner.environment == 'self-hosted' }}
 run: |
   set -euo pipefail
@@ -151,7 +151,7 @@ run: |
     sudo ln -sfn libclang-18.so.18 "$library"
   fi
   ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
-"##;
+"#;
 
 /// Steps `ci-policy.yml` carries exactly once per job: the Boat-capable jobs make
 /// libclang loadable on Boat, and `core` warns when pull request CI fell back to
