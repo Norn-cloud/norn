@@ -168,7 +168,7 @@ function DecisionBody({ decision, now, onDirty, onClose, onSettled, call }: {
             {phase.kind === "refused" && (
               <div role="alert" className="grid gap-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                 <span className="font-medium">{phase.message}</span>
-                {top.filter((d) => d.message !== phase.message).map((d) => <span key={d.code + d.message} className="text-meta"><CodedMessage code={d.code} message={d.message} /></span>)}
+                {top.filter((d) => d.message !== phase.message).map((d) => <span key={d.code + d.message} className="text-meta"><CodedMessage code={d.code} message={d.message} block /></span>)}
               </div>
             )}
             {phase.kind === "failed" && (
