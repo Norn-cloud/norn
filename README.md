@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,960 records across 142 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,961 records across 144 metrics. Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -20,6 +20,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
+| `checker.test.cut2_changed_four_serial_s` | 14.6 | s (total) | boat | 2 | 14.6 / 29 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 | `checker.test.cut2_four_serial_s` | 14.6 | s (total) | boat | 2 | 14.6 / 29 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1231) |
 | `checker.test.cut_delta_s` | -30 *est.* | s (single) | boat | 2 | -30 / -5 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1231) |
 | `checker.test.nextest_exec_s` | 62.5 | s (single) | boat | 3 | 61 / 67.4 | █▁▃ | `20e8feb4b0` | [link](https://github.com/Norn-cloud/norn/pull/1216) |
@@ -110,7 +111,8 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `proof.gate.artifact_governance_extraction.s` | 95 | s (single) | boat | 1 | 95 / 95 | ▁ | `328a1a1aa3` | [link](https://github.com/Norn-cloud/norn/pull/1244) |
 | `proof.gate.checker-certificates-correspondence.s` | 177 | s (single) | boat | 1 | 177 / 177 | ▁ | `12bf2239d4` | [link](https://github.com/Norn-cloud/norn/pull/1232) |
 | `proof.gate.checker_certificates.s` | 352 | s (single) | boat | 4 | 210 / 403 | ▆▁█▆ | `07f5325866` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
-| `proof.gate.exact_arith.s` | 2,946 | s (single) | boat | 10 | 647 / 4,663 | ▁▂▂▃▃█▃▁▅▅ | `07f5325866` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
+| `proof.gate.exact-arith-correspondence.s` | 740 | s (single) | boat | 8 | 740 / 4,663 | ▃▃▅▃█▃▁▁ | `6d85fb5639` | [link](https://github.com/Norn-cloud/norn/commit/62fab75f811ca1885ed2fa494ce2c3ea6ccecf7e) |
+| `proof.gate.exact_arith.s` | 2,946 | s (single) | boat | 5 | 647 / 2,946 | ▁▂▂██ | `07f5325866` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_binding.s` | 348 | s (single) | boat | 3 | 236 / 348 | ▁██ | `07f5325866` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_commit.s` | 194 | s (single) | boat | 2 | 194 / 301 | █▁ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_decider.s` | 365 | s (single) | boat | 3 | 214 / 365 | ▁▃█ | `07f5325866` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
@@ -130,7 +132,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 |---|---:|---|---|---:|---|---|---|---|
 | `sim.dst.do_glue_s` | 6.8 | s (single) | boat | 1 | 6.8 / 6.8 | ▁ | `73f3b52e1f` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 | `sim.dst.request_layer_s` | 15.9 | s (single) | boat | 1 | 15.9 / 15.9 | ▁ | `73f3b52e1f` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
-| `sim.dst.serial_total_s` | 34.7 | s (total) | boat | 3 | 33.4 / 121 | ▁█▁ | `1d665da8fd` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
+| `sim.dst.serial_total_s` | 34.7 | s (total) | boat | 5 | 33.4 / 121 | ▁▁█▁▁ | `1d665da8fd` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 
 ## Test counts
 
@@ -164,18 +166,18 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
-| `ci.core.bundle.b2.peak_disk_used_gib` | 66,317,406,208 | bytes (single) | boat | 2 | 66,317,406,208 / 80,086,061,056 | █▁ | `ae22979719` | [link](https://github.com/Norn-cloud/norn/pull/1248) |
+| `ci.core.bundle.b2.peak_disk_used_gib` | 66,317,406,208 | bytes (single) | boat | 4 | 61.8 / 80,086,061,056 | ▁█▁▇ | `ae22979719` | [link](https://github.com/Norn-cloud/norn/pull/1248) |
 | `ci.core.run.s` | 3,291 | s (single) | github-hosted | 170 | 35 / 9,710 | ▃▂▅▂▃▂▂▄▃▃▂▂▃▃▂▃▃▃▃▃▃▄▃▂▂▂▃▂▃▂▃▃▃▃▃▃▃▂▃▃ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
-| `ci.core.task.phase.browser.s` | 138 | s (single) | boat, github-hosted | 24 | 0 / 447 | ▁▁▁▄▆▆▄▅▅▇▆▇▆▆▆▅▆▅▇█▅▇▅▃ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
+| `ci.core.task.phase.browser.s` | 138 | s (single) | boat, github-hosted | 25 | 0 / 447 | ▁▁▁▄▆▆▄▅▅▇▆▇▆▆▆▅▆▅▇█▅▇▅▃▃ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
 | `ci.core.task.phase.clippy.s` | 77 | s (single) | boat, github-hosted | 72 | 42 / 121 | ▆▁▅▆▄▃▃▃▃▂▂▄▄▃▃▄▃▂▁▃▁▄▃▃▅▂▄▄▄▃▄▂▃▃▅█▆▃▆▄ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
-| `ci.core.task.phase.doc.s` | 36 | s (single) | boat, github-hosted | 72 | 16 / 73 | ▄▁▅▅▃▂▂▂▂▄▁▆▂▃▅▃▂▃▁▃▁▅▅▁▃▃▅▅▃▅▅▂▄▂▄█▃▅▃▃ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
+| `ci.core.task.phase.doc.s` | 36 | s (single) | boat, github-hosted | 73 | 16 / 73 | ▁▅▅▃▂▂▂▂▄▁▆▂▃▅▃▂▃▁▃▁▅▅▁▃▃▅▅▃▅▅▂▄▂▄█▃▅▃▃▃ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
 | `ci.core.task.phase.doctest.s` | 21 | s (single) | github-hosted | 79 | 18 / 53 | █▂▃▃▂▂▁▂▂▁▃▄▂▁▂▃▁▃▂▃▁▂▂▂▁▁▃▁▁▃▃▃▂▄▃▄▂▂▃▂ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.phase.features.s` | 667 | s (single) | github-hosted | 67 | 296 / 1,013 | ▅▄▃▄▆▆▃▇▆▆▆▆▄▆▆▃▃▇▆▄▄▆▇▅▆▄▅▇▅▅█▇▆▇▇█▇▆█▅ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
-| `ci.core.task.phase.guards.s` | 360 | s (single) | boat, github-hosted | 82 | 226 / 805 | ▄▆▆▆▆▆▅▆▆▄▄▆▆▆▆▄▅▅▅▆▅▆▅▆▅▅▆▅▅▇▆▆▇▇██▇▇▅▃ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
-| `ci.core.task.phase.integration.s` | 718 | s (single) | boat, github-hosted | 82 | 275 / 1,263 | ▃▃▂▂▁▃▂▃▂▂▂▃▂▃▃▂▃▂▄▂▂▇▇▃▃▇▅▄▄▇█▅▆▆▇█▄▇▄▄ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
-| `ci.core.task.phase.provenance.s` | 6 | s (single) | boat, github-hosted | 65 | 6 / 34 | ▆▄▄▃▄▆▃▄▅▃▄▅▃▅▂▂▃▃▂▂▃▂▃▃▂▃▂▂▃▃▂▁▃▁▂▃▃▃▃▁ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
+| `ci.core.task.phase.guards.s` | 360 | s (single) | boat, github-hosted | 83 | 226 / 805 | ▆▆▆▆▆▅▆▆▄▄▆▆▆▆▄▅▅▅▆▅▆▅▆▅▅▆▅▅▇▆▆▇▇██▇▇▅▃▃ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
+| `ci.core.task.phase.integration.s` | 718 | s (single) | boat, github-hosted | 83 | 275 / 1,263 | ▃▂▂▁▃▂▃▂▂▂▃▂▃▃▂▃▂▄▂▂▇▇▃▃▇▅▄▄▇█▅▆▆▇█▄▇▄▄▄ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
+| `ci.core.task.phase.provenance.s` | 6 | s (single) | boat, github-hosted | 66 | 6 / 34 | ▄▄▃▄▆▃▄▅▃▄▅▃▅▂▂▃▃▂▂▃▂▃▃▂▃▂▂▃▃▂▁▃▁▂▃▃▃▃▁▁ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
 | `ci.core.task.phase.test-shards.s` | 14 | s (single) | github-hosted | 63 | 6 / 14 | ▅▅▆▃▅▅▄▅▃▅▅▂▅▅▄▅▆▃▄▅▇▅▄▆▄▄▅▃▅▅▅▇▆▅▇▅▇▅██ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
-| `ci.core.task.phase.wasm.s` | 89 | s (single) | boat, github-hosted | 62 | 42 / 150 | ▂▂▂▃▄▃▆█▁▂▃▁▂▆▁▇▃▃▅▃▄▅▂▅▁▆▄▆▄▇▇▄▅▅▅▃▂█▃▄ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
+| `ci.core.task.phase.wasm.s` | 89 | s (single) | boat, github-hosted | 63 | 42 / 150 | ▂▂▃▄▃▆█▁▂▃▁▂▆▁▇▃▃▅▃▄▅▂▅▁▆▄▆▄▇▇▄▅▅▅▃▂█▃▄▄ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
 | `ci.core.task.test.heavy-1.s` | 90 | s (single) | github-hosted | 72 | 47 / 98 | ▇▁▄▄▇▇▇▄▄▂▂▇▇▇▄▅▇▁▁▄▄▁▄▄▂▇▂▄▇▇▅█▂▂▂▇▇▇▁▇ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.test.heavy-2.s` | 639 | s (single) | github-hosted | 83 | 303 / 650 | ▅▄▆▆▆▄▅▃▃▇▄▆▆▅▅▆▃▂▅▄▅▂▅▅▂▇▃▅▇▇▆▇▃▄▄███▃█ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.test.heavy-3.s` | 160 | s (single) | github-hosted | 75 | 89 / 176 | ▇▁▅▅▇▇▇▅▅▂▂▇▇▇▅▅▇▁▁▅▅▁▅▅▂▇▁▅▇▆▅▆▂▂▂▇█▇▁▇ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
@@ -192,6 +194,7 @@ What limits each metric's latest value, in the measurer's words.
 
 - `boat.libclang_step_s`: one run on a default Boat VM from snapshot norn-ci-main-a8c384a14d-v1; includes apt-get update over the network; reused runners skip it (0 s)
 - `boat.starts.used_24h`: Account-wide: every project on this Boat account, not only Norn. Rolling 24-hour window from `boat limits --json`, read before this run's own start. Not tied to a commit.
+- `checker.test.cut2_changed_four_serial_s`: same VM and session as the 6cbc5766c3 measurement
 - `checker.test.cut2_four_serial_s`: The four tests cut 2 changed most, run serially on one VM. measured_at is when the PR body stated it. The head sha is #1231's head; the body does not restate it.
 - `checker.test.cut_delta_s`: Author's net estimate: the serial four-test delta (14.4 s) plus two tests from a parallel run that was about 16% slower. Whole-suite wall time is unusable for this: untouched tests varied by up to 41 s (incremental 68 s, then 109 s).
 - `checker.test.nextest_exec_s`: Noisy: about half the crate's test time is two long property tests (incremental about 52–55 s, three_systems about 9–11 s) that the cut does not touch. 4 tests fail on base and head alike (they need CI's prepare_inputs). measured_at is when the PR body stated it.
@@ -272,6 +275,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.gate.artifact_governance_extraction.s`: Second run on the same VM: the first run (197 s, cold build of norn-ir) failed only on a workspace-path check caused by a symlinked checkout; this run reused that build. One run. Two default (8 GiB) VMs became unresponsive on this gate.
 - `proof.gate.checker-certificates-correspondence.s`: one run, wall clock incl. Mathlib/Aeneas olean import and every mutant re-extraction; same VM ran the four gates sequentially; Lean import is IO-bound on 8 GB (about 40-100 s per process)
 - `proof.gate.checker_certificates.s`: contended: 2-3 steps ran at once on one 4 vCPU VM
+- `proof.gate.exact-arith-correspondence.s`: single sample on a warm VM (third gate run on it); affected mode, mutant phase 559 s for 31 mutants, ~180 s fixed baseline; serial, limited by single-threaded Lean elaboration; the same gate ran 2917 s on the train VM alongside nextest
 - `proof.gate.exact_arith.s`: affected mode, 24 mutants (mutant phase 2787 s); contended: 2-3 steps ran at once on one 4 vCPU VM for most of the run
 - `proof.gate.kernel_binding.s`: contended: 2-3 steps ran at once on one 4 vCPU VM
 - `proof.gate.kernel_commit.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
@@ -287,7 +291,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.verus.kernel_l1_version.s`: One small file (1 verified item). No commit stated; measured_at is when the comment was posted. One run.
 - `sim.dst.do_glue_s`: The plain DO glue law test (64 cases), from the serial run of the set. One run.
 - `sim.dst.request_layer_s`: The DO request-layer simulator test, from the serial run of the set. One run.
-- `sim.dst.serial_total_s`: Same serial set on the combined frozen head, which includes 23 newer main commits (one changes norn-cell-do/src/server.rs). VM type not restated for this run. One run; measured_at is when the PR body stated it.
+- `sim.dst.serial_total_s`: debug build, nextest --test-threads 1, one default Boat VM; same 11 tests as at 73f3b52e1f
 - `tests.rust.count`: core.sh test all on the round-1 train tree (#1204 reverted out); 9 skipped not counted; env file from the round-0 VM of the same template and type
 - `tests.rust.crate.norn-api.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-authz.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
