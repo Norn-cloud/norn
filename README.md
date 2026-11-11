@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-364 records across 98 metrics. Each series runs in the order of the
+365 records across 96 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -19,7 +19,6 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
-| `checker.test.cut2_changed_four_serial_s` | 14.6 | s (total) | boat | 2 | 14.6 / 29 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 | `checker.test.cut2_four_serial_s` | 14.6 | s (total) | boat | 2 | 14.6 / 29 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1231) |
 | `checker.test.cut_delta_s` | -30 *est.* | s (single) | boat | 2 | -30 / -5 | █▁ | `7a58029d8e` | [link](https://github.com/Norn-cloud/norn/pull/1231) |
 | `checker.test.nextest_exec_s` | 62.5 | s (single) | boat | 3 | 61 / 67.4 | █▁▃ | `20e8feb4b0` | [link](https://github.com/Norn-cloud/norn/pull/1216) |
@@ -89,8 +88,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
 | `proof.gate.checker_certificates.s` | 210 | s (single) | boat | 2 | 210 / 345 | █▁ | `bf2905c1cd` | [link](https://github.com/Norn-cloud/norn/pull/1234) |
-| `proof.gate.exact-arith-correspondence.s` | 2,721 | s (single) | boat | 2 | 1,596 / 2,721 | ▁█ | `b9ea6a8ab6` | [link](https://github.com/Norn-cloud/norn/pull/1221) |
-| `proof.gate.exact_arith.s` | 1,039 | s (single) | boat | 3 | 647 / 1,058 | ▁██ | `79d8c106b9` | thread |
+| `proof.gate.exact_arith.s` | 1,596 | s (single) | boat | 4 | 647 / 1,596 | ▁▄▄█ | `b9ea6a8ab6` | [link](https://github.com/Norn-cloud/norn/pull/1221) |
 | `proof.gate.kernel_binding.s` | 236 | s (single) | boat | 1 | 236 / 236 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_commit.s` | 301 | s (single) | boat | 1 | 301 / 301 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_decider.s` | 214 | s (single) | boat | 1 | 214 / 214 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
@@ -107,7 +105,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 |---|---:|---|---|---:|---|---|---|---|
 | `sim.dst.do_glue_s` | 6.8 | s (single) | boat | 1 | 6.8 / 6.8 | ▁ | `73f3b52e1f` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 | `sim.dst.request_layer_s` | 15.9 | s (single) | boat | 1 | 15.9 / 15.9 | ▁ | `73f3b52e1f` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
-| `sim.dst.serial_total_s` | 34.7 | s (total) | boat | 5 | 33.4 / 121 | ▁▁█▁▁ | `1d665da8fd` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
+| `sim.dst.serial_total_s` | 34.7 | s (total) | boat | 3 | 33.4 / 121 | ▁█▁ | `1d665da8fd` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
 
 ## Test counts
 
@@ -142,7 +140,6 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 What limits each metric's latest value, in the measurer's words.
 
 - `boat.starts.used_24h`: Account-wide: every project on this Boat account, not only Norn. Rolling 24-hour window from `boat limits --json` (410 used, 430 remaining of 840), including 1 start by this lane's pipeline smoke test. Not tied to a commit.
-- `checker.test.cut2_changed_four_serial_s`: same VM and session as the 6cbc5766c3 measurement
 - `checker.test.cut2_four_serial_s`: The four tests cut 2 changed most, run serially on one VM. measured_at is when the PR body stated it. The head sha is #1231's head; the body does not restate it.
 - `checker.test.cut_delta_s`: Author's net estimate: the serial four-test delta (14.4 s) plus two tests from a parallel run that was about 16% slower. Whole-suite wall time is unusable for this: untouched tests varied by up to 41 s (incremental 68 s, then 109 s).
 - `checker.test.nextest_exec_s`: Noisy: about half the crate's test time is two long property tests (incremental about 52–55 s, three_systems about 9–11 s) that the cut does not touch. 4 tests fail on base and head alike (they need CI's prepare_inputs). measured_at is when the PR body stated it.
@@ -202,8 +199,7 @@ What limits each metric's latest value, in the measurer's words.
 - `fork.proto.storage_vs_full.f1000`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
 - `fork.proto.storage_vs_full.f20`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
 - `proof.gate.checker_certificates.s`: With 17 native_decide refutation vectors added, yet faster than the 345 s run; no explanation given. measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
-- `proof.gate.exact-arith-correspondence.s`: single sample; wall clock of the gate script only (Mathlib cache fetch excluded); earlier heads with the same mutant set ran 1039-1058 s on the same snapshot, slowdown unattributed
-- `proof.gate.exact_arith.s`: Larger scope than the 1058 s run yet faster; no explanation given. The sha is the branch head the lane named. VM type not restated. Cold or warm tool caches not stated. One run. Source is a coordinator-thread message, not on GitHub.
+- `proof.gate.exact_arith.s`: corrects record 31bd5961 (2721 s), which wrongly included the post-gate canary venv/pip install; this is the gate script alone from file mtimes (+-1 s): ~434 s setup+extraction+proofs+vectors, ~1162 s for 18 mutants (42-151 s each); single sample
 - `proof.gate.kernel_binding.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_commit.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_decider.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
@@ -215,7 +211,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.verus.kernel_l1_version.s`: One small file (1 verified item). No commit stated; measured_at is when the comment was posted. One run.
 - `sim.dst.do_glue_s`: The plain DO glue law test (64 cases), from the serial run of the set. One run.
 - `sim.dst.request_layer_s`: The DO request-layer simulator test, from the serial run of the set. One run.
-- `sim.dst.serial_total_s`: debug build, nextest --test-threads 1, one default Boat VM; same 11 tests as at 73f3b52e1f
+- `sim.dst.serial_total_s`: Same serial set on the combined frozen head, which includes 23 newer main commits (one changes norn-cell-do/src/server.rs). VM type not restated for this run. One run; measured_at is when the PR body stated it.
 - `tests.rust.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-api.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-authz.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
