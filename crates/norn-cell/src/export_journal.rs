@@ -254,8 +254,24 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     ///
-    /// Engine errors, invalid JSON, or an export record whose content hash does not verify.
+    /// `core.world.fork_evidence_forbidden` for a commit a fork minted after
+    /// its base (FORK-EVIDENCE-1); engine errors, invalid JSON, or an export
+    /// record whose content hash does not verify.
     pub fn export_record(&self, commit_seq: u64) -> Result<Option<ExportRecord>, CellError> {
+        if self
+            .fork_pin()
+            .is_some_and(|pin| commit_seq > pin.base.commits)
+        {
+            return Err(CellError::ForkEvidenceForbidden);
+        }
+        self.journal_record(commit_seq)
+    }
+
+    /// [`Self::export_record`] for the store's own use, fork-minted included.
+    pub(crate) fn journal_record(
+        &self,
+        commit_seq: u64,
+    ) -> Result<Option<ExportRecord>, CellError> {
         let Some(record) = read_record(&self.conn, commit_seq)? else {
             return Ok(None);
         };

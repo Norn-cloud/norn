@@ -14,7 +14,11 @@
 //!
 //! Inside a fork, the row `world` label and receipts keep the label of the
 //! timeline the fork inherited: relabelling the inherited rows would copy them.
-//! The pin carries the fork's world.
+//! The pin carries the fork's world, so every world-boundary decision reads
+//! [`CellStore::world`], never a row label. Rows and receipts a fork mints are
+//! not yet bound to its pin, so a fork refuses to export them or its receipt
+//! log as evidence (FORK-EVIDENCE-1, `core.world.fork_evidence_forbidden`)
+//! until a versioned store format binds the pin into what a fork writes.
 //!
 //! [`ForkEngine`] is the storage seam. The native engine implements it by
 //! copying the whole database (SQLite's online backup). That copy is the
@@ -176,6 +180,27 @@ impl<E: SqlEngine> CellStore<E> {
         self.fork.as_ref()
     }
 
+    /// The world this store serves, from its pin and never from row labels:
+    /// [`norn_kernel::World::Main`] unless the store is a fork. Every
+    /// world-boundary decision (perform, result recording, kernel turns,
+    /// evidence) reads this; a fork's inherited rows still say `main`.
+    #[must_use]
+    pub fn world(&self) -> norn_kernel::World {
+        self.fork
+            .as_ref()
+            .map_or(norn_kernel::World::Main, |pin| norn_kernel::World::Fork {
+                id: norn_kernel::WorldId(pin.world.clone()),
+            })
+    }
+
+    /// FORK-EVIDENCE-1: a fork's receipt log is never presented as evidence.
+    pub(crate) fn refuse_fork_evidence(&self) -> Result<(), CellError> {
+        if self.fork.is_some() {
+            return Err(CellError::ForkEvidenceForbidden);
+        }
+        Ok(())
+    }
+
     /// WORLD-ISOLATE-1: refuse anything that would reach the outside world.
     pub(crate) fn refuse_perform_in_fork(&self) -> Result<(), CellError> {
         if self.fork.is_some() {
@@ -262,6 +287,7 @@ mod tests {
         })?;
         let mut store = CellStore::open_in_memory(model.clone())?;
         let mut parent = MAIN_WORLD.to_owned();
+        assert_eq!(store.world(), norn_kernel::World::Main);
         for level in 0..4 {
             let base = store.verified_head()?;
             let world = format!("w{level}");
@@ -272,6 +298,12 @@ mod tests {
                 base,
             };
             assert_eq!(fork.fork_pin(), Some(&expected));
+            assert_eq!(
+                fork.world(),
+                norn_kernel::World::Fork {
+                    id: norn_kernel::WorldId(world.clone()),
+                }
+            );
             let mut reopened = CellStore::from_engine(fork.conn, model.clone())?;
             assert_eq!(reopened.fork_pin(), Some(&expected));
             assert!(matches!(

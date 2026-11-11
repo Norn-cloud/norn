@@ -2038,7 +2038,7 @@ impl<E: SqlEngine> CellStore<E> {
         let mut store = Self::unverified(conn, model);
         if let Some(active) = Self::read_active_definitions(&store.conn)? {
             let installation = store
-                .export_record(active.commit_seq)?
+                .journal_record(active.commit_seq)?
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
@@ -2280,7 +2280,7 @@ impl<E: SqlEngine> CellStore<E> {
                             .to_owned(),
                     });
                 }
-                let record = self.export_record(version.commit_seq)?.ok_or_else(|| {
+                let record = self.journal_record(version.commit_seq)?.ok_or_else(|| {
                     CellError::LedgerCorrupt {
                         seq: version.commit_seq,
                         reason: "installed definitions have no typed export record".to_owned(),
@@ -3179,7 +3179,7 @@ impl<E: SqlEngine> CellStore<E> {
             generation,
             head.commit_seq,
         )?;
-        let outcome = match self.export_record(head.commit_seq)? {
+        let outcome = match self.journal_record(head.commit_seq)? {
             Some(record) => crate::payload_storage::encode_result(
                 &self.conn,
                 &record.batch.scope,

@@ -107,6 +107,10 @@ pub enum CellError {
     /// FORK-PIN-1: a fork's world is never `main`, empty or its parent's.
     #[error("core.world.fork_invalid_world")]
     ForkInvalidWorld,
+    /// FORK-EVIDENCE-1: a fork never exports what it minted, or its receipt
+    /// log, as evidence.
+    #[error("core.world.fork_evidence_forbidden")]
+    ForkEvidenceForbidden,
 
     /// Missing or mismatched independent historical value proof.
     #[error("historical value proof refused: {0}")]

@@ -2037,7 +2037,7 @@ impl<E: SqlEngine> CellStore<E> {
                 }
             }
             let rebuilt = store
-                .export_record(record.receipt.body.commit_seq)?
+                .journal_record(record.receipt.body.commit_seq)?
                 .ok_or_else(refused)?;
             // Format and previous export hash change in a big-bang rebuild. Every
             // replay-relevant field must otherwise remain exactly the same.

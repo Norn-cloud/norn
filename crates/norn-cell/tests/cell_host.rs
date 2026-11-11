@@ -2674,6 +2674,8 @@ enum ForkOp {
     CreateInvalid { from: Option<u8>, own: bool },
     Commit(u8, ForkPut),
     Perform(u8),
+    Deliver(u8, u8),
+    Evidence(u8),
     Simulate(u8, u8),
     Discard(u8),
 }
@@ -2703,6 +2705,8 @@ fn fork_op() -> impl Strategy<Value = ForkOp> {
         1 => (from, any::<bool>()).prop_map(|(from, own)| ForkOp::CreateInvalid { from, own }),
         4 => (slot.clone(), fork_put()).prop_map(|(slot, put)| ForkOp::Commit(slot, put)),
         2 => slot.clone().prop_map(ForkOp::Perform),
+        1 => (slot.clone(), any::<u8>()).prop_map(|(slot, value)| ForkOp::Deliver(slot, value)),
+        1 => slot.clone().prop_map(ForkOp::Evidence),
         2 => (slot.clone(), any::<u8>()).prop_map(|(slot, value)| ForkOp::Simulate(slot, value)),
         1 => slot.prop_map(ForkOp::Discard),
     ]
@@ -2933,6 +2937,47 @@ impl ForkTrace {
                 }
                 Touched::Fork(slot)
             }
+            ForkOp::Deliver(slot, value) => {
+                // A real external result never lands in a fork, whatever the
+                // inherited rows' world label says.
+                let Some(fork) = self.forks.get_mut(&slot) else {
+                    return Touched::Nothing;
+                };
+                assert!(matches!(
+                    fork.complete_perform(&law_command(0, 0, value), WireInput::Result(value)),
+                    Err(CellError::WorldPerformForbidden)
+                ));
+                Touched::Nothing
+            }
+            ForkOp::Evidence(slot) => {
+                // FORK-EVIDENCE-1: inherited records export; minted ones and
+                // the fork's receipt log never do.
+                let Some(fork) = self.forks.get(&slot) else {
+                    return Touched::Nothing;
+                };
+                let store = fork.store();
+                let base = store.fork_pin().map(|pin| pin.base.commits);
+                let head = store.export_commit_count().expect("head");
+                assert_eq!(
+                    store.world(),
+                    norn_kernel::World::Fork {
+                        id: norn_kernel::WorldId(format!("fork-{slot}")),
+                    }
+                );
+                for seq in 1..=head {
+                    let exported = store.export_record(seq);
+                    if base.is_some_and(|base| seq > base) {
+                        assert!(matches!(exported, Err(CellError::ForkEvidenceForbidden)));
+                    } else {
+                        assert!(matches!(exported, Ok(Some(_))), "inherited record {seq}");
+                    }
+                }
+                assert!(matches!(
+                    store.transparency_checkpoint(),
+                    Err(CellError::ForkEvidenceForbidden)
+                ));
+                Touched::Nothing
+            }
             ForkOp::Simulate(slot, value) => {
                 let Some(fork) = self.forks.get_mut(&slot) else {
                     return Touched::Nothing;
@@ -2956,13 +3001,15 @@ impl ForkTrace {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
-    /// FORK-NONINTERFERE and WORLD-ISOLATE-1 (Core 08, FORK-ISOLATE 1–2),
-    /// sampled over generated traces against the copying reference fork:
-    /// main equals main run alone after every operation (non-interference);
-    /// no fork ever reaches the outside world (no escape); and every operation
-    /// changes only the instance it targets, so a fork is a snapshot of its
-    /// base plus its own commits (L2), and a new fork reads exactly its
-    /// parent (L4).
+    /// FORK-NONINTERFERE, WORLD-ISOLATE-1 and FORK-EVIDENCE-1 (Core 08,
+    /// FORK-ISOLATE 1–2, L2, L4, L5, L6), sampled over generated traces
+    /// against the copying reference fork: main equals main run alone after
+    /// every operation (non-interference); no fork reaches the outside world
+    /// or records a real result although its inherited rows say `main` (no
+    /// escape, decided by the pin); a fork exports only inherited records and
+    /// never its receipt log; every operation changes only the instance it
+    /// targets, so a fork is a snapshot of its base plus its own commits; and a
+    /// new fork reads exactly its parent.
     #[test]
     fn forks_never_interfere_with_main_or_each_other(
         ops in proptest::collection::vec(fork_op(), 1..40)
