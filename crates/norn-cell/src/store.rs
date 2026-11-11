@@ -2721,6 +2721,7 @@ impl<E: SqlEngine> CellStore<E> {
                     for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
                         self.conn.execute_batch(statement)?;
                     }
+                    crate::retained::init(&self.conn)?;
                     let binding = |key: &str| self.conn.query_optional(
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),

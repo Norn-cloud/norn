@@ -337,8 +337,10 @@ pub struct InstallDefinitionResponse {
 #[into_params(parameter_in = Query)]
 pub struct ListDefinitionsQuery {
     /// Required organization.
+    #[param(required = true, nullable = false)]
     pub org_id: Option<String>,
     /// Required environment.
+    #[param(required = true, nullable = false)]
     pub environment_id: Option<String>,
     /// The kind to list.
     pub kind: Option<String>,
@@ -384,8 +386,10 @@ pub struct DefinitionPage {
 #[into_params(parameter_in = Query)]
 pub struct GetDefinitionQuery {
     /// Required organization.
+    #[param(required = true, nullable = false)]
     pub org_id: Option<String>,
     /// Required environment.
+    #[param(required = true, nullable = false)]
     pub environment_id: Option<String>,
     /// A past version; absent selects the current one.
     pub version: Option<u64>,

@@ -291,3 +291,46 @@ fn a_retained_revision_cannot_change_the_kernel_set_or_receipt() {
     assert_eq!(installed.version, 2);
     assert_eq!(installed.receipt_sha256, before.receipt_sha256);
 }
+
+/// A cell provisioned before the retained table existed gains it when the
+/// provisioning path reopens it, so retained installs and reads work.
+#[test]
+fn provisioning_reopen_adds_the_retained_table_to_an_older_file() {
+    use norn_cell::engine::{NativeEngine, SqlEngine};
+
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (model, canonical) = definitions();
+    let kernel = input(&canonical, 10);
+    let open = || NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    drop(
+        CellStore::provision_definitions(open(), model.clone(), &kernel, SCOPE)
+            .expect("fresh provisioning"),
+    );
+
+    // An older file: the retained table is absent.
+    let engine = open();
+    engine
+        .execute_batch(r#"DROP TABLE "_norn_retained_definition""#)
+        .expect("drop retained table");
+    drop(engine);
+
+    let mut store = CellStore::provision_definitions(open(), model, &kernel, SCOPE)
+        .expect("provisioning reopen of an older file");
+    let dashboard = change(
+        "studio.dashboard.old",
+        1,
+        RetainedLifecycle::Active,
+        "Old",
+        None,
+    );
+    store
+        .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &dashboard)
+        .expect("retained install on the reopened file");
+    let listed = store
+        .read()
+        .retained_definitions("dashboard", false, None, 10)
+        .expect("retained listing on the reopened file");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].definition.id, "studio.dashboard.old");
+}
