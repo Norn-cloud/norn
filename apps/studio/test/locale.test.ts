@@ -102,7 +102,7 @@ test("labels change the words, never the ids: a localized catalog keeps every na
   const fact = (id: string) => arabic.fields.find((field) => field.id === id)!
   expect([fact("status").label, fact("status").labelLang]).toEqual(["الحالة", "ar"])
   expect([fact("number").label, fact("number").labelLang]).toEqual(["number", "en"])
-  expect([...fact("status").valueLabels]).toEqual([["posted", "مُرحّلة"]])
+  expect([...fact("status").valueLabels ?? []]).toEqual([["posted", "مُرحّلة"]])
 })
 
 test("the document takes the reader's language and direction", () => {

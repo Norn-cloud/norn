@@ -9,11 +9,11 @@ export type Lifecycle = Schemas["NornIrLifecycle"]
 export interface Field {
   readonly id: string
   /** The reader's label for the fact, or the id in words when it has none in their language. */
-  readonly label: string
+  readonly label?: string
   /** The language `label` is written in. */
-  readonly labelLang: string
+  readonly labelLang?: string
   /** Enum values' labels in the reader's language, by stored value; a value without one shows as stored. */
-  readonly valueLabels: ReadonlyMap<string, string>
+  readonly valueLabels?: ReadonlyMap<string, string>
   readonly type: string
   readonly optional: boolean
   /** Declared exact-decimal facts, with the unit or currency fact their type names. */

@@ -129,12 +129,12 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
       {concept.fields.map((field) => (
         <TableRow key={field.id} data-fact={field.id}>
           <TableCell className="font-medium">
-            <span lang={field.labelLang}>{field.label}</span>
+            <span lang={field.labelLang ?? "en"}>{field.label ?? field.id.replaceAll("_", " ")}</span>
             {field.optional && <span className="text-muted-foreground"> (optional)</span>}
             {technical && <Iso className="ms-2 font-mono text-xs text-muted-foreground">{field.id}</Iso>}
           </TableCell>
           <TableCell className="whitespace-normal text-muted-foreground">
-            {field.valueLabels.size > 0
+            {field.valueLabels !== undefined && field.valueLabels.size > 0
               ? <span>{[...field.valueLabels].map(([value, label], index) => <span key={value}>{index > 0 && comma}{label}{technical && <> <Iso className="font-mono text-xs">{value}</Iso></>}</span>)}</span>
               : field.type}
           </TableCell>
