@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,919 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,920 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -134,7 +134,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
-| `tests.rust.count` | 3,302 | count (single) | local | 15 | 1,990 / 3,302 | ▁▂▂▂▃▄▅▆▆▆▇▇███ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/commit/6cbc5766c342dd26744106920bc3a38a3cacfe58) |
+| `tests.rust.count` | 3,592 | count (single) | boat, local | 16 | 1,990 / 3,592 | ▁▁▂▂▃▄▅▅▅▅▆▆▆▇▇█ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
 | `tests.rust.crate.norn-api.count` | 118 | count (single) | local | 14 | 9 / 118 | ▁▁▁▁▁▂▃▃▄▄▄▅▇█ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/commit/6cbc5766c342dd26744106920bc3a38a3cacfe58) |
 | `tests.rust.crate.norn-authz.count` | 52 | count (single) | local | 14 | 50 / 52 | ▁▁▁▁▁█████████ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/commit/6cbc5766c342dd26744106920bc3a38a3cacfe58) |
 | `tests.rust.crate.norn-builtins.count` | 14 | count (single) | local | 2 | 14 / 14 | ▁▁ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/commit/6cbc5766c342dd26744106920bc3a38a3cacfe58) |
@@ -283,7 +283,7 @@ What limits each metric's latest value, in the measurer's words.
 - `sim.dst.do_glue_s`: The plain DO glue law test (64 cases), from the serial run of the set. One run.
 - `sim.dst.request_layer_s`: The DO request-layer simulator test, from the serial run of the set. One run.
 - `sim.dst.serial_total_s`: Same serial set on the combined frozen head, which includes 23 newer main commits (one changes norn-cell-do/src/server.rs). VM type not restated for this run. One run; measured_at is when the PR body stated it.
-- `tests.rust.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
+- `tests.rust.count`: core.sh test all on the D82 train tree; 9 skipped not counted
 - `tests.rust.crate.norn-api.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-authz.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-builtins.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
