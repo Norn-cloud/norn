@@ -357,6 +357,14 @@ class SchemaProperties(unittest.TestCase):
         inlined = copy.deepcopy(before)
         inlined["properties"]["calendar"] = {"type": "string", "enum": ["iso_utc", "local"], "default": "iso_utc"}
         self.assertEqual(diff_schema(before, inlined, frozenset({cd.IN})), [])
+        # A sibling default added over the target's own default changes what the server does.
+        over = copy.deepcopy(moved)
+        over["properties"]["calendar"]["default"] = "local"
+        self.assertEqual(diff_schema(moved, over, frozenset({cd.IN})),
+                         ['s.calendar: input default changed from "iso_utc" to "local"'])
+        same = copy.deepcopy(moved)
+        same["properties"]["calendar"]["default"] = "iso_utc"
+        self.assertEqual(diff_schema(moved, same, frozenset({cd.IN})), [])
         # The referenced schema's own default is compared where it is defined.
         own = copy.deepcopy(moved)
         own["$defs"]["CalendarPolicy"]["default"] = "local"
@@ -514,24 +522,187 @@ fn life<'a>(x: &'a str) -> &'a str { "life.time" }
 '''
         self.assertEqual(cd.rust_literals(text), {"first.code", "after.tests", "testkit.code", "prod.code", "after.all", "life.time"})
 
-    def test_test_only_files_and_declared_test_modules_are_not_production(self):
+    def test_a_file_is_test_only_because_a_test_cfg_says_so_never_by_its_name(self):
         files = {
-            "crates/a/src/lib.rs": 'const A: &str = "prod.a";\n#[cfg(test)]\nmod checks;\n#[cfg(test)]\n#[path = "odd/place.rs"]\nmod elsewhere;\nmod real;\n',
-            "crates/a/src/checks.rs": 'const T: &str = "declared.test_module";\n',
+            "crates/a/src/lib.rs": 'const A: &str = "prod.a";\n#[cfg(test)]\nmod checks;\n#[cfg(test)]\n#[path = "odd/place.rs"]\nmod elsewhere;\n'
+                                   'mod real;\nmod inheritance;\n#[cfg(all(test, unix))]\nmod dev_tests;\nmod commands;\n',
+            "crates/a/src/checks.rs": 'mod helpers;\nconst T: &str = "declared.test_module";\n',
+            "crates/a/src/checks/helpers.rs": 'const T: &str = "module.of_a_test_module";\n',
             "crates/a/src/odd/place.rs": 'const T: &str = "path.test_module";\n',
             "crates/a/src/real.rs": 'const R: &str = "prod.real";\n',
-            "crates/a/src/tests.rs": 'const T: &str = "tests.file";\n',
+            "crates/a/src/inheritance.rs": 'const I: &str = "prod.inheritance";\n#[cfg(test)]\nmod tests;\n',
             "crates/a/src/inheritance/tests.rs": 'const T: &str = "nested.tests_file";\n',
             "crates/a/src/dev_tests.rs": 'const T: &str = "suffix.tests_file";\n',
-            "crates/a/src/whole.rs": '#![cfg(test)]\nconst T: &str = "inner.attribute";\n',
+            "crates/a/src/whole.rs": '//! Docs.\n#![allow(dead_code)]\n#![cfg(test)]\nconst T: &str = "inner.attribute";\n',
+            # Named like tests but declared as production: they are production.
+            "crates/a/src/commands.rs": 'mod test;\nmod tests;\n',
+            "crates/a/src/commands/test.rs": 'const C: &str = "prod.test_command";\n',
+            "crates/a/src/commands/tests.rs": 'const C: &str = "prod.tests_command";\n',
             "crates/a/tests/it.rs": 'const T: &str = "integration.test";\n',
         }
         tree = cd.Tree(lambda d: sorted(p for p in files if p.startswith(d + "/")), files.get)
-        self.assertEqual(set(cd.refusal_codes(tree)), {"prod.a", "prod.real"})
+        self.assertEqual(set(cd.refusal_codes(tree)),
+                         {"prod.a", "prod.real", "prod.inheritance", "prod.test_command", "prod.tests_command"})
         # A code that survives only in a test is removed from production.
-        after = {**files, "crates/a/src/real.rs": "\n", "crates/a/src/tests.rs": 'const T: &str = "prod.real";\n'}
+        after = {**files, "crates/a/src/real.rs": "\n", "crates/a/src/inheritance/tests.rs": 'const T: &str = "prod.real";\n'}
         after_tree = cd.Tree(lambda d: sorted(p for p in after if p.startswith(d + "/")), after.get)
         self.assertEqual(cd.removed_refusal_codes(tree, after_tree), {"prod.real": (1, 0)})
+
+    def test_a_string_that_continues_over_lines_hides_nothing_after_it(self):
+        text = '''
+const HELP: &str = "first line \\
+    second line with a \\" quote and a { brace \\
+    third line";
+const RAW: &str = r##"raw over
+lines with "# inside and a // comment
+"##;
+const BYTES: &[u8] = b"bytes \\
+    over lines";
+/* a block comment /* nested
+   over lines */ with "a.comment" */
+fn refuse() -> Refusal { Refusal::new(NOT_FOUND, "question.not_found", "no such question") }
+'''
+        self.assertEqual(cd.rust_literals(text), {"question.not_found"})
+
+        def tree(source):
+            files = {"crates/norn-x/src/lib.rs": source}
+            return cd.Tree(lambda d: sorted(files) if d in (".", "crates") else [], files.get)
+        renamed = text.replace('"question.not_found"', '"question.missing"')
+        self.assertEqual(cd.diff(tree(text), tree(renamed)), ["refusal code question.not_found: removed"])
+        # Lines of the lexed code are lines of the source.
+        code, _ = cd._lex(text)
+        self.assertEqual(code.count("\n"), text.count("\n"))
+
+    def test_the_lexer_fails_closed(self):
+        cases = {
+            "unterminated string literal": 'const A: &str = "a.b";\nconst B: &str = "never closed;\nconst C: &str = "c.d";\n',
+            "unterminated raw string literal": 'const A: &str = r#"never closed";\n',
+            "unterminated block comment": 'const A: &str = "a.b";\n/* never closed\n',
+            "neither a char literal nor a lifetime": "const A: char = ';\n",
+            "unbalanced `}`": 'fn f() { } }\nconst C: &str = "c.d";\n',
+            "is never closed": 'fn f() { if x { }\nconst C: &str = "c.d";\n',
+            "unbalanced `]`": "fn f() { (] }\n",
+            "cannot tell where the item under this test `cfg` attribute ends": '#[cfg(test)]\nconst C: &str = "c.d"\n',
+        }
+        for message, source in cases.items():
+            with self.assertRaises(cd.LexError) as raised:
+                cd.rust_literals(source, "crates/x/src/lib.rs")
+            self.assertIn(message, str(raised.exception))
+            self.assertRegex(str(raised.exception), r"^crates/x/src/lib\.rs:\d+: ")
+        # A string may span lines, so an unclosed one swallows the next quote: the
+        # report is at the quote that is left without a partner, never a silent skip.
+        self.assertIn(":3: ", str(self._lex_error(cases["unterminated string literal"])))
+
+    def _lex_error(self, source):
+        try:
+            cd.rust_literals(source, "crates/x/src/lib.rs")
+        except cd.LexError as error:
+            return error
+        self.fail("no LexError")
+
+    def test_a_test_cfg_on_a_field_variant_arm_or_expression_gates_only_that(self):
+        # The shapes of crates/norn-checker/src/inheritance.rs:117 and :210, and their kin.
+        text = '''
+pub(crate) struct Classification<'a> {
+    pub(crate) cyclic: BTreeSet<&'a Name>,
+    #[cfg(test)]
+    usage: Usage,
+}
+fn classify() -> Result<Classification, Refusal> {
+    let limit = "after.field";
+    Ok(Classification {
+        cyclic,
+        #[cfg(test)]
+        usage: meter.usage("test.struct_literal"),
+    })
+}
+fn last_field() -> Classification {
+    Classification {
+        cyclic,
+        #[cfg(test)]
+        usage: meter.usage("test.last_field")
+    }
+}
+const AFTER_LITERAL: &str = "after.struct_literal";
+enum Kind {
+    Real,
+    #[cfg(test)]
+    Fake { reason: &'static str },
+    #[cfg(test)]
+    Stub = "test.variant".len() as isize,
+    Other,
+}
+fn arms(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Real => "arm.real",
+        #[cfg(test)]
+        Kind::Fake { .. } => { "test.block_arm" }
+        #[cfg(test)]
+        Kind::Stub => "test.expression_arm",
+        Kind::Other => "arm.other",
+    }
+}
+fn statements() {
+    #[cfg(test)]
+    let probe = if true { "test.let_if" } else { "test.let_else" };
+    #[cfg(test)]
+    { record("test.block_statement"); }
+    #[cfg(test)]
+    record("test.call_statement");
+    emit("after.statements");
+}
+#[cfg(test)]
+impl Kind { fn code(&self) -> &'static str { "test.impl" } }
+#[cfg(test)]
+pub(crate) const PROBE: Probe = Probe { code: "test.const_struct" };
+#[cfg(test)]
+macro_rules! probe { () => { "test.macro" }; }
+# [ cfg ( test ) ]
+fn spaced() -> &'static str { "test.spaced_attribute" }
+const END: &str = "after.everything";
+'''
+        self.assertEqual(cd.rust_literals(text), {"after.field", "after.struct_literal", "arm.real", "arm.other",
+                                                  "after.statements", "after.everything"})
+
+    def test_an_inner_test_cfg_gates_the_file_only_before_its_first_item(self):
+        whole = '//! Docs.\n#![allow(dead_code)]\n#![cfg(test)]\nconst T: &str = "test.whole_file";\n'
+        self.assertTrue(cd._rust_file("crates/x/src/a.rs", whole).test_only)
+        inline = 'const A: &str = "prod.before";\nmod tests {\n    #![cfg(test)]\n    const T: &str = "test.inline";\n}\nconst B: &str = "prod.after";\n'
+        file = cd._rust_file("crates/x/src/a.rs", inline)
+        self.assertFalse(file.test_only)
+        self.assertEqual(set(cd._codes(file.literals)), {"prod.before", "prod.after"})
+
+    def test_the_real_tree_lexes_completely_and_agrees_with_an_independent_count(self):
+        # The lexer against a second, simpler method over this repository's own
+        # sources: per production file, the code-shaped literals it finds must
+        # equal, exactly, a line-by-line regex count over the raw text outside
+        # the test-only line ranges and outside lines that are only a comment.
+        # A file that does not lex to its end raises LexError here.
+        import re
+        root = Path(cd.__file__).resolve().parents[2]
+        tree = cd.disk_tree(root)
+        production = cd.production_files(tree)
+        self.assertGreater(len(production), 300)
+        quoted = re.compile(r'"(' + cd.CODE.pattern + r')(?:: [^"\n]*)?"')
+        line_of = lambda code, index: code.count("\n", 0, index) + 1
+        total = 0
+        for path, file in production.items():
+            text = tree.read(path)
+            self.assertEqual(file.code.count("\n"), text.count("\n"), path)
+            cd._blocks(file.code, path)
+            gated = set()
+            for start, end in file.test_ranges:
+                gated.update(range(line_of(file.code, start), line_of(file.code, end - 1) + 1))
+            independent = sum(len(quoted.findall(line)) for number, line in enumerate(text.split("\n"), 1)
+                              if number not in gated and not line.lstrip().startswith("//"))
+            found = sum(cd._codes(file.literals).values())
+            self.assertEqual(found, independent, f"{path}: the lexer finds {found} code literals, a line regex {independent}")
+            total += found
+        self.assertGreater(total, 1000)
+        # The files the round-three review named: literals after a continued string are seen.
+        codes = cd.refusal_codes(tree)
+        self.assertGreaterEqual(codes["question.not_found"], 2)
+        self.assertGreaterEqual(codes["core.values.inexact"], 1)
 
     def test_renaming_one_of_several_spellings_is_a_break(self):
         def tree(source):
@@ -551,6 +722,11 @@ fn life<'a>(x: &'a str) -> &'a str { "life.time" }
         enrolled = {f"{cd.SCHEMA_DIRS[0]}/a.schema.json": "{}", "tools/norn-ts/fixtures/schema/x.json": "{}",
                     "crates/x/tests/schema/y.json": "{}", f"{cd.INTERNAL[0]}": "{}"}
         self.assertEqual(cd.unenrolled_surfaces(tree(enrolled)), [])
+        # Internal means one named file or directory, not its neighbours.
+        atlas = "registry/standards/atlas.schema.json"
+        self.assertIn(atlas, cd.INTERNAL)
+        self.assertEqual(cd.unenrolled_surfaces(tree({**enrolled, atlas: "{}", "registry/standards/pack.schema.json": "{}"})),
+                         ["registry/standards/pack.schema.json"])
         for path in ("crates/norn-new/schema/event.json", "crates/norn-new/schema/v1/event.json", "packages/x/wire.schema.json",
                      "tools/dev/dev.contract.json"):
             self.assertEqual(cd.unenrolled_surfaces(tree({**enrolled, path: "{}"})), [path], path)
@@ -697,6 +873,14 @@ class Scenarios(unittest.TestCase):
         approved = self.run_script("--base", "main", "--head", self.commit("approve both"))
         self.assertEqual(approved.returncode, 0, approved.stdout)
         self.assertIn("2 approved", approved.stdout)
+
+    def test_a_source_the_lexer_cannot_classify_fails_the_check_and_cannot_be_approved(self):
+        self.git("switch", "-q", "-c", "feature")
+        self.write("crates/norn-api/src/broken.rs", 'pub const A: &str = "never closed;\n')
+        self.approve("D85", "refusal code scope.denied: removed")
+        refused = self.run_script("--base", "main", "--head", self.commit("unlexable"))
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertIn("crates/norn-api/src/broken.rs:1: unterminated string literal", refused.stdout)
 
     def test_an_approval_already_on_the_base_approves_nothing_new(self):
         self.approve("D85", "refusal code scope.denied: removed")

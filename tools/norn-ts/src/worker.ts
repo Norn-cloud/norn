@@ -14,6 +14,10 @@
  * with every file-system batch; `sourceDigest` is the SHA-256 of the sorted
  * (project-relative path, bytes) pairs under `sources`, so a caller can tell
  * which bytes a result belongs to. A setup failure prints `{ event: "fatal" }`.
+ *
+ * Limit: the watcher covers the source directories. A top-level module that
+ * is a symlink to a file elsewhere in the project is compiled and digested,
+ * but an edit to its target triggers no recompile until a source is saved.
  */
 import { createHash } from "node:crypto"
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, watch } from "node:fs"
@@ -36,12 +40,14 @@ const posix = (path: string) => path.split(sep).join("/")
 
 /** Whether `path`, with every symlink resolved, is the project root or inside it. */
 function insideProject(realRoot: string, path: string): boolean {
-  const real = realpathSync(path)
+  let real: string
+  try { real = realpathSync(path) }
+  catch { return false } // a dangling link resolves nowhere, so not inside the project
   return real === realRoot || real.startsWith(realRoot + sep)
 }
 
 function outside(what: string): ProjectError {
-  return new ProjectError("cli.project.invalid_manifest", `${what} resolves outside the project; sources must stay inside it.`)
+  return new ProjectError("cli.project.invalid_manifest", `${what} does not resolve inside the project; sources must stay inside it.`)
 }
 
 /** The manifest's source directories that exist; one that resolves outside the project refuses. */
