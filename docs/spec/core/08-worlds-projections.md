@@ -22,7 +22,7 @@ Historical queries select records valid at `effective_as_of` and known by `known
 
 One declared question generates cell/IVM/OLAP pipelines and output projections. Iceberg publication atomically switches the visible snapshot pointer only after complete generation validation; failed builds leave the prior generation visible and labelled stale. Exports retain query/time/frontier/lineage identity. A number is not fully explained until contributions reconcile exactly to its total and resolve to authorized source evidence; redacted lineage reports restricted detail, not a fictitious complete path.
 
-Forks pin a base and run the same evaluator, schemas and laws with virtual clock and fixture outcomes. They cannot perform, use live credentials or write to main outputs. Promotion submits proposed commands again against current main authority/versions; never copy fork rows into main. Main/historical/fork caches and subscriptions cannot share identity accidentally.
+Forks pin a base and run the same evaluator, schemas and laws with virtual clock and fixture outcomes. They cannot perform, use live credentials or write to main outputs. Promotion submits proposed commands again against current main authority/versions; never copy fork rows into main. Main/historical/fork caches and subscriptions cannot share identity accidentally. [Fork lifecycle and isolation](#fork-lifecycle-and-isolation) states the storage, lifecycle and merge contract.
 
 Subscriptions send a complete authorized snapshot followed by ordered deltas; resumed tokens bind query, world and authority generation. A missing retained delta causes an explicit reset + fresh snapshot, not silent gaps. Revocation invalidates result caches and subscription access before subsequent delivery. Exact queries cannot substitute asynchronous data; analytics displays frontier/lag/coverage.
 
@@ -31,6 +31,10 @@ Statistical analysis is a recorded Function result over point-in-time inputs. Pu
 | Invariant / layer | Stable target diagnostic |
 |---|---|
 | WORLD-ISOLATE-1: forks never perform; history never mutates; dispatch/commit | `core.world.perform_forbidden` |
+| FORK-PIN-1: a fork is created only at its parent's verified head and keeps that pin and the cell identity; create/open | `core.world.fork_stale_base`, `core.world.fork_invalid_world` |
+| FORK-SIMULATE-1: only a fork records simulated results; main records performed results only; dispatch | `core.world.simulation_forbidden` |
+| FORK-LIFE-1: a discarded, expired or promoted fork accepts no commit or open; host | `core.world.fork_closed` |
+| FORK-MERGE-1: promotion replays commands under main's current laws; commit | `core.world.merge_refused` |
 | ASOF-KNOWLEDGE-1: no future knowledge leaks into old cutoff; evaluation | `core.world.temporal_leakage` |
 | RESTATE-HISTORY-1: append new interpretation, retain old answers; admission/publication | `core.world.invalid_restatement` |
 | LINEAGE-SUM-1: number equals exact declared contributions; publication | `core.projection.lineage_incomplete` |
@@ -42,6 +46,8 @@ Evidence: runtime isolation/access enforcement; sampled replay/subscription/thre
 ## Named acceptance scenarios
 
 - **WORLD-FORK:** Given main payment capability, when a fork requests perform, then refuse with no outbox dispatch; fixture receipt evaluation remains possible and labelled simulated.
+- **FORK-STALE-BASE:** Given main at commit 7, when a fork is requested at commit 6, then refuse `core.world.fork_stale_base` and create nothing.
+- **FORK-NONINTERFERE:** Given any interleaving of main commits and performs with fork creation, fork commits, simulated results, refused performs and discards, when the fork operations are deleted from the trace, then main's ledger, state, outbox and execution count are unchanged.
 - **ASOF-RESTATE:** Given a correction learned on Nov 3 about Nov 1, when querying Nov 1 known Nov 2 then known Nov 4, then retain the original answer and expose the corrected answer respectively; exact values in [beat 6](../acceptance/data-engineering.md).
 - **LINEAGE-REGION:** Given inventory value 80 in North, when drilling down, then contributions 20+60 resolve to holding IDs, ERP receipt and source cursor; unauthorized source content stays concealed.
 - **SUB-RESET:** Given a resumed token outside retention or from an old grant generation, when reconnecting, then reset or deny; never silently omit deltas.
@@ -58,7 +64,7 @@ Present: `crates/norn-kernel/src/observations.rs`, `crates/norn-cell/src/{histor
 2. **Demo priority:** contribution lineage projection and source-document drill-down; then authorized LINEAGE-REGION tests.
 3. **Demo priority:** staged backfill/restatement generation and atomic output switch; Iceberg/export/view adapters in separate cuts, then OUTPUT-ATOMIC.
 4. **Demo priority:** #69 point-in-time analytical inputs, recorded regression/forecast receipt and publication guards in separate cuts; ANALYSIS-LEAK plus exact beat-6 regression fixture.
-5. Add world/base pin and scenario clock/outcome fixtures; WORLD-FORK against the real evaluator.
+5. Add world/base pin and scenario clock/outcome fixtures; WORLD-FORK against the real evaluator. Fork storage, lifecycle and merge follow the unit order in [Fork lifecycle and isolation](#fork-lifecycle-and-isolation).
 6. Complete subscription cursor/authority reset, then IVM/full-recompute equivalence with 03, then EN/AR explanations over the same result IDs.
 
 ASOF-KNOWLEDGE-1 incarnation selection reads authenticated immutable version evidence under an aggregate row/byte budget. It selects the highest eligible version at an inclusive knowledge cutoff and immutable source commit frontier (including equal-clock corrections), preserves tombstones and source receipts, and returns explicit exhaustion without a partial answer. Effective-time interpretation, query projection, authorization and restatement publication remain the declared question/host boundaries; this lookup alone is not DATA-ASOF acceptance.
@@ -72,6 +78,72 @@ ASOF-KNOWLEDGE-1 native historical questions retain the existing admitted exact 
 ASOF-KNOWLEDGE-1 reader-bound historical evidence caches admit and authenticate each immutable receipt once per read; all facts still verify their snapshot commitment and exact emitting write. The cache cannot be deserialized or rebound to another reader. Shared receipt bytes are charged when decoded, rather than charging a nonexistent repeated decode for each fact in the same commit.
 
 RESTATE-HISTORY-1 native private-cache maintenance consumes the next authenticated source receipt, retracts/replaces its changed canonical members through Core 03 arithmetic, and compares with a rebuild at the same T/K slice. Backward/skipped points and source/authorization refusals retain the prior complete generation. This is query maintenance; governed restatement activation, durable output switching and posted-book reconciliation remain separate authorities.
+## Fork lifecycle and isolation
+
+[Owner] Forking is cheap and never blocks main. Many agents fork one cell at once; creating a fork costs metadata, a fork stores only what it changes, main's commits never wait on a fork, and forks never wait on each other. Only the commit step of a merge into one cell is serialized. Proof obligations are tracked under the assurance epic (#718); WORLD-FORK is #624.
+
+### Fork record
+
+| Target record | Required fields |
+|---|---|
+| Fork pin | `world: WorldId` (never `main`, never the parent's own world), `parent: WorldId` (`main` or another fork), `base: {commits, ledger_seq, ledger_hash}` equal to the parent's verified `LedgerHead` at creation, the parent's cell identity and bindings unchanged, definition namespace root?, `expires_at?` |
+| Fork state | `open`, `discarded`, `expired` or `promoted`; only `open` accepts open, read and commit |
+
+**FORK-PIN-1.** A fork is a separate store instance, never rows in its parent's database: rows in the parent's file would queue every fork write behind the parent's single writer. A fork is created only at the parent's current verified head; a caller pin naming any other position refuses `core.world.fork_stale_base` and creates nothing. Forking from an older position needs retained roots and is added with the copy-on-write store. `main`, an empty id or the parent's own world refuses `core.world.fork_invalid_world`. The fork inherits the parent's cell identity and bindings (#502) byte for byte: the identity never forks, and a fork is served only under the scope its parent was bound to. The fork's world is the pin, not a new identity. The pin is durable in the fork instance and survives reopen; nothing can turn a fork back into main. A fork of a fork records the fork as its parent.
+
+Inside a fork instance, the row `world` label and `ReceiptBody.world` name the instance's local timeline, which keeps the label it inherited. Relabelling inherited rows would copy them, so the pin carries the fork's world. Fork receipts are meaningful only together with that pin, and promotion replays commands, never receipts or rows.
+
+### Lifecycle
+
+- **Create** copies the parent's root: O(1) metadata plus, when durable, one group-committed record. The reference engine copies the whole database; it is the oracle every copy-on-write engine must match, not a production path.
+- **Open** reopens an `open` fork under its pin and the inherited identity.
+- **Commit** runs the same evaluator, schemas, laws and authority as main, against the fork's own state. It never reads or writes the parent after creation.
+- **Discard** closes the fork. Its unique pages become unreachable and are reclaimed by garbage collection.
+- **TTL.** A fork with `expires_at` becomes `expired` when the lifecycle service observes the deadline; expiry is a discard. Open, read and commit on a closed fork refuse `core.world.fork_closed`.
+- **Promote** is merge by replay (below), then the fork closes as `promoted`. Promotion never copies fork rows, pages or receipts into main.
+
+### World-scoped effects
+
+**WORLD-ISOLATE-1.** A non-main world cannot perform real external effects. Perform in a fork refuses `core.world.perform_forbidden` before any durable claim, so nothing is dispatched and no claim is recorded. A fork gets recorded, simulated or sandbox bindings, never live credentials. A simulated result is recorded against the fork's pending command and delivered through the same consume path; the fork pin labels it simulated. Main never records a simulated result (`core.world.simulation_forbidden`). A fork never appends to its parent's export journal or object-store prefix and never writes main's outputs, subscriptions or caches.
+
+### Addressing and dedupe
+
+Pages and blobs dedupe within one tenant only, across all of that tenant's cells, forks and worlds. A tenant's storage address is keyed, `HMAC(tenant_key, content)`, so addresses are never comparable across tenants: storage accounting, latency and upload responses cannot reveal whether another tenant holds the same content. Per-tenant encryption at rest fits on top. Public pack and definition content keeps plain content hashes and dedupes globally. A private definition's Core 01 identity digest remains its identity in the tenant's own records; only its storage address is keyed. Definitions, ontology changesets, connectors, transforms, UI documents and policies are stored once by digest; a world pins one namespace root, the digest of a name→digest map over all of them, so forking definitions copies that root.
+
+### Merge contract
+
+**FORK-MERGE-1.** Facts merge by replay, never by copying state. Each command the fork admitted after its base is replayed against main's current state under main's current authority, definition versions and laws. A command whose read versions are unchanged, or which re-evaluates to the same outcome, commits as an ordinary main action. Any other command refuses `core.world.merge_refused` with a typed reason or becomes a decision card; nothing is silently overwritten. Real performs happen only under main's bindings, after the replayed command is admitted. Definition namespaces merge three-way against the fork's base root: unchanged, one-sided or identical changes merge, divergent changes become conflicts, and the merged root passes admission again. This states the contract only; replay, recheck and decision cards are a later unit.
+
+### FORK-ISOLATE
+
+Let H be any main history, F a fork created at main position n, and t any trace interleaving main operations with F's creation, commits, simulated results, perform attempts, reads, discard, expiry and garbage collection, with no `Merge(F)`. Let t∖F be t with F's operations deleted.
+
+1. **Non-interference:** `π_main(run(H·t)) = π_main(run(H·(t∖F)))` for main's ledger, state, outbox and external-effect log.
+2. **No escape:** no external effect is dispatched from a world other than main (`core.world.perform_forbidden`).
+3. **Merge:** a trace containing `Merge(F)` changes main exactly as sequentially committing the replayed commands would, each admitted under main's authority and laws at its commit.
+
+Storage lemmas for every fork engine:
+
+- **L1** a write never changes a stored page under its address;
+- **L2** a fork's root is a snapshot: later parent writes do not change it, and fork writes change no root they did not open;
+- **L3** garbage collection never frees a page reachable from a live root;
+- **L4** a fork read returns exactly what reading a full copy would (property tests against the copying oracle).
+
+Evidence target: L1–L4 as properties against the copying reference engine and model checks of the page store; non-interference and no-escape as generated trace properties and deterministic simulation on forks; a Lean world-indexed non-interference meta-theorem and a Quint model of create, commit, merge, discard and garbage collection replayed through ITF. Until those exist, FORK-ISOLATE is a target, and each passing property is sampled evidence only.
+
+### Unit order
+
+1. This contract.
+2. The `CellStore` fork contract with the copying reference engine, FORK-PIN-1, WORLD-ISOLATE-1 refusals, WORLD-FORK and FORK-NONINTERFERE properties.
+3. A copy-on-write page store behind `SqlEngine`: keyed addresses, a Merkle page map, O(1) fork, reachability garbage collection, L1–L4 against the oracle.
+4. A durable local tier with group commit and crash recovery.
+5. Definition namespace roots and three-way namespace merge with re-admission.
+6. Merge by replay with version recheck and decision cards.
+7. Durable lineage in the object-store journal: a fork's chain starts from its parent's chain at the base.
+8. The lifecycle service: TTL, promote, discard, garbage-collection scheduling, quotas, scale to zero.
+9. Diff and why between worlds.
+10. The FORK-ISOLATE proofs.
+
 ## Receipt-bound incarnation evidence
 
 **SNAPSHOT-RECEIPT-1:** every new `WrittenRow` commits its complete canonical incarnation snapshot digest before the producing receipt is hashed, including tombstones and intermediate versions in one atomic batch. Historical reads verify that digest against the authenticated emitting receipt; changing both the snapshot and its co-located hash cannot replace it. Legacy/unbound entries refuse as unproven; no migration derives a trusted commitment from their current mutable contents. Only a private writer can inspect its own not-yet-receipted incarnation inside the atomic commit; it cannot export it as evidence. Named scenarios cover joint snapshot/hash tampering, unbound commitments, receipt substitution, restart and repeated writes/tombstones.
