@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import { actionCell } from "./action-cell.ts"
+import { actionCell, refuse } from "./action-cell.ts"
 import { objectCell, population, session } from "./object-cell.ts"
 
 // One test per row of the action forms' verb matrix (see the PR), plus each state the forms show.
@@ -126,7 +126,7 @@ test("edit: a transition from the record drawer carries the record's id and move
   await expect(rowFor(page, "demo/holding/0001")).toContainText("40.000")
 })
 
-test("delete: a destructive, irreversible action confirms first, then later actions on it are refused by the rule", async ({ page }) => {
+test("delete: a destructive, irreversible action confirms first, then later actions on it are refused by their precondition", async ({ page }) => {
   await open(page)
   await rowFor(page, "demo/holding/0002").click()
   await page.getByRole("button", { name: "Retire holding" }).click()
@@ -145,8 +145,8 @@ test("delete: a destructive, irreversible action confirms first, then later acti
   await sheet(page).getByLabel("Counted quantity").fill("1.000")
   await sheet(page).getByLabel("Reason").fill("Late count")
   await sheet(page).getByRole("button", { name: "Adjust quantity" }).click()
-  await expect(sheet(page).getByRole("alert").first()).toContainText("This holding is retired; it can't change any more.")
-  await expect(sheet(page).getByRole("alert").first()).toContainText("The holding is retired.")
+  // The served refusal names the precondition's failure and carries no diagnostic for this caller.
+  await expect(sheet(page).getByRole("alert").first()).toHaveText("a declared precondition does not hold")
 })
 
 test("reopen: a dirty draft asks before it is discarded; keep editing keeps it; a retry after an outage commits once", async ({ page }) => {
@@ -200,7 +200,8 @@ test("create: a parent with owned rows takes a list of records; the cell's input
 test("while the cell takes no actions, New and the drawer's actions say why", async ({ page }) => {
   await session(page)
   await objectCell(page, population(10))
-  await page.route("**/api/host/v1/actions**", (route) => route.fulfill({ status: 404, json: { code: "route.not_found", message: "No such route." } }))
+  // The cell's own answer today: it serves no action catalog route.
+  await page.route("**/api/host/v1/actions**", (route) => refuse(route, "routeNotFound"))
   await page.goto("/objects/canon.Holding")
   await expect(page.getByRole("button", { name: "New holding" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "New holding" })).toHaveAttribute("title", "This cell doesn't take actions from Studio yet.")

@@ -2,7 +2,8 @@
 //! with a verified fixture principal, the kernel's Cedar PDP deciding the call
 //! from that principal alone, and the documents Studio's client parses
 //! (`apps/studio/test/fixtures/action-call.json`, read by
-//! `apps/studio/test/actions.test.ts`).
+//! `apps/studio/test/actions.test.ts` and served verbatim, with the status its
+//! `status` member pins, by the Playwright stand-in `apps/studio/e2e/action-cell.ts`).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -318,13 +319,81 @@ fn studio_call_commits_replays_and_matches_the_client_contract() {
     assert_eq!(replayed["receipt"], committed["receipt"]);
 
     let changed = melt_body("melt-1", "12", "9", "4b7a2c1e-0000-4000-8000-000000000001");
-    let (status, conflict) = post(&cell, Some(OPERATOR), &changed);
-    assert_eq!(status, 409);
-    assert_eq!(conflict, fixture["conflict"]);
+    served(&fixture, "conflict", &post(&cell, Some(OPERATOR), &changed));
+    served(
+        &fixture,
+        "invalidKey",
+        &post(&cell, Some(OPERATOR), r#"{"input":{},"idempotencyKey":""}"#),
+    );
+}
 
-    let (status, invalid) = post(&cell, Some(OPERATOR), r#"{"input":{},"idempotencyKey":""}"#);
-    assert_eq!(status, 400);
-    assert_eq!(invalid, fixture["invalidKey"]);
+/// The served response is the fixture's document `name`, with the status the
+/// fixture's `status` member pins for it.
+fn served(fixture: &Value, name: &str, (status, document): &(u16, Value)) {
+    assert_eq!(
+        Some(u64::from(*status)),
+        fixture["status"][name].as_u64(),
+        "{name}: {document}"
+    );
+    assert_eq!(document, &fixture[name], "{name}");
+}
+
+/// Every refusal Studio's action stand-in serves, as the route serves it to
+/// a caller without the refusal-detail grant. The stand-in imports these
+/// documents, so a change to the route fails here until the fixture follows.
+#[test]
+fn studio_refusals_match_the_client_contract() {
+    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+    let cell = cell();
+    let body = melt_body("melt-4", "12", "10", "refusals");
+    // An unknown action, an ungranted caller and a foreign scope: one opaque
+    // denial. An absent or hidden target is the same document
+    // (`norn_api::actions::action_denied`).
+    let unknown = "/v1/actions/constitution.melt.unknown";
+    served(
+        &fixture,
+        "denied",
+        &send(&cell, "POST", unknown, SCOPE, Some(OPERATOR), &body),
+    );
+    served(&fixture, "denied", &post(&cell, Some(VIEWER), &body));
+    let foreign = "orgId=org_other&environmentId=dev";
+    served(
+        &fixture,
+        "denied",
+        &send(&cell, "POST", ROUTE, foreign, Some(OPERATOR), &body),
+    );
+    // An exact decimal travels as its text; `12,5` is no number.
+    let invalid = melt_body("melt-4", "12,5", "10", "invalid-input");
+    served(
+        &fixture,
+        "invalidInput",
+        &post(&cell, Some(OPERATOR), &invalid),
+    );
+    // More fine metal out than in breaks the action's declared precondition.
+    let above = melt_body("melt-4", "4", "9", "precondition");
+    served(
+        &fixture,
+        "precondition",
+        &post(&cell, Some(OPERATOR), &above),
+    );
+    let pinned = "orgId=org_demo&environmentId=dev&version=99";
+    served(
+        &fixture,
+        "stale",
+        &send(&cell, "POST", ROUTE, pinned, Some(OPERATOR), &body),
+    );
+    // The action catalog Studio reads first is not a route the cell serves.
+    served(
+        &fixture,
+        "routeNotFound",
+        &send(&cell, "GET", "/v1/actions", SCOPE, Some(OPERATOR), ""),
+    );
+    // Nothing above committed.
+    let (status, first) = post(&cell, Some(OPERATOR), &body);
+    assert_eq!(
+        (status, first["outcome"].as_str()),
+        (200, Some("committed"))
+    );
 }
 
 #[test]
