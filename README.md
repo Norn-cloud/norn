@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-360 records across 95 metrics. Each series runs in the order of the
+361 records across 96 metrics. Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -91,6 +91,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `proof.gate.checker_certificates.s` | 210 | s (single) | boat | 2 | 210 / 345 | █▁ | `bf2905c1cd` | [link](https://github.com/Norn-cloud/norn/pull/1234) |
 | `proof.gate.exact-arith-correspondence.s` | 2,721 | s (single) | boat | 1 | 2,721 / 2,721 | ▁ | `b9ea6a8ab6` | [link](https://github.com/Norn-cloud/norn/pull/1221) |
 | `proof.gate.exact_arith.s` | 1,039 | s (single) | boat | 3 | 647 / 1,058 | ▁██ | `79d8c106b9` | thread |
+| `proof.gate.kernel_binding.s` | 236 | s (single) | boat | 1 | 236 / 236 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_commit.s` | 301 | s (single) | boat | 1 | 301 / 301 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_ka.s` | 170 | s (single) | boat | 1 | 170 / 170 | ▁ | `c920cf7c87` | [link](https://github.com/Norn-cloud/norn/pull/1228) |
 | `proof.gate.norm_precedence.s` | 202 | s (single) | boat | 1 | 202 / 202 | ▁ | `b5d3afdd03` | [link](https://github.com/Norn-cloud/norn/pull/1235) |
@@ -201,6 +202,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.gate.checker_certificates.s`: With 17 native_decide refutation vectors added, yet faster than the 345 s run; no explanation given. measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
 - `proof.gate.exact-arith-correspondence.s`: single sample; wall clock of the gate script only (Mathlib cache fetch excluded); earlier heads with the same mutant set ran 1039-1058 s on the same snapshot, slowdown unattributed
 - `proof.gate.exact_arith.s`: Larger scope than the 1058 s run yet faster; no explanation given. The sha is the branch head the lane named. VM type not restated. Cold or warm tool caches not stated. One run. Source is a coordinator-thread message, not on GitHub.
+- `proof.gate.kernel_binding.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_commit.s`: one sample; warm snapshot (Aeneas lake build cached); gates run sequentially on one VM sharing page cache; mutant loop dominates
 - `proof.gate.kernel_ka.s`: K-A gate on the tree of this head. measured_at is the head's commit time; the run time was not stated. No durations were stated for the K-B and K-C gates. Cold or warm tool caches not stated. One run.
 - `proof.gate.norm_precedence.s`: The source states 3m22s. measured_at is when the PR body stated it. Cold or warm tool caches not stated. One run.
