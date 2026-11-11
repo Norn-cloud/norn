@@ -1,0 +1,690 @@
+{
+  "artifactId": "ubl.invoice.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "OASIS UBL 2.3 Invoice (structure read from the pinned XSDs)",
+  "namespace": "ubl",
+  "payload": {
+    "adapter": {
+      "name": "norn.formats.pack",
+      "version": "0.1.0"
+    },
+    "datasets": [
+      {
+        "id": "InvoiceType",
+        "kind": "document",
+        "nativeName": "{urn:oasis:names:specification:ubl:schema:xsd:Invoice-2}InvoiceType"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "InvoiceType",
+        "name": "UBLExtensions",
+        "nativeType": "xsd:unresolved",
+        "ordinal": 0,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "UBLVersionID",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}UBLVersionIDType",
+        "ordinal": 1,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "CustomizationID",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}CustomizationIDType",
+        "ordinal": 2,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "ProfileID",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}ProfileIDType",
+        "ordinal": 3,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "ProfileExecutionID",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}ProfileExecutionIDType",
+        "ordinal": 4,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "ID",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}IDType",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "CopyIndicator",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}CopyIndicatorType",
+        "ordinal": 6,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "boolean"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "UUID",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}UUIDType",
+        "ordinal": 7,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "IssueDate",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}IssueDateType",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "date"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "IssueTime",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}IssueTimeType",
+        "ordinal": 9,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "time"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "DueDate",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}DueDateType",
+        "ordinal": 10,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "date"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "InvoiceTypeCode",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}InvoiceTypeCodeType",
+        "ordinal": 11,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "Note",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}NoteType",
+        "ordinal": 12,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "TaxPointDate",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}TaxPointDateType",
+        "ordinal": 13,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "date"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "DocumentCurrencyCode",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}DocumentCurrencyCodeType",
+        "ordinal": 14,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "TaxCurrencyCode",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}TaxCurrencyCodeType",
+        "ordinal": 15,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PricingCurrencyCode",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}PricingCurrencyCodeType",
+        "ordinal": 16,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PaymentCurrencyCode",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}PaymentCurrencyCodeType",
+        "ordinal": 17,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PaymentAlternativeCurrencyCode",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}PaymentAlternativeCurrencyCodeType",
+        "ordinal": 18,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "AccountingCostCode",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}AccountingCostCodeType",
+        "ordinal": 19,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "AccountingCost",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}AccountingCostType",
+        "ordinal": 20,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "LineCountNumeric",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}LineCountNumericType",
+        "ordinal": 21,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "BuyerReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}BuyerReferenceType",
+        "ordinal": 22,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "InvoicePeriod",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}PeriodType",
+        "ordinal": 23,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "OrderReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}OrderReferenceType",
+        "ordinal": 24,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "BillingReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}BillingReferenceType",
+        "ordinal": 25,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "DespatchDocumentReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}DocumentReferenceType",
+        "ordinal": 26,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "ReceiptDocumentReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}DocumentReferenceType",
+        "ordinal": 27,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "StatementDocumentReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}DocumentReferenceType",
+        "ordinal": 28,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "OriginatorDocumentReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}DocumentReferenceType",
+        "ordinal": 29,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "ContractDocumentReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}DocumentReferenceType",
+        "ordinal": 30,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "AdditionalDocumentReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}DocumentReferenceType",
+        "ordinal": 31,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "ProjectReference",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}ProjectReferenceType",
+        "ordinal": 32,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "Signature",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}SignatureType",
+        "ordinal": 33,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "AccountingSupplierParty",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}SupplierPartyType",
+        "ordinal": 34,
+        "required": true,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "AccountingCustomerParty",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}CustomerPartyType",
+        "ordinal": 35,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PayeeParty",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}PartyType",
+        "ordinal": 36,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "BuyerCustomerParty",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}CustomerPartyType",
+        "ordinal": 37,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "SellerSupplierParty",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}SupplierPartyType",
+        "ordinal": 38,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "TaxRepresentativeParty",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}PartyType",
+        "ordinal": 39,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "Delivery",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}DeliveryType",
+        "ordinal": 40,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "DeliveryTerms",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}DeliveryTermsType",
+        "ordinal": 41,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PaymentMeans",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}PaymentMeansType",
+        "ordinal": 42,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PaymentTerms",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}PaymentTermsType",
+        "ordinal": 43,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PrepaidPayment",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}PaymentType",
+        "ordinal": 44,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "AllowanceCharge",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}AllowanceChargeType",
+        "ordinal": 45,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "TaxExchangeRate",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}ExchangeRateType",
+        "ordinal": 46,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PricingExchangeRate",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}ExchangeRateType",
+        "ordinal": 47,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PaymentExchangeRate",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}ExchangeRateType",
+        "ordinal": 48,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "PaymentAlternativeExchangeRate",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}ExchangeRateType",
+        "ordinal": 49,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "TaxTotal",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}TaxTotalType",
+        "ordinal": 50,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "WithholdingTaxTotal",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}TaxTotalType",
+        "ordinal": 51,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "LegalMonetaryTotal",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}MonetaryTotalType",
+        "ordinal": 52,
+        "required": true,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "InvoiceLine",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}InvoiceLineType",
+        "ordinal": 53,
+        "required": true,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "payable_amount",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}PayableAmountType",
+        "ordinal": 54,
+        "required": true,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "supplier_endpoint",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}EndpointIDType",
+        "ordinal": 55,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "supplier_name",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}NameType",
+        "ordinal": 56,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "customer_endpoint",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}EndpointIDType",
+        "ordinal": 57,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InvoiceType",
+        "name": "customer_name",
+        "nativeType": "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}NameType",
+        "ordinal": 58,
+        "required": false,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-11T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "5f3504fd2b639fc23eb86b47d0764373ef0c1354186034e7e7567356f7c6a84b",
+      "uri": "urn:norn:xsd-bundle:sha256:5f3504fd2b639fc23eb86b47d0764373ef0c1354186034e7e7567356f7c6a84b"
+    },
+    "source": {
+      "instance": "source.oasis.ubl",
+      "system": "XSD",
+      "version": "2.3"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ubl/artifacts/ubl.invoice.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

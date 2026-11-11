@@ -98,6 +98,7 @@ pub fn decode_source_schema(value: &serde_json::Value) -> Result<SourceSchemaIr,
 pub fn check_source_schema(document: &SourceSchemaIr) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     check_envelope(document, &mut out);
+    check_standard_source_admission(document, &mut out);
     let datasets = check_datasets(document, &mut out);
     check_fields(document, &datasets, &mut out);
     let mut constraint_ids = BTreeSet::new();
@@ -604,5 +605,36 @@ fn check_evidence_list(
             Span::from_segments([list, &index.to_string(), "evidence", &position.to_string()]),
             out,
         );
+    }
+}
+
+// Source compiler output is a proposal. Canonical admission remains owned by
+// the checker, rather than duplicated in the IO-free syntax compiler.
+fn check_standard_source_admission(document: &SourceSchemaIr, out: &mut Vec<Diagnostic>) {
+    if document.adapter.name != "norn.formats.xsd" {
+        return;
+    }
+    let slot = "norn.formats.xsd/0.1.0";
+    let admission = document
+        .extensions
+        .as_ref()
+        .and_then(|slots| slots.get(slot))
+        .and_then(norn_ir::JsonValue::as_object)
+        .and_then(|profile| profile.get("admission"));
+    match admission {
+        Some(source) => {
+            for mut diagnostic in crate::ontology::check_source_admission(source) {
+                diagnostic.path = Some(format!(
+                    "/extensions/norn.formats.xsd~10.1.0/admission/{}",
+                    diagnostic.path.unwrap_or_default()
+                ));
+                out.push(diagnostic.into());
+            }
+        }
+        None => out.push(error(
+            codes::INVALID_EVIDENCE,
+            "XSD evidence requires an OntologySource admission declaration".into(),
+            Span::pointer("/extensions/norn.formats.xsd~10.1.0/admission"),
+        )),
     }
 }

@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { Agent, AgentRole, Resource, EconomicEvent, Commitment, LedgerEffect } from "../../core/src/physics.ts"
+import { Agent, AgentRole, Resource, EconomicEvent, Commitment, LedgerEffect, Claim } from "../../core/src/physics.ts"
 
 export const Catalog = Norn.interfaceType({
   name: "canon.Catalog", title: "Catalog metadata, never stock", version: "0.1.0",
@@ -82,5 +82,17 @@ export const SettlementObservation = Norn.type({
     { id: "payer", target: Party, cardinality: { to: "one", from: "many", required: true } },
     { id: "payee", target: Party, cardinality: { to: "one", from: "many", required: true } },
     { id: "event", target: "core.EconomicEvent", cardinality: { to: "one", from: "many" } },
+  ],
+})
+export const Invoice = Norn.type({
+  name: "canon.Invoice", title: "Invoice observation: a claim document", version: "0.1.0", implements: [Claim],
+  properties: Schema.Struct({
+    document_id: Norn.ref("core.document_number"), issue_date: Norn.ref("iso8601.date"),
+    amount: Norn.ref("core.money_amount"), currency: Norn.ref("core.code"), due_date: Norn.ref("iso8601.date"),
+  }),
+  links: [
+    { id: "creditor", target: Party, cardinality: { to: "one", from: "many", required: true } },
+    { id: "debtor", target: Party, cardinality: { to: "one", from: "many", required: true } },
+    { id: "arises_from", target: "core.Commitment", cardinality: { to: "one", from: "many" } },
   ],
 })

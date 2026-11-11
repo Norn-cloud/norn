@@ -1,0 +1,21 @@
+{
+  "sha256": "4263d7e864744e7bb7b309468ac8d840a51192191a13ee199d55763dad67759f",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/ubl/records.ts",
+    "registry/packs/ubl/source.ts",
+    "registry/packs/ubl/ubl.pack.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
