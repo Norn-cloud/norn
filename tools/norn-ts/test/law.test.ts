@@ -117,6 +117,7 @@ describe("closures, sum and day helpers", () => {
     refuse(() => X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "sku"))), X.lit(0)), /sum expects a list of numbers/)
     refuse(() => X.le(X.call("days_between", self("issue_date"), self("due_date")), X.lit(1)), /parsed dates/)
     refuse(() => X.ge(X.addDays(self("issue_date"), X.lit("x")), X.call("date", self("due_date"))), /whole number of days/)
+    refuse(() => X.ge(X.addDays(self("issue_date"), X.lit(1.5)), X.call("date", self("due_date"))), /whole number of days, not number/)
     refuse(() => X.ge(X.addDays(self("issue_date"), X.lit(1)), X.call("timestamp", self("due_date"))), /qualified for numbers only/)
   })
 
