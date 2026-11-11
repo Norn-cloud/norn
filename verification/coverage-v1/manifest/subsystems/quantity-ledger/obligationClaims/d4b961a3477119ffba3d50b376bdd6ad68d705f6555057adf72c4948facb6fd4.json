@@ -5,7 +5,7 @@
     "runtime": "tested",
     "model": "missing",
     "proof": "partial",
-    "residual": "The production checker and differential/property cases exercise exact checked i128 arithmetic, while Kani proves only one fixed intermediate-overflow vector and a bounded pair domain; no proof covers every admitted bound or production evaluator path.",
+    "residual": "The production checker and differential/property cases exercise exact checked i128 arithmetic, while Kani proves only one fixed intermediate-overflow vector and a bounded pair domain. Aeneas/Lean (scripts/verify-exact-arith-aeneas.sh) proves, for every i128 and u8 input, that the extracted production canonical_parts and checked_pow10 and the FOLD-ARITHMETIC rounding quotient match their written semantics, under TRUST-CHARON-AENEAS-AND-CORE-MODELS; the claim stays partial until runner receipts admit implementation proofs (#969), and no proof covers every admitted bound, the remaining ledger arithmetic or the evaluator's lowering to these functions.",
     "evidence": {
       "runtime": {
         "$entries": "obligationClaims.entryd4b961a3477119ffba3d50b376bdd6ad68d705f6555057adf72c4948facb6fd4.evidence.runtime"

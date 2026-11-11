@@ -4,7 +4,14 @@
   "leanCompositeGates": {
     "verification/kernel-l1/Reference.lean": "scripts/verify-kernel-l1-lean.sh",
     "verification/kernel-l1/Audit.lean": "scripts/verify-kernel-l1-lean.sh",
-    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh"
+    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh",
+    "verification/exact-arith-v1/Decimal/FunsExternal.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/DecimalProof.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/DecimalReference.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/QuotientProof.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/RoundingMath.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/RoundingReference.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/ScaledQuotient/FunsExternal.lean": "scripts/verify-exact-arith-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [
