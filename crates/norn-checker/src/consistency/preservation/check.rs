@@ -7,6 +7,11 @@
 //!
 //! Every helper refuses (`None` or `false`) rather than panics when an index
 //! is missing or arithmetic overflows; a refusal only withholds `certified`.
+#![allow(
+    clippy::question_mark,
+    clippy::vec_init_then_push,
+    reason = "Charon/Aeneas extract this file and translate neither `?` on Option nor `vec!`"
+)]
 
 /// An atom over variables, or (in a state) over elements.
 #[derive(Debug, Clone, PartialEq, Eq)]
