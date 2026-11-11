@@ -5,20 +5,22 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     reason = "test assertions"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 
+use norn_builtins::Registered;
 use norn_builtins::decision::{
     DeciderEvidence, Decision, DecisionRefusal, IssuedOnly, MAX_OPTION_ID_CHARS, MAX_REQUEST_BYTES,
     MAX_TEXT_CHARS, REQUEST_BLOB, expire, issue, parse_request, withdraw,
 };
 use norn_ir::function::{
     Authority, AuthorityKind, BlobRef, Digest, Fencing, FreshnessMode, FunctionInvocation,
-    FunctionManifest, FunctionOutcome, FunctionReceipt, MemberPin, PredicatePin,
-    RelevantStateToken, RetryCeiling, RunRef,
+    FunctionOutcome, FunctionReceipt, MemberPin, PredicatePin, RelevantStateToken, RetryCeiling,
+    RunRef,
 };
 use norn_kernel::result_reconciliation::{
     Completion, DispatchedCommand, InvalidReceipt, ReceiptValidator, ReconcileContext,
@@ -26,13 +28,14 @@ use norn_kernel::result_reconciliation::{
     ResultDenial, StateView, reconcile,
 };
 use norn_kernel::{CommandId, FactKey, FactVersion, Generation, LogicalTime};
+use norn_testkit::proptest::prelude::*;
 use serde_json::json;
 
 const TENANT: &str = "org_demo";
 const DEADLINE: u64 = 10_000;
 
-fn manifest() -> FunctionManifest {
-    norn_builtins::decision_manifest().unwrap()
+fn manifest() -> Registered {
+    norn_builtins::registered_decision().unwrap()
 }
 
 fn request(extra: &serde_json::Value) -> Vec<u8> {
@@ -55,7 +58,7 @@ fn request(extra: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&body).unwrap()
 }
 
-fn invocation(manifest: &FunctionManifest, request: &[u8]) -> FunctionInvocation {
+fn invocation(manifest: &Registered, request: &[u8]) -> FunctionInvocation {
     FunctionInvocation {
         tenant: TENANT.to_owned(),
         world: "main".to_owned(),
@@ -68,7 +71,7 @@ fn invocation(manifest: &FunctionManifest, request: &[u8]) -> FunctionInvocation
             id: "run-1".to_owned(),
             generation: 1,
         },
-        manifest: manifest.content_digest().unwrap(),
+        manifest: manifest.digest().clone(),
         inputs: BTreeMap::new(),
         blobs: BTreeMap::from([(
             REQUEST_BLOB.to_owned(),
@@ -142,18 +145,18 @@ impl StateView for Unchanged {
 
 /// Reconcile `receipt` as the perform's result under the issued-only contract.
 fn deliver(
-    manifest: &FunctionManifest,
+    manifest: &Registered,
     invocation: &FunctionInvocation,
     issued: &BTreeSet<Digest>,
     receipt: &FunctionReceipt,
 ) -> Reconciliation {
     let dispatched = DispatchedCommand::pin(
         invocation.clone(),
-        manifest.execution_profile_digest().unwrap(),
+        manifest.manifest().execution_profile_digest().unwrap(),
     )
     .unwrap();
     let state = norn_kernel::result_reconciliation::CommandState::dispatched(&dispatched);
-    let digest = manifest.content_digest().unwrap();
+    let digest = manifest.digest().clone();
     let validator = IssuedOnly {
         manifest: &digest,
         issued,
@@ -400,51 +403,15 @@ fn answers_and_requests_are_bounded() {
     }
 }
 
-#[test]
-fn expiry_and_withdrawal_are_typed_failures_the_cell_issues() {
-    let manifest = manifest();
-    let body = request(&json!({}));
-    let invocation = invocation(&manifest, &body);
-    assert_eq!(
-        expire(&manifest, &invocation, &body, DEADLINE),
-        Err(DecisionRefusal::NotExpired)
-    );
-    let expired = expire(&manifest, &invocation, &body, DEADLINE + 1).unwrap();
-    let withdrawn = withdraw(&manifest, &invocation, &body, &ada(), DEADLINE).unwrap();
-    for (issued, tag) in [(expired, "Expired"), (withdrawn, "Withdrawn")] {
-        let FunctionOutcome::Failure(failure) = &issued.receipt().outcome else {
-            panic!("{tag} is a typed failure")
-        };
-        assert_eq!(failure.code, tag);
-        assert_eq!(
-            failure.detail.get("_tag"),
-            Some(&norn_ir::RuntimeValue::String(tag.to_owned()))
-        );
-    }
-}
-
-/// Sol S5 (#1173): after the deadline only `Expired` may be issued; a
-/// withdrawal then refuses, exactly as a decision does.
-#[test]
-fn a_withdrawal_after_the_deadline_is_refused() {
-    let manifest = manifest();
-    let body = request(&json!({}));
-    let invocation = invocation(&manifest, &body);
-    assert!(withdraw(&manifest, &invocation, &body, &ada(), DEADLINE - 1).is_ok());
-    assert!(withdraw(&manifest, &invocation, &body, &ada(), DEADLINE).is_ok());
-    assert_eq!(
-        withdraw(&manifest, &invocation, &body, &ada(), DEADLINE + 1),
-        Err(DecisionRefusal::Expired)
-    );
-    assert!(expire(&manifest, &invocation, &body, DEADLINE + 1).is_ok());
-}
-
-/// Sol S2 (#1173): the manifest's 64 KiB `max_input_bytes` binds the parser
+/// Sol S2 (#1163): the manifest's 64 KiB `max_input_bytes` binds the parser
 /// and every issuance path, before parsing or hashing.
 #[test]
 fn an_oversized_request_is_refused_before_parsing_and_issuance() {
     let manifest = manifest();
-    assert_eq!(manifest.bounds.max_input_bytes, Some(MAX_REQUEST_BYTES));
+    assert_eq!(
+        manifest.manifest().bounds.max_input_bytes,
+        Some(MAX_REQUEST_BYTES)
+    );
     let body = request(&json!({ "options": [
         { "id": "publish", "label": "Publish", "effect": { "action": "a".repeat(70_000) }, "scope": "Public" }
     ], "agentPick": "publish" }));
@@ -473,20 +440,254 @@ fn an_oversized_request_is_refused_before_parsing_and_issuance() {
         Err(too_large)
     );
     assert_eq!(
-        expire(&manifest, &invocation, &body, DEADLINE + 1),
+        expire(&manifest, &invocation, &body, DEADLINE),
         Err(too_large)
     );
+    let owner = invocation.authority.clone();
+    let none = BTreeSet::new();
+    let by_owner = DeciderEvidence {
+        actor: &owner,
+        roles: &none,
+        satisfied_laws: &none,
+    };
     assert_eq!(
-        withdraw(&manifest, &invocation, &body, &ada(), DEADLINE - 1),
+        withdraw(&manifest, &invocation, &body, &by_owner, DEADLINE - 1),
         Err(too_large)
     );
 }
 
-/// Sol S4 (#1173): an unbounded option id fit the input budget but overflowed
-/// the 32 KiB receipt summary. Ids are bounded, and the widest accepted
-/// answer still issues a receipt within the summary bound.
+#[test]
+fn expiry_and_withdrawal_are_typed_failures_the_cell_issues() {
+    let manifest = manifest();
+    let body = request(&json!({}));
+    let invocation = invocation(&manifest, &body);
+    let owner = invocation.authority.clone();
+    let none = BTreeSet::new();
+    let by_owner = DeciderEvidence {
+        actor: &owner,
+        roles: &none,
+        satisfied_laws: &none,
+    };
+    assert_eq!(
+        expire(&manifest, &invocation, &body, DEADLINE - 1),
+        Err(DecisionRefusal::NotExpired)
+    );
+    let expired = expire(&manifest, &invocation, &body, DEADLINE).unwrap();
+    let withdrawn = withdraw(&manifest, &invocation, &body, &by_owner, DEADLINE - 1).unwrap();
+    for (issued, tag) in [(expired, "Expired"), (withdrawn, "Withdrawn")] {
+        let FunctionOutcome::Failure(failure) = &issued.receipt().outcome else {
+            panic!("{tag} is a typed failure")
+        };
+        assert_eq!(failure.code, tag);
+        assert_eq!(
+            failure.detail.get("_tag"),
+            Some(&norn_ir::RuntimeValue::String(tag.to_owned()))
+        );
+    }
+}
+
+#[test]
+fn a_withdrawal_refuses_at_the_deadline_and_for_an_unknown_withdrawer() {
+    let manifest = manifest();
+    let body = request(&json!({}));
+    let invocation = invocation(&manifest, &body);
+    let none = BTreeSet::new();
+    let approver = roles(&["finance.approver"]);
+    let owner = invocation.authority.clone();
+    let empty = Authority {
+        kind: AuthorityKind::Actor,
+        id: String::new(),
+    };
+    let stranger = Authority {
+        kind: AuthorityKind::Service,
+        id: "agent:copilot".to_owned(),
+    };
+    let withdraw_as = |actor: &Authority, held: &BTreeSet<String>, now| {
+        withdraw(
+            &manifest,
+            &invocation,
+            &body,
+            &DeciderEvidence {
+                actor,
+                roles: held,
+                satisfied_laws: &none,
+            },
+            now,
+        )
+    };
+    // At or after the deadline only Expired resolves the decision.
+    for now in [DEADLINE, DEADLINE + 1] {
+        assert_eq!(
+            withdraw_as(&owner, &none, now),
+            Err(DecisionRefusal::Expired)
+        );
+    }
+    for (actor, held) in [
+        (&empty, &approver),
+        (&stranger, &none),
+        (&stranger, &approver),
+        (&ada(), &none),
+    ] {
+        assert_eq!(
+            withdraw_as(actor, held, 5_000),
+            Err(DecisionRefusal::NotADecider),
+            "{actor:?}"
+        );
+    }
+    // The run's own authority, or a decider, may withdraw before the deadline.
+    assert!(withdraw_as(&owner, &none, 5_000).is_ok());
+    assert!(withdraw_as(&ada(), &approver, 5_000).is_ok());
+}
+
+/// One cell-side attempt to resolve the decision at a logical time.
+#[derive(Debug, Clone)]
+enum Attempt {
+    Decide(usize),
+    Withdraw,
+    Expire,
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+    /// DECISION-TERMINAL-1: for any interleaving of decide, withdraw and
+    /// expire, delivered in order to reconciliation, exactly one terminal
+    /// receipt is accepted per decision: the first one issued.
+    #[test]
+    fn any_interleaving_accepts_exactly_one_terminal_receipt(
+        attempts in prop::collection::vec(
+            (
+                prop_oneof![
+                    (0_usize..3).prop_map(Attempt::Decide),
+                    Just(Attempt::Withdraw),
+                    Just(Attempt::Expire),
+                ],
+                0_u64..2 * DEADLINE,
+            ),
+            1..12,
+        ),
+    ) {
+        let manifest = manifest();
+        let body = request(&json!({}));
+        let invocation = invocation(&manifest, &body);
+        let held = roles(&["finance.approver"]);
+        let laws = roles(&["law.two_person"]);
+        let evidence = DeciderEvidence { actor: &ada(), roles: &held, satisfied_laws: &laws };
+        let choices = ["publish", "hold", "ship"];
+        let mut attempts = attempts;
+        attempts.sort_by_key(|(_, at)| *at);
+        // The cell's alarm always expires an unresolved decision eventually.
+        attempts.push((Attempt::Expire, 2 * DEADLINE));
+        let dispatched = DispatchedCommand::pin(
+            invocation.clone(),
+            manifest.manifest().execution_profile_digest().unwrap(),
+        )
+        .unwrap();
+        let digest = manifest.digest().clone();
+        let mut state = norn_kernel::result_reconciliation::CommandState::dispatched(&dispatched);
+        let mut ledger = BTreeSet::new();
+        let mut first_issued = None;
+        let mut accepted = Vec::new();
+        for (attempt, at) in attempts {
+            let issued = match attempt {
+                Attempt::Decide(choice) => issue(&manifest, &invocation, &body, &evidence, &decide(choices[choice]), at),
+                Attempt::Withdraw => withdraw(&manifest, &invocation, &body, &evidence, at),
+                Attempt::Expire => expire(&manifest, &invocation, &body, at),
+            };
+            let Ok(issued) = issued else { continue };
+            // The issuers' windows never overlap: before the deadline a
+            // decision or withdrawal, at or after it only expiry.
+            let expiry = matches!(&issued.receipt().outcome, FunctionOutcome::Failure(failure) if failure.code == "Expired");
+            prop_assert_eq!(expiry, at >= DEADLINE);
+            ledger.insert(issued.digest().clone());
+            first_issued.get_or_insert_with(|| issued.digest().clone());
+            let validator = IssuedOnly { manifest: &digest, issued: &ledger, inner: &Contract };
+            let outcome = reconcile(
+                &ReconcileContext {
+                    tenant: TENANT,
+                    world: "main",
+                    now: LogicalTime::from_millis(at),
+                    // The cell issues every decision receipt itself, so the
+                    // issuers, not the delivery time, enforce the deadline.
+                    policy: ReconcilePolicy { accept_late: true, ..ReconcilePolicy::DEFAULT },
+                },
+                &dispatched,
+                &state,
+                &Completion {
+                    receipt: issued.receipt(),
+                    command: &CommandId(invocation.command_id.clone()),
+                    generation: Generation(1),
+                    authenticated_executor: Some(issued.receipt().provenance.executor.as_str()),
+                },
+                &ResultChecks { authorizer: &Allow, validator: &validator },
+                &Unchanged,
+            )
+            .unwrap();
+            match outcome {
+                Reconciliation::Accepted(acceptance) => {
+                    accepted.push(acceptance.record.receipt.clone());
+                    state = acceptance.state;
+                }
+                Reconciliation::Refused(refused) => state = refused.state,
+            }
+        }
+        prop_assert_eq!(accepted.len(), 1, "exactly one terminal receipt");
+        prop_assert_eq!(Some(&accepted[0]), first_issued.as_ref());
+    }
+}
+
+#[test]
+fn only_the_registered_manifest_binds() {
+    // Sol S2 on #1046: a manifest with another implementation or runtime
+    // digest, and an invocation pinned to its recomputed digest, issue nothing.
+    let registered = manifest();
+    let body = request(&json!({}));
+    let held = roles(&["finance.approver"]);
+    let laws = roles(&["law.two_person"]);
+    let evidence = DeciderEvidence {
+        actor: &ada(),
+        roles: &held,
+        satisfied_laws: &laws,
+    };
+    let other = Digest(format!("sha256:{}", "e".repeat(64)));
+    let mut implementation = registered.manifest().clone();
+    implementation.implementation.digest = other.clone();
+    let mut runtime = registered.manifest().clone();
+    runtime.runtime.digest = other;
+    for forged in [implementation, runtime] {
+        let mut dispatch = invocation(&registered, &body);
+        dispatch.manifest = forged.content_digest().unwrap();
+        assert_ne!(&dispatch.manifest, registered.digest());
+        assert_eq!(
+            issue(
+                &registered,
+                &dispatch,
+                &body,
+                &evidence,
+                &decide("hold"),
+                5_000
+            ),
+            Err(DecisionRefusal::NotThisCommand)
+        );
+        assert_eq!(
+            withdraw(&registered, &dispatch, &body, &evidence, 5_000),
+            Err(DecisionRefusal::NotThisCommand)
+        );
+        assert_eq!(
+            expire(&registered, &dispatch, &body, DEADLINE),
+            Err(DecisionRefusal::NotThisCommand)
+        );
+    }
+    // The registry is the only source of a `Registered` manifest.
+    assert_eq!(
+        norn_builtins::resolve("norn.decision", 1).unwrap(),
+        Some(registered)
+    );
+}
+
 #[test]
 fn every_accepted_choice_fits_the_receipt_summary() {
+    // Sol S3 on #1046: an unbounded option id passed the input bound but
+    // overflowed the 32 KiB summary.
     let option =
         |id: &str| json!({ "id": id, "label": "L", "effect": { "action": "a" }, "scope": "S" });
     let refused = |extra: serde_json::Value| {
@@ -504,11 +705,20 @@ fn every_accepted_choice_fits_the_receipt_summary() {
         refused(json!({ "options": [option(&"o".repeat(33_000))], "agentPick": null })),
         "decision.option_id"
     );
+    for field in ["label", "scope"] {
+        let mut wide = option("a");
+        wide[field] = json!("l".repeat(MAX_TEXT_CHARS + 1));
+        assert_eq!(
+            refused(json!({ "options": [wide], "agentPick": null })),
+            "decision.option_text",
+            "{field}"
+        );
+    }
     // The widest accepted answer: the longest id and the longest note of the
     // widest characters (4-byte UTF-8; U+0958 also changes under NFC).
     let body = request(&json!({ "options": [option(&longest)], "agentPick": null }));
-    let manifest = manifest();
-    let dispatch = invocation(&manifest, &body);
+    let registered = manifest();
+    let dispatch = invocation(&registered, &body);
     let held = roles(&["finance.approver"]);
     let laws = roles(&["law.two_person"]);
     let evidence = DeciderEvidence {
@@ -521,7 +731,7 @@ fn every_accepted_choice_fits_the_receipt_summary() {
             choice: longest.clone(),
             note: Some(wide.to_string().repeat(MAX_TEXT_CHARS)),
         };
-        let issued = issue(&manifest, &dispatch, &body, &evidence, &answer, 5_000).unwrap();
+        let issued = issue(&registered, &dispatch, &body, &evidence, &answer, 5_000).unwrap();
         let FunctionOutcome::Success(success) = &issued.receipt().outcome else {
             panic!("a decision succeeds")
         };

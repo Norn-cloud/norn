@@ -17,9 +17,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_ir::RuntimeValue;
 use norn_ir::function::{
     AuthorityKind, CacheOrigin, Digest, ExecutionProvenance, FailureOutcome, FunctionInvocation,
-    FunctionManifest, FunctionOutcome, FunctionReceipt, ResourceUse, SuccessOutcome,
+    FunctionOutcome, FunctionReceipt, ResourceUse, SuccessOutcome,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::Registered;
 
 /// The Function id.
 pub const FUNCTION_ID: &str = "norn.decision";
@@ -33,7 +35,7 @@ pub const OUTPUT_SCHEMA: &str = include_str!("schemas/decision.output.json");
 pub const ERROR_SCHEMA: &str = include_str!("schemas/decision.error.json");
 /// The blob that carries the canonical-JSON request.
 pub const REQUEST_BLOB: &str = "request";
-/// The longest question and note, in characters.
+/// The longest question, note, option label and option scope, in characters.
 pub const MAX_TEXT_CHARS: usize = 500;
 /// The longest option id, in characters (ASCII, so also bytes).
 pub const MAX_OPTION_ID_CHARS: usize = 64;
@@ -43,6 +45,10 @@ pub const MAX_OPTIONS: usize = 9;
 /// `max_input_bytes`. [`parse_request`] and every issuance path refuse a
 /// larger request before parsing or hashing it.
 pub const MAX_REQUEST_BYTES: u64 = 64 * 1024;
+
+fn too_large(request: &[u8]) -> bool {
+    !u64::try_from(request.len()).is_ok_and(|len| len <= MAX_REQUEST_BYTES)
+}
 /// The longest a decision may wait: seven days.
 pub const MAX_EXPIRES_IN_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 /// Where the cell issues the receipt.
@@ -79,11 +85,12 @@ pub struct DecisionOption {
     /// `[a-z][a-z0-9_]*`, at most [`MAX_OPTION_ID_CHARS`] characters, unique
     /// within the decision; `choice` names it.
     pub id: String,
-    /// What the decider reads.
+    /// What the decider reads, at most [`MAX_TEXT_CHARS`] characters.
     pub label: String,
     /// What it does.
     pub effect: OptionEffect,
-    /// How far it reaches, in the decider's words.
+    /// How far it reaches, in the decider's words, at most
+    /// [`MAX_TEXT_CHARS`] characters.
     pub scope: String,
 }
 
@@ -159,10 +166,10 @@ pub enum DecisionRefusal {
     /// The note is longer than [`MAX_TEXT_CHARS`].
     NoteTooLong,
     /// The answer's summary would exceed the receipt summary bound. The id
-    /// and note bounds keep every accepted choice far below it; this check
-    /// keeps that true if a bound moves.
+    /// and note bounds keep every accepted choice far below it (the widest
+    /// is under 20 KiB); this check keeps that true if a bound moves.
     SummaryTooLarge,
-    /// The decision's deadline passed; only [`expire`] can resolve it now.
+    /// The decision's deadline was reached; only [`expire`] can resolve it now.
     Expired,
     /// The deadline has not passed, so it cannot expire yet.
     NotExpired,
@@ -219,10 +226,6 @@ impl IssuedReceipt {
     }
 }
 
-fn too_large(request: &[u8]) -> bool {
-    !u64::try_from(request.len()).is_ok_and(|len| len <= MAX_REQUEST_BYTES)
-}
-
 fn is_option_id(id: &str) -> bool {
     let mut chars = id.chars();
     id.len() <= MAX_OPTION_ID_CHARS
@@ -255,6 +258,12 @@ pub fn parse_request(bytes: &[u8]) -> Result<DecisionRequest, DecisionRefusal> {
         if option.effect.action.is_some() == option.effect.binding.is_some() {
             return Err(invalid("decision.option_effect"));
         }
+        if [&option.label, &option.scope]
+            .iter()
+            .any(|text| text.chars().count() > MAX_TEXT_CHARS)
+        {
+            return Err(invalid("decision.option_text"));
+        }
     }
     if request
         .agent_pick
@@ -275,20 +284,26 @@ pub fn parse_request(bytes: &[u8]) -> Result<DecisionRequest, DecisionRefusal> {
     Ok(request)
 }
 
-/// Check `invocation` is a dispatch of `manifest` carrying exactly `request`.
+/// DECISION-TERMINAL-1: the command is open strictly before its deadline.
+/// Before it, a decision or a withdrawal may resolve the command; at or after
+/// it, only [`expire`] can. The two windows never overlap.
+const fn open(invocation: &FunctionInvocation, now_ms: u64) -> bool {
+    now_ms < invocation.deadline_millis
+}
+
+/// Check `invocation` is a dispatch of the registered `norn.decision@1`
+/// carrying exactly `request`.
 fn bind(
-    manifest: &FunctionManifest,
+    registered: &Registered,
     invocation: &FunctionInvocation,
     request: &[u8],
-) -> Result<(DecisionRequest, Digest), DecisionRefusal> {
+) -> Result<DecisionRequest, DecisionRefusal> {
     if too_large(request) {
         return Err(DecisionRefusal::InvalidRequest(
             "decision.request_too_large",
         ));
     }
-    let digest = manifest
-        .content_digest()
-        .map_err(|_canonical| DecisionRefusal::Canonical)?;
+    let manifest = registered.manifest();
     let blob = invocation
         .blobs
         .get(REQUEST_BLOB)
@@ -297,7 +312,7 @@ fn bind(
         Digest::of_json_document(request).map_err(|_canonical| DecisionRefusal::NotThisCommand)?;
     if manifest.function_id != FUNCTION_ID
         || manifest.version != VERSION
-        || invocation.manifest != digest
+        || &invocation.manifest != registered.digest()
         || blob.digest != request_digest
         || u64::try_from(request.len()).ok() != Some(blob.size_bytes)
         || invocation.blobs.len() != 1
@@ -305,23 +320,23 @@ fn bind(
     {
         return Err(DecisionRefusal::NotThisCommand);
     }
-    Ok((parse_request(request)?, digest))
+    parse_request(request)
 }
 
 fn receipt(
-    manifest: &FunctionManifest,
-    manifest_digest: Digest,
+    registered: &Registered,
     invocation: &FunctionInvocation,
     executor: &str,
     outcome: FunctionOutcome,
 ) -> Result<IssuedReceipt, DecisionRefusal> {
     let canonical = |_error| DecisionRefusal::Canonical;
+    let manifest = registered.manifest();
     let receipt = FunctionReceipt {
         command_id: invocation.command_id.clone(),
         run: invocation.run.clone(),
         attempt: 1,
         dispatch: invocation.content_digest().map_err(canonical)?,
-        manifest: manifest_digest,
+        manifest: registered.digest().clone(),
         execution_profile: manifest.execution_profile_digest().map_err(canonical)?,
         input_identity: invocation.input_identity().map_err(canonical)?,
         dependency_token: invocation.dependency.digest().map_err(canonical)?,
@@ -351,15 +366,15 @@ fn receipt(
 /// not an Actor with a decider role, or the decider law is unsatisfied; the
 /// choice is unknown or the note too long.
 pub fn issue(
-    manifest: &FunctionManifest,
+    registered: &Registered,
     invocation: &FunctionInvocation,
     request: &[u8],
     decider: &DeciderEvidence<'_>,
     decision: &Decision,
     now_ms: u64,
 ) -> Result<IssuedReceipt, DecisionRefusal> {
-    let (request, manifest_digest) = bind(manifest, invocation, request)?;
-    if now_ms > invocation.deadline_millis {
+    let request = bind(registered, invocation, request)?;
+    if !open(invocation, now_ms) {
         return Err(DecisionRefusal::Expired);
     }
     if decider.actor.kind != AuthorityKind::Actor
@@ -406,8 +421,7 @@ pub fn issue(
     let output_manifest = norn_ir::function::output_manifest_digest(&[], &summary)
         .map_err(|_canonical| DecisionRefusal::Canonical)?;
     receipt(
-        manifest,
-        manifest_digest,
+        registered,
         invocation,
         &decider.actor.id,
         FunctionOutcome::Success(SuccessOutcome {
@@ -430,48 +444,48 @@ fn failure(tag: &str) -> FunctionOutcome {
 /// # Errors
 /// The command does not bind, or the deadline has not passed.
 pub fn expire(
-    manifest: &FunctionManifest,
+    registered: &Registered,
     invocation: &FunctionInvocation,
     request: &[u8],
     now_ms: u64,
 ) -> Result<IssuedReceipt, DecisionRefusal> {
-    let (_request, manifest_digest) = bind(manifest, invocation, request)?;
-    if now_ms <= invocation.deadline_millis {
+    bind(registered, invocation, request)?;
+    if open(invocation, now_ms) {
         return Err(DecisionRefusal::NotExpired);
     }
-    receipt(
-        manifest,
-        manifest_digest,
-        invocation,
-        PLACEMENT,
-        failure("Expired"),
-    )
+    receipt(registered, invocation, PLACEMENT, failure("Expired"))
 }
 
-/// Issue the `Withdrawn` receipt for `withdrawer`, whom the caller
-/// authorized, while the decision is still open: after the deadline only
-/// [`expire`] resolves it.
+/// Issue the `Withdrawn` receipt before the deadline. The withdrawer is the
+/// run's own dispatching authority, or an Actor holding a decider role; the
+/// cell resolves either from the verified caller.
 ///
 /// # Errors
-/// The command does not bind, or the deadline passed.
+/// The command does not bind; the deadline passed (only [`expire`] resolves
+/// it now); the withdrawer is empty or neither of the above.
 pub fn withdraw(
-    manifest: &FunctionManifest,
+    registered: &Registered,
     invocation: &FunctionInvocation,
     request: &[u8],
-    withdrawer: &norn_ir::function::Authority,
+    withdrawer: &DeciderEvidence<'_>,
     now_ms: u64,
 ) -> Result<IssuedReceipt, DecisionRefusal> {
-    let (_request, manifest_digest) = bind(manifest, invocation, request)?;
-    if now_ms > invocation.deadline_millis {
+    let request = bind(registered, invocation, request)?;
+    if !open(invocation, now_ms) {
         return Err(DecisionRefusal::Expired);
     }
-    receipt(
-        manifest,
-        manifest_digest,
-        invocation,
-        &withdrawer.id,
-        failure("Withdrawn"),
-    )
+    let actor = withdrawer.actor;
+    let owner = actor == &invocation.authority;
+    let decider = actor.kind == AuthorityKind::Actor
+        && request
+            .decider
+            .roles
+            .iter()
+            .any(|role| withdrawer.roles.contains(role));
+    if actor.id.is_empty() || !(owner || decider) {
+        return Err(DecisionRefusal::NotADecider);
+    }
+    receipt(registered, invocation, &actor.id, failure("Withdrawn"))
 }
 
 /// DECISION-ISSUED-1: for the `norn.decision@1` manifest, reconciliation

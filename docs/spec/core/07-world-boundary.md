@@ -192,11 +192,14 @@ BUILTIN-PIN-1: the engine's compiled-in registry is the crate `norn-builtins`.
 Each built-in's manifest pins `runtime.id`/`runtime.version` to that crate and
 `implementation.digest` and `runtime.digest` to its HOST-TREE-1 digest, recorded
 in `registry/builtins/norn-builtins.json` outside the digested tree. The locator
-is `norn-builtins/<version>@<digest>`. A drift test recomputes the digest from the
-crate's sources and fails until a reviewed change re-pins it. Only this table
-registers built-ins: `resolve(id, version)` answers nothing for any other id or
-version, and authored or pack `host` manifests keep refusing
-`function.manifest.authored_host`.
+is `norn-builtins/<version>@<digest>`. The crate's build script recomputes the
+digest from its sources and fails the build until a reviewed change re-pins it,
+and the registry refuses `builtin.pin_mismatch` unless the pin equals the digest
+it was built from. Only this table registers built-ins: `resolve(id, version)`
+answers nothing for any other id or version, and authored or pack `host`
+manifests keep refusing `function.manifest.authored_host`. The decision functions
+accept only a manifest the registry handed out (`Registered`), and bind only a
+dispatch pinned to its exact digest.
 
 DECISION-1 (`norn.decision@1`, D58): a flow asks a person by `perform` of this
 built-in, then `route` on `choice` with `otherwise` failing; the run waits in
@@ -204,11 +207,13 @@ built-in, then `route` on `choice` with `otherwise` failing; the run waits in
 a closed record `{question, risk: low|medium|high, options: [{id, label,
 effect: {action}|{binding}, scope}], agentPick?, decider: {roles, law?},
 expiresInMs?}`. The cell enforces the bounds the closed schema cannot carry:
-question and note at most 500 characters, one to nine options, option ids
-`[a-z][a-z0-9_]*` and unique, exactly one effect member, `agentPick` naming an
+question, note, option label and option scope at most 500 characters, one to
+nine options, option ids `[a-z][a-z0-9_]*`, at most 64 characters and unique, exactly one effect member, `agentPick` naming an
 option (a recommendation, never a decision), at least one decider role, and
 `expiresInMs` at most seven days, which the cell turns into the command's
-deadline. The output is `{choice, note?}`, where `choice` must name an option.
+deadline. The output is `{choice, note?}`, where `choice` must name an option;
+these bounds keep every accepted answer within the receipt summary bound, and the
+cell refuses `decision.summary_too_large` if one ever would not.
 The errors are `{_tag: "Expired" | "Withdrawn"}`.
 
 Only the cell resolves the command, by issuing the Function receipt itself and
@@ -217,9 +222,12 @@ route path then applies it, and the result's single consumption follows the
 ordinary delivery fence (Core 04). Issuing requires the verified caller to be an
 Actor holding one of `decider.roles`; when `decider.law` is set, the server must
 also have evaluated that law as satisfied. The receipt's `provenance.executor` is
-the deciding Actor and its placement is `norn.cell`. After the deadline only the
-`Expired` receipt can be issued; `Withdrawn` is issued for an authorized
-withdrawer. DECISION-ISSUED-1: for this manifest, reconciliation accepts only
+the deciding Actor and its placement is `norn.cell`. DECISION-TERMINAL-1: the command is open strictly before its deadline. Before
+it, the cell may issue a decision or a `Withdrawn` receipt; at or after it, only
+`Expired`. The windows never overlap, so reconciliation accepts exactly one
+terminal receipt per decision: the first issued. A withdrawer is the run's own
+dispatching authority or an Actor holding a decider role; an empty or other
+withdrawer refuses `decision.not_a_decider`. DECISION-ISSUED-1: for this manifest, reconciliation accepts only
 receipts the cell issued and retained. A client-supplied result, even
 byte-identical to an issued receipt the cell has no record of, refuses
 `decision.receipt_not_cell_issued`. Refusals: `decision.not_a_decider`,
@@ -229,7 +237,11 @@ bounds; a request blob over the manifest's 64 KiB `max_input_bytes` refuses
 `decision.request_too_large` before it is parsed or hashed. An action-based decide route can instead consume the receipt through
 RECEIPT-CONSUME-1. Named scenarios (`crates/norn-builtins/tests/`):
 **DECISION-RESOLVE**, **DECISION-FORGED**, **DECISION-NON-DECIDER**,
-**DECISION-BOUNDS**, **DECISION-EXPIRE**, **BUILTIN-PIN-DRIFT**.
+**DECISION-BOUNDS**, **DECISION-EXPIRE**, **DECISION-WITHDRAW**,
+**DECISION-TERMINAL** (any interleaving accepts exactly one terminal receipt),
+**DECISION-REGISTERED** (a recomputed manifest digest binds nothing),
+**DECISION-SUMMARY-BOUND**, **BUILTIN-PIN-DRIFT** (an edit without a new pin
+fails the build check).
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 

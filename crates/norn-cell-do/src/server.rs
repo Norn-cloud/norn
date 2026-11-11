@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::host::DevHost;
+use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
+use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
+use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
     evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
@@ -21,7 +24,7 @@ use norn_cell::engine::SqlEngine;
 
 use norn_api::authz::{ReadCapability, ReadRequest};
 
-use crate::policy::{CallerSlot, DEMO_GRANTS, READ_POLICY_ID, collection_access};
+use crate::policy::{CallerSlot, CellObjectAccess, DEMO_GRANTS, READ_POLICY_ID, collection_access};
 use crate::principal::{PrincipalResolver, RequestScope};
 
 /// One finite HTTP response: a status and a JSON body.
@@ -35,6 +38,10 @@ pub struct Response {
 
 /// Longest accepted query string, in bytes.
 pub const MAX_QUERY_BYTES: usize = 2048;
+
+/// Longest accepted grid query string, in bytes: a filter of eight clauses,
+/// each `in` up to fifty values, percent-encoded.
+pub const MAX_OBJECT_QUERY_BYTES: usize = 8192;
 
 /// One finite HTTP request as the transport delivers it.
 #[derive(Debug, Clone, Copy)]
@@ -87,8 +94,10 @@ pub fn handle_with<E: SqlEngine>(
         .and_then(|rest| rest.split_once('/'))
         .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
+    let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let known = path == "/v1/definitions"
         || ad_hoc
+        || object.is_some()
         || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
     let result = if !known {
         Err(Refusal::new(
@@ -108,6 +117,10 @@ pub fn handle_with<E: SqlEngine>(
         ))
     } else {
         match (question, questions) {
+            (None, _) if object.is_some() => object.map_or_else(
+                || Err(norn_api::authz::read_denied()),
+                |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
+            ),
             (None, _) => definitions_query(query)
                 .and_then(|query| get_defs(host, &query, actor))
                 .and_then(|document| document_json(&document)),
@@ -195,6 +208,135 @@ fn ad_hoc_question<E: SqlEngine>(
     }
 }
 
+/// The segments of an object route after `/v1/objects/`: a type, an optional
+/// id, and for an id an optional `links` or `lineage` leaf. No segment is empty.
+fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
+    let mut segments = rest.split('/');
+    let kind = segments.next().filter(|kind| !kind.is_empty())?;
+    let id = segments.next();
+    let leaf = segments.next();
+    if segments.next().is_some()
+        || id.is_some_and(str::is_empty)
+        || leaf.is_some_and(|leaf| !matches!(leaf, "links" | "lineage"))
+    {
+        return None;
+    }
+    Some((kind, id, leaf))
+}
+
+/// HOST-READ-3/4: `GET /v1/objects/{type}` (a grid query),
+/// `GET /v1/objects/{type}/{id}` and its `/links` and `/lineage`, scoped by
+/// the query string.
+fn objects<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    (object_type, id, leaf): (&str, Option<&str>, Option<&str>),
+    query: &str,
+) -> Result<String, Refusal> {
+    // Path segments decode percent escapes only: `&`, `=` and `+` are literal
+    // in a path, never query syntax. A segment that is not UTF-8 once decoded
+    // names nothing: it refuses rather than alias another id.
+    let decoded = |text: &str| {
+        percent_encoding::percent_decode_str(text)
+            .decode_utf8()
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
+    };
+    let object_type = decoded(object_type)?;
+    if let (Some(id), Some("links")) = (id, leaf) {
+        let mut fields = parse(
+            query,
+            &[
+                "orgId",
+                "environmentId",
+                "direction",
+                "link",
+                "limit",
+                "after",
+            ],
+        )?;
+        let scope = ScopeQuery {
+            org_id: fields.remove("orgId"),
+            environment_id: fields.remove("environmentId"),
+        };
+        let params = ObjectLinkParams {
+            direction: fields.remove("direction"),
+            link: fields.remove("link"),
+            limit: fields.remove("limit"),
+            after: fields.remove("after"),
+        };
+        return document_json(&get_object_links(
+            host,
+            &scope,
+            actor,
+            &object_type,
+            &decoded(id)?,
+            &params,
+            &CellObjectAccess,
+        )?);
+    }
+    if let (Some(id), Some(_lineage)) = (id, leaf) {
+        let fields = parse(query, &["orgId", "environmentId"])?;
+        let scope = ScopeQuery {
+            org_id: fields.get("orgId").cloned(),
+            environment_id: fields.get("environmentId").cloned(),
+        };
+        return document_json(&get_object_lineage(
+            host,
+            &scope,
+            actor,
+            &object_type,
+            &decoded(id)?,
+            &CellObjectAccess,
+        )?);
+    }
+    if let Some(id) = id {
+        let fields = parse(query, &["orgId", "environmentId"])?;
+        let scope = ScopeQuery {
+            org_id: fields.get("orgId").cloned(),
+            environment_id: fields.get("environmentId").cloned(),
+        };
+        let record = get_queried_object(
+            host,
+            &scope,
+            actor,
+            &object_type,
+            &decoded(id)?,
+            &CellObjectAccess,
+        )?;
+        return document_json(&record);
+    }
+    // The cursor has its own bound, so any query the host accepts on a first
+    // page stays acceptable with every cursor the host issues for it.
+    let mut fields = parse_within(
+        query,
+        &["orgId", "environmentId", "limit", "sort", "filter", "after"],
+        MAX_OBJECT_QUERY_BYTES.saturating_add(MAX_CURSOR_BYTES),
+    )?;
+    let cursor_bytes = fields.get("after").map_or(0, String::len);
+    if query.len().saturating_sub(cursor_bytes) > MAX_OBJECT_QUERY_BYTES {
+        return Err(Refusal::invalid("the query string exceeds the host bound"));
+    }
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let params = ObjectQueryParams {
+        limit: fields.remove("limit"),
+        sort: fields.remove("sort"),
+        filter: fields.remove("filter"),
+        after: fields.remove("after"),
+    };
+    document_json(&get_object_query(
+        host,
+        &scope,
+        actor,
+        &object_type,
+        &params,
+        &CellObjectAccess,
+    )?)
+}
+
 /// The named-question view of the cell's question runtime.
 fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
     runtime
@@ -224,7 +366,15 @@ fn definitions_query(query: &str) -> Result<DefinitionsQuery, Refusal> {
 
 /// A bounded query string with only `allowed` keys, each at most once.
 fn parse(query: &str, allowed: &[&'static str]) -> Result<BTreeMap<&'static str, String>, Refusal> {
-    if query.len() > MAX_QUERY_BYTES {
+    parse_within(query, allowed, MAX_QUERY_BYTES)
+}
+
+fn parse_within(
+    query: &str,
+    allowed: &[&'static str],
+    max: usize,
+) -> Result<BTreeMap<&'static str, String>, Refusal> {
+    if query.len() > max {
         return Err(Refusal::invalid("the query string exceeds the host bound"));
     }
     let mut fields = BTreeMap::new();

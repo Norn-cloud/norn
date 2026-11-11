@@ -15,5 +15,14 @@ norn-kernel = { path = "../norn-kernel" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 
+# BUILTIN-PIN-1: build.rs recomputes the source-tree digest with the one
+# HOST-TREE-1 implementation and fails the build on a stale pin.
+[build-dependencies]
+norn-ir = { path = "../norn-ir" }
+serde_json = "1.0.150"
+
+[dev-dependencies]
+norn-testkit = { path = "../norn-testkit" }
+
 [lints]
 workspace = true

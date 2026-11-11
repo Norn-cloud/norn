@@ -7902,7 +7902,10 @@ export interface components {
              * @description How many commits.
              */
             commits: number;
-            /** @description The last event hash. */
+            /**
+             * @description The last event hash for a reader with whole-world Values (D53);
+             *     otherwise a keyed handle of it, stable per revision: compare it only for equality.
+             */
             hash: string;
             /**
              * Format: int64
@@ -7960,8 +7963,11 @@ export interface components {
             fact: components["schemas"]["NornIrFactRef"];
             /** @description Full incarnation digest, disclosed with canonical values. */
             factDigest: string | null;
-            /** @description Emitting receipt identity; no export capability. */
-            receiptHash: string;
+            /**
+             * @description Emitting receipt identity; no export capability. Null when any member of
+             *     the bucket is restricted; a keyed handle (D53) for a reader without whole-world Values.
+             */
+            receiptHash: string | null;
             /**
              * Format: int64
              * @description Receipt-authenticated knowledge time.
@@ -8065,7 +8071,10 @@ export interface components {
             effectiveAsOf: components["schemas"]["NornIrUtcTimestamp"];
             /** @description Physical evaluator. */
             engine: components["schemas"]["NornQueryEngine"];
-            /** @description Quarantined identities excluded from the answer → their finding or evidence pin. */
+            /**
+             * @description Quarantined identities excluded from the answer → their finding or evidence pin.
+             *     For a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.
+             */
             exclusions: {
                 [key: string]: string;
             };

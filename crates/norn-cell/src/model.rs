@@ -281,7 +281,11 @@ impl Model {
     ///
     /// # Errors
     ///
-    /// [`CellError::Projection`] when the types do not project.
+    /// [`CellError::Projection`] when the types do not project, and
+    /// [`CellError::EffectiveViewRefused`] when the effective view of the
+    /// types cannot be derived (more than 4,096 object types, or another
+    /// inheritance classification budget): the model is refused rather than
+    /// admitted with an empty view.
     pub fn new(input: &SqliteDdlInput<'_>) -> Result<Self, CellError> {
         Self::new_with_interfaces(input, &[])
     }
@@ -383,7 +387,7 @@ impl Model {
             tenant: None,
         };
         let (effective_objects, effective_links) =
-            effective_object_types(&entity_model, &entity_context)
+            effective_object_types(&entity_model, &entity_context)?
                 .into_values()
                 .fold(
                     (BTreeMap::new(), BTreeMap::new()),
@@ -592,6 +596,31 @@ impl Model {
         self.effective_objects
             .get(name)
             .ok_or_else(|| CellError::UnknownObjectType(name.to_owned()))
+    }
+
+    /// The effective properties of `object_type`, inherited ones included,
+    /// in declaration order, each with its resolved local type (`None` for a
+    /// registry or unresolved type, whose definition is not available here).
+    ///
+    /// # Errors
+    /// The type is not in this model.
+    pub fn effective_property_types(
+        &self,
+        object_type: &str,
+    ) -> Result<Vec<(String, Option<norn_ir::PropertyType>)>, CellError> {
+        Ok(self
+            .query_contract(object_type)?
+            .properties
+            .iter()
+            .map(|property| {
+                let resolved = match &property.kind {
+                    norn_checker::entity_instance::EffectiveKind::Base(kind) => Some(kind.clone()),
+                    norn_checker::entity_instance::EffectiveKind::Registry(_)
+                    | norn_checker::entity_instance::EffectiveKind::Unresolved => None,
+                };
+                (property.id.as_str().to_owned(), resolved)
+            })
+            .collect())
     }
 
     /// Every object type of the model (#3018: the kernel's `TypeCatalog`

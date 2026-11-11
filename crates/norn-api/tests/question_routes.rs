@@ -22,8 +22,13 @@ use norn_api::{
     scope::{CellScope, ScopeQuery},
 };
 use norn_cell::{
-    CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, ObjectRecord,
-    compute::{Freshness, QueryContext, lineage::keyed_lineage_handle},
+    CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, LedgerHead, ObjectRecord,
+    compute::{
+        Freshness, QueryContext,
+        lineage::{
+            keyed_finding_handle, keyed_lineage_handle, keyed_receipt_handle, keyed_revision_handle,
+        },
+    },
     engine::NativeEngine,
 };
 use norn_checker::metric::compute::QuestionPlan;
@@ -54,6 +59,8 @@ enum Mode {
     Historical,
     MissingCutoff,
     WrongCutoff,
+    /// The cutoff is K2: one write, of SYN-MELT-15-1 (#1175).
+    SingleWriteCutoff,
     /// WEEK keeps only SYN-MELT-15-1: its other members move a week earlier.
     Singleton,
 }
@@ -62,6 +69,8 @@ struct Runtime {
     plan: QuestionPlan,
     context: QueryContext,
     cutoff: Option<KnowledgeCutoff>,
+    /// The cutoff commit's raw receipt hash, when the fixture pins one.
+    cutoff_receipt: Option<String>,
     resolved: Arc<AtomicUsize>,
     min_disclosed: usize,
 }
@@ -76,13 +85,18 @@ impl Authorizer for Policy {
         let actor = request.access.principal.subject_id.as_str();
         let allowed = match request.capability {
             ReadCapability::Population => {
-                ["reader", "auditor", "partial", "mixed"].contains(&actor)
+                ["reader", "auditor", "partial", "mixed", "slice"].contains(&actor)
                     && !(actor == "partial" && request.access.resource.id == "SYN-MELT-15-1")
             }
-            // `mixed` sees every member's values but one.
+            // `mixed` sees every member's values but one. `slice` sees every
+            // row's values but holds no collection grant (whole-world Values,
+            // #1175); only `auditor` does.
             ReadCapability::Values => {
+                let id = request.access.resource.id.as_str();
+                let collection = id == request.access.resource.object_type;
                 actor == "auditor"
-                    || (actor == "mixed" && request.access.resource.id != "SYN-MELT-15-1")
+                    || (actor == "mixed" && !collection && id != "SYN-MELT-15-1")
+                    || (actor == "slice" && !collection)
             }
             ReadCapability::Sources => actor == "auditor",
         };
@@ -171,6 +185,17 @@ impl QuestionRuntime<NativeEngine> for Runtime {
     fn handle_key(&self) -> &[u8] {
         &HANDLE_KEY
     }
+    fn collection_access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+    ) -> Result<PdpRequest, Refusal> {
+        let mut access = self.access(scope, actor, object_type, capability, None)?;
+        object_type.clone_into(&mut access.resource.object_type);
+        Ok(access)
+    }
 }
 fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
     let (mut store, mut plan, mut context) = fixture();
@@ -186,8 +211,9 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
         .expect("K1");
     let receipt = initial.receipt();
     let mut cutoff = None;
+    let mut cutoff_receipt = None;
     match mode {
-        Mode::Historical | Mode::MissingCutoff | Mode::WrongCutoff => {
+        Mode::Historical | Mode::MissingCutoff | Mode::WrongCutoff | Mode::SingleWriteCutoff => {
             plan = asof_plan(&store, &plan, "2026-10-26T00:00:00Z");
             if !matches!(mode, Mode::MissingCutoff) {
                 cutoff = Some(KnowledgeCutoff {
@@ -201,7 +227,8 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
                     ..point
                 });
             }
-            store
+            cutoff_receipt = Some(receipt.hash.clone());
+            let corrected = store
                 .commit(&CommitBatch {
                     world: WORLD.into(),
                     scope: context.scope.clone(),
@@ -216,6 +243,18 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
                     ..CommitBatch::default()
                 })
                 .expect("K2");
+            if matches!(mode, Mode::SingleWriteCutoff) {
+                let single = corrected.receipt();
+                cutoff = Some(KnowledgeCutoff {
+                    recorded_at: LogicalTime::from_millis(single.body.logical_time),
+                    frontier: single.body.commit_seq,
+                });
+                cutoff_receipt = Some(single.hash.clone());
+                // The as-of instant and the historical clock are the cutoff's
+                // knowledge time, one second after K1.
+                plan = asof_plan(&store, &plan, "2026-10-26T00:00:01Z");
+                context.now_ms = single.body.logical_time;
+            }
         }
         Mode::Fresh => context.now_ms = context.now_ms.checked_add(1000).expect("fresh clock"),
         Mode::Stale => context.now_ms = context.now_ms.checked_add(6000).expect("stale clock"),
@@ -254,6 +293,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
             plan,
             context,
             cutoff,
+            cutoff_receipt,
             resolved: Arc::new(AtomicUsize::new(0)),
             min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
         },
@@ -633,6 +673,7 @@ fn resolved_trace_document() -> SdkDocument {
         plan,
         context,
         cutoff: None,
+        cutoff_receipt: None,
         resolved: Arc::new(AtomicUsize::new(0)),
         min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
     };
@@ -946,6 +987,319 @@ fn a_mixed_bucket_discloses_no_member_value_from_which_the_hidden_one_follows() 
     assert_eq!(mixed.rows[WEEK].totals, auditor.rows[WEEK].totals);
 }
 
+/// #1175: a historical answer names its cutoff commit. Its receipt hash commits
+/// to that commit's values, so for a single write the reader lacks Values on it
+/// would confirm a guess offline. Such a reader sees the keyed receipt handle,
+/// and the raw hash appears nowhere in its document; `mixed` lacks Values on
+/// that one row only. A reader with whole-world Values keeps it.
+#[test]
+fn a_historical_cutoff_on_a_restricted_single_write_withholds_its_receipt_hash() {
+    let (host, runtime) = configured(Mode::SingleWriteCutoff);
+    let raw = runtime.cutoff_receipt.clone().expect("K2 receipt");
+    let commit = |actor| {
+        let QuestionAnswer::Historical(answer) =
+            get_answer(&host, &scope(), Some(actor), QUESTION, &runtime).expect("historical")
+        else {
+            panic!("historical")
+        };
+        assert_eq!(answer.result.known_as_of, 2);
+        let norn_kernel::World::Historical { commit } = &answer.world else {
+            panic!("historical world")
+        };
+        (
+            commit.0.clone(),
+            serde_json::to_string(&answer).expect("document"),
+        )
+    };
+    for actor in ["reader", "mixed"] {
+        let (handle, document) = commit(actor);
+        assert_eq!(handle, keyed_receipt_handle(&HANDLE_KEY, &raw), "{actor}");
+        assert!(!document.contains(&raw), "{actor}: {document}");
+    }
+    assert_eq!(commit("auditor").0, raw);
+}
+
+/// #1175 (B3): a cell whose ledger chains actual values. K1 writes every
+/// fixture row with a `created` event each, K2 sets SYN-MELT-15-1's
+/// `recovered` with a `set` event. Returns the host, its runtime, the head
+/// after K1 (the predecessor a reader may already hold) and the head after
+/// K2, whose hash is the unkeyed chain over K2's restricted value. With
+/// `historical`, the answer is at the K2 cutoff and K3 then sets a value of
+/// another row, so the live head moves past it.
+fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain) {
+    let (mut store, base, mut context) = fixture();
+    context.scope = physical().key();
+    let writes = fixture_writes();
+    store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            events: created_events(&writes),
+            writes,
+            ..CommitBatch::default()
+        })
+        .expect("K1 with created events");
+    let predecessor = store.verified_head().expect("K1 head");
+    let corrected = put(
+        "SYN-MELT-15-1",
+        75_000,
+        72_000,
+        "2026-10-23T12:01:00Z",
+        "gold",
+    );
+    let k2 = store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK + 1000,
+            events: vec![set_event(&corrected, "recovered").expect("set event")],
+            writes: vec![corrected],
+            ..CommitBatch::default()
+        })
+        .expect("K2 with a set event");
+    let head = store.verified_head().expect("K2 head");
+    // The precondition of the oracle: the new head chains exactly one event,
+    // carrying the restricted value, from a predecessor the reader saw.
+    assert!(predecessor.seq > 0, "K1 chains its created events");
+    assert_eq!(Some(head.seq), predecessor.seq.checked_add(1));
+    let entries = store.read().ledger(head.seq).expect("ledger");
+    let [entry] = entries.as_slice() else {
+        panic!("one K2 event")
+    };
+    assert_eq!(entry.prev_hash, predecessor.hash);
+    assert_eq!(entry.hash, head.hash);
+    assert_eq!(
+        entry
+            .event
+            .get("op")
+            .and_then(norn_ir::RuntimeValue::as_str),
+        Some("set")
+    );
+    let mut plan = base.clone();
+    let mut cutoff = None;
+    let mut cutoff_receipt = None;
+    if historical {
+        let receipt = k2.receipt();
+        cutoff = Some(KnowledgeCutoff {
+            recorded_at: LogicalTime::from_millis(receipt.body.logical_time),
+            frontier: receipt.body.commit_seq,
+        });
+        cutoff_receipt = Some(receipt.hash.clone());
+        plan = asof_plan(&store, &base, "2026-10-26T00:00:01Z");
+        context.now_ms = receipt.body.logical_time;
+        let later = put(
+            "SYN-MELT-15-2",
+            50_000,
+            49_000,
+            "2026-10-23T12:02:00Z",
+            "gold",
+        );
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: context.scope.clone(),
+                logical_time: CLOCK + 2000,
+                events: vec![set_event(&later, "recovered").expect("set event")],
+                writes: vec![later],
+                ..CommitBatch::default()
+            })
+            .expect("K3 after the cutoff");
+    }
+    let live = store.verified_head().expect("live head");
+    assert_eq!(live == head, !historical);
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    (
+        host,
+        Runtime {
+            bad_row: false,
+            plan,
+            context,
+            cutoff,
+            cutoff_receipt,
+            resolved: Arc::new(AtomicUsize::new(0)),
+            min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+        },
+        Chain {
+            predecessor,
+            head,
+            live,
+        },
+    )
+}
+/// The ledger heads of [`with_value_events`].
+struct Chain {
+    predecessor: LedgerHead,
+    head: LedgerHead,
+    live: LedgerHead,
+}
+
+/// #1175 (B3): `revision.hash` is the unkeyed ledger chain hash. A reader who
+/// saw the K1 head and then reads the K2 answer could hash candidate values
+/// of K2's one restricted `set` event and compare. A reader without
+/// whole-world Values sees the keyed revision handle instead, in the answer
+/// and in the trace's embedded answer, stable per revision; no raw ledger hash
+/// appears in either document. That includes `slice`, who reads every row's
+/// values but holds no collection grant. A whole-world reader keeps the raw head.
+#[test]
+fn a_live_answer_and_its_trace_withhold_the_ledger_head_from_a_reader_without_values() {
+    let (
+        host,
+        runtime,
+        Chain {
+            predecessor, head, ..
+        },
+    ) = with_value_events(false);
+    let handle = keyed_revision_handle(&HANDLE_KEY, &head.hash);
+    assert_ne!(handle, head.hash);
+    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    let trace = |actor, lineage: &str| {
+        get_numeric_trace(
+            &host,
+            &trace_query(lineage),
+            Some(actor),
+            QUESTION,
+            &runtime,
+        )
+        .expect("trace")
+    };
+    for actor in ["reader", "mixed", "slice"] {
+        let answer = live(actor);
+        assert_eq!(answer.revision.hash, handle, "{actor}");
+        assert_eq!(answer.revision.seq, head.seq, "{actor}");
+        assert_eq!(answer.revision.commits, head.commits, "{actor}");
+        assert_eq!(live(actor).revision, answer.revision, "{actor}: stable pin");
+        let traced = trace(actor, &answer.lineage_ref);
+        assert_eq!(traced.result.revision, answer.revision, "{actor}");
+        for document in [
+            serde_json::to_string(&answer).expect("answer document"),
+            serde_json::to_string(&traced).expect("trace document"),
+        ] {
+            assert!(!document.contains(&head.hash), "{actor}: {document}");
+            assert!(!document.contains(&predecessor.hash), "{actor}: {document}");
+        }
+    }
+    let audited = live("auditor");
+    assert_eq!(audited.revision, head);
+    assert_eq!(trace("auditor", &audited.lineage_ref).result.revision, head);
+}
+
+/// #1175 (B3): a historical answer's revision is the cutoff ledger head, the
+/// same unkeyed chain. A reader without whole-world Values (`slice`
+/// included) sees the keyed revision handle and the keyed receipt handle for
+/// the cutoff commit; neither the cutoff head, its predecessor, the live head
+/// nor the cutoff receipt appears raw. A whole-world reader keeps both raw.
+#[test]
+fn a_historical_answer_withholds_its_cutoff_ledger_head_from_a_reader_without_values() {
+    let (
+        host,
+        runtime,
+        Chain {
+            predecessor,
+            head: cutoff,
+            live: live_head,
+        },
+    ) = with_value_events(true);
+    let receipt = runtime.cutoff_receipt.clone().expect("K2 receipt");
+    let historical = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Historical(answer) => answer,
+        QuestionAnswer::Live(_) => panic!("historical"),
+    };
+    for actor in ["reader", "mixed", "slice"] {
+        let answer = historical(actor);
+        assert_eq!(
+            answer.result.revision.hash,
+            keyed_revision_handle(&HANDLE_KEY, &cutoff.hash),
+            "{actor}"
+        );
+        assert_eq!(answer.result.revision.seq, cutoff.seq, "{actor}");
+        let document = serde_json::to_string(&answer).expect("document");
+        for raw in [&cutoff.hash, &predecessor.hash, &live_head.hash, &receipt] {
+            assert!(!document.contains(raw.as_str()), "{actor}: {document}");
+        }
+    }
+    let audited = historical("auditor");
+    assert_eq!(audited.result.revision, cutoff);
+    let norn_kernel::World::Historical { commit } = &audited.world else {
+        panic!("historical world")
+    };
+    assert_eq!(commit.0, receipt);
+}
+
+/// #1175: one commit writes every fixture row, across buckets, and its receipt
+/// hash commits to all of their values and to the ledger head. A reader
+/// without whole-world Values sees the keyed receipt handle on every
+/// contribution, even in a bucket whose members it may all read (`slice`
+/// everywhere, `mixed` outside SYN-MELT-15-1's week), with the members' own
+/// values still disclosed; the raw hash appears nowhere. A whole-world reader
+/// keeps the raw hash.
+#[test]
+fn a_shared_commit_withholds_its_receipt_hash_from_every_bucket_it_wrote() {
+    let (host, runtime) = configured(Mode::Live);
+    let answer = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    let other = answer("auditor")
+        .rows
+        .keys()
+        .find(|bucket| bucket.as_str() != WEEK)
+        .expect("another bucket")
+        .clone();
+    let trace = |actor, bucket: &str| {
+        let lineage = answer(actor).lineage_ref;
+        let query = TraceQuery {
+            bucket: Some(bucket.into()),
+            ..trace_query(&lineage)
+        };
+        get_numeric_trace(&host, &query, Some(actor), QUESTION, &runtime).expect("trace")
+    };
+    let audited = trace("auditor", &other);
+    let raw = audited.contributions[0]
+        .receipt_hash
+        .clone()
+        .expect("whole-world receipt");
+    assert!(
+        audited
+            .contributions
+            .iter()
+            .all(|member| member.receipt_hash.as_deref() == Some(raw.as_str())),
+        "one commit wrote every row"
+    );
+    for (actor, bucket) in [
+        ("slice", WEEK),
+        ("slice", other.as_str()),
+        ("mixed", other.as_str()),
+    ] {
+        let traced = trace(actor, bucket);
+        assert!(!traced.contributions.is_empty(), "{actor} {bucket}");
+        for member in &traced.contributions {
+            assert!(
+                !member.restricted && member.values.is_some(),
+                "{actor} {bucket}"
+            );
+            assert_eq!(
+                member.receipt_hash.as_deref(),
+                Some(keyed_receipt_handle(&HANDLE_KEY, &raw).as_str()),
+                "{actor} {bucket}"
+            );
+        }
+        let wire = serde_json::to_string(&traced).expect("wire");
+        assert!(!wire.contains(&raw), "{actor} {bucket}: {wire}");
+    }
+}
+
 /// D53 (2): to a reader lacking Values on any of its members, a bucket with
 /// fewer members than the declared minimum discloses no aggregate: `value`
 /// null, no totals, `suppressed`. A reader with every Values grant sees it, and
@@ -1112,5 +1466,169 @@ fn a_short_handle_key_refuses() {
         .expect_err("short key")
         .status,
         500
+    );
+}
+
+/// #1175 (B4): a cell holding a real quarantined observation, the retained
+/// quarantine fixture's capture of SYN-MELT-15-1 with `recovered` 80 000 above
+/// its input (`fixtures/demo/answers/scrap-yield.quarantine.finding.json`).
+/// With `historical`, the answer is at that capture's cutoff and a corrected
+/// capture then clears the live quarantine. Returns the host, its runtime, the
+/// raw finding ID and the cell directory.
+fn with_quarantine(
+    historical: bool,
+) -> (DevHost<NativeEngine>, Runtime, String, tempfile::TempDir) {
+    let (base, mut plan, mut context) = fixture();
+    let mut object = base
+        .model()
+        .object_types()
+        .find(|o| o.name.as_str() == TYPE)
+        .expect("conversion")
+        .clone();
+    let mut encoded = serde_json::to_value(&object).expect("object");
+    encoded["invariants"] = serde_json::json!([{"id":"recovery_bound","expression":"self.recovered <= self.input","message":"Recovered mass exceeds source input"}]);
+    object = serde_json::from_value(encoded).expect("invariant");
+    let model =
+        norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).expect("model");
+    let artifact = serde_json::json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
+    let key = physical().key();
+    let directory = tempfile::tempdir().expect("cell directory");
+    let path = directory.path().join("cell.sqlite");
+    let mut store =
+        CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).expect("store");
+    store
+        .install_definitions(
+            model.clone(),
+            norn_cell::InstalledDefinitionInput {
+                canonical_set: serde_json::to_string(&vec![artifact]).expect("set"),
+                registry: vec![],
+                receipt_sha256: "synthetic-quality-v1".into(),
+                admission_receipt: None,
+                readmission: None,
+                diff: serde_json::json!({}),
+                installed_at: CLOCK,
+                layout: None,
+            },
+            Some(0),
+            &key,
+        )
+        .expect("install");
+    key.clone_into(&mut context.scope);
+    context.world = norn_cell::MAIN_WORLD.into();
+    store
+        .commit(&CommitBatch {
+            world: context.world.clone(),
+            scope: key.clone(),
+            logical_time: CLOCK,
+            writes: fixture_writes(),
+            ..CommitBatch::default()
+        })
+        .expect("load");
+    let mut cell = norn_cell::SqliteCell::new(store, &key, |_| BTreeMap::new()).expect("cell");
+    capture_quality(&mut cell, 80_000, "bad-source");
+    let finding = cell
+        .store()
+        .read()
+        .observation_findings(&context.world, TYPE, "SYN-MELT-15-1")
+        .expect("findings")
+        .remove(0)
+        .id;
+    let mut cutoff = None;
+    if historical {
+        let receipt = cell
+            .store()
+            .read()
+            .receipts()
+            .expect("receipts")
+            .pop()
+            .expect("capture receipt");
+        cutoff = Some(KnowledgeCutoff {
+            recorded_at: LogicalTime::from_millis(receipt.body.logical_time),
+            frontier: receipt.body.commit_seq,
+        });
+        plan = asof_plan(cell.store(), &plan, "2026-10-26T00:00:00Z");
+        context.now_ms = receipt.body.logical_time;
+        capture_quality(&mut cell, 73_500, "corrected-source");
+    }
+    drop(cell);
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).expect("reopen");
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    (
+        host,
+        Runtime {
+            bad_row: false,
+            plan,
+            context,
+            cutoff,
+            cutoff_receipt: None,
+            resolved: Arc::new(AtomicUsize::new(0)),
+            min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+        },
+        finding,
+        directory,
+    )
+}
+
+/// #1175 (B4): `result.exclusions` maps a quarantined record to its finding
+/// ID, and the finding identity hashes that record's canonical values without
+/// a key, so the raw ID confirms a guessed hidden value offline. A reader
+/// without whole-world Values (`reader` with Population only, `mixed`, and
+/// `slice` without a collection grant) sees the keyed finding handle; the raw
+/// ID appears nowhere in its document. A whole-world reader keeps the raw ID.
+#[test]
+fn a_live_answer_withholds_its_quarantine_finding_ids_from_a_reader_without_values() {
+    let (host, runtime, finding, _directory) = with_quarantine(false);
+    let handle = keyed_finding_handle(&HANDLE_KEY, &finding);
+    assert_ne!(handle, finding);
+    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    for actor in ["reader", "mixed", "slice"] {
+        let answer = live(actor);
+        assert_eq!(
+            answer.exclusions,
+            BTreeMap::from([("SYN-MELT-15-1".to_owned(), handle.clone())]),
+            "{actor}"
+        );
+        let document = serde_json::to_string(&answer).expect("document");
+        assert!(!document.contains(&finding), "{actor}: {document}");
+    }
+    assert_eq!(
+        live("auditor").exclusions,
+        BTreeMap::from([("SYN-MELT-15-1".to_owned(), finding)])
+    );
+}
+
+/// #1175 (B4): a historical answer at the quarantining capture keeps the
+/// exclusion after a later correction cleared it live; its finding ID follows
+/// the same projection as the live answer's.
+#[test]
+fn a_historical_answer_withholds_its_quarantine_finding_ids_from_a_reader_without_values() {
+    let (host, runtime, finding, _directory) = with_quarantine(true);
+    let handle = keyed_finding_handle(&HANDLE_KEY, &finding);
+    let historical = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Historical(answer) => answer,
+        QuestionAnswer::Live(_) => panic!("historical"),
+    };
+    for actor in ["reader", "mixed", "slice"] {
+        let answer = historical(actor);
+        assert_eq!(
+            answer.result.exclusions,
+            BTreeMap::from([("SYN-MELT-15-1".to_owned(), handle.clone())]),
+            "{actor}"
+        );
+        let document = serde_json::to_string(&answer).expect("document");
+        assert!(!document.contains(&finding), "{actor}: {document}");
+    }
+    assert_eq!(
+        historical("auditor").result.exclusions,
+        BTreeMap::from([("SYN-MELT-15-1".to_owned(), finding)])
     );
 }

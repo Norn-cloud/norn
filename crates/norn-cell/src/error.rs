@@ -83,6 +83,9 @@ pub enum CellError {
     /// Deterministic query semantics or snapshot preconditions refused.
     #[error("{0}")]
     ComputeRefused(&'static str),
+    /// RUN-LEDGER-1: a run start or run write was refused (`run.*`).
+    #[error("{0}")]
+    RunRefused(&'static str),
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,
@@ -107,6 +110,12 @@ pub enum CellError {
     /// The object types do not project to DDL.
     #[error("ddl projection: {0}")]
     Projection(#[from] SqliteDdlError),
+    /// The effective view of the object types could not be derived: the
+    /// bounded inheritance classification was exhausted (more than 4,096
+    /// object types, or another budget). The model is refused; no query ever
+    /// sees an empty view.
+    #[error(transparent)]
+    EffectiveViewRefused(#[from] norn_checker::EffectiveViewRefused),
     /// A payload does not (de)serialize.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
@@ -307,6 +316,18 @@ pub enum CellError {
         "perform claim for `{command_id}` generation {generation} is not the unperformed outbox head"
     )]
     PerformClaimNotPending {
+        /// The command id.
+        command_id: String,
+        /// The claimed generation.
+        generation: u64,
+    },
+    /// PARKED-1: a perform claim names a parked command, which is never
+    /// performed. No build before parked commands could record one, so a
+    /// retained journal that does is refused by name rather than replayed.
+    #[error(
+        "restore.parked_claim_unsupported: perform claim for parked command `{command_id}` generation {generation}"
+    )]
+    ParkedClaimUnsupported {
         /// The command id.
         command_id: String,
         /// The claimed generation.

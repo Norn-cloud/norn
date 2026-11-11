@@ -20662,7 +20662,7 @@
           },
           "hash": {
             "type": "string",
-            "description": "The last event hash."
+            "description": "The last event hash for a reader with whole-world Values (D53);\notherwise a keyed handle of it, stable per revision: compare it only for equality."
           },
           "seq": {
             "type": "integer",
@@ -20816,8 +20816,11 @@
             "description": "Full incarnation digest, disclosed with canonical values."
           },
           "receiptHash": {
-            "type": "string",
-            "description": "Emitting receipt identity; no export capability."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Emitting receipt identity; no export capability. Null when any member of\nthe bucket is restricted; a keyed handle (D53) for a reader without whole-world Values."
           },
           "recordedAtMs": {
             "type": "integer",
@@ -21105,7 +21108,7 @@
           },
           "exclusions": {
             "type": "object",
-            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.",
+            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.\nFor a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.",
             "additionalProperties": {
               "type": "string"
             },
