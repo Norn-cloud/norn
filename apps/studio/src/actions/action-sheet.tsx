@@ -80,6 +80,7 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
               )}
               <ActionForm key={`${draftKey(open)}:${generation}:${restored === undefined ? "new" : "kept"}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
                 remembered={restored} onDraft={(draft) => { latest.current = draft }} onCommitted={() => { kept.delete(draftKey(open)); setBanner(false) }}
+                onChanged={() => void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
             </div>

@@ -88,13 +88,25 @@ export interface ActionCell {
   readonly calls: { readonly actionId: string; readonly body: string }[]
   /** The next call fails as an outage (500, no refusal document). */
   failNext(): void
+  /** The next call is held open until the returned function releases it. */
+  holdNext(): () => void
 }
 
-export async function actionCell(page: Page, objects: ObjectCell): Promise<ActionCell> {
+export interface ActionCellOptions {
+  /**
+   * Opening a holding offers its undo on the receipt (`undo: { actionId, input }`, from the action's
+   * declared compensation). The served route does not send this yet: it is the shape requested on #1208,
+   * and this option goes when the route's own fixtures carry it (#1215).
+   */
+  readonly undoOpen?: boolean
+}
+
+export async function actionCell(page: Page, objects: ObjectCell, options: ActionCellOptions = {}): Promise<ActionCell> {
   const calls: { actionId: string; body: string }[] = []
   const keys = new Map<string, { actionId: string; input: string; receipt: unknown }>()
   let seq = 100
   let fail = false
+  let hold: Promise<void> | null = null
   await page.route("**/api/host/v1/actions**", async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -106,6 +118,7 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = request.postData() ?? ""
     calls.push({ actionId, body })
+    if (hold !== null) { const held = hold; hold = null; await held }
     if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
     const action = ACTIONS.find((a) => a.actionId === actionId)
     // An unknown action is the same opaque denial as an absent or hidden target.
@@ -140,9 +153,16 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     else objects.rows.push(row)
     objects.commit()
     seq += 1
-    const receipt = { outcome: "committed", objectType: "canon.Holding", objectId: id, version, receipt: { receiptHash: seq.toString(16).padStart(64, "c"), commitSeq: seq, recordedAtMs: Date.now() } }
+    const receipt = {
+      outcome: "committed", objectType: "canon.Holding", objectId: id, version, receipt: { receiptHash: seq.toString(16).padStart(64, "c"), commitSeq: seq, recordedAtMs: Date.now() },
+      ...options.undoOpen && actionId === "canon.holding.open" ? { undo: { actionId: "canon.holding.retire", input: { id } } } : {},
+    }
     keys.set(idempotencyKey, { actionId, input: inputText, receipt })
     return route.fulfill({ json: receipt })
   })
-  return { calls, failNext: () => { fail = true } }
+  return {
+    calls,
+    failNext: () => { fail = true },
+    holdNext: () => { let release = () => {}; hold = new Promise<void>((resolve) => { release = resolve }); return release },
+  }
 }
