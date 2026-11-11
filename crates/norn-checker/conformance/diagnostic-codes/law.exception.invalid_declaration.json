@@ -1,0 +1,7 @@
+{
+  "code": "law.exception.invalid_declaration",
+  "message": "law exception declaration is malformed: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
