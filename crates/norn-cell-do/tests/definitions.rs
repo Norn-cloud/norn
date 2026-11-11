@@ -694,7 +694,7 @@ fn the_checker_restatement_signs_off_saved_questions_and_dashboards() {
             &cell,
             "/v1/definitions:admit",
             ADMIN,
-            &json!({ "kind": kind, "payload": payload }),
+            &json!({ "kind": kind, "id": format!("studio.{kind}.signed"), "payload": payload }),
         );
         assert_eq!(status, 200, "{admitted}");
         assert_eq!(admitted["admitted"], json!(true), "{admitted}");
