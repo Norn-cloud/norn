@@ -48,6 +48,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -72,16 +73,15 @@ INTERNAL = ("scripts/ci/implementation-receipt.schema.json", "verification/cover
 # Example and test inputs are not contracts.
 NOT_CONTRACT_DIRS = ("fixtures", "test", "tests")
 CODE = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+")
-CODE_CONST = re.compile(r'const\s+[A-Z][A-Z0-9_]*\s*:\s*&(?:\'static\s+)?str\s*=\s*"(' + CODE.pattern + r')"\s*;')
 STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
-CODE_FN = re.compile(r"fn\s+code\s*\(")
-# Refusal constructors whose first code-shaped string argument is a code:
-# `Refusal::new(StatusCode::X, "a.b", ..)`, `Refused::one("a.b", ..)`,
-# `Failure::setup("a.b", ..)`, `DiagnosticCode::new("a.b")`, `refused("a.b", ..)`.
-CODE_CALL = re.compile(r"\b(?:Refusal|Refused|Failure|DiagnosticCode)::[a-z_][a-z0-9_]*\s*\(|(?<![\w:.])refused\s*\(")
-# A `code: "a.b"` struct field initializer.
-CODE_FIELD = re.compile(r'\bcode\s*:\s*"(' + CODE.pattern + r')"')
-TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*(?:#\[[^\]]*\]\s*)*mod\s+\w+\s*([{;])")
+# A literal that is a code, or starts with one as `a.b: detail`.
+CODE_LITERAL = re.compile(r"(" + CODE.pattern + r")(?:: .*)?", re.DOTALL)
+# Where a Rust comment, string, raw string or char literal starts.
+RUST_TOKEN = re.compile(r"""//|/\*|(?<![A-Za-z0-9_])b?r(#*)"|"|b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^\\'])'""", re.DOTALL)
+CFG = re.compile(r"#(!?)\[cfg\(")
+ATTRIBUTE = re.compile(r"\s*#\[")
+DECLARED_MODULE = re.compile(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
+TEST_FILE = re.compile(r"(?:^|/)(?:tests?|[a-z0-9_]+_tests?)\.rs$")
 
 # A tree is how the check reads one revision: list the files under a directory
 # and read one file, or None when it does not exist.
@@ -229,9 +229,9 @@ def _accepts(schema: object, value: object, root: object, depth: int = 0) -> boo
     if schema is True or not isinstance(schema, dict) or depth > 16:
         return schema is not False
     if "const" in schema:
-        return schema["const"] == value
+        return _same(schema["const"], value)
     if isinstance(schema.get("enum"), list):
-        return value in schema["enum"]
+        return any(_same(member, value) for member in schema["enum"])
     members = schema.get("oneOf") or schema.get("anyOf")
     if members:
         return any(_accepts(member, value, root, depth + 1) for member in members)
@@ -290,6 +290,31 @@ def _alternatives(schemas: list, root: object) -> dict[str, object]:
 
 JSON_TYPES = {"null", "boolean", "number", "string", "array", "object"}
 _MISSING = object()
+
+
+def _same(left: object, right: object) -> bool:
+    """JSON equality: `1` is not `true` and `0` is not `false`."""
+    return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
+
+
+def _default(schema: object, root: object, depth: int = 0) -> object:
+    """The default a schema node gives: its own, else the one its `$ref` target gives."""
+    if not isinstance(schema, dict) or depth > 16:
+        return _MISSING
+    if "default" in schema:
+        return schema["default"]
+    return _default(resolve(root, schema["$ref"]), root, depth + 1) if "$ref" in schema else _MISSING
+
+
+def _compare_default(old: object, new: object, where: str, out: list[str], docs: Documents) -> None:
+    """An input whose own `default` changed or went away (a `$ref` with a
+    sibling `default` included). The server acts on it when the field is absent."""
+    if not isinstance(old, dict) or "default" not in old:
+        return
+    after = _default(new, docs.new)
+    if after is _MISSING or not _same(old["default"], after):
+        shown = "removed" if after is _MISSING else json.dumps(after)
+        out.append(f"{where}: input default changed from {json.dumps(old['default'])} to {shown}")
 ANNOTATIONS = {"description", "title", "examples", "default", "deprecated", "$comment", "readOnly", "writeOnly", "format"}
 
 
@@ -353,6 +378,8 @@ def compare_schema(old: object, new: object, where: str, directions: frozenset[s
     is compared by what it points to, so inlining or renaming an equivalent
     schema is not a change.
     """
+    if IN in directions:
+        _compare_default(old, new, where, out, docs)
     old_ref = old.get("$ref") if isinstance(old, dict) else None
     new_ref = new.get("$ref") if isinstance(new, dict) else None
     if old_ref is not None or new_ref is not None:
@@ -369,6 +396,16 @@ def compare_schema(old: object, new: object, where: str, directions: frozenset[s
         if old is None or new is None:
             out.append(f"{where}: $ref {old_ref or new_ref} does not resolve")
             return
+        if IN in directions and old_ref is not None:
+            _compare_default(old, new, where, out, docs)  # the target's own default
+    # A schema that only annotates (`{"format": "date"}`) accepts anything, but
+    # its format is still what an output promises and an input is parsed as.
+    if isinstance(old, dict) and "format" in old and _is_any(old, docs.old):
+        after = new.get("format") if isinstance(new, dict) else None
+        if after is None and OUT in directions:
+            out.append(f"{where}: output format {json.dumps(old['format'])} removed")
+        elif after is not None and after != old["format"]:
+            out.append(f"{where}: format changed from {json.dumps(old['format'])} to {json.dumps(after)}")
     old = True if _is_any(old, docs.old) else old
     new = True if _is_any(new, docs.new) else new
     if isinstance(old, bool) or isinstance(new, bool):
@@ -412,9 +449,7 @@ def compare_schema(old: object, new: object, where: str, directions: frozenset[s
             out.append(f"{where}: {key} tightened from {old.get(key)} to {new[key]}")
         elif key in old and new.get(key) != old[key] and OUT in directions:
             out.append(f"{where}: output {key} loosened from {old[key]} to {new.get(key, 'none')}")
-    if IN in directions and "default" in old and old["default"] != new.get("default", _MISSING):
-        after = json.dumps(new["default"]) if "default" in new else "removed"
-        out.append(f"{where}: input default changed from {json.dumps(old['default'])} to {after}")
+
     old_props = old.get("properties") or {}
     new_props = new.get("properties") or {}
     for name, schema in old_props.items():
@@ -617,145 +652,184 @@ def sdk_exports(text: str | None) -> set[str]:
     return names
 
 
-def _function_body(text: str, start: int) -> str:
-    """The brace-balanced body after `start`, ignoring braces in strings and chars."""
-    open_at = text.find("{", start)
-    if open_at < 0:
-        return ""
-    depth, index = 0, open_at
-    while index < len(text):
-        char = text[index]
-        if char == '"':
-            match = STRING.match(text, index)
-            index = match.end() if match else index + 1
-            continue
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[open_at:index + 1]
-        index += 1
-    return text[open_at:]
+def _lex(text: str) -> tuple[str, list[tuple[int, str]]]:
+    """Rust source as structure and literals: the code with comments removed
+    and every string, raw string and char literal blanked (so a brace, quote or
+    `//` inside one is never read as code), plus each string literal's content
+    with its position in that code."""
+    out: list[str] = []
+    literals: list[tuple[int, str]] = []
+    index = position = 0
 
+    def emit(piece: str) -> None:
+        nonlocal position
+        out.append(piece)
+        position += len(piece)
 
-def _without_comments(text: str) -> str:
-    """The source with `//` and `/* */` comments blanked (strings, raw strings
-    and char literals kept), so a code left in a comment is not a use."""
-    out, index, length = [], 0, len(text)
-    while index < length:
-        char = text[index]
-        if text.startswith("//", index):
-            end = text.find("\n", index)
-            index = length if end < 0 else end
-            continue
-        if text.startswith("/*", index):
-            depth, index = 1, index + 2
-            while index < length and depth:
+    while True:
+        token = RUST_TOKEN.search(text, index)
+        if not token:
+            emit(text[index:])
+            return "".join(out), literals
+        emit(text[index:token.start()])
+        start, lead = token.start(), token.group(0)
+        if lead == "//":
+            end = text.find("\n", start)
+            index = len(text) if end < 0 else end
+        elif lead == "/*":
+            depth, index = 1, start + 2
+            while index < len(text) and depth:
                 if text.startswith("/*", index):
                     depth, index = depth + 1, index + 2
                 elif text.startswith("*/", index):
                     depth, index = depth - 1, index + 2
                 else:
                     index += 1
-            out.append(" ")
-            continue
-        raw = re.match(r'r(#*)"', text[index:index + 260]) if char == "r" and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")) else None
-        if raw:
-            close = text.find('"' + raw.group(1), index + raw.end())
-            end = length if close < 0 else close + 1 + len(raw.group(1))
-            out.append(text[index:end])
-            index = end
-            continue
-        if char == '"':
-            match = STRING.match(text, index)
-            end = match.end() if match else index + 1
-            out.append(text[index:end])
-            index = end
-            continue
-        if char == "'":
-            match = re.match(r"'(?:\\.|[^\\'])'", text[index:index + 12])
-            if match:
-                out.append(match.group(0))
-                index += match.end()
-                continue
-        out.append(char)
-        index += 1
-    return "".join(out)
-
-
-def _without_tests(text: str) -> str:
-    """The source without comments and without every `#[cfg(test)] mod`
-    (inline or declared), wherever it sits in the file."""
-    text = _without_comments(text)
-    while True:
-        test = TEST_MODULE.search(text)
-        if not test:
-            return text
-        if test.group(1) == ";":
-            text = text[:test.start()] + text[test.end():]
+            emit(" ")
+        elif lead == '"':
+            literal = STRING.match(text, start)
+            if literal:
+                literals.append((position, literal.group(1)))
+            emit('""')
+            index = literal.end() if literal else len(text)
+        elif lead.endswith('"'):
+            close = text.find('"' + token.group(1), token.end())
+            end = len(text) if close < 0 else close
+            literals.append((position, text[token.end():end]))
+            emit('""')
+            index = len(text) if close < 0 else close + 1 + len(token.group(1))
         else:
-            body = _function_body(text, test.end() - 1)
-            text = text[:test.start()] + text[test.end() - 1 + len(body):]
+            emit("' '")
+            index = token.end()
 
 
-def _call_codes(text: str) -> set[str]:
-    """The first code-shaped string argument of every refusal constructor call."""
-    codes = set()
-    for match in CODE_CALL.finditer(text):
-        depth, index = 1, match.end()
-        while index < len(text) and depth:
-            char = text[index]
-            if char == '"':
-                literal = STRING.match(text, index)
-                if literal and CODE.fullmatch(literal.group(1)):
-                    codes.add(literal.group(1))
-                    break
-                index = literal.end() if literal else index + 1
-                continue
-            depth += {"(": 1, ")": -1}.get(char, 0)
-            index += 1
-    return codes
+def _closing(code: str, index: int, opening: str, closing: str) -> int:
+    """The index after the bracket that closes the one before `index`."""
+    depth = 1
+    while index < len(code) and depth:
+        depth += (code[index] == opening) - (code[index] == closing)
+        index += 1
+    return index
 
 
-def rust_codes(text: str) -> set[str]:
-    """Refusal codes a Rust source declares, outside comments and test
-    modules: literals inside `fn code` bodies, `const NAME: &str = "a.b"`
-    code constants, the code argument of refusal constructors and `code:
-    "a.b"` field initializers."""
-    text = _without_tests(text)
-    codes = set(CODE_CONST.findall(text)) | _call_codes(text) | set(CODE_FIELD.findall(text))
-    for match in CODE_FN.finditer(text):
-        for literal in STRING.findall(_function_body(text, match.end())):
-            if CODE.fullmatch(literal):
-                codes.add(literal)
-    return codes
+def _is_test_cfg(condition: str) -> bool:
+    """Whether a `cfg(..)` condition holds only in test builds: `test`, or an
+    `all(..)` with such a member. `any(test, ..)` and `not(test)` are production."""
+    condition = condition.strip()
+    if condition == "test":
+        return True
+    if not (condition.startswith("all(") and condition.endswith(")")):
+        return False
+    members, depth, start = [], 0, 4
+    for index in range(4, len(condition) - 1):
+        depth += (condition[index] == "(") - (condition[index] == ")")
+        if condition[index] == "," and depth == 0:
+            members.append(condition[start:index])
+            start = index + 1
+    members.append(condition[start:-1])
+    return any(_is_test_cfg(member) for member in members)
 
 
-def rust_literals(text: str) -> set[str]:
-    """Every code-shaped string literal outside comments and test modules."""
-    return {literal for literal in STRING.findall(_without_tests(text)) if CODE.fullmatch(literal)}
+@dataclass
+class RustFile:
+    """One lexed source: its production literals and the test-only modules it declares."""
+    literals: list[str]
+    test_only: bool
+    test_modules: list[str]
+
+
+def _rust_file(path: str, text: str) -> RustFile:
+    code, literals = _lex(text)
+    ranges: list[tuple[int, int]] = []
+    modules: list[str] = []
+    test_only = False
+    directory = path.rsplit("/", 1)[0]
+    base = directory if path.rsplit("/", 1)[-1] in ("mod.rs", "lib.rs", "main.rs") else path[:-3]
+    for cfg in CFG.finditer(code):
+        closed = _closing(code, cfg.end(), "(", ")")
+        if not _is_test_cfg(code[cfg.end():closed - 1]):
+            continue
+        if cfg.group(1):
+            test_only = True  # `#![cfg(test)]`: the whole file
+            continue
+        index = code.find("]", closed) + 1
+        while True:
+            attribute = ATTRIBUTE.match(code, index)
+            if not attribute:
+                break
+            index = _closing(code, attribute.end(), "[", "]")
+        # The item the attribute gates: up to its `;`, or through its `{ .. }` body.
+        end, depth = index, 0
+        while end < len(code):
+            char = code[end]
+            end += 1
+            if char in "([":
+                depth += 1
+            elif char in ")]":
+                depth -= 1
+            elif char == ";" and depth == 0:
+                break
+            elif char == "{" and depth == 0:
+                end = _closing(code, end, "{", "}")
+                break
+        ranges.append((cfg.start(), end))
+        declared = DECLARED_MODULE.match(code, index)
+        if declared and declared.end() == end:
+            name = declared.group(1)
+            modules += [f"{base}/{name}.rs", f"{base}/{name}/"]
+            # `#[path = "x.rs"]` names the file itself.
+            modules += [os.path.normpath(f"{directory}/{literal}") for position, literal in literals
+                        if cfg.start() <= position < end and literal.endswith(".rs")]
+    kept = [literal for position, literal in literals if not any(start <= position < end for start, end in ranges)]
+    return RustFile(kept, test_only, modules)
+
+
+def _codes(literals: list[str]) -> Counter[str]:
+    return Counter(match.group(1) for match in map(CODE_LITERAL.fullmatch, literals) if match)
+
+
+def rust_literals(text: str, path: str = "crates/x/src/lib.rs") -> set[str]:
+    """Every code-shaped string literal of one source outside comments and test-only items."""
+    return set(_codes(_rust_file(path, text).literals))
 
 
 def _rust_sources(tree: Tree) -> list[str]:
     paths = []
     for path in tree.list("crates"):
         parts = path.split("/")
-        if len(parts) >= 4 and parts[2] == "src" and path.endswith(".rs") and not path.endswith("_tests.rs") \
-                and "tests" not in parts[3:-1]:
+        if len(parts) >= 4 and parts[2] == "src" and path.endswith(".rs") and not TEST_FILE.search(path) \
+                and not {"tests", "test"} & set(parts[3:-1]):
             paths.append(path)
     return paths
 
 
-def refusal_codes(tree: Tree) -> set[str]:
-    return set().union(*(rust_codes(tree.read(path) or "") for path in _rust_sources(tree)))
+def refusal_codes(tree: Tree) -> Counter[str]:
+    """The refusal-code surface, independent of how a code is constructed: every
+    string literal of code shape (lowercase dotted segments, alone or as the
+    `a.b: detail` prefix of a message) in production Rust under `crates/*/src`.
+    Test files, `#[cfg(test)]`/`#[cfg(all(test, ..))]` items and the modules
+    they declare are not production. Each code maps to how many times
+    production spells it. This over-approximates on purpose: a literal that is
+    not a code costs an approval when it is removed, and a code the check does
+    not see would be a silent break."""
+    files = {path: _rust_file(path, tree.read(path) or "") for path in _rust_sources(tree)}
+    test_modules = [module for file in files.values() for module in file.test_modules]
+    codes: Counter[str] = Counter()
+    for path, file in files.items():
+        if file.test_only or any(path == module or (module.endswith("/") and path.startswith(module)) for module in test_modules):
+            continue
+        codes += _codes(file.literals)
+    return codes
 
 
-def removed_refusal_codes(old: Tree, new: Tree) -> set[str]:
-    """Codes the base declares that the head no longer spells anywhere: moving
-    a code into a helper, a constant or another crate is not a removal."""
-    present = set().union(*(rust_literals(new.read(path) or "") for path in _rust_sources(new)))
-    return refusal_codes(old) - present
+def removed_refusal_codes(old: Tree, new: Tree) -> dict[str, tuple[int, int]]:
+    """Codes production spells fewer times at the head than at the base, as
+    code -> (before, after). Moving a code keeps its count; renaming it at any
+    one site lowers it, even while another site (an error message attribute,
+    say) still spells the old name; merging duplicate spellings into one
+    constant lowers it too, and costs an approval."""
+    before, after = refusal_codes(old), refusal_codes(new)
+    return {code: (count, after[code]) for code, count in before.items() if after[code] < count}
 
 
 def diagnostic_codes(tree: Tree) -> dict[str, dict]:
@@ -838,7 +912,7 @@ def unenrolled_surfaces(tree: Tree) -> list[str]:
         parts = path.split("/")
         if not path.endswith(".json") or path.startswith(".github/") or set(parts[:-1]) & set(NOT_CONTRACT_DIRS):
             continue
-        shaped = path.endswith((".schema.json", ".contract.json")) or (len(parts) > 1 and parts[-2] in ("schema", "schemas"))
+        shaped = path.endswith((".schema.json", ".contract.json")) or bool({"schema", "schemas"} & set(parts[:-1]))
         if not shaped or path in enrolled or path in SCHEMA_FILES or path.startswith(tuple(f"{d}/" for d in SCHEMA_DIRS)) \
                 or path.startswith(INTERNAL) or path.startswith(DIAGNOSTIC_CODES):
             continue
@@ -885,8 +959,9 @@ def diff(old: Tree, new: Tree) -> list[str]:
         else:
             before_schema, after_schema = json.loads(text), json.loads(new_schemas[path])
             compare_schema(before_schema, after_schema, path, frozenset({IN, OUT}), out, Documents(before_schema, after_schema))
-    for code in sorted(removed_refusal_codes(old, new)):
-        out.append(f"refusal code {code}: removed")
+    for code, (before_count, after_count) in sorted(removed_refusal_codes(old, new).items()):
+        out.append(f"refusal code {code}: removed" if after_count == 0
+                   else f"refusal code {code}: production spellings reduced from {before_count} to {after_count}")
     old_diagnostics, new_diagnostics = diagnostic_codes(old), diagnostic_codes(new)
     for code, document in old_diagnostics.items():
         if code not in new_diagnostics:

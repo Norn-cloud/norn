@@ -337,6 +337,42 @@ class SchemaProperties(unittest.TestCase):
         added = {"type": "object", "properties": {"tz": {"type": "string"}}}
         self.assertEqual(diff_schema(added, before, frozenset({cd.IN})), [])
 
+    def test_a_default_beside_a_ref_is_compared(self):
+        # The shape of `question_ir.schema.json` /properties/calendar.
+        before = {"type": "object", "properties": {"calendar": {"$ref": "#/$defs/CalendarPolicy", "default": "iso_utc"}},
+                  "$defs": {"CalendarPolicy": {"type": "string", "enum": ["iso_utc", "local"]}}}
+        changed = copy.deepcopy(before)
+        changed["properties"]["calendar"]["default"] = "local"
+        removed = copy.deepcopy(before)
+        del removed["properties"]["calendar"]["default"]
+        self.assertEqual(diff_schema(before, changed, frozenset({cd.IN})),
+                         ['s.calendar: input default changed from "iso_utc" to "local"'])
+        self.assertEqual(diff_schema(before, removed, frozenset({cd.IN})),
+                         ['s.calendar: input default changed from "iso_utc" to removed'])
+        self.assertEqual(diff_schema(before, changed, frozenset({cd.OUT})), [])
+        # Moving the same default onto the referenced schema, or inlining it, is a re-encoding.
+        moved = copy.deepcopy(removed)
+        moved["$defs"]["CalendarPolicy"]["default"] = "iso_utc"
+        self.assertEqual(diff_schema(before, moved, frozenset({cd.IN})), [])
+        inlined = copy.deepcopy(before)
+        inlined["properties"]["calendar"] = {"type": "string", "enum": ["iso_utc", "local"], "default": "iso_utc"}
+        self.assertEqual(diff_schema(before, inlined, frozenset({cd.IN})), [])
+        # The referenced schema's own default is compared where it is defined.
+        own = copy.deepcopy(moved)
+        own["$defs"]["CalendarPolicy"]["default"] = "local"
+        self.assertTrue(any("default changed" in line for line in diff_schema(moved, own, frozenset({cd.IN}))))
+
+    def test_a_default_or_enum_is_compared_as_json(self):
+        for before, after in ((1, True), (0, False), (True, 1)):
+            schema = lambda value: {"type": "object", "properties": {"n": {"default": value}}}
+            self.assertTrue(diff_schema(schema(before), schema(after), frozenset({cd.IN})), (before, after))
+        self.assertTrue(diff_schema({"enum": [1, "a"]}, {"enum": [True, "a"]}))
+        # A schema that is only a default or a format is still compared.
+        self.assertTrue(diff_schema({"default": "a"}, {"default": "b"}, frozenset({cd.IN})))
+        self.assertTrue(diff_schema({"format": "date"}, {}, frozenset({cd.OUT})))
+        self.assertTrue(diff_schema({"format": "date"}, {"format": "date-time"}, frozenset({cd.IN})))
+        self.assertEqual(diff_schema({"format": "date"}, {}, frozenset({cd.IN})), [])
+
     def test_an_output_pattern_or_format_removed_widens_it(self):
         for key, value in (("pattern", "^[a-z]+$"), ("format", "date")):
             before = {"type": "string", key: value}
@@ -413,44 +449,101 @@ class OpenApiProperties(unittest.TestCase):
 
 
 class CodeAndCliProperties(unittest.TestCase):
-    def test_constructor_codes_are_declared(self):
+    def test_a_code_is_declared_however_it_is_constructed(self):
         text = '''
 fn refuse() -> Refusal {
     Refusal::new(StatusCode::CONFLICT, "defs.stale", format!("lost {}", "x.y"))
 }
-fn other() { Refusal::new(
-    StatusCode::BAD_REQUEST,
-    "request.too_large",
-    "body exceeds the limit",
-); }
 fn setup() -> Failure { Failure::setup("norn.dev.io", "norn.json is unreadable") }
 fn usage() -> Failure { Failure { code: "norn.dev.usage", message: String::new(), exit: 2 } }
-fn compute() { refused("core.compute.stale_input", detail) }
+fn dispute() -> CellError { CellError::ComputeRefused("core.world.source_dispute_unqualified") }
+fn options() -> Result<(), DecisionRefusal> {
+    let invalid = DecisionRefusal::InvalidRequest;
+    Err(invalid("decision.option_count"))
+}
+#[derive(thiserror::Error)]
+enum CellError {
+    #[error("core.world.frontier_behind")]
+    Behind,
+    #[error("law.wording.incomplete_locale: {0}")]
+    Locale(String),
+}
+const RAW: &str = r#"raw.code"#;
 '''
-        self.assertEqual(cd.rust_codes(text), {"defs.stale", "request.too_large", "norn.dev.io", "norn.dev.usage",
-                                               "core.compute.stale_input"})
-        for code in ("defs.stale", "request.too_large", "norn.dev.io"):
-            renamed = text.replace(f'"{code}"', f'"{code}_renamed"')
+        codes = {"defs.stale", "x.y", "norn.dev.io", "norn.dev.usage", "core.world.source_dispute_unqualified",
+                 "decision.option_count", "core.world.frontier_behind", "law.wording.incomplete_locale", "raw.code"}
+        self.assertEqual(cd.rust_literals(text), codes)
+        # Renaming a code of any form removes it from the surface: a break.
+        for code in codes - {"x.y"}:
+            renamed = text.replace(code, f"{code}_renamed")
             self.assertNotIn(code, cd.rust_literals(renamed), code)
+
+            def tree(source):
+                files = {"crates/norn-x/src/lib.rs": source}
+                return cd.Tree(lambda d: sorted(files) if d in (".", "crates") else [], files.get)
+            self.assertEqual(cd.diff(tree(text), tree(renamed)), [f"refusal code {code}: removed"], code)
 
     def test_tests_and_comments_never_hide_or_declare_a_code(self):
         text = '''
 const A: &str = "first.code";
 #[cfg(test)]
 mod tests {
+    const BRACE: char = '{';
+    const QUOTE: char = '"';
     const T: &str = "test.only";
 }
 const B: &str = "after.tests";
+#[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used, reason = "tests")]
+mod unix_tests {
+    const U: &str = "unix.test_only";
+}
 #[cfg(test)]
-mod more;
+fn helper() -> &'static str { "test.helper" }
+#[cfg(test)]
+use crate::x::{a, b};
+#[cfg(any(test, feature = "testkit"))]
+const KIT: &str = "testkit.code";
+#[cfg(not(test))]
+const PROD: &str = "prod.code";
+const C: &str = "after.all";
 // const OLD: &str = "removed.code"; kept in a comment
-/* "also.removed" */
+/* "also.removed" /* nested */ "still.comment" */
 const URL: &str = "http://x.y"; // a "comment.code" after a string with //
+fn life<'a>(x: &'a str) -> &'a str { "life.time" }
 '''
-        self.assertEqual(cd.rust_codes(text), {"first.code", "after.tests"})
-        literals = cd.rust_literals(text)
-        for hidden in ("test.only", "removed.code", "also.removed", "comment.code"):
-            self.assertNotIn(hidden, literals, hidden)
+        self.assertEqual(cd.rust_literals(text), {"first.code", "after.tests", "testkit.code", "prod.code", "after.all", "life.time"})
+
+    def test_test_only_files_and_declared_test_modules_are_not_production(self):
+        files = {
+            "crates/a/src/lib.rs": 'const A: &str = "prod.a";\n#[cfg(test)]\nmod checks;\n#[cfg(test)]\n#[path = "odd/place.rs"]\nmod elsewhere;\nmod real;\n',
+            "crates/a/src/checks.rs": 'const T: &str = "declared.test_module";\n',
+            "crates/a/src/odd/place.rs": 'const T: &str = "path.test_module";\n',
+            "crates/a/src/real.rs": 'const R: &str = "prod.real";\n',
+            "crates/a/src/tests.rs": 'const T: &str = "tests.file";\n',
+            "crates/a/src/inheritance/tests.rs": 'const T: &str = "nested.tests_file";\n',
+            "crates/a/src/dev_tests.rs": 'const T: &str = "suffix.tests_file";\n',
+            "crates/a/src/whole.rs": '#![cfg(test)]\nconst T: &str = "inner.attribute";\n',
+            "crates/a/tests/it.rs": 'const T: &str = "integration.test";\n',
+        }
+        tree = cd.Tree(lambda d: sorted(p for p in files if p.startswith(d + "/")), files.get)
+        self.assertEqual(set(cd.refusal_codes(tree)), {"prod.a", "prod.real"})
+        # A code that survives only in a test is removed from production.
+        after = {**files, "crates/a/src/real.rs": "\n", "crates/a/src/tests.rs": 'const T: &str = "prod.real";\n'}
+        after_tree = cd.Tree(lambda d: sorted(p for p in after if p.startswith(d + "/")), after.get)
+        self.assertEqual(cd.removed_refusal_codes(tree, after_tree), {"prod.real": (1, 0)})
+
+    def test_renaming_one_of_several_spellings_is_a_break(self):
+        def tree(source):
+            files = {"crates/norn-x/src/lib.rs": source}
+            return cd.Tree(lambda d: sorted(files) if d in (".", "crates") else [], files.get)
+        # The wire code and its error-message attribute spell the same name.
+        before = '#[error("core.world.dispute")]\nstruct E;\nfn f() -> E { CellError::ComputeRefused("core.world.dispute") }\n'
+        renamed = before.replace('ComputeRefused("core.world.dispute")', 'ComputeRefused("core.world.other")')
+        self.assertEqual(cd.diff(tree(before), tree(renamed)),
+                         ["refusal code core.world.dispute: production spellings reduced from 2 to 1"])
+        moved = '#[error("core.world.dispute")]\nstruct E;\nconst D: &str = "core.world.dispute";\nfn f() -> E { CellError::ComputeRefused(D) }\n'
+        self.assertEqual(cd.diff(tree(before), tree(moved)), [])
 
     def test_an_unenrolled_contract_file_fails(self):
         def tree(files):
@@ -458,7 +551,8 @@ const URL: &str = "http://x.y"; // a "comment.code" after a string with //
         enrolled = {f"{cd.SCHEMA_DIRS[0]}/a.schema.json": "{}", "tools/norn-ts/fixtures/schema/x.json": "{}",
                     "crates/x/tests/schema/y.json": "{}", f"{cd.INTERNAL[0]}": "{}"}
         self.assertEqual(cd.unenrolled_surfaces(tree(enrolled)), [])
-        for path in ("crates/norn-new/schema/event.json", "packages/x/wire.schema.json", "tools/dev/dev.contract.json"):
+        for path in ("crates/norn-new/schema/event.json", "crates/norn-new/schema/v1/event.json", "packages/x/wire.schema.json",
+                     "tools/dev/dev.contract.json"):
             self.assertEqual(cd.unenrolled_surfaces(tree({**enrolled, path: "{}"})), [path], path)
 
     def test_a_single_enrolled_schema_file_is_compared(self):
@@ -477,10 +571,10 @@ const URL: &str = "http://x.y"; // a "comment.code" after a string with //
     def test_moving_a_code_is_not_removing_it(self):
         before = 'impl E {\n    pub const fn code(&self) -> &str {\n        match self { Self::A => "decision.guard_false", Self::B => OTHER }\n    }\n}\nconst OTHER: &str = "decision.other";\n'
         moved = 'fn helper() -> &\'static str { "decision.guard_false" }\nconst OTHER: &str = "decision.other";\n'
-        self.assertEqual(cd.rust_codes(before), {"decision.guard_false", "decision.other"})
-        self.assertLessEqual(cd.rust_codes(before), cd.rust_literals(moved))
+        self.assertEqual(cd.rust_literals(before), {"decision.guard_false", "decision.other"})
+        self.assertLessEqual(cd.rust_literals(before), cd.rust_literals(moved))
         self.assertNotIn("decision.guard_false", cd.rust_literals('const OTHER: &str = "decision.other";\n'))
-        self.assertEqual(cd.rust_codes('#[cfg(test)]\nmod tests {\n    const X: &str = "test.only";\n}\n'), set())
+        self.assertEqual(cd.rust_literals('#[cfg(test)]\nmod tests {\n    const X: &str = "test.only";\n}\n'), set())
 
     def test_cli_additions_pass_and_removals_fail(self):
         flag = {"long": "org", "short": None, "aliases": [], "positional": False, "takes_value": True,

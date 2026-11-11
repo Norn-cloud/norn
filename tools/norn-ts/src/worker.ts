@@ -16,7 +16,7 @@
  * which bytes a result belongs to. A setup failure prints `{ event: "fatal" }`.
  */
 import { createHash } from "node:crypto"
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, watch } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, watch } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
 import { compilePack, packModules } from "./pack.ts"
 import { ProjectError, readProject, type Project } from "./project.ts"
@@ -34,13 +34,44 @@ export interface CompiledEvent {
 
 const posix = (path: string) => path.split(sep).join("/")
 
+/** Whether `path`, with every symlink resolved, is the project root or inside it. */
+function insideProject(realRoot: string, path: string): boolean {
+  const real = realpathSync(path)
+  return real === realRoot || real.startsWith(realRoot + sep)
+}
+
+function outside(what: string): ProjectError {
+  return new ProjectError("cli.project.invalid_manifest", `${what} resolves outside the project; sources must stay inside it.`)
+}
+
+/** The manifest's source directories that exist; one that resolves outside the project refuses. */
+function sourceDirs(root: string, manifest: Project): string[] {
+  const realRoot = realpathSync(root)
+  return manifest.sources.map((source) => resolve(root, source)).filter((dir) => {
+    if (!existsSync(dir)) return false
+    if (!insideProject(realRoot, dir)) throw outside(`source ${posix(relative(root, dir))}`)
+    return statSync(dir).isDirectory()
+  })
+}
+
+/**
+ * The modules compiled as one set: each source directory's top-level `*.ts`.
+ * A module that is a symlink is compiled only if it resolves inside the project.
+ */
+function projectModules(root: string, manifest: Project): string[] {
+  const realRoot = realpathSync(root)
+  return sourceDirs(root, manifest).flatMap((dir) => packModules(dir)).map((module) => {
+    if (!insideProject(realRoot, module)) throw outside(`module ${posix(relative(root, module))}`)
+    return module
+  })
+}
+
 function sourceFiles(root: string, manifest: Project): string[] {
-  const files: string[] = []
-  // Symlinks are never followed (no cycle, nothing outside the project), and
-  // each real directory is read once.
+  const files = new Set<string>(projectModules(root, manifest))
+  // Below the top level, symlinks are never followed (no cycle, nothing
+  // outside the project), and each real directory is read once.
   const visited = new Set<string>()
   const walk = (dir: string) => {
-    if (!existsSync(dir) || !lstatSync(dir).isDirectory()) return
     const real = realpathSync(dir)
     if (visited.has(real)) return
     visited.add(real)
@@ -48,14 +79,18 @@ function sourceFiles(root: string, manifest: Project): string[] {
       const path = join(dir, entry)
       const kind = lstatSync(path)
       if (kind.isDirectory()) walk(path)
-      else if (kind.isFile() && entry.endsWith(".ts")) files.push(path)
+      else if (kind.isFile() && entry.endsWith(".ts")) files.add(path)
     }
   }
-  for (const source of manifest.sources) walk(resolve(root, source))
-  return files
+  for (const dir of sourceDirs(root, manifest)) walk(dir)
+  return [...files]
 }
 
-/** SHA-256 over the sorted (project-relative path, bytes) pairs under `sources`. */
+/**
+ * SHA-256 over the sorted (project-relative path, bytes) pairs of every `*.ts`
+ * file under `sources` and of every compiled module, a symlinked one included
+ * (its bytes are its target's).
+ */
 export function sourceDigest(root: string, manifest: Project): string {
   const hash = createHash("sha256")
   for (const file of sourceFiles(root, manifest).map((path) => posix(relative(root, path))).sort()) {
@@ -68,10 +103,7 @@ export function sourceDigest(root: string, manifest: Project): string {
 /** Compile every top-level module of every source directory as one set. */
 export function compileProject(root: string, manifest: Project, gen: number): CompiledEvent {
   const digest = sourceDigest(root, manifest)
-  const modules = manifest.sources.flatMap((source) => {
-    const dir = resolve(root, source)
-    return existsSync(dir) && lstatSync(dir).isDirectory() ? packModules(dir) : []
-  })
+  const modules = projectModules(root, manifest)
   const pack = compilePack(root, { modules, scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId }, root })
   if (!pack.ok) {
     const diagnostics = pack.failures.flatMap((failure) => failure.diagnostics.map((diagnostic) => ({
@@ -112,7 +144,8 @@ export function main(args: readonly string[]): void {
       let digest = ""
       try { digest = sourceDigest(root, manifest) } catch { /* reported below */ }
       emit({ event: "compiled", gen, sourceDigest: digest, ok: false,
-        diagnostics: [{ code: "cli.compile.internal", message: `The compiler failed on this source: ${String(error)}` }] })
+        diagnostics: [error instanceof ProjectError ? error.diagnostic
+          : { code: "cli.compile.internal", message: `The compiler failed on this source: ${String(error)}` }] })
     }
   }
   compile()
@@ -126,10 +159,10 @@ export function main(args: readonly string[]): void {
     if (timer) clearTimeout(timer)
     timer = setTimeout(compile, 50)
   }
-  for (const source of manifest.sources) {
-    const dir = resolve(root, source)
-    if (existsSync(dir)) watch(dir, { recursive: true }, changed)
-  }
+  // A source that resolves outside the project is reported by each compile, never watched.
+  let dirs: string[] = []
+  try { dirs = sourceDirs(root, manifest) } catch { /* reported by compile() above */ }
+  for (const dir of dirs) watch(dir, { recursive: true }, changed)
 }
 
 if (import.meta.main) main(process.argv.slice(2))

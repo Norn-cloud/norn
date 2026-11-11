@@ -500,6 +500,7 @@ fn policy_fixture() -> Fixture {
     for path in [
         "scripts/ci/core.sh",
         "scripts/ci/contract_diff.py",
+        "scripts/ci/test_contract_diff.py",
         "scripts/ci/contract-breaks.json",
         "scripts/ci/implementation_receipts.py",
         ".config/nextest.toml",
@@ -575,6 +576,7 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
         ".github/workflows/core.yml",
         "scripts/ci/core.sh",
         "scripts/ci/contract_diff.py",
+        "scripts/ci/test_contract_diff.py",
         "scripts/ci/contract-breaks.json",
         "scripts/ci/implementation_receipts.py",
         "verification/coverage-v1/negative_canaries.py",
