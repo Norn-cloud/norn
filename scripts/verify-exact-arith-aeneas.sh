@@ -2,8 +2,8 @@
 # #717 (D78): Charon/Aeneas extract the production exact-arithmetic core and
 # Lean proves it against the written VAL-EXACT-1 / FOLD-ARITHMETIC /
 # FOLD-SCALED / VAL-ROUND / EXACT-RATIONAL-1 semantics in
-# verification/exact-arith-v1. Every seeded rounding and overflow mutant
-# must then extract and fail the same proof.
+# verification/exact-arith-v1. Every seeded rounding and overflow mutant must
+# then extract, fail the same proof, and be refuted by a concrete vector.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
@@ -280,6 +280,123 @@ printf '%s\n' \
   '        a.coeff a.places b.coeff b.places :=' \
   '  Norn.OrderedFold.divide_correct profile a b' \
   | (cd "$lean_root" && LEAN_PATH="$baseline:$result/common" lake env lean -DwarningAsError=true --stdin)
+# Refutation vectors: concrete runs of the extracted code, decided by compiled
+# evaluation (`native_decide`; the machine-integer library is not
+# kernel-reducible, so `decide` cannot run it). They hold on production and
+# refute every seeded mutant. They are generated here, never part of a claim,
+# and outside the proof tree, whose hole scan rejects `native_decide`.
+mkdir -p "$result/vectors"
+cat > "$result/vectors/ExactArithVectors.lean" <<'LEANVECTORS'
+import Decimal.Funs
+import Scaled.Funs
+import ExactRational.Funs
+
+open Aeneas Aeneas.Std Result
+
+namespace ExactArithVectors
+
+def pair : Result (Std.I128 × Std.U8) → Option (ℤ × ℕ)
+  | ok (c, s) => some (c.val, s.val)
+  | _ => none
+
+def optInt : Result (Option Std.I128) → Option (Option ℤ)
+  | ok (some v) => some (some v.val)
+  | ok none => some none
+  | _ => none
+
+def refusable {E : Type} : Result (core.result.Result Std.I128 E) → Option (Option ℤ)
+  | ok (.Ok v) => some (some v.val)
+  | ok (.Err _) => some none
+  | _ => none
+
+def decimal {E : Type} :
+    Result (core.result.Result rust_decimal.decimal.Decimal E) → Option (Option (ℤ × ℕ))
+  | ok (.Ok d) => some (some (d.coeff, d.places))
+  | ok (.Err _) => some none
+  | _ => none
+
+def rational :
+    Result (Option norn_checker_rational.exact_rational.Rational) → Option (Option (ℤ × ℤ))
+  | ok (some r) => some (some (r.numerator.val, r.denominator.val))
+  | ok none => some none
+  | _ => none
+
+def ordering : Result (Option Ordering) → Option (Option Ordering)
+  | ok o => some o
+  | _ => none
+
+def dec (c : ℤ) (s : ℕ) (h : -2 ^ 96 < c ∧ c < 2 ^ 96 := by decide) (hs : s ≤ 28 := by decide) :
+    rust_decimal.decimal.Decimal := ⟨c, s, h, hs⟩
+
+def rat (n d : Std.I64) : norn_checker_rational.exact_rational.Rational := ⟨n, d⟩
+
+open norn_checker_decimal zen_expression norn_checker_rational
+
+theorem canonical_strips : pair (decimal.canonical_parts 1200#i128 3#u8) = some (12, 1) := by
+  native_decide
+theorem canonical_negative : pair (decimal.canonical_parts (-1200)#i128 3#u8) = some (-12, 1) := by
+  native_decide
+theorem canonical_zero : pair (decimal.canonical_parts 0#i128 7#u8) = some (0, 0) := by
+  native_decide
+theorem canonical_keeps_digit : pair (decimal.canonical_parts 1203#i128 3#u8) = some (1203, 3) := by
+  native_decide
+theorem canonical_wide :
+    pair (decimal.canonical_parts 170141183460469231731687303715884105720#i128 1#u8) =
+      some (17014118346046923173168730371588410572, 0) := by
+  native_decide
+theorem pow10_zero : optInt (decimal.checked_pow10 0#u8) = some (some 1) := by native_decide
+theorem pow10_max : optInt (decimal.checked_pow10 38#u8) = some (some (10 ^ 38)) := by native_decide
+theorem pow10_overflow : optInt (decimal.checked_pow10 39#u8) = some none := by native_decide
+theorem half_even_tie :
+    refusable (scaled.rounded_quotient .HalfEven 5#i128 2#i128) = some (some 2) := by native_decide
+theorem half_even_odd_tie :
+    refusable (scaled.rounded_quotient .HalfEven 7#i128 2#i128) = some (some 4) := by native_decide
+theorem half_away_tie :
+    refusable (scaled.rounded_quotient .HalfAwayFromZero 5#i128 2#i128) = some (some 3) := by
+  native_decide
+theorem half_away_negative_tie :
+    refusable (scaled.rounded_quotient .HalfAwayFromZero (-5)#i128 2#i128) = some (some (-3)) := by
+  native_decide
+theorem toward_zero :
+    refusable (scaled.rounded_quotient .TowardZero 7#i128 2#i128) = some (some 3) := by
+  native_decide
+theorem refuse_inexact :
+    refusable (scaled.rounded_quotient .Refuse 7#i128 2#i128) = some none := by native_decide
+theorem zero_divisor_refuses :
+    refusable (scaled.rounded_quotient .HalfEven 1#i128 0#i128) = some none := by native_decide
+theorem coefficient_scale_limit :
+    refusable (scaled.coefficient 19#u32 (dec 1 0)) = some none := by native_decide
+theorem binary_multiply :
+    decimal (scaled.binary ⟨2#u32, .HalfEven⟩ .Multiply (dec 150 2) (dec 200 2)) =
+      some (some (300, 2)) := by
+  native_decide
+theorem divide_aligns :
+    decimal (scaled.divide ⟨2#u32, .HalfEven⟩ (dec 10 1) (dec 3 0)) = some (some (33, 2)) := by
+  native_decide
+theorem normalize_sign :
+    rational (exact_rational.Rational.normalize 6#i128 (-4)#i128) = some (some (-3, 2)) := by
+  native_decide
+theorem normalize_min_denominator :
+    rational (exact_rational.Rational.normalize 1#i128
+      (-170141183460469231731687303715884105728)#i128) = some none := by
+  native_decide
+theorem normalize_wide :
+    rational (exact_rational.Rational.normalize 9223372036854775808#i128 1#i128) = some none := by
+  native_decide
+theorem add_exact :
+    rational (exact_rational.Rational.checked_add (rat 1#i64 2#i64) (rat 1#i64 3#i64)) =
+      some (some (5, 6)) := by
+  native_decide
+theorem cmp_exact :
+    ordering (exact_rational.Rational.cmp (rat 1#i64 3#i64) (rat 1#i64 2#i64)) =
+      some (some .lt) := by
+  native_decide
+
+end ExactArithVectors
+LEANVECTORS
+vector_pattern='ExactArithVectors.lean:[0-9]*:[0-9]*: error: Tactic `native_decide` evaluated that the proposition'
+# Every vector holds on the production extraction.
+lean_check "$baseline" "$result/vectors" ExactArithVectors
 echo "exact-arith: production fragments proved against the written semantics"
 
 # Mutants are applied to a hard-linked copy of the workspace; the edited file is
@@ -316,7 +433,8 @@ mutants = [
     ("overflow-canonical-intermediate-product", decimal,
      "unscaled /= 10;", "unscaled = unscaled * 10 / 100;"),
     ("rational-not-reduced", rational, "break Some(a);", "break Some(1);"),
-    ("rational-sign-not-normalized", rational, "if denominator < 0 {", "if denominator < -1 {"),
+    ("rational-sign-not-normalized", rational,
+     "numerator = numerator.checked_neg()?;", "numerator = numerator.checked_abs()?;"),
     ("rational-add-subtracts", rational,
      ".checked_add(i128::from(rhs.numerator).checked_mul(i128::from(self.denominator))?)?;",
      ".checked_sub(i128::from(rhs.numerator).checked_mul(i128::from(self.denominator))?)?;"),
@@ -328,6 +446,15 @@ mutants = [
      "numerator: i64::try_from(numerator.checked_div(divisor)?).ok().unwrap_or(i64::MAX),"),
     ("overflow-rational-unchecked-negation", rational,
      "denominator = denominator.checked_neg()?;", "denominator = -denominator;"),
+    ("scaled-coefficient-scale-limit", scaled,
+     "    if scale > 18 {\n        return Err(ScaledRefusal::OutsideDeclaredScale);\n    }\n    let places",
+     "    if scale > 19 {\n        return Err(ScaledRefusal::OutsideDeclaredScale);\n    }\n    let places"),
+    ("scaled-binary-multiply-unscaled", scaled,
+     "            factor,\n        )?),\n        ArithmeticOp::Divide",
+     "            1,\n        )?),\n        ArithmeticOp::Divide"),
+    ("scaled-divide-exponent-swapped", scaled,
+     "let exponent = i64::from(profile.scale) + i64::from(b.scale()) - i64::from(a.scale());",
+     "let exponent = i64::from(profile.scale) + i64::from(a.scale()) - i64::from(b.scale());"),
 ]
 for name, path, old, new in mutants:
     source = (tree / path).read_text(encoding="utf-8")
@@ -352,20 +479,26 @@ while read -r name path; do
     echo "mutant $name: did not extract and elaborate; it cannot test the proof" >&2
     exit 1
   fi
-  refuted=false
+  unproved=false
   for module in DecimalProof QuotientProof RationalProof ScaledProof; do
     if ! lean_check "$out" "$proof_root" "$module" > "$result/mutants/$name/$module.log" 2>&1; then
-      refuted=true
+      unproved=true
     fi
   done
+  # Detected means refuted, not merely unproved: a vector must evaluate false.
+  lean_check "$out" "$result/vectors" ExactArithVectors > "$result/mutants/$name/vectors.log" 2>&1
   rm "$tree/$path"
   cp "$pristine" "$tree/$path"
-  if $refuted; then
-    echo "mutant $name: proof fails (detected)"
-  else
+  if ! $unproved; then
     echo "mutant $name: proof still holds (survived)" >&2
+    survivors=$((survivors + 1))
+  elif grep -q "$vector_pattern" "$result/mutants/$name/vectors.log"; then
+    echo "mutant $name: refuted by $(grep -o "$vector_pattern" "$result/mutants/$name/vectors.log" | wc -l) vector(s)"
+  else
+    tail -n 20 "$result/mutants/$name/vectors.log" >&2
+    echo "mutant $name: unproved but not refuted by any vector" >&2
     survivors=$((survivors + 1))
   fi
 done < "$result/mutants/list"
 test "$survivors" -eq 0
-echo "exact-arith: every seeded rounding and overflow mutant fails the proof"
+echo "exact-arith: every seeded rounding and overflow mutant is refuted"
