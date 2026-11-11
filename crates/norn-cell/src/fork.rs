@@ -528,4 +528,49 @@ mod tests {
         ));
         Ok(())
     }
+    /// CELL-ID-1 with FORK-PIN-1, today's rule: a fork file carries main's
+    /// cell id, so `open_bound(main_id)` accepts it, and it loads as a fork
+    /// that still refuses performs and its own minted evidence. Whether a
+    /// fork gets a derived identity instead is an open U2b decision.
+    #[test]
+    fn a_fork_file_opened_under_mains_identity_stays_a_fork() -> Result<(), CellError> {
+        let model = Model::new(&SqliteDdlInput {
+            object_types: &[],
+            property_types: &[],
+        })?;
+        let empty = || CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "s".to_owned(),
+            ..CommitBatch::default()
+        };
+        let mut main = CellStore::open_in_memory(model.clone())?;
+        main.commit(&empty())?;
+        let id = main
+            .cell_id()?
+            .ok_or_else(|| CellError::Engine("main is bound".to_owned()))?;
+        let base = main.verified_head()?;
+        let mut fork = main.fork("what-if", &base)?;
+        fork.commit(&empty())?;
+        let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
+        let path = dir.path().join("fork.sqlite");
+        fork.conn
+            .execute_batch(&format!("VACUUM INTO '{}'", path.display()))?;
+        drop(fork);
+
+        let mut opened = CellStore::open_bound(&path, model, StoreOptions::default(), &id)?;
+        assert_eq!(
+            opened.fork_pin().map(|pin| pin.world.as_str()),
+            Some("what-if")
+        );
+        assert!(matches!(
+            opened.record_performed("c", 0, &norn_ir::RuntimeValue::Null),
+            Err(CellError::WorldPerformForbidden)
+        ));
+        assert!(opened.export_record(base.commits)?.is_some());
+        assert!(matches!(
+            opened.export_record(base.commits + 1),
+            Err(CellError::ForkEvidenceForbidden)
+        ));
+        Ok(())
+    }
 }
