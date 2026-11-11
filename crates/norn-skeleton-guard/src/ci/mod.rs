@@ -811,7 +811,9 @@ mod tests {
     }
 
     /// The verdicts `validate.py`'s `validate_pull_request_concurrency` must also reach
-    /// (`negative_canaries.py --workflow-contract` checks that side).
+    /// (`negative_canaries.py --workflow-contract` checks that side). The fixture is not a
+    /// gate file on purpose: flipping a verdict in it fails both tests unless the gate-pinned
+    /// rule changes too, and that change needs `/approve-gates`.
     const CONCURRENCY_CASES: &str =
         include_str!("../../../../verification/coverage-v1/fixtures/pull-request-concurrency.json");
 
