@@ -2706,7 +2706,7 @@ fn fork_op() -> impl Strategy<Value = ForkOp> {
         4 => (slot.clone(), fork_put()).prop_map(|(slot, put)| ForkOp::Commit(slot, put)),
         2 => slot.clone().prop_map(ForkOp::Perform),
         1 => (slot.clone(), any::<u8>()).prop_map(|(slot, value)| ForkOp::Deliver(slot, value)),
-        1 => slot.clone().prop_map(ForkOp::Evidence),
+        2 => slot.clone().prop_map(ForkOp::Evidence),
         2 => (slot.clone(), any::<u8>()).prop_map(|(slot, value)| ForkOp::Simulate(slot, value)),
         1 => slot.prop_map(ForkOp::Discard),
     ]
@@ -2784,6 +2784,9 @@ struct ForkTrace {
     /// Main run alone: the same main operations, no fork operations (t∖F).
     alone: LawNative,
     forks: std::collections::BTreeMap<u8, LawNative>,
+    /// Each fork's main horizon, tracked by the trace itself: the main commit
+    /// count when its lineage left main, inherited by forks of forks.
+    horizons: std::collections::BTreeMap<u8, u64>,
     executed: std::sync::Arc<std::sync::atomic::AtomicU64>,
     alone_executed: std::sync::Arc<std::sync::atomic::AtomicU64>,
     escaped: std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -2813,6 +2816,7 @@ impl ForkTrace {
             main: counting_cell(store(), &executed),
             alone: counting_cell(store(), &alone_executed),
             forks: std::collections::BTreeMap::new(),
+            horizons: std::collections::BTreeMap::new(),
             executed,
             alone_executed,
             escaped: std::sync::Arc::default(),
@@ -2867,6 +2871,9 @@ impl ForkTrace {
                     .fork_pin()
                     .map_or_else(|| "main".to_owned(), |pin| pin.world.clone());
                 let base = parent.store().verified_head().expect("head");
+                let horizon = from
+                    .and_then(|from| self.horizons.get(&from).copied())
+                    .unwrap_or(base.commits);
                 let world = format!("fork-{slot}");
                 let store = parent.store().fork(&world, &base).expect("forks");
                 // L4 at creation: the fork reads exactly what its parent holds.
@@ -2882,6 +2889,7 @@ impl ForkTrace {
                 );
                 let fork = counting_cell(store, &self.escaped);
                 self.forks.insert(slot, fork);
+                self.horizons.insert(slot, horizon);
                 Touched::Fork(slot)
             }
             ForkOp::CreateStale { from } => {
@@ -2950,13 +2958,14 @@ impl ForkTrace {
                 Touched::Nothing
             }
             ForkOp::Evidence(slot) => {
-                // FORK-EVIDENCE-1: inherited records export; minted ones and
-                // the fork's receipt log never do.
+                // FORK-EVIDENCE-1: records main committed before the lineage
+                // left it export; records any fork in the lineage minted, and
+                // the fork's receipt log, never do, at every nesting depth.
                 let Some(fork) = self.forks.get(&slot) else {
                     return Touched::Nothing;
                 };
                 let store = fork.store();
-                let base = store.fork_pin().map(|pin| pin.base.commits);
+                let horizon = self.horizons.get(&slot).copied();
                 let head = store.export_commit_count().expect("head");
                 assert_eq!(
                     store.world(),
@@ -2966,7 +2975,7 @@ impl ForkTrace {
                 );
                 for seq in 1..=head {
                     let exported = store.export_record(seq);
-                    if base.is_some_and(|base| seq > base) {
+                    if horizon.is_some_and(|horizon| seq > horizon) {
                         assert!(matches!(exported, Err(CellError::ForkEvidenceForbidden)));
                     } else {
                         assert!(matches!(exported, Ok(Some(_))), "inherited record {seq}");
@@ -2992,6 +3001,7 @@ impl ForkTrace {
             }
             ForkOp::Discard(slot) => {
                 self.forks.remove(&slot);
+                self.horizons.remove(&slot);
                 Touched::Nothing
             }
         }

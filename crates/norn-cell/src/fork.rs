@@ -38,6 +38,7 @@ use crate::system::META;
 const WORLD_KEY: &str = "fork:world";
 const PARENT_KEY: &str = "fork:parent";
 const BASE_KEY: &str = "fork:base";
+const HORIZON_KEY: &str = "fork:main_horizon";
 
 /// An engine that can fork: produce an independent engine whose committed
 /// contents equal its own at the moment of the call.
@@ -65,6 +66,11 @@ pub struct ForkPin {
     pub parent: String,
     /// The parent's verified ledger head when the fork was created.
     pub base: LedgerHead,
+    /// FORK-EVIDENCE-1: the commit count at which this fork's lineage left
+    /// main. For a fork of main it is `base.commits`; a fork of a fork
+    /// inherits its parent's unchanged, because commits its parent minted
+    /// are fork-minted too even though they precede this fork's base.
+    pub main_horizon: u64,
 }
 
 /// A store's complete committed contents, table by table, for comparing
@@ -100,19 +106,28 @@ pub(crate) fn load_pin<E: SqlEngine>(conn: &E) -> Result<Option<ForkPin>, CellEr
             |row| row.get::<String>(0),
         )
     };
-    let found = [meta(WORLD_KEY)?, meta(PARENT_KEY)?, meta(BASE_KEY)?];
+    let found = [
+        meta(WORLD_KEY)?,
+        meta(PARENT_KEY)?,
+        meta(BASE_KEY)?,
+        meta(HORIZON_KEY)?,
+    ];
     if found.iter().all(Option::is_none) {
         return Ok(None);
     }
-    let [Some(world), Some(parent), Some(base)] = found else {
+    let [Some(world), Some(parent), Some(base), Some(main_horizon)] = found else {
         return Err(CellError::Encoding("incomplete fork pin".to_owned()));
     };
     let base = serde_json::from_str(&base)
         .map_err(|error| CellError::Encoding(format!("fork base: {error}")))?;
+    let main_horizon = main_horizon
+        .parse()
+        .map_err(|error| CellError::Encoding(format!("fork main horizon: {error}")))?;
     Ok(Some(ForkPin {
         world,
         parent,
         base,
+        main_horizon,
     }))
 }
 
@@ -121,13 +136,14 @@ fn write_pin<E: SqlEngine>(conn: &E, pin: &ForkPin) -> Result<(), CellError> {
         .map_err(|error| CellError::Encoding(format!("fork base: {error}")))?;
     // A fork of a fork replaces the copied pin: its parent is that fork.
     conn.execute(
-        &format!("DELETE FROM \"{META}\" WHERE \"key\" IN (?1, ?2, ?3)"),
-        params![WORLD_KEY, PARENT_KEY, BASE_KEY],
+        &format!("DELETE FROM \"{META}\" WHERE \"key\" IN (?1, ?2, ?3, ?4)"),
+        params![WORLD_KEY, PARENT_KEY, BASE_KEY, HORIZON_KEY],
     )?;
     let insert = format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
     conn.execute(&insert, params![WORLD_KEY, pin.world.as_str()])?;
     conn.execute(&insert, params![PARENT_KEY, pin.parent.as_str()])?;
     conn.execute(&insert, params![BASE_KEY, base])?;
+    conn.execute(&insert, params![HORIZON_KEY, pin.main_horizon.to_string()])?;
     Ok(())
 }
 
@@ -152,6 +168,7 @@ impl<E: ForkEngine> CellStore<E> {
             .fork_pin()
             .map_or(MAIN_WORLD, |pin| pin.world.as_str())
             .to_owned();
+        let inherited_horizon = self.fork_pin().map(|pin| pin.main_horizon);
         if world.is_empty() || world == MAIN_WORLD || world == parent {
             return Err(CellError::ForkInvalidWorld);
         }
@@ -166,6 +183,7 @@ impl<E: ForkEngine> CellStore<E> {
         let pin = ForkPin {
             world: world.to_owned(),
             parent,
+            main_horizon: inherited_horizon.unwrap_or(head.commits),
             base: head,
         };
         engine.transaction(|| write_pin(&engine, &pin))?;
@@ -287,6 +305,7 @@ mod tests {
         })?;
         let mut store = CellStore::open_in_memory(model.clone())?;
         let mut parent = MAIN_WORLD.to_owned();
+        let horizon = store.verified_head()?.commits;
         assert_eq!(store.world(), norn_kernel::World::Main);
         for level in 0..4 {
             let base = store.verified_head()?;
@@ -296,6 +315,7 @@ mod tests {
                 world: world.clone(),
                 parent: parent.clone(),
                 base,
+                main_horizon: horizon,
             };
             assert_eq!(fork.fork_pin(), Some(&expected));
             assert_eq!(
