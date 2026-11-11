@@ -46,9 +46,10 @@ use norn_kernel::{
 };
 use norn_testkit::Settings;
 use norn_testkit::cell_host::{
-    CELL_FAULT_LABELS, CELL_HOST_LABELS, CELL_NETWORK_LABELS, CellOp, FaultKind, FaultPlan,
-    LawCommand, LawEvent, LawInput, LedgerEntry, SimulatedCell, check_cell_host,
-    check_link_override, law_responder, override_object_types, run_cell_host,
+    CELL_FAULT_LABELS, CELL_HOST_LABELS, CELL_NETWORK_LABELS, CellOp, Delivery, Dispatching,
+    FaultKind, FaultPlan, LawCommand, LawEvent, LawInput, LedgerEntry, Route, SimulatedCell,
+    check_cell_host, check_link_override, law_command, law_responder, override_object_types,
+    run_cell_host, run_cell_host_sequence,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1306,20 +1307,38 @@ fn cell_host_mutant_executing_a_redelivered_result_again_is_caught() {
     );
 }
 
-/// Law 7 can fail: a host that records a stale-generation result is caught.
+/// Law 7 can fail: a host that records a stale-generation result is caught
+/// on the fixed interleaving that makes one: enqueue `c0`, dispatch it,
+/// re-issue it at generation 1 and dispatch again, then deliver the
+/// generation-0 result. The healthy driver passes the same sequence.
 #[test]
 fn cell_host_mutant_recording_a_stale_result_is_caught() {
-    let failure = run_cell_host::<ResponderMutant<STALE_RESULT>>(
-        &Settings::new(file!())
-            .without_persistence()
-            .max_shrink_iters(1),
-    )
-    .expect_err("a host that records a stale result must fail the laws");
+    let enqueue = |generation, payload| CellCommit {
+        effects: vec![Effect::Perform(law_command(0, generation, payload))],
+        ..CellCommit::empty()
+    };
+    let stale = law_command(0, 0, 7);
+    let transitions = vec![
+        CellOp::Commit(enqueue(0, 7)),
+        CellOp::Dispatch(Box::new(Dispatching {
+            prepare: None,
+            reissue: Some(enqueue(1, 8)),
+        })),
+        CellOp::Deliver(Box::new(Delivery {
+            input: law_responder(&stale),
+            command: stale,
+            route: Route::InOrder,
+        })),
+    ];
+    // The healthy driver refuses the stale result on the same sequence.
+    let healthy =
+        run_cell_host_sequence::<LawSqlite<false, NativeEngine, true>>(transitions.clone());
+    assert_eq!(healthy, Ok(()));
+    let violation = run_cell_host_sequence::<ResponderMutant<STALE_RESULT>>(transitions)
+        .expect_err("a host that records a stale result must fail the laws");
     assert!(
-        failure
-            .reason
-            .contains("law violated: a result is recorded only"),
-        "{failure}"
+        violation.contains("law violated: a result is recorded only"),
+        "{violation}"
     );
 }
 

@@ -1161,11 +1161,25 @@ pub enum CellOp {
     /// The host claims its fresh outbox head and dispatches it; the outside
     /// world's result goes in flight (hosts that declare
     /// [`SimulatedCell::NETWORK`] only).
-    Dispatch,
+    Dispatch(Box<Dispatching>),
     /// The network hands the host a result (law 7).
     Deliver(Box<Delivery>),
     /// The network loses the in-flight result at this index (law 7).
     Lose(u8),
+}
+
+/// A dispatch of the law machine ([`CellOp::Dispatch`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dispatching {
+    /// An unfaulted commit run first that leaves a fresh command at the
+    /// outbox head (enqueueing one, consuming the head's delivered result,
+    /// or re-issuing a head whose result is outstanding), so the dispatch
+    /// always claims something.
+    pub prepare: Option<LawCommit>,
+    /// After the dispatch, a commit re-issuing the dispatched head at its
+    /// next generation, dispatched again: two results for one command are
+    /// then in flight, the older one stale.
+    pub reissue: Option<LawCommit>,
 }
 
 /// One result the network hands the host ([`CellOp::Deliver`]).
@@ -1905,6 +1919,43 @@ impl CellModel {
         Expect::Dispatch(Some(head))
     }
 
+    /// A [`Dispatching`]: the expectations of its preparing commit, its
+    /// dispatch, and its re-issue and second dispatch, in order.
+    fn dispatching(&mut self, dispatching: &Dispatching) -> Vec<Expect> {
+        let mut chain = Vec::new();
+        if let Some(commit) = &dispatching.prepare {
+            chain.push(Expect::Commit(self.commit(commit)));
+        }
+        chain.push(self.dispatch());
+        if let Some(commit) = &dispatching.reissue {
+            chain.push(Expect::Commit(self.commit(commit)));
+            chain.push(self.dispatch());
+        }
+        chain
+    }
+
+    /// A dispatch prepared to claim a fresh head; with `twice`, re-issued and
+    /// dispatched again, the re-issue computed on the state the dispatch
+    /// leaves.
+    fn dispatch_strategy(&self, twice: bool) -> BoxedStrategy<CellOp> {
+        let model = self.clone();
+        self.prepare_perform()
+            .prop_map(move |prepare| {
+                let reissue = if twice {
+                    let mut after = model.clone();
+                    if let Some(commit) = &prepare {
+                        after.commit(commit).ok();
+                    }
+                    after.dispatch();
+                    after.reissue_head()
+                } else {
+                    None
+                };
+                CellOp::Dispatch(Box::new(Dispatching { prepare, reissue }))
+            })
+            .boxed()
+    }
+
     /// A delivery (law 7): recorded exactly when it is the current head's
     /// first result at that generation.
     fn deliver(&mut self, delivery: &Delivery) -> Expect {
@@ -1963,7 +2014,10 @@ impl CellModel {
                 route,
             }))
         };
-        let mut options = vec![(mix.dispatch, Just(CellOp::Dispatch).boxed())];
+        let mut options = vec![
+            (mix.dispatch, self.dispatch_strategy(false)),
+            (mix.twin, self.dispatch_strategy(true)),
+        ];
         let flying: Vec<(Command<LawCommand>, LawInput)> = self
             .in_flight
             .iter()
@@ -2387,6 +2441,7 @@ struct Swarm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NetworkMix {
     dispatch: u32,
+    twin: u32,
     deliver: u32,
     reorder: u32,
     duplicate: u32,
@@ -2406,10 +2461,12 @@ impl NetworkMix {
             weight(),
             weight(),
             weight(),
+            weight(),
         )
             .prop_map(
-                |(dispatch, deliver, reorder, duplicate, lose, reissue, redeliver)| Self {
+                |(dispatch, twin, deliver, reorder, duplicate, lose, reissue, redeliver)| Self {
                     dispatch,
+                    twin,
                     deliver,
                     reorder,
                     duplicate,
@@ -2608,6 +2665,9 @@ pub struct CellReference {
     prepared: Option<Expect>,
     /// The fault the most recently applied operation ran under.
     fault: Option<ArmedFault>,
+    /// The expectations of the most recently applied [`Dispatching`], in
+    /// order.
+    chain: Vec<Expect>,
     /// The case's transition mix; `None` keeps the fixed mix.
     swarm: Option<Swarm>,
 }
@@ -2659,6 +2719,7 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
     fn apply(mut state: CellReference, op: &CellOp) -> CellReference {
         state.fault = None;
         state.prepared = None;
+        state.chain = Vec::new();
         let model = &mut state.model;
         model.steps = model.steps.saturating_add(1);
         let expected = match op {
@@ -2671,7 +2732,10 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 Expect::Nothing
             }
             CellOp::Inject { id, payload } => model.inject(*id, *payload),
-            CellOp::Dispatch => model.dispatch(),
+            CellOp::Dispatch(dispatching) => {
+                state.chain = model.dispatching(dispatching);
+                Expect::Nothing
+            }
             CellOp::Deliver(delivery) => model.deliver(delivery),
             CellOp::Lose(ix) => {
                 if usize::from(*ix) < model.in_flight.len() {
@@ -2895,9 +2959,10 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
                     }
                 }
             }
-            CellOp::Dispatch | CellOp::Deliver(_) | CellOp::Lose(_) => {
-                apply_network(&mut host, &op, expected);
+            CellOp::Dispatch(dispatching) => {
+                apply_dispatching(&mut host, &dispatching, &reference.chain);
             }
+            CellOp::Deliver(_) | CellOp::Lose(_) => apply_network(&mut host, &op, expected),
             CellOp::Faulted(faulted) => {
                 let Faulted {
                     prepare, target, ..
@@ -2918,24 +2983,40 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
     }
 }
 
-/// One network transition (law 7): a dispatch claims exactly what the model
-/// predicts, and a delivery is recorded exactly when the model records it.
+/// A [`Dispatching`] (law 7): its commits as commits, and each dispatch
+/// claims exactly what the model predicts.
+fn apply_dispatching<H: SimulatedCell>(host: &mut H, dispatching: &Dispatching, chain: &[Expect]) {
+    let mut expected = chain.iter().cloned();
+    let mut next = || expected.next().unwrap_or(Expect::Nothing);
+    if let Some(commit) = &dispatching.prepare {
+        apply_commit(host, commit, &next(), None);
+    }
+    dispatch_once(host, next());
+    if let Some(commit) = &dispatching.reissue {
+        apply_commit(host, commit, &next(), None);
+        dispatch_once(host, next());
+    }
+}
+
+fn dispatch_once<H: SimulatedCell>(host: &mut H, expected: Expect) {
+    let dispatched = host.sim_dispatch();
+    let label = if matches!(dispatched, Ok(Some(_))) {
+        "network.dispatched"
+    } else {
+        "network.dispatch_idle"
+    };
+    coverage::hit_prefixed("cell", label);
+    assert_eq!(
+        dispatched.map(Expect::Dispatch),
+        Ok(expected),
+        "law violated: dispatch claims a command other than the fresh head"
+    );
+}
+
+/// One network transition (law 7): a delivery is recorded exactly when the
+/// model records it, and a loss is the network's alone.
 fn apply_network<H: SimulatedCell>(host: &mut H, op: &CellOp, expected: Expect) {
     match op {
-        CellOp::Dispatch => {
-            let dispatched = host.sim_dispatch();
-            let label = if matches!(dispatched, Ok(Some(_))) {
-                "network.dispatched"
-            } else {
-                "network.dispatch_idle"
-            };
-            coverage::hit_prefixed("cell", label);
-            assert_eq!(
-                dispatched.map(Expect::Dispatch),
-                Ok(expected),
-                "law violated: dispatch claims a command other than the fresh head"
-            );
-        }
         CellOp::Deliver(delivery) => {
             let recorded = host.sim_deliver(&delivery.command, &delivery.input);
             if let Expect::Deliver { stale, delayed, .. } = expected {
@@ -2962,7 +3043,8 @@ fn apply_network<H: SimulatedCell>(host: &mut H, op: &CellOp, expected: Expect) 
             );
         }
         CellOp::Lose(_) => coverage::hit_prefixed("cell", "network.dropped"),
-        CellOp::Commit(_)
+        CellOp::Dispatch(_)
+        | CellOp::Commit(_)
         | CellOp::Perform
         | CellOp::Observe
         | CellOp::Clock
@@ -3247,6 +3329,38 @@ pub fn run_cell_host<H: SimulatedCell>(settings: &Settings) -> Result<Coverage, 
             transitions: Vec::new(),
         }),
     }
+}
+
+/// Runs the laws over one fixed `transitions` sequence from a fresh host,
+/// for a mutant self-test whose counterexample is known: generation alone
+/// may reach it too rarely. Returns the first violation's message.
+///
+/// # Errors
+///
+/// The violation, as the law machine's panic message.
+pub fn run_cell_host_sequence<H: SimulatedCell>(transitions: Vec<CellOp>) -> Result<(), String> {
+    let initial = CellReference {
+        model: CellModel {
+            commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
+            ..CellModel::default()
+        },
+        ..CellReference::default()
+    };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        CellHostMachine::<H>::test_sequential(
+            proptest::test_runner::Config::default(),
+            initial,
+            transitions,
+            None,
+        );
+    }))
+    .map_err(|panic| {
+        panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+            .unwrap_or_default()
+    })
 }
 
 /// [`run_cell_host`], panicking with the minimal counterexample on failure.
