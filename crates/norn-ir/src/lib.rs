@@ -260,7 +260,7 @@ pub mod canonical {
 
 pub mod verification;
 pub use verification::{
-    LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity, LawStateScope,
+    LawException, LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity, LawStateScope,
     LawTiming,
 };
 

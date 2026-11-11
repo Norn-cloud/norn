@@ -52,7 +52,8 @@ fn preference_and_exception_are_not_erased() {
     rule.defeated_by.clear();
     rule.exceptions.push(
         serde_json::from_value(json!({
-            "id":"emergency", "condition":"self.emergency == true",
+            "id":"emergency", "overrides":"sales.approve", "condition":"self.emergency == true",
+            "rationale":"Emergencies skip approval",
             "source":{"artifactId":"sales.rules","pointer":"/rules/0/exceptions/0"}
         }))
         .expect("exception"),
@@ -288,6 +289,8 @@ fn structured_nested_bindings_must_identify_real_slots() {
     let mut r = requirement();
     r.norm.exceptions.push(norn_ir::deontic::RuleException {
         id: "exception".into(),
+        overrides: r.norm.law.id.clone(),
+        rationale: "exception".into(),
         condition: norn_ir::ZenExpression("input.active".into()),
         source: r.norm.source.clone(),
     });
@@ -697,6 +700,8 @@ fn native_order_preserves_explicit_defeat_and_own_exception() {
     );
     low.exceptions.push(norn_ir::deontic::RuleException {
         id: "explicit".into(),
+        overrides: low.law.id.clone(),
+        rationale: "explicit".into(),
         condition: norn_ir::ZenExpression("true".into()),
         source: low.source.clone(),
     });
@@ -793,6 +798,8 @@ fn ordinary_admission_runs_native_declared_order() {
     low.defeated_by.clear();
     low.exceptions.push(norn_ir::deontic::RuleException {
         id: "exempt".into(),
+        overrides: low.law.id.clone(),
+        rationale: "exempt".into(),
         condition: norn_ir::ZenExpression("true".into()),
         source: low.source.clone(),
     });
@@ -822,6 +829,8 @@ fn ordinary_admission_protects_base_and_refuses_cross_layer_wins() {
             low.defeated_by.push(high.law.id.clone());
             low.exceptions.push(norn_ir::deontic::RuleException {
                 id: "masked".into(),
+                overrides: low.law.id.clone(),
+                rationale: "masked".into(),
                 condition: norn_ir::ZenExpression("true".into()),
                 source: low.source.clone(),
             });
@@ -1331,6 +1340,8 @@ fn within_refuses_every_variation_with_a_typed_reason() {
             |r| {
                 r.norm.exceptions.push(norn_ir::deontic::RuleException {
                     id: "waived".into(),
+                    overrides: r.norm.law.id.clone(),
+                    rationale: "waived".into(),
                     condition: norn_ir::ZenExpression("input.active".into()),
                     source: r.norm.source.clone(),
                 });
@@ -1492,4 +1503,165 @@ fn activation_identity_is_canonical_and_events_are_closed() {
     let mut extra = event;
     extra["silentPass"] = json!(true);
     assert!(serde_json::from_value::<ActivationEvent>(extra).is_err());
+}
+
+#[allow(clippy::expect_used, reason = "test-only typed exception fixture")]
+fn law_exception(id: &str, overrides: &str, condition: &str) -> norn_ir::LawException {
+    serde_json::from_value(json!({
+        "id": id, "overrides": overrides, "condition": condition,
+        "rationale": format!("{id} is exempt"),
+        "source": {"artifactId": "sales.rules", "pointer": "/rules/0/law/exceptions"}
+    }))
+    .expect("exception")
+}
+
+#[test]
+fn exceptions_have_one_home_on_a_rule_or_its_law() {
+    use norn_checker::deontic::{RequirementRefusal as R, check_requirement, exception_home};
+    use norn_checker::law_exceptions::{ExceptionTreeRefusal, codes};
+    // R4: a law-level tree is still defeasible for whole-law lowering.
+    let mut rule = obligation().expect("fixture");
+    rule.law
+        .exceptions
+        .push(law_exception("emergency", "sales.approve", "self.emergency == true"));
+    assert_eq!(
+        lower_deontic_law(&rule),
+        Err(LawLoweringRefusal::Defeasible)
+    );
+    assert_eq!(exception_home(&rule), Some(rule.law.exceptions.as_slice()));
+    rule.exceptions
+        .push(law_exception("emergency", "sales.approve", "self.emergency == true"));
+    assert_eq!(
+        lower_deontic_law(&rule),
+        Err(LawLoweringRefusal::ExceptionHome)
+    );
+    assert_eq!(exception_home(&rule), None);
+
+    let mut r = requirement();
+    let law_id = r.norm.law.id.clone();
+    r.norm
+        .law
+        .exceptions
+        .push(law_exception("idle", &law_id, "input.active == false"));
+    assert_eq!(check_requirement(&r, &requirement_env()), Ok(()));
+    r.norm
+        .exceptions
+        .push(law_exception("idle", &law_id, "input.active == false"));
+    let refusal = check_requirement(&r, &requirement_env()).expect_err("two homes");
+    assert_eq!(refusal, R::ExceptionHome);
+    assert_eq!(refusal.code(), codes::TWO_HOMES);
+    let view = norn_ir::requirement_display::RequirementView {
+        requirement: r.clone(),
+        locale: "ar".into(),
+    };
+    assert!(view.slots().is_err());
+    r.norm.exceptions.clear();
+    r.norm.law.exceptions[0].overrides = "missing".into();
+    let refusal = check_requirement(&r, &requirement_env()).expect_err("dangling");
+    assert_eq!(
+        refusal,
+        R::ExceptionTree(ExceptionTreeRefusal::DanglingOverride(0))
+    );
+    assert_eq!(refusal.code(), codes::DANGLING_OVERRIDE);
+    r.norm.law.exceptions[0].overrides = law_id;
+    r.norm.law.exceptions[0].condition = norn_ir::ZenExpression("input.quantity".into());
+    assert_eq!(
+        check_requirement(&r, &requirement_env()),
+        Err(R::PredicateType)
+    );
+}
+
+#[test]
+fn native_order_folds_a_law_exception_tree() {
+    use norn_checker::deontic::lower_declared_order;
+    let mut low = obligation().expect("fixture");
+    low.law.modality = LawModality::Always {};
+    low.law.timing = None;
+    low.law.condition = None;
+    low.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("true".into()),
+    };
+    let id = low.law.id.clone();
+    // Two overlapping siblings both lift the law (R3): no conflict outcome.
+    low.law.exceptions = vec![
+        law_exception("a", &id, "true"),
+        law_exception("b", &id, "true"),
+    ];
+    let both = lower_declared_order(&[low.clone()], &norn_expr::schema::Schema::Boolean)
+        .expect("overlapping siblings lower");
+    assert_eq!(both.norms[0].excepted, both.norms[0].applicable);
+    // A matching child removes only its own parent; the sibling still lifts.
+    low.law.exceptions.push(law_exception("not_a", "a", "true"));
+    let sibling = lower_declared_order(&[low.clone()], &norn_expr::schema::Schema::Boolean)
+        .expect("nested tree lowers");
+    assert_eq!(sibling.norms[0].excepted, sibling.norms[0].applicable);
+    // Without the sibling the child re-enables the law everywhere.
+    low.law.exceptions.remove(1);
+    let reenabled = lower_declared_order(&[low.clone()], &norn_expr::schema::Schema::Boolean)
+        .expect("nested tree lowers");
+    assert!(reenabled.norms[0].excepted.is_empty());
+    assert!(!reenabled.norms[0].applicable.is_empty());
+    // A malformed tree or two homes never ground.
+    let mut dangling = low.clone();
+    dangling.law.exceptions[1].overrides = "missing".into();
+    assert!(lower_declared_order(&[dangling], &norn_expr::schema::Schema::Boolean).is_err());
+    let mut two = low.clone();
+    two.exceptions.push(law_exception("c", &id, "true"));
+    assert!(lower_declared_order(&[two], &norn_expr::schema::Schema::Boolean).is_err());
+    // A non-Boolean condition anywhere in the tree refuses, even under a
+    // parent that does not match.
+    low.law.exceptions[0].condition = norn_ir::ZenExpression("false".into());
+    low.law.exceptions[1].condition = norn_ir::ZenExpression("1".into());
+    assert!(lower_declared_order(&[low], &norn_expr::schema::Schema::Boolean).is_err());
+}
+
+#[test]
+fn layer_protection_reads_law_exception_trees_in_both_directions() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    // R1: only declared exceptions narrow a rule; a clash between layers is
+    // refused whichever layer is higher, and an exception that a child
+    // re-enables does not narrow anything.
+    for (exempt_base, reenabled) in [(false, false), (false, true), (true, false), (true, true)] {
+        let (entity, mut low, mut high) = admission_fixture();
+        let narrowed = if exempt_base { &mut low } else { &mut high };
+        let id = narrowed.law.id.clone();
+        narrowed.law.exceptions.push(law_exception("narrow", &id, "true"));
+        if reenabled {
+            narrowed
+                .law
+                .exceptions
+                .push(law_exception("unless_paid", "narrow", "self.paid"));
+            narrowed
+                .law
+                .exceptions
+                .push(law_exception("unless_unpaid", "narrow", "self.paid == false"));
+        }
+        let mut installed = entity.clone();
+        installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low]});
+        let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
+        let mut candidate = entity.clone();
+        candidate["artifactId"] = json!("candidate.entity");
+        candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
+        high.source.artifact_id = "candidate.entity".into();
+        high.source.pointer = "/payload/extensions/norn.normative~11.0.0/0".into();
+        candidate["dependencies"] = json!([{"artifactId":"erpnext.SalesOrder.entity","kind":"entity","version":"0.1.0","required":true}]);
+        candidate["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[high]});
+        let artifact = serde_json::from_value(candidate).expect("candidate");
+        let findings = check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[base],
+                tenant: None,
+            },
+        );
+        let conflict = findings
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.normative.conflict");
+        assert_eq!(
+            conflict, reenabled,
+            "base exempt {exempt_base}, re-enabled {reenabled}: {findings:?}"
+        );
+    }
 }

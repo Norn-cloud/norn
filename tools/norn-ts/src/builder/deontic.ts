@@ -1,7 +1,7 @@
 /** Structured normative authoring data. Rust owns the wire contract and lowering.
  * This builder grants no permissions and verifies no authority signatures. */
 import { toJson } from "../canonical.ts"
-import type { LawIR } from "./law.ts"
+import type { LawException, LawIR } from "./law.ts"
 
 export interface RuleSourceSpan {
   readonly artifactId: string
@@ -22,7 +22,8 @@ export interface DeonticRule {
   readonly authorityId: string
   readonly authorityVersion: string
   readonly source: RuleSourceSpan
-  readonly exceptions?: ReadonlyArray<{ readonly id: string; readonly condition: string; readonly source: RuleSourceSpan }>
+  /** Exceptions live here or on `law.exceptions`, never both. */
+  readonly exceptions?: ReadonlyArray<LawException>
   readonly defeatedBy?: ReadonlyArray<string>
 }
 export interface DeonticIR {
@@ -44,7 +45,9 @@ export function renderDeontic(rule: DeonticRule): string {
   const grade = { obligation: "must", permission: "may", prohibition: "must not" }[rule.modality]
   const when = rule.law.condition === undefined ? "" : ` WHEN ${quote(rule.law.condition)}`
   const timing = rule.law.timing === undefined ? "" : ` WITH TIMING ${quote(rule.law.timing)}`
-  const exceptions = (rule.exceptions ?? []).map(e => ` EXCEPT ${quote(e.id)} WHEN ${quote(e.condition)}`).join("")
+  const declared = rule.exceptions?.length ? rule.exceptions : (rule.law.exceptions ?? [])
+  const lifts = (e: LawException) => (e.overrides === rule.law.id ? "" : ` OVERRIDING ${quote(e.overrides)}`)
+  const exceptions = declared.map(e => ` EXCEPT ${quote(e.id)}${lifts(e)} WHEN ${quote(e.condition)}`).join("")
   const priority = (rule.defeatedBy ?? []).map(id => ` YIELDING TO ${quote(id)}`).join("")
   return `IN ${quote(rule.law.scope)}${when}, ${quote(rule.law.subject)} ${grade} WITH MODALITY ${quote(rule.law.modality)} ${quote(rule.law.response)}${timing}${exceptions}${priority} ACCORDING TO ${quote(rule.authorityId)} VERSION ${quote(rule.authorityVersion)}.`
 }
