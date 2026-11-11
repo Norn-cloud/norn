@@ -20,6 +20,8 @@ pub enum LawLoweringRefusal {
     UnsupportedProofFragment,
     /// A LAW-WITHIN-1 trigger, retrigger and cancel policy has no `LawIR` form.
     ActivationTiming,
+    /// The rule and its embedded law both declare exceptions; one home only.
+    ExceptionHome,
 }
 
 /// Exact law plus the source link consumed by a later proof bridge.
@@ -48,7 +50,13 @@ pub fn lower_deontic_law(rule: &DeonticRule) -> Result<LoweredDeonticLaw, LawLow
     if !valid_source(&rule.source) {
         return Err(LawLoweringRefusal::InvalidSource);
     }
-    if !rule.exceptions.is_empty() || !rule.defeated_by.is_empty() {
+    if !rule.exceptions.is_empty() && !rule.law.exceptions.is_empty() {
+        return Err(LawLoweringRefusal::ExceptionHome);
+    }
+    if !rule.exceptions.is_empty()
+        || !rule.law.exceptions.is_empty()
+        || !rule.defeated_by.is_empty()
+    {
         return Err(LawLoweringRefusal::Defeasible);
     }
     match rule.modality {
@@ -120,7 +128,7 @@ pub fn lower_theorem_candidate(
     Ok(candidate)
 }
 
-fn valid_source(source: &RuleSourceSpan) -> bool {
+pub(crate) fn valid_source(source: &RuleSourceSpan) -> bool {
     !source.artifact_id.trim().is_empty()
         && valid_pointer(&source.pointer)
         && source.bytes.as_ref().is_none_or(|r| r.start <= r.end)
@@ -278,6 +286,12 @@ pub enum RequirementRefusal {
     PredicateType,
     /// A locale map is malformed or incomplete.
     Wording(&'static str),
+    /// The rule and its embedded law both declare exceptions; one home only.
+    ExceptionHome,
+    /// The declared exception tree is malformed.
+    ExceptionTree(crate::law_exceptions::ExceptionTreeRefusal),
+    /// An invariant identity cannot be lifted by an exception.
+    ExceptionResponse,
 }
 
 impl RequirementRefusal {
@@ -294,6 +308,9 @@ impl RequirementRefusal {
             Self::Wording(code) => code,
             Self::InvalidBinding => "law.model.unknown_binding",
             Self::PredicateType => "law.model.predicate_type",
+            Self::ExceptionHome => crate::law_exceptions::codes::TWO_HOMES,
+            Self::ExceptionTree(refusal) => refusal.code(),
+            Self::ExceptionResponse => crate::law_exceptions::codes::UNSUPPORTED_RESPONSE,
         }
     }
 }
@@ -334,6 +351,7 @@ pub fn check_requirement(
             || !law.scope.lifecycle_states.is_empty()
             || !law.scope.commitments.is_empty()
             || !rule.exceptions.is_empty()
+            || !law.exceptions.is_empty()
             || !rule.defeated_by.is_empty()
         {
             return Err(R::UnsupportedActivation);
@@ -345,6 +363,7 @@ pub fn check_requirement(
             return Err(R::InvalidBinding);
         }
     }
+    let declared = exception_home(rule).ok_or(R::ExceptionHome)?;
     let mut exceptions = std::collections::BTreeSet::new();
     let mut ids = [&law.id, &law.owner, &law.subject, root]
         .into_iter()
@@ -355,7 +374,7 @@ pub fn check_requirement(
     if ids.any(|s| s.trim().is_empty())
         || !valid_norm_identity(rule)
         || !valid_source(&rule.source)
-        || rule.exceptions.iter().any(|e| {
+        || declared.iter().any(|e| {
             e.id.trim().is_empty() || !valid_source(&e.source) || !exceptions.insert(&e.id)
         })
         || law.scope.lifecycle_states.iter().any(|s| {
@@ -367,6 +386,7 @@ pub fn check_requirement(
     {
         return Err(R::InvalidBinding);
     }
+    crate::law_exceptions::check_tree(&law.id, declared).map_err(R::ExceptionTree)?;
     check_wording(requirement).map_err(R::Wording)?;
     let response = match &law.response {
         LawResponse::Predicate { expression } => Some(expression),
@@ -383,13 +403,17 @@ pub fn check_requirement(
             return Err(R::UnsupportedResponse);
         }
     };
+    // As in law admission: an invariant identity is unconditional.
+    if !declared.is_empty() && matches!(law.response, LawResponse::Invariant { .. }) {
+        return Err(R::ExceptionResponse);
+    }
     let cancel = within.and_then(|(w, _millis)| w.cancel.as_ref());
     for predicate in law
         .condition
         .iter()
         .chain(response)
         .chain(cancel)
-        .chain(rule.exceptions.iter().map(|e| &e.condition))
+        .chain(declared.iter().map(|e| &e.condition))
     {
         let expression = Expression::compile(&predicate.0).map_err(|_error| R::PredicateType)?;
         check_expression(&expression, env, &Type::Bool).map_err(|_error| R::PredicateType)?;
@@ -463,7 +487,7 @@ pub fn lower_declared_order(
     let predicates = rules.iter().try_fold(1usize, |count, rule| {
         count
             .checked_add(usize::from(rule.law.condition.is_some()))
-            .and_then(|n| n.checked_add(rule.exceptions.len()))
+            .and_then(|n| n.checked_add(exception_home(rule).map_or(0, <[_]>::len)))
             .ok_or(Unknown::Limit)
     })?;
     if domain.values.is_empty()
@@ -496,10 +520,16 @@ pub fn lower_declared_order(
             let applicable = rule.law.condition.as_ref().map_or(Ok(true), |condition| {
                 normative_boolean(&condition.0, &value)
             })?;
-            let mut excepted = false;
-            for exception in &rule.exceptions {
-                excepted |= normative_boolean(&exception.condition.0, &value)?;
-            }
+            // Evaluate every declared condition (a failure anywhere refuses),
+            // then fold the tree: siblings OR together, a matching child
+            // removes only its own parent.
+            let declared = exception_home(rule).ok_or_else(invalid)?;
+            let matched = declared
+                .iter()
+                .map(|exception| normative_boolean(&exception.condition.0, &value))
+                .collect::<Result<Vec<_>, _>>()?;
+            let (excepted, _applied) =
+                crate::law_exceptions::fold(&rule.law.id, declared, &matched);
             if applicable {
                 norm.applicable.insert(context);
                 if excepted {
@@ -552,12 +582,75 @@ fn normative_binding(rule: &DeonticRule, first: &DeonticRule) -> bool {
         || (matches!(rule.modality, DeonticModality::Prohibition)
             != matches!(rule.law.modality, LawModality::Never {}));
     let mut exception_ids = BTreeSet::new();
+    let Some(declared) = exception_home(rule) else {
+        return false;
+    };
     !invalid
-        && !rule.exceptions.iter().any(|exception| {
+        && !declared.iter().any(|exception| {
             exception.id.trim().is_empty()
                 || !exception_ids.insert(&exception.id)
                 || !valid_source(&exception.source)
         })
+        && crate::law_exceptions::check_tree(&rule.law.id, declared).is_ok()
+}
+
+/// A rule's exceptions live on the rule or on its embedded law, never both.
+/// `None` when both lists are nonempty; readers never merge them.
+#[must_use]
+pub fn exception_home(rule: &DeonticRule) -> Option<&[norn_ir::LawException]> {
+    match (rule.exceptions.is_empty(), rule.law.exceptions.is_empty()) {
+        (false, false) => None,
+        (true, false) => Some(&rule.law.exceptions),
+        (_, true) => Some(&rule.exceptions),
+    }
+}
+
+/// Rationale given to an exception stored in the flat pre-tree shape.
+pub const LEGACY_EXCEPTION_RATIONALE: &str =
+    "Declared before exception trees; lifts its rule directly.";
+
+/// Upgrade exceptions stored in the flat `norn.normative/1.0.0` shape
+/// (`{ id, condition, source }`) to the tree shape. A flat exception lifted its
+/// rule directly, so it becomes an exception that overrides the rule's law id:
+/// the same meaning. Any other shape is left for the strict decoder.
+fn upgrade_legacy_exceptions(slot: &mut serde_json::Value) {
+    let Some(rules) = slot.as_array_mut() else {
+        return;
+    };
+    for rule in rules {
+        let Some(law_id) = rule
+            .pointer("/law/id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some(exceptions) = rule
+            .get_mut("exceptions")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+        for exception in exceptions {
+            let Some(object) = exception.as_object_mut() else {
+                continue;
+            };
+            let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            if keys == ["condition", "id", "source"] {
+                object.insert("overrides".into(), law_id.clone().into());
+                object.insert("rationale".into(), LEGACY_EXCEPTION_RATIONALE.into());
+            }
+        }
+    }
+}
+
+/// Decode one normative slot, upgrading flat legacy exceptions first.
+fn decode_slot(slot: &serde_json::Value) -> Result<Vec<DeonticRule>, String> {
+    let mut value = slot.clone();
+    upgrade_legacy_exceptions(&mut value);
+    serde_json::from_slice(&norn_canonical::canonical_json_of(&value).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
 }
 
 /// Customer-authored declarations in the existing `EntityIR` extension map.
@@ -657,13 +750,11 @@ fn admission_order(
         if !matches!(*root, norn_ir::EntityRoot::V2(_)) {
             return Err("normative carrier kind is unsupported".into());
         }
-        let value = extensions
-            .get(NORMATIVE_SLOT)
-            .ok_or("missing normative declaration slot")?;
-        let declared: Vec<DeonticRule> = serde_json::from_slice(
-            &norn_canonical::canonical_json_of(value).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
+        let declared = decode_slot(
+            extensions
+                .get(NORMATIVE_SLOT)
+                .ok_or("missing normative declaration slot")?,
+        )?;
         if rules.len().saturating_add(declared.len())
             > crate::consistency::diagnosis::MAX_DECLARATIONS
         {

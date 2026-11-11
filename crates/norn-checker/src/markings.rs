@@ -797,7 +797,7 @@ mod tests {
             base: EntityModel::EMPTY,
             tenant: None,
         };
-        let effective = effective_object_types(&model, &context);
+        let effective = effective_object_types(&model, &context).expect("effective view derives");
 
         let base = effective
             .get(&0)

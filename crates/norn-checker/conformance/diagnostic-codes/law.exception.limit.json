@@ -1,0 +1,7 @@
+{
+  "code": "law.exception.limit",
+  "message": "law exception tree exceeds its declaration limit",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

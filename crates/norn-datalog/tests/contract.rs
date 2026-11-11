@@ -319,3 +319,43 @@ fn finite_ground_seeds_are_allowed_but_canonical_collisions_are_refused() {
         vec![Term::Constant(Value::Text("e\u{301}".to_owned()))];
     assert_eq!(code(&program), Code::NoncanonicalConstant);
 }
+
+#[test]
+fn registered_inheritance_step_is_admitted_bounded_nonrecursive_shared_ast() {
+    let program = overlap::registered_inheritance_step_v1();
+    let plan = validate(
+        &program,
+        Budget {
+            max_predicates: 5,
+            max_rules: 2,
+            max_atoms: 6,
+            max_terms: 16,
+            max_text_bytes: 1_024,
+            max_work: 20_000,
+        },
+    )
+    .expect("fixed inheritance-step schema");
+    assert!(
+        plan.groups
+            .iter()
+            .all(|group| !group.recursive && group.stratum == 0)
+    );
+    assert_eq!(
+        program
+            .rules
+            .iter()
+            .filter(|rule| rule.mode == Mode::Validation)
+            .count(),
+        1
+    );
+    assert_eq!(
+        program.rules.last().expect("cycle rule").id,
+        "registered.inheritance.cycle"
+    );
+    let mut unsafe_program = program;
+    unsafe_program.rules[0]
+        .head
+        .terms
+        .push(Term::Variable("fresh".to_owned()));
+    assert!(validate(&unsafe_program, Budget::default()).is_err());
+}
