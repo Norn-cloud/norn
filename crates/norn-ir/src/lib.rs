@@ -1450,7 +1450,11 @@ define_payload_root!(
             modality => "modality" as LawModality,
             response => "response" as LawResponse
         }
-        optional { condition => "condition" as ZenExpression, timing => "timing" as LawTiming }
+        optional {
+            condition => "condition" as ZenExpression,
+            timing => "timing" as LawTiming,
+            exceptions => "exceptions" as Vec<LawException>
+        }
     }
 );
 
