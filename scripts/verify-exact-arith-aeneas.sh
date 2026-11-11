@@ -31,6 +31,8 @@ proof_files=(
   verification/exact-arith-v1/DecimalProof.lean
   verification/exact-arith-v1/DecimalReference.lean
   verification/exact-arith-v1/ExactRational/FunsExternal.lean
+  verification/exact-arith-v1/LedgerProof.lean
+  verification/exact-arith-v1/LedgerReference.lean
   verification/exact-arith-v1/QuotientProof.lean
   verification/exact-arith-v1/RationalProof.lean
   verification/exact-arith-v1/RationalReference.lean
@@ -64,6 +66,9 @@ extract() {
   printf '#[path = "%s"]\npub mod decimal;\n' "$tree/$decimal_source" > "$out/decimal_root.rs" || return
   (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
     --start-from crate::decimal::canonical_parts --start-from crate::decimal::checked_pow10 \
+    --start-from crate::decimal::canonical --start-from crate::decimal::rescale \
+    --start-from crate::decimal::checked_add --start-from crate::decimal::checked_sub \
+    --start-from crate::decimal::checked_mul \
     --dest-file "$out/decimal.llbc" -- --crate-name norn_checker_decimal --crate-type lib \
     --edition 2024 "$out/decimal_root.rs") || return
   printf '#[path = "%s"]\npub mod exact_rational;\n' "$tree/$rational_source" \
@@ -112,8 +117,8 @@ generated() {
 
 (cd "$lean_root" && lake build Aeneas)
 # The written semantics never import the extraction.
-for module in CoreModels DecimalReference RoundingReference RoundingMath RationalReference \
-  ScaledReference; do
+for module in CoreModels DecimalReference LedgerReference RoundingReference RoundingMath \
+  RationalReference ScaledReference; do
   lean_check "$result/common" "$proof_root" "$module"
 done
 
@@ -133,6 +138,12 @@ expected = {
         "norn_checker_decimal.decimal.checked_pow10",
         "norn_checker_decimal.decimal.checked_pow10_loop",
         "norn_checker_decimal.decimal.checked_pow10_loop.body",
+        "norn_checker_decimal.decimal.canonical",
+        "norn_checker_decimal.decimal.rescale",
+        "norn_checker_decimal.decimal.align",
+        "norn_checker_decimal.decimal.checked_add",
+        "norn_checker_decimal.decimal.checked_sub",
+        "norn_checker_decimal.decimal.checked_mul",
     }, {
         "core.option.Option.Insts.CoreOpsTry_traitTry.branch",
         "core.option.Option.Insts.CoreOpsTry_traitFromResidualOptionInfallible.from_residual",
@@ -212,7 +223,7 @@ for prefix, (crate, source, local, external) in expected.items():
 PYMANIFEST
 generated "$baseline"
 proof_output=""
-for module in DecimalProof QuotientProof RationalProof ScaledProof; do
+for module in DecimalProof LedgerProof QuotientProof RationalProof ScaledProof; do
   if module_output="$(lean_check "$baseline" "$proof_root" "$module" 2>&1)"; then
     proof_output+="$module_output"$'\n'
   else
@@ -226,6 +237,10 @@ expected_axioms="$(printf '%s\n' \
   "'Norn.QuantityLedger.canonical_parts_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.QuantityLedger.canonical_parts_unique' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.QuantityLedger.checked_pow10_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.QuantityLedger.rescale_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.QuantityLedger.checked_add_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.QuantityLedger.checked_sub_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.QuantityLedger.checked_mul_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.OrderedFold.rounded_quotient_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.ExactRational.normalize_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.ExactRational.new_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
@@ -248,6 +263,7 @@ test "${proof_output%$'\n'}" = "$expected_axioms"
 # Check the exact propositions, not only the theorem names or an exit code.
 printf '%s\n' \
   'import DecimalProof' \
+  'import LedgerProof' \
   'import QuotientProof' \
   'import RationalProof' \
   'import ScaledProof' \
@@ -259,6 +275,24 @@ printf '%s\n' \
   'example (e : U8) : ∃ r, norn_checker_decimal.decimal.checked_pow10 e = .ok r ∧' \
   '    r.map (fun x => x.val) = Norn.QuantityLedger.pow10Spec e.val :=' \
   '  Norn.QuantityLedger.checked_pow10_correct e' \
+  'open Aeneas.Std in' \
+  'example (v : norn_checker_decimal.decimal.ScaledInteger) (t : U8) :' \
+  '    ∃ r, norn_checker_decimal.decimal.rescale v t = .ok r ∧ Norn.QuantityLedger.projRescale r =' \
+  '      Norn.QuantityLedger.rescaleSpec v.unscaled.val v.scale.val t.val :=' \
+  '  Norn.QuantityLedger.rescale_correct v t' \
+  'example (a b : norn_checker_decimal.decimal.ScaledInteger) :' \
+  '    ∃ r, norn_checker_decimal.decimal.checked_add a b = .ok r ∧ Norn.QuantityLedger.Outcome r' \
+  '      (Norn.QuantityLedger.addSpec a.unscaled.val a.scale.val b.unscaled.val b.scale.val) :=' \
+  '  Norn.QuantityLedger.checked_add_correct a b' \
+  'example (a b : norn_checker_decimal.decimal.ScaledInteger) :' \
+  '    ∃ r, norn_checker_decimal.decimal.checked_sub a b = .ok r ∧ Norn.QuantityLedger.Outcome r' \
+  '      (Norn.QuantityLedger.subSpec a.unscaled.val a.scale.val b.unscaled.val b.scale.val) :=' \
+  '  Norn.QuantityLedger.checked_sub_correct a b' \
+  'open Aeneas.Std in' \
+  'example (a b : norn_checker_decimal.decimal.ScaledInteger) (m : U8) :' \
+  '    ∃ r, norn_checker_decimal.decimal.checked_mul a b m = .ok r ∧ Norn.QuantityLedger.Outcome r' \
+  '      (Norn.QuantityLedger.mulSpec a.unscaled.val a.scale.val b.unscaled.val b.scale.val m.val) :=' \
+  '  Norn.QuantityLedger.checked_mul_correct a b m' \
   'open Aeneas.Std in' \
   'example (rounding : zen_expression.scaled.Rounding) (n d : I128) :' \
   '    ∃ r, zen_expression.scaled.rounded_quotient rounding n d = .ok r ∧' \
@@ -338,6 +372,15 @@ def ordering : Result (Option Ordering) → Option (Option Ordering)
 def dec (c : ℤ) (s : ℕ) (h : -2 ^ 96 < c ∧ c < 2 ^ 96 := by decide) (hs : s ≤ 28 := by decide) :
     rust_decimal.decimal.Decimal := ⟨c, s, h, hs⟩
 
+def amount :
+    Result (core.result.Result norn_checker_decimal.decimal.ScaledInteger
+      norn_checker_decimal.decimal.ScaledRefusal) → Option (Option (ℤ × ℕ))
+  | ok (.Ok v) => some (some (v.unscaled.val, v.scale.val))
+  | ok (.Err _) => some none
+  | _ => none
+
+def si (u : Std.I128) (s : Std.U8) : norn_checker_decimal.decimal.ScaledInteger := ⟨u, s⟩
+
 def rat (n d : Std.I64) : norn_checker_rational.exact_rational.Rational := ⟨n, d⟩
 
 open norn_checker_decimal zen_expression norn_checker_rational
@@ -357,6 +400,30 @@ theorem canonical_wide :
 theorem pow10_zero : optInt (decimal.checked_pow10 0#u8) = some (some 1) := by native_decide
 theorem pow10_max : optInt (decimal.checked_pow10 38#u8) = some (some (10 ^ 38)) := by native_decide
 theorem pow10_overflow : optInt (decimal.checked_pow10 39#u8) = some none := by native_decide
+theorem ledger_add_aligns :
+    amount (decimal.checked_add (si 15#i128 1#u8) (si 2#i128 0#u8)) = some (some (35, 1)) := by
+  native_decide
+theorem ledger_add_canonical :
+    amount (decimal.checked_add (si 15#i128 1#u8) (si 5#i128 1#u8)) = some (some (2, 0)) := by
+  native_decide
+theorem ledger_sub_order :
+    amount (decimal.checked_sub (si 5#i128 0#u8) (si 2#i128 0#u8)) = some (some (3, 0)) := by
+  native_decide
+theorem ledger_rescale_overflow :
+    refusable (decimal.rescale (si 10000000000000000000000000000000000000#i128 0#u8) 2#u8) =
+      some none := by
+  native_decide
+theorem ledger_mul_max_scale :
+    amount (decimal.checked_mul (si 1#i128 14#u8) (si 3#i128 14#u8) 28#u8) =
+      some (some (3, 28)) := by
+  native_decide
+theorem ledger_mul_scale_above_max :
+    amount (decimal.checked_mul (si 1#i128 14#u8) (si 1#i128 15#u8) 28#u8) = some none := by
+  native_decide
+theorem ledger_mul_overflow :
+    amount (decimal.checked_mul (si 85070591730234615865843651857942052864#i128 0#u8)
+      (si 2#i128 0#u8) 28#u8) = some none := by
+  native_decide
 theorem half_even_tie :
     refusable (scaled.rounded_quotient .HalfEven 5#i128 2#i128) = some (some 2) := by native_decide
 theorem half_even_odd_tie :
@@ -442,6 +509,20 @@ mutants = [
      "value = value.checked_mul(10)?;", "value = value.checked_mul(10).unwrap_or(i128::MAX);"),
     ("overflow-canonical-intermediate-product", decimal,
      "unscaled /= 10;", "unscaled = unscaled * 10 / 100;"),
+    ("ledger-add-aligns-to-smaller-scale", decimal,
+     "if lhs.scale >= rhs.scale {", "if lhs.scale <= rhs.scale {"),
+    ("ledger-add-not-canonical", decimal,
+     "Some(unscaled) => Ok(canonical(ScaledInteger { unscaled, scale })),\n"
+     "        None => Err(ScaledRefusal::AdditionOverflow),",
+     "Some(unscaled) => Ok(ScaledInteger { unscaled, scale }),\n"
+     "        None => Err(ScaledRefusal::AdditionOverflow),"),
+    ("ledger-sub-swapped", decimal, "match lhs.checked_sub(rhs) {", "match rhs.checked_sub(lhs) {"),
+    ("ledger-mul-max-scale-off-by-one", decimal,
+     "if scale > max_scale {", "if scale >= max_scale {"),
+    ("overflow-ledger-rescale-wrapping", decimal,
+     "value.unscaled.checked_mul(multiplier)", "Some(value.unscaled.wrapping_mul(multiplier))"),
+    ("overflow-ledger-mul-wrapping", decimal,
+     "lhs.unscaled.checked_mul(rhs.unscaled)", "Some(lhs.unscaled.wrapping_mul(rhs.unscaled))"),
     ("rational-not-reduced", rational, "break Some(a);", "break Some(1);"),
     ("rational-sign-not-normalized", rational,
      "numerator = numerator.checked_neg()?;", "numerator = numerator.checked_abs()?;"),
@@ -490,7 +571,7 @@ while read -r name path; do
     exit 1
   fi
   unproved=false
-  for module in DecimalProof QuotientProof RationalProof ScaledProof; do
+  for module in DecimalProof LedgerProof QuotientProof RationalProof ScaledProof; do
     if ! lean_check "$out" "$proof_root" "$module" > "$result/mutants/$name/$module.log" 2>&1; then
       unproved=true
     fi

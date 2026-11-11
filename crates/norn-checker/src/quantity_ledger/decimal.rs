@@ -26,6 +26,110 @@ pub(super) fn checked_pow10(exponent: u8) -> Option<i128> {
     Some(value)
 }
 
+/// An exact decimal `unscaled × 10^(-scale)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ScaledInteger {
+    pub(super) unscaled: i128,
+    pub(super) scale: u8,
+}
+
+/// Why exact scaled-integer arithmetic refused. Ledger lowering attaches the
+/// error code, the authoring path and the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScaledRefusal {
+    /// Aligning to the target scale would discard digits.
+    ScaleLoss,
+    /// The alignment multiplier `10^gap` leaves `i128`.
+    AlignmentMultiplierOverflow,
+    /// The aligned coefficient leaves `i128`.
+    AlignmentOverflow,
+    AdditionOverflow,
+    SubtractionOverflow,
+    /// The product scale leaves `u8`.
+    MultiplicationScaleOverflow,
+    /// The product scale exceeds the caller's maximum.
+    MultiplicationScaleAboveMaximum(u8),
+    MultiplicationOverflow,
+}
+
+/// VAL-EXACT-1 canonical form of a scaled integer.
+pub(super) fn canonical(value: ScaledInteger) -> ScaledInteger {
+    let (unscaled, scale) = canonical_parts(value.unscaled, value.scale);
+    ScaledInteger { unscaled, scale }
+}
+
+/// The coefficient of `value` at `target_scale`, refusing instead of rounding
+/// or overflowing.
+pub(super) fn rescale(value: ScaledInteger, target_scale: u8) -> Result<i128, ScaledRefusal> {
+    let gap = match target_scale.checked_sub(value.scale) {
+        Some(gap) => gap,
+        None => return Err(ScaledRefusal::ScaleLoss),
+    };
+    let multiplier = match checked_pow10(gap) {
+        Some(multiplier) => multiplier,
+        None => return Err(ScaledRefusal::AlignmentMultiplierOverflow),
+    };
+    match value.unscaled.checked_mul(multiplier) {
+        Some(aligned) => Ok(aligned),
+        None => Err(ScaledRefusal::AlignmentOverflow),
+    }
+}
+
+/// The two coefficients aligned to the larger scale, and that scale.
+fn align(lhs: ScaledInteger, rhs: ScaledInteger) -> Result<(i128, i128, u8), ScaledRefusal> {
+    let target_scale = if lhs.scale >= rhs.scale {
+        lhs.scale
+    } else {
+        rhs.scale
+    };
+    let lhs = rescale(lhs, target_scale)?;
+    let rhs = rescale(rhs, target_scale)?;
+    Ok((lhs, rhs, target_scale))
+}
+
+/// Exact canonical sum, or a refusal.
+pub(super) fn checked_add(
+    lhs: ScaledInteger,
+    rhs: ScaledInteger,
+) -> Result<ScaledInteger, ScaledRefusal> {
+    let (lhs, rhs, scale) = align(lhs, rhs)?;
+    match lhs.checked_add(rhs) {
+        Some(unscaled) => Ok(canonical(ScaledInteger { unscaled, scale })),
+        None => Err(ScaledRefusal::AdditionOverflow),
+    }
+}
+
+/// Exact canonical difference, or a refusal.
+pub(super) fn checked_sub(
+    lhs: ScaledInteger,
+    rhs: ScaledInteger,
+) -> Result<ScaledInteger, ScaledRefusal> {
+    let (lhs, rhs, scale) = align(lhs, rhs)?;
+    match lhs.checked_sub(rhs) {
+        Some(unscaled) => Ok(canonical(ScaledInteger { unscaled, scale })),
+        None => Err(ScaledRefusal::SubtractionOverflow),
+    }
+}
+
+/// Exact canonical product with a scale of at most `max_scale`, or a refusal.
+pub(super) fn checked_mul(
+    lhs: ScaledInteger,
+    rhs: ScaledInteger,
+    max_scale: u8,
+) -> Result<ScaledInteger, ScaledRefusal> {
+    let scale = match lhs.scale.checked_add(rhs.scale) {
+        Some(scale) => scale,
+        None => return Err(ScaledRefusal::MultiplicationScaleOverflow),
+    };
+    if scale > max_scale {
+        return Err(ScaledRefusal::MultiplicationScaleAboveMaximum(scale));
+    }
+    match lhs.unscaled.checked_mul(rhs.unscaled) {
+        Some(unscaled) => Ok(canonical(ScaledInteger { unscaled, scale })),
+        None => Err(ScaledRefusal::MultiplicationOverflow),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{canonical_parts, checked_pow10};
