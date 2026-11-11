@@ -140,6 +140,14 @@ source; **CELL-ID-SCOPE** gives independent same-scope stores distinct identitie
 **CELL-ID-OPEN** refuses a different expected CellId; **CELL-ID-RESTORE** refuses
 a different or missing target binding without publishing a destination;
 **CELL-ID-LEGACY** refuses portable export/adoption of unqualified history.
+Qualification selector `cell_identity_restore`:
+`cell_identity_restore_refuses_other_identities_and_preserves_state` (a
+same-scope sibling's, a different, a missing and a malformed identity refuse
+with no destination and an unchanged source; the accepted restore reproduces the
+complete source state) and
+`cell_identity_restore_then_reopen_under_another_identity_writes_nothing`
+(reopening a restored file under another identity, or restoring onto it again,
+refuses and leaves its complete state unchanged).
 
 The format marker is mandatory for portable identity. An old generic binding
 named `cell_id`, even when it contains 32 hexadecimal digits, stays unqualified.

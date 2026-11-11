@@ -324,3 +324,159 @@ fn reopen_refuses_a_later_journal_identity_after_metadata_is_restored() {
         Err(CellError::BindingMismatch { .. })
     ));
 }
+
+fn identity_bindings(cell_id: Option<&str>) -> BTreeMap<String, String> {
+    let mut bindings = BTreeMap::from([
+        ("scope".to_owned(), "org_demo/dev".to_owned()),
+        (
+            "cell_identity_format".to_owned(),
+            norn_cell::cell_identity::FORMAT.to_owned(),
+        ),
+    ]);
+    if let Some(cell_id) = cell_id {
+        bindings.insert("cell_id".to_owned(), cell_id.to_owned());
+    }
+    bindings
+}
+
+fn file_dump(path: &std::path::Path) -> BTreeMap<String, Vec<String>> {
+    CellStore::open(path, model(), StoreOptions::default())
+        .expect("reopen")
+        .read()
+        .dump()
+        .expect("dump")
+}
+
+/// CELL-ID-RESTORE: a same-scope sibling's identity, a missing identity and a
+/// malformed identity all refuse before a destination exists; the source is
+/// unchanged and the accepted restore reproduces the source's complete state.
+#[tokio::test]
+async fn cell_identity_restore_refuses_other_identities_and_preserves_state() {
+    let dir = tempfile::tempdir().expect("directory");
+    let source_path = dir.path().join("source.sqlite");
+    let mut source =
+        CellStore::open_bound(&source_path, model(), StoreOptions::default(), &a()).expect("source");
+    let sibling = CellStore::open_in_memory(model()).expect("same-scope sibling");
+    source.bind("scope", "org_demo/dev").expect("scope");
+    let sibling_id = sibling.cell_id().expect("id").expect("bound");
+    assert_ne!(sibling_id, a(), "same-scope cells cannot alias");
+    let mut exporter = Exporter::local(&dir.path().join("export")).expect("exporter");
+    for _ in 0..2 {
+        let seq = source
+            .commit(&CommitBatch {
+                scope: "org_demo/dev".into(),
+                ..CommitBatch::default()
+            })
+            .expect("commit")
+            .receipt()
+            .body
+            .commit_seq;
+        let record = source.export_record(seq).expect("read").expect("record");
+        exporter.append(&record).await.expect("export");
+    }
+    let source_state = source.read().dump().expect("dump");
+    drop(source);
+    let target = dir.path().join("restored.sqlite");
+    for bindings in [
+        identity_bindings(Some(sibling_id.as_str())),
+        identity_bindings(Some(b().as_str())),
+        identity_bindings(None),
+        identity_bindings(Some("NOT-A-CELL-ID")),
+    ] {
+        assert!(matches!(
+            CellStore::restore_from(
+                &mut exporter,
+                &target,
+                model(),
+                "org_demo/dev",
+                &bindings,
+                StoreOptions::default(),
+            )
+            .await,
+            Err(RestoreError::IdentityMismatch)
+        ));
+        assert!(!target.exists(), "a refused restore publishes nothing");
+    }
+    assert_eq!(file_dump(&source_path), source_state);
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        model(),
+        "org_demo/dev",
+        &identity_bindings(Some(a().as_str())),
+        StoreOptions::default(),
+    )
+    .await
+    .expect("same identity restore");
+    let restored = CellStore::open(&target, model(), StoreOptions::default()).expect("restored");
+    assert_eq!(restored.cell_id().expect("id"), Some(a()));
+    assert_eq!(restored.read().dump().expect("dump"), source_state);
+}
+
+/// CELL-ID-OPEN after restore: reopening the restored file under another
+/// identity refuses without writing, never calls the identity source, and a
+/// second restore onto the published file refuses; the file's complete state is
+/// unchanged by every refusal.
+#[tokio::test]
+async fn cell_identity_restore_then_reopen_under_another_identity_writes_nothing() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut source = CellStore::open_in_memory(model()).expect("source");
+    source.bind("scope", "org_demo/dev").expect("scope");
+    let source_id = source.cell_id().expect("id").expect("bound");
+    source
+        .commit(&CommitBatch {
+            scope: "org_demo/dev".into(),
+            ..CommitBatch::default()
+        })
+        .expect("commit");
+    let record = source.export_record(1).expect("read").expect("record");
+    let mut exporter = Exporter::local(&dir.path().join("export")).expect("exporter");
+    exporter.append(&record).await.expect("export");
+    let target = dir.path().join("restored.sqlite");
+    let bindings = identity_bindings(Some(source_id.as_str()));
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        model(),
+        "org_demo/dev",
+        &bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restore");
+    let restored_state = file_dump(&target);
+    assert_eq!(restored_state, source.read().dump().expect("dump"));
+    let other = if source_id == a() { b() } else { a() };
+
+    assert!(matches!(
+        CellStore::open_bound(&target, model(), StoreOptions::default(), &other),
+        Err(CellError::BindingMismatch { .. })
+    ));
+    assert_eq!(file_dump(&target), restored_state);
+
+    let mut calls = 0;
+    let engine = NativeEngine::open(&target, StoreOptions::default()).expect("engine");
+    let reopened = CellStore::from_engine_with_identity_source(engine, model(), |_| {
+        calls += 1;
+        Ok(other.clone())
+    })
+    .expect("reopen");
+    assert_eq!(calls, 0, "reopen never consults the identity source");
+    assert_eq!(reopened.cell_id().expect("id"), Some(source_id.clone()));
+    drop(reopened);
+    assert_eq!(file_dump(&target), restored_state);
+
+    assert!(matches!(
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            model(),
+            "org_demo/dev",
+            &bindings,
+            StoreOptions::default(),
+        )
+        .await,
+        Err(RestoreError::TargetExists(_))
+    ));
+    assert_eq!(file_dump(&target), restored_state);
+}
