@@ -675,8 +675,8 @@ const END: &str = "after.everything";
     def test_the_real_tree_lexes_completely_and_agrees_with_an_independent_count(self):
         # The lexer against a second, simpler method over this repository's own
         # sources: per production file, the code-shaped literals it finds must
-        # equal, exactly, a line-by-line regex count over the raw text outside
-        # the test-only line ranges and outside lines that are only a comment.
+        # equal, exactly (tolerance 0), a line-by-line regex count over the raw
+        # text outside the test-only line ranges, with `//` comments cut.
         # A file that does not lex to its end raises LexError here.
         import re
         root = Path(cd.__file__).resolve().parents[2]
@@ -685,6 +685,13 @@ const END: &str = "after.everything";
         self.assertGreater(len(production), 300)
         quoted = re.compile(r'"(' + cd.CODE.pattern + r')(?:: [^"\n]*)?"')
         line_of = lambda code, index: code.count("\n", 0, index) + 1
+
+        def uncommented(line):
+            # Cut a `//` comment: the first `//` with an even number of quotes before it.
+            at = line.find("//")
+            while at >= 0 and line.count('"', 0, at) % 2:
+                at = line.find("//", at + 2)
+            return line if at < 0 else line[:at]
         total = 0
         for path, file in production.items():
             text = tree.read(path)
@@ -693,10 +700,13 @@ const END: &str = "after.everything";
             gated = set()
             for start, end in file.test_ranges:
                 gated.update(range(line_of(file.code, start), line_of(file.code, end - 1) + 1))
-            independent = sum(len(quoted.findall(line)) for number, line in enumerate(text.split("\n"), 1)
-                              if number not in gated and not line.lstrip().startswith("//"))
+            independent = sum(len(quoted.findall(uncommented(line))) for number, line in enumerate(text.split("\n"), 1)
+                              if number not in gated)
             found = sum(cd._codes(file.literals).values())
-            self.assertEqual(found, independent, f"{path}: the lexer finds {found} code literals, a line regex {independent}")
+            self.assertEqual(found, independent,
+                             f"{path}: the lexer finds {found} code literals, a line regex {independent}. One of the two "
+                             "misreads this file; the line regex is known not to see `/* */` comments or a code "
+                             "literal split over lines.")
             total += found
         self.assertGreater(total, 1000)
         # The files the round-three review named: literals after a continued string are seen.
