@@ -84,6 +84,7 @@ run_phase() {
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       python3 scripts/ci/test_implementation_receipts.py
+      python3 scripts/ci/test_contract_diff.py
       python3 scripts/test_record_new_files.py
       python3 scripts/test_demo_scenarios.py
       cargo xtask ci policy
