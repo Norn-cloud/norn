@@ -73,6 +73,8 @@ Only the cell host resolves authenticated, scoped evidence; unsupported hosts re
 Execution is open only on the single-commit path of Core 07 RECEIPT-CONSUME-1:
 consumption and effects commit atomically, with no partial persistence on refusal.
 
+RECEIPT-STORE-1: only authenticated reconciliation of the cell’s recorded performer result may populate its scoped, persisted receipt store. Intake records source receipt and knowledge time; it grants no action/publication authority. Unknown, forged, wrong-scope or differently recorded results refuse without a write. Predicate and collection freshness adapters are currently unavailable and refuse closed. Generic event export does not restore private receipt authority.
+
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
 ### TXN-CELL-1 — single-cell execution profile

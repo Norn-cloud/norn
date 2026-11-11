@@ -436,6 +436,12 @@ pub const SYSTEM_DDL: &[&str] = &[
       ("world", json_extract("event", '$.request.ledgerId'), json_extract("event", '$.request.operation.original_id'))
       WHERE json_extract("event", '$.type')='quantity.transition'
         AND json_extract("event", '$.request.operation.kind')='reverse'"#,
+    r#"CREATE TABLE IF NOT EXISTS "_norn_function_receipt" (
+  "reference" TEXT PRIMARY KEY,
+  "scope" TEXT NOT NULL,
+  "body" TEXT NOT NULL,
+  "consumed_commit_seq" INTEGER
+)"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_receipt" (
   "commit_seq" INTEGER NOT NULL,
   "world" TEXT NOT NULL,

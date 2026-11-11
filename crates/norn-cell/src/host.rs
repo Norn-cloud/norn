@@ -81,9 +81,9 @@ pub enum PerformClaim<C, I> {
 
 /// A `CellHost` over a [`CellStore`], using its selected SQL engine.
 pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
-    store: CellStore<S>,
-    scope: String,
-    now: LogicalTime,
+    pub(crate) store: CellStore<S>,
+    pub(crate) scope: String,
+    pub(crate) now: LogicalTime,
     responder: Responder<C, I>,
     published: Vec<CommitReceipt>,
     events: PhantomData<fn() -> E>,
