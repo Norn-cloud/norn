@@ -7,6 +7,8 @@ import json
 import os
 
 FORMAT = "norn.frappe-bundle/1"
+# Must equal norn_projections::FRAPPE_BUNDLE_DOMAIN.
+DOMAIN = b"norn.frappe-bundle/1\n"
 _cache: dict[str, tuple[float, dict]] = {}
 
 
@@ -39,10 +41,13 @@ def load(kind: str = "installed") -> dict | None:
 
 
 def digest(document: dict) -> str:
-    """Content hash of a bundle: sha256 over its sorted-key compact JSON."""
+    """`bundleHash`: SHA-256 of DOMAIN then the canonical JSON of the bundle
+    without its hash, as `norn_projections::project_frappe_bundle` computes it.
+    Sorted keys and compact separators match Norn's canonical form for
+    bundles, whose keys are ASCII and whose numbers are integers."""
     body = {k: v for k, v in document.items() if k != "bundleHash"}
     raw = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hashlib.sha256(DOMAIN + raw.encode()).hexdigest()
 
 
 def object_type(doctype: str) -> dict:
