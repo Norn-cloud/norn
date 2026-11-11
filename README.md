@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,921 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,922 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -172,7 +172,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `ci.core.task.phase.integration.s` | 642 | s (single) | github-hosted | 81 | 275 / 1,263 | ▃▃▃▂▂▁▃▂▃▂▂▂▃▂▃▃▂▃▂▄▂▂▇▇▃▃▇▅▄▄▇█▅▆▆▇█▄▇▄ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.phase.provenance.s` | 14 | s (single) | github-hosted | 64 | 6 / 34 | ▃▆▄▄▃▄▆▃▄▅▃▄▅▃▅▂▂▃▃▂▂▃▂▃▃▂▃▂▂▃▃▂▁▃▁▂▃▃▃▃ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.phase.test-shards.s` | 14 | s (single) | github-hosted | 63 | 6 / 14 | ▅▅▆▃▅▅▄▅▃▅▅▂▅▅▄▅▆▃▄▅▇▅▄▆▄▄▅▃▅▅▅▇▆▅▇▅▇▅██ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
-| `ci.core.task.phase.wasm.s` | 78 | s (single) | github-hosted | 61 | 42 / 150 | ▃▂▂▂▃▄▃▆█▁▂▃▁▂▆▁▇▃▃▅▃▄▅▂▅▁▆▄▆▄▇▇▄▅▅▅▃▂█▃ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
+| `ci.core.task.phase.wasm.s` | 89 | s (single) | boat, github-hosted | 62 | 42 / 150 | ▂▂▂▃▄▃▆█▁▂▃▁▂▆▁▇▃▃▅▃▄▅▂▅▁▆▄▆▄▇▇▄▅▅▅▃▂█▃▄ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
 | `ci.core.task.test.heavy-1.s` | 90 | s (single) | github-hosted | 72 | 47 / 98 | ▇▁▄▄▇▇▇▄▄▂▂▇▇▇▄▅▇▁▁▄▄▁▄▄▂▇▂▄▇▇▅█▂▂▂▇▇▇▁▇ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.test.heavy-2.s` | 639 | s (single) | github-hosted | 83 | 303 / 650 | ▅▄▆▆▆▄▅▃▃▇▄▆▆▅▅▆▃▂▅▄▅▂▅▅▂▇▃▅▇▇▆▇▃▄▄███▃█ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.test.heavy-3.s` | 160 | s (single) | github-hosted | 75 | 89 / 176 | ▇▁▅▅▇▇▇▅▅▂▂▇▇▇▅▅▇▁▁▅▅▁▅▅▂▇▁▅▇▆▅▆▂▂▂▇█▇▁▇ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
