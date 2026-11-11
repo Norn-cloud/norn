@@ -30,6 +30,7 @@
 //!   commit consumes.
 
 pub mod catalog;
+pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
@@ -88,3 +89,5 @@ pub use store::{
 /// Workers/Durable Objects SQLite adapter (celld and workerd).
 #[cfg(target_arch = "wasm32")]
 pub mod workers;
+
+mod read_envelope;

@@ -508,15 +508,26 @@ async fn version_zero_then_two_installs_restore_through_typed_models_and_preserv
     );
     let restored_path = directory.path().join("restored.sqlite");
     let bindings = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
-    let report = CellStore::restore_from(
-        &mut exporter,
-        &restored_path,
-        v2.clone(),
-        SCOPE,
-        &bindings,
-        StoreOptions::default(),
-    )
-    .await
+    let report = {
+        let expected_bindings = {
+            let mut expected = bindings.clone();
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &restored_path,
+            v2.clone(),
+            SCOPE,
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("typed restore");
     assert_eq!(report.manifest, manifest);
     let restored = CellStore::open(&restored_path, v2, StoreOptions::default()).expect("reopen");
@@ -615,15 +626,26 @@ async fn readmission_export_restores_the_receipt_and_original_prefix_exactly() {
     }
 
     let target = directory.path().join("restored.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &target,
-        model.clone(),
-        SCOPE,
-        &BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            model.clone(),
+            SCOPE,
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("restore readmission");
     let restored = CellStore::open(&target, model, StoreOptions::default()).expect("reopen");
     assert_eq!(
@@ -715,16 +737,52 @@ async fn typed_install_tampering_version_jumps_and_untyped_schema_changes_fail_i
         .expect("unchanged typed install");
     let target = directory.path().join("wrong-model.sqlite");
     assert!(matches!(
-        CellStore::restore_from(
-            &mut exporter,
-            &target,
-            definitions(false).0,
-            SCOPE,
-            &BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]),
-            StoreOptions::default()
-        )
-        .await,
+        {
+            let expected_bindings = {
+                let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
+                let source = exporter.verify().await.expect("source identity");
+                expected.extend(
+                    ["cell_id", "cell_identity_format"]
+                        .map(|key| (key.to_owned(), source.bindings[key].clone())),
+                );
+                expected
+            };
+            CellStore::restore_from(
+                &mut exporter,
+                &target,
+                definitions(false).0,
+                SCOPE,
+                &expected_bindings,
+                StoreOptions::default(),
+            )
+            .await
+        },
         Err(RestoreError::ModelMismatch)
     ));
     assert!(!target.exists());
+}
+
+#[test]
+fn unqualified_definition_history_reopens_locally_without_portable_export() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("legacy.sqlite");
+    let (model, canonical) = definitions(false);
+    drop(CellStore::open(&path, model.clone(), StoreOptions::default()).expect("empty store"));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    engine
+        .execute("DELETE FROM _norn_meta WHERE key IN ('binding:cell_id', 'binding:cell_identity_format')", &[])
+        .expect("legacy fixture");
+    let mut store = CellStore::from_engine(engine, model.clone()).expect("legacy open");
+    store
+        .install_definitions(model.clone(), input(canonical, 1), Some(0), SCOPE)
+        .expect("legacy definitions");
+    let receipt = store.read().receipt_at(1).expect("receipt");
+    drop(store);
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen definitions");
+    assert_eq!(store.read().receipt_at(1).expect("receipt"), receipt);
+    assert_eq!(store.cell_id().expect("legacy identity"), None);
+    assert!(matches!(
+        store.export_record(1),
+        Err(norn_cell::CellError::BindingMismatch { .. })
+    ));
 }

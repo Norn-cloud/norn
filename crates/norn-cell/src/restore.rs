@@ -87,6 +87,9 @@ impl CellStore<NativeEngine> {
         bindings: &BTreeMap<String, String>,
         options: StoreOptions,
     ) -> Result<RestoreReport, RestoreError> {
+        let expected_id = crate::cell_identity::from_bindings(bindings)
+            .map_err(|_invalid_identity| RestoreError::IdentityMismatch)?
+            .ok_or(RestoreError::IdentityMismatch)?;
         let manifest = exporter.verify().await?;
         refuse_existing(path)?;
         if manifest.head_commit_seq == 0 {
@@ -127,7 +130,9 @@ impl CellStore<NativeEngine> {
         let mut store = Self::from_retained_engine(
             NativeEngine::open(file.path(), options)?,
             Model::from_retained_snapshot(initial)?,
+            &expected_id,
         )?;
+        store.require_cell_id(&expected_id)?;
         for record in &records {
             for (key, value) in &record.bindings {
                 store.bind(key, value)?;
