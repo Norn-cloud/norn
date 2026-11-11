@@ -1033,7 +1033,7 @@ fn an_agent_is_not_installed_over_a_binding_retired_during_admission() {
     let issues = binding("Issues", "member", &json!({}));
     let (status, installed) = install_binding(&cell, "studio.binding.issues", &issues, None);
     assert_eq!(status, 200, "{installed}");
-    RACING.with(|racing| *racing.borrow_mut() = Some(cell.clone()));
+    RACING.with(|racing| *racing.borrow_mut() = Some(std::rc::Rc::clone(&cell)));
     let agent = json!({ "kind": "agent", "id": "studio.agent.triage",
         "payload": { "title": "Triage", "tools": ["studio.binding.issues"] } });
     let (status, refused) = post(&cell, "/v1/definitions:install", ADMIN, &agent);
