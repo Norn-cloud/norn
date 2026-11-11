@@ -133,6 +133,7 @@ export class ExpansionBudget {
         case "Binary": case "Compare": case "Logical": child(expr.left); child(expr.right); break
         case "Unsafe": bytes = this.capBytes(bytes + utf8(expr.text)); break
         case "Call": for (const arg of expr.args) child(arg); break
+        case "Closure": bytes = this.capBytes(bytes + utf8(expr.fn) + utf8(expr.alias) * 2); child(expr.list); child(expr.body); break
         case "Conditional": child(expr.condition); child(expr.yes); child(expr.no); break
         case "Coalesce": child(expr.value); child(expr.fallback); break
         case "Not": child(expr.operand); break
