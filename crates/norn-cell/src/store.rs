@@ -2097,6 +2097,10 @@ impl<E: SqlEngine> CellStore<E> {
             .map_err(|error| match error {
                 GuardedError::Guard(error) | GuardedError::Store(error) => error,
             })?;
+        if store.fork.is_some() {
+            let head = store.verified_head()?.commits;
+            store.refuse_pin_past(head)?;
+        }
         Ok(store)
     }
 
@@ -2279,16 +2283,23 @@ impl<E: SqlEngine> CellStore<E> {
             .transparency
             .replace(crate::transparency::load(&store.conn)?);
         store.fork = crate::fork::load_pin(&store.conn)?;
-        if store
+        let head = store.verified.borrow().commits;
+        store.refuse_pin_past(head)?;
+        Ok(store)
+    }
+
+    /// FORK-PIN-1: a fork's base is never past its store's head.
+    fn refuse_pin_past(&self, head_commits: u64) -> Result<(), CellError> {
+        if self
             .fork
             .as_ref()
-            .is_some_and(|pin| pin.base.commits > store.verified.borrow().commits)
+            .is_some_and(|pin| pin.base.commits > head_commits)
         {
             return Err(CellError::Encoding(
                 "fork pin: the base is past the store's head".to_owned(),
             ));
         }
-        Ok(store)
+        Ok(())
     }
 
     #[allow(
@@ -3497,6 +3508,30 @@ mod identity_history_tests {
         assert!(matches!(
             reopened.record_performed("c", 0, &Value::Null),
             Err(CellError::WorldPerformForbidden)
+        ));
+    }
+
+    /// FORK-PIN-1: provisioning refuses a fork whose pinned base is past
+    /// its store's head, as `open` does.
+    #[test]
+    fn provisioning_refuses_a_fork_pinned_past_its_head() {
+        let current = Model::from_snapshot(&snapshot(1)).expect("current model");
+        let input = definition_input(&current);
+        let main = CellStore::provision_definitions(
+            NativeEngine::open_in_memory().expect("engine"),
+            current.clone(),
+            &input,
+            "s",
+        )
+        .expect("public provisioning");
+        let base = main.verified_head().expect("head");
+        let fork = main.fork("what-if", &base).expect("forks");
+        let mut pin = fork.fork_pin().cloned().expect("pin");
+        pin.base.commits += 1;
+        crate::fork::write_pin(&fork.conn, &pin).expect("rewrites the pin");
+        assert!(matches!(
+            CellStore::provision_definitions(fork.conn, current, &input, "s"),
+            Err(CellError::Encoding(message)) if message.contains("past the store's head")
         ));
     }
 

@@ -3542,10 +3542,12 @@ fn consume(cell: &mut LawNative, performed: &Performed<WireInput>) {
 
 /// Perform main's head command, and consume what it delivers.
 fn perform_main(cell: &mut LawNative) -> String {
-    // A claim whose outcome is unknown refuses here, identically in both mains.
+    // A claim whose outcome is unknown refuses here, identically in both
+    // mains. Any other refusal on main is a bug, never an equal outcome.
     let performed = match cell.perform() {
         Ok(performed) => performed,
-        Err(error) => return format!("{error}"),
+        Err(error @ CellError::PerformOutcomeUnknown { .. }) => return format!("{error}"),
+        Err(error) => panic!("main's perform refused: {error:?}"),
     };
     if let Some(performed) = &performed {
         consume(cell, performed);
@@ -3559,7 +3561,7 @@ fn claim_main(cell: &mut LawNative) -> String {
     match cell.claim_perform() {
         Ok(Some(norn_cell::PerformClaim::Fresh(command))) => format!("claimed {}", command.id.0),
         Ok(other) => format!("{other:?}"),
-        Err(error) => format!("{error}"),
+        Err(error) => panic!("main's claim refused: {error:?}"),
     }
 }
 
@@ -3576,7 +3578,7 @@ fn complete_main(cell: &mut LawNative) -> String {
             format!("completed {}", command.id.0)
         }
         Ok(None) => "not the claimed head".to_owned(),
-        Err(error) => format!("{error}"),
+        Err(error) => panic!("main's completion refused: {error:?}"),
     }
 }
 

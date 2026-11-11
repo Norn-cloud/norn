@@ -52,8 +52,18 @@ fn cell(kinds: DefinitionKinds) -> Cell {
 }
 
 fn cell_on(engine: NativeEngine, kinds: DefinitionKinds) -> Cell {
+    cell_seeded(engine, kinds, |_, _| {})
+}
+
+/// A cell whose store `seed` writes to before any route serves it.
+fn cell_seeded(
+    engine: NativeEngine,
+    kinds: DefinitionKinds,
+    seed: impl FnOnce(&mut norn_cell::CellStore<NativeEngine>, &str),
+) -> Cell {
     let scope = analytics::analytics_scope();
-    let opened = analytics::provision(engine, &scope).unwrap();
+    let mut opened = analytics::provision(engine, &scope).unwrap();
+    seed(&mut opened.store, &scope.key());
     let policy =
         ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
     let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
@@ -1138,8 +1148,28 @@ fn flow_body(id: &str, artifacts: &[Value], expected: Option<u64>) -> Value {
     body
 }
 
+/// Install `body`, signing the server's words for a flow the cell admits
+/// (a flow is never installed unsigned). A refused admission installs
+/// unsigned, so the install returns the same refusal.
 fn install_flow(cell: &Cell, body: &Value) -> (u16, Value) {
-    post(cell, "/v1/definitions:install", ADMIN, body)
+    let mut body = body.clone();
+    if body["kind"] == json!("flow") && body.get("signoff").is_none() {
+        // Admit takes no expectedVersion.
+        let mut admit = body.clone();
+        admit.as_object_mut().unwrap().remove("expectedVersion");
+        let (_, admitted) = post(cell, "/v1/definitions:admit", ADMIN, &admit);
+        if let Some(digest) = admitted["restatementSha256"].as_str() {
+            body["signoff"] = json!({ "restatementSha256": digest });
+        }
+    }
+    post(cell, "/v1/definitions:install", ADMIN, &body)
+}
+
+/// A cell whose flows install: roles, and the checker's restatement.
+fn flow_kinds() -> DefinitionKinds {
+    DefinitionKinds::default()
+        .with_roles(ROLES)
+        .with_restater(norn_api::definition_routes::checker_restatement)
 }
 
 fn codes_of(refused: &Value) -> Vec<String> {
@@ -1151,7 +1181,7 @@ fn codes_of(refused: &Value) -> Vec<String> {
 
 #[test]
 fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
-    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let cell = cell(flow_kinds());
     // Its one perform names a tool nothing binds yet.
     let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
     assert_eq!(status, 422, "{refused}");
@@ -1189,7 +1219,12 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
     );
     let (_, document) = get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER);
     assert_eq!(document["flow"], installed["flow"]);
-    assert_eq!(document["restatement"], Value::Null);
+    assert_eq!(
+        document["restatement"],
+        json!(
+            "Automation \"crm.route_message\" (version 1.0.0).\nIt runs when a run of it is started.\n1. classify: calls norn.classify.whatsapp-intent at version 1."
+        )
+    );
 
     // `uses` reports the pinned version, from the same extraction the install checked.
     let (_, page) = get(
@@ -1274,14 +1309,18 @@ fn a_registered_builtin_resolves_a_perform() {
     fn resolve(function: &str, version: u32) -> bool {
         function == TOOL && version == 1
     }
-    let cell = cell(DefinitionKinds::default().with_builtins(resolve));
+    let cell = cell(
+        DefinitionKinds::default()
+            .with_builtins(resolve)
+            .with_restater(norn_api::definition_routes::checker_restatement),
+    );
     let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
     assert_eq!(status, 200, "{installed}");
 }
 
 #[test]
 fn a_flow_owns_exactly_its_two_lowered_artifacts() {
-    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let cell = cell(flow_kinds());
     assert_eq!(
         install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
         200
@@ -1378,7 +1417,7 @@ fn with_commands(mut artifacts: Vec<Value>, cell: &str) -> Vec<Value> {
 /// so neither the install check nor `uses=` can miss the call it makes.
 #[test]
 fn constructed_command_records_are_refused() {
-    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let cell = cell(flow_kinds());
     assert_eq!(
         install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
         200
@@ -1410,7 +1449,7 @@ fn constructed_command_records_are_refused() {
 /// checked column at run time, so the install refuses it.
 #[test]
 fn a_second_writer_to_commands_is_refused() {
-    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let cell = cell(flow_kinds());
     assert_eq!(
         install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
         200
@@ -1469,9 +1508,20 @@ fn performs_are_re_resolved_under_the_write_lock() {
     let performs = norn_checker::flow_performs::perform_refs(&rule["payload"])
         .unwrap()
         .len();
+    let cell = cell(
+        DefinitionKinds::default()
+            .with_builtins(vanishing)
+            .with_restater(norn_api::definition_routes::checker_restatement),
+    );
+    // Sign while every function resolves, then count only the install.
+    VALIDATION_CALLS.store(usize::MAX, Ordering::SeqCst);
+    let mut body = flow_body(FLOW_ID, &lowered(), None);
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(status, 200, "{admitted}");
+    body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    CALLS.store(0, Ordering::SeqCst);
     VALIDATION_CALLS.store(performs, Ordering::SeqCst);
-    let cell = cell(DefinitionKinds::default().with_builtins(vanishing));
-    let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
+    let (status, refused) = install_flow(&cell, &body);
     assert_eq!(status, 422, "{refused}");
     assert!(
         codes_of(&refused)
@@ -1497,7 +1547,7 @@ fn performs_are_re_resolved_under_the_write_lock() {
 /// every kind, so no submitted artifact can be classified as trusted.
 #[test]
 fn reserved_namespaces_are_refused() {
-    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let cell = cell(flow_kinds());
     let mut core = flow_body("core.example", &lowered(), None);
     core["payload"]["flow"]["id"] = json!("core.example");
     for body in [
@@ -1530,11 +1580,98 @@ fn reserved_namespaces_are_refused() {
     );
 }
 
+/// Fable round two (D84): a retained definition that already holds a
+/// reserved id (from before the namespace was reserved) stays readable,
+/// revisable and retirable through the routes. Only new ids are refused.
+#[test]
+fn an_existing_reserved_definition_is_read_revised_and_retired() {
+    use norn_cell::retained::{
+        RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle, payload_sha256,
+    };
+    const ID: &str = "core.dashboard";
+    let cell = cell_seeded(
+        NativeEngine::open_in_memory().unwrap(),
+        DefinitionKinds::default(),
+        |store, scope| {
+            let active = store.read().installed_definitions(None).unwrap().unwrap();
+            let payload = String::from_utf8(
+                norn_ir::RuntimeValue::from_json(dashboard("Core"))
+                    .unwrap()
+                    .canonical_json()
+                    .unwrap(),
+            )
+            .unwrap();
+            let change = RetainedDefinitionChange {
+                definition: RetainedDefinition {
+                    kind: "dashboard".to_owned(),
+                    id: ID.to_owned(),
+                    revision: 1,
+                    lifecycle: RetainedLifecycle::Active,
+                    title: "Core".to_owned(),
+                    payload_sha256: payload_sha256(&payload),
+                    payload,
+                    signoff: None,
+                },
+                expected_revision: None,
+            };
+            let input = norn_cell::InstalledDefinitionInput {
+                canonical_set: active.canonical_set.clone(),
+                registry: active.registry.clone(),
+                receipt_sha256: active.receipt_sha256.clone(),
+                admission_receipt: active.admission_receipt.clone(),
+                readmission: None,
+                diff: json!({ "added": [], "removed": [], "changed": [], "narrowing": [] }),
+                installed_at: active.installed_at,
+                layout: None,
+            };
+            let model = store.model().clone();
+            store
+                .install_retained_definition(model, &input, Some(active.version), scope, &change)
+                .unwrap();
+        },
+    );
+    let path = format!("/v1/definitions/{ID}");
+    let (status, document) = get(&cell, &path, "", VIEWER);
+    assert_eq!(status, 200, "{document}");
+    assert_eq!(document["version"], json!(1), "{document}");
+    assert_eq!(document["payload"], dashboard("Core"), "{document}");
+
+    // A new revision of the existing id installs over it.
+    let (status, revised) = install(&cell, ID, &dashboard("Core, revised"), Some(1));
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(2), "{revised}");
+    let (_, document) = get(&cell, &path, "", VIEWER);
+    assert_eq!(
+        document["payload"],
+        dashboard("Core, revised"),
+        "{document}"
+    );
+
+    let (status, retired) = post(
+        &cell,
+        &format!("{path}:retire"),
+        ADMIN,
+        &json!({ "expectedVersion": 2 }),
+    );
+    assert_eq!(status, 200, "{retired}");
+    assert_eq!(retired["version"], json!(3), "{retired}");
+    let (_, document) = get(&cell, &path, "", VIEWER);
+    assert_eq!(document["lifecycle"], json!("retired"), "{document}");
+
+    // A different reserved id is still a new id, so still refused.
+    let (status, refused) = install(&cell, "core.other", &dashboard("Other"), None);
+    assert_eq!(
+        (status, refused["code"].clone()),
+        (400, json!("definition.id_reserved")),
+        "{refused}"
+    );
+}
+
 /// Sol S4: two flow ids that derive the same Run type cannot overwrite each
 /// other's artifacts; only a flow's own previous revision is replaced.
 #[test]
 fn colliding_flow_artifacts_are_refused() {
-    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let cell = cell(flow_kinds());
     assert_eq!(
         install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
         200
@@ -1577,7 +1714,7 @@ fn a_cell_with_an_installed_flow_reopens_unchanged() {
     let path = directory.join("cell.sqlite");
     let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
     {
-        let cell = cell_on(open(), DefinitionKinds::default().with_roles(ROLES));
+        let cell = cell_on(open(), flow_kinds());
         assert_eq!(
             install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
             200
@@ -1618,7 +1755,7 @@ fn a_cell_with_an_installed_flow_reopens_unchanged() {
 /// the payload, and bad labels are typed refusals.
 #[test]
 fn a_flow_carries_its_title_and_step_labels() {
-    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let cell = cell(flow_kinds());
     assert_eq!(
         install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
         200
@@ -1698,7 +1835,7 @@ fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
     assert_eq!(admitted["restatementSha256"], json!(sha256(&words)));
 
     // Fable S7: unsigned, a flow this cell can restate is refused.
-    let (status, unsigned) = install_flow(&cell, &body);
+    let (status, unsigned) = post(&cell, "/v1/definitions:install", ADMIN, &body);
     assert_eq!(
         (status, unsigned["code"].clone()),
         (422, json!("definition.signoff_required")),
@@ -1726,6 +1863,19 @@ fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
         json!(sha256(&words))
     );
     assert_eq!(document["signoff"]["signer"], json!("viewer@demo"));
+
+    // A cell that cannot restate a flow cannot install one: fail closed.
+    let bare = crate::cell(DefinitionKinds::default().with_roles(ROLES));
+    assert_eq!(
+        install_binding(&bare, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let (status, refused) = install_flow(&bare, &flow_body(FLOW_ID, &lowered(), None));
+    assert_eq!(
+        (status, refused["code"].clone()),
+        (422, json!("definition.signoff_unavailable")),
+        "{refused}"
+    );
 }
 
 #[test]

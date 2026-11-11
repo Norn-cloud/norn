@@ -1282,15 +1282,25 @@ pub fn install_definition<E: SqlEngine>(
     if !admitted(&diagnostics) {
         return Err(refused(diagnostics));
     }
-    // Fable S7: nothing checks a sign-off when a run starts, so a flow that
-    // this cell can restate is installed only once a signer signs its words.
-    if request.kind == "flow" && kinds.restater.is_some() && request.signoff.is_none() {
-        return Err(Refusal::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            codes::SIGNOFF_REQUIRED,
-            "a flow is installed by signing the server's words for it",
-            "admit the flow, read its restatement, and install it with signoff.restatementSha256",
-        ));
+    // Fable S7: nothing checks a sign-off when a run starts, so a flow is
+    // installed only once a signer signs its words. A cell that cannot
+    // restate a flow cannot install one (fail closed).
+    if request.kind == "flow" && request.signoff.is_none() {
+        return Err(if kinds.restater.is_some() {
+            Refusal::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                codes::SIGNOFF_REQUIRED,
+                "a flow is installed by signing the server's words for it",
+                "admit the flow, read its restatement, and install it with signoff.restatementSha256",
+            )
+        } else {
+            Refusal::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                codes::SIGNOFF_UNAVAILABLE,
+                "the sign-off cannot be verified",
+                "this cell has no restatement generator, so it cannot install a flow",
+            )
+        });
     }
     let signed = request
         .signoff

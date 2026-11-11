@@ -126,7 +126,8 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
             SCOPE,
             &remodelled
         ),
-        Err(CellError::DefinitionReceiptInvalid(_))
+        Err(CellError::DefinitionReceiptInvalid(message))
+            if message.contains("not a flow installs over the active model")
     ));
 
     // An unused id is required without an expected revision.

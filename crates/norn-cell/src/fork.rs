@@ -137,7 +137,7 @@ pub(crate) fn load_pin<E: SqlEngine>(conn: &E) -> Result<Option<ForkPin>, CellEr
     Ok(Some(pin))
 }
 
-fn write_pin<E: SqlEngine>(conn: &E, pin: &ForkPin) -> Result<(), CellError> {
+pub(crate) fn write_pin<E: SqlEngine>(conn: &E, pin: &ForkPin) -> Result<(), CellError> {
     let base = serde_json::to_string(&pin.base)
         .map_err(|error| CellError::Encoding(format!("fork base: {error}")))?;
     // A fork of a fork replaces the copied pin: its parent is that fork.
