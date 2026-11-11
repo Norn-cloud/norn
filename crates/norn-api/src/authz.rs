@@ -11,6 +11,8 @@ pub enum Operation {
     ReadDefinitions,
     /// Invoke the named admitted action.
     CallAction(String),
+    /// Admit, install or retire a retained (non-kernel) definition.
+    WriteDefinitions,
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -177,6 +179,7 @@ mod tests {
             for operation in [
                 Operation::ReadDefinitions,
                 Operation::CallAction("demo.action".into()),
+                Operation::WriteDefinitions,
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

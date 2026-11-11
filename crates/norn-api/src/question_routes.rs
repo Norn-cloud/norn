@@ -203,6 +203,33 @@ fn answer_plan<E: SqlEngine>(
     Ok(answer)
 }
 
+/// #1164 (D53): the receipt coordinate `actor` may see for a commit outside
+/// any answer (a retained definition's install). The receipt hash commits to
+/// the ledger head, which chains every earlier event's values, so only a
+/// reader with whole-world Values sees it raw; every other reader sees its
+/// keyed receipt handle. A cell without a question runtime holds no handle
+/// key and decides no collection grant, so it discloses neither (`None`).
+/// # Errors
+/// A handle key shorter than 32 bytes.
+pub(crate) fn disclosed_receipt<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: Option<&dyn AdHocQuestions<E>>,
+    store: &CellStore<E>,
+    actor: &str,
+    receipt_hash: &str,
+) -> Result<Option<String>, Refusal> {
+    let Some(runtime) = runtime else {
+        return Ok(None);
+    };
+    let runtime: &dyn QuestionRuntime<E> = runtime;
+    let key = handle_key(runtime)?;
+    Ok(Some(if world_values(host, runtime, store, actor) {
+        receipt_hash.to_owned()
+    } else {
+        keyed_receipt_handle(key, receipt_hash)
+    }))
+}
+
 /// #1175 (D53): whether `actor` holds Values over the whole world: a
 /// collection-level grant on every object type of the cell, decided by the
 /// host policy without reading cell data. Raw ledger and receipt hashes chain
@@ -547,6 +574,33 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
     runtime: &'r dyn AdHocQuestions<E>,
 ) -> Result<(QuestionPlan, &'r [u8]), Refusal> {
     let key = handle_key(runtime)?;
+    match check_ad_hoc(host, scope, actor, question, runtime)? {
+        Ok(plan) => Ok((plan, key)),
+        Err(findings) => Err(Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            "question.refused",
+            "the question is not admissible",
+            "each diagnostic names the rule and where in the question it applies",
+        )
+        .with_diagnostics(&findings, "/question")),
+    }
+}
+
+/// F2b's question admission without evaluation: authorize every metric and
+/// object type `question` reads for `actor` (one opaque 403 otherwise,
+/// decided before admission), then admit it against the cell's declared
+/// metrics. Returns the plan, or the checker's findings with pointers into
+/// the question. Saved definitions (dashboard tiles) admit their questions
+/// through this same path.
+/// # Errors
+/// An ungranted or undeclared metric or type, or a scope mismatch.
+pub fn check_ad_hoc<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: &str,
+    question: &QuestionIR,
+    runtime: &dyn AdHocQuestions<E>,
+) -> Result<Result<QuestionPlan, Vec<norn_checker::Diagnostic>>, Refusal> {
     let named: &dyn QuestionRuntime<E> = runtime;
     let (named_metrics, undeclared) = read_metrics(question, runtime.definitions());
     // D62: that a named metric does not exist is disclosed (as the checker's
@@ -599,25 +653,20 @@ fn admit_ad_hoc<'r, E: SqlEngine>(
             },
         )?);
     }
-    let plan = admit(
+    let plan = match admit(
         runtime.definitions(),
         question,
         runtime.catalog(),
         runtime.max_rows(),
-    )
-    .map_err(|findings| {
-        Refusal::new(
-            http::StatusCode::UNPROCESSABLE_ENTITY,
-            "question.refused",
-            "the question is not admissible",
-            "each diagnostic names the rule and where in the question it applies",
-        )
-        .with_diagnostics(&rebased(findings), "/question")
-    })?;
+    ) {
+        Ok(plan) => plan,
+        // D62: pointers into the one submitted question, each finding once.
+        Err(findings) => return Ok(Err(rebased(findings))),
+    };
     if !types.contains(plan.grain().as_str()) {
         return Err(read_denied());
     }
-    Ok((plan, key))
+    Ok(Ok(plan))
 }
 
 /// F2b: admit an ad-hoc question against the cell's declared metrics and

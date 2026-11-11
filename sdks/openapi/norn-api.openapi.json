@@ -10,18 +10,27 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/v1/actions/{actionId}": {
-      "post": {
+    "/v1/definitions/{id}": {
+      "get": {
         "tags": [
-          "crate::actions"
+          "crate::definition_routes"
         ],
-        "summary": "Call one admitted action as the verified caller: it commits, or an\nidentical earlier call replays with its original receipt.\n# Errors\nOne opaque 403, decided before any storage read, for a missing or\nunverified caller, a denied policy, a foreign scope or an unknown action;\nthe same opaque 403 for every visibility or permission refusal the kernel\ndecides (an invisible or absent target, a denied policy decision);\n409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed\nrefusal, its detail disclosed only under an explicit diagnostic grant. A\nrefusal commits nothing.",
-        "operationId": "call_action",
+        "summary": "`GET /v1/definitions/{id}`: one version of one definition, the current\none unless `version` names a past one.\n# Errors\nA denied caller (403), an invalid id (400), an unknown id or version (404\n`definition.not_found`).",
+        "operationId": "get_definition",
         "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The definition id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "name": "orgId",
             "in": "query",
-            "description": "Organization, matched against physical scope.",
+            "description": "Required organization.",
             "required": true,
             "schema": {
               "type": "string"
@@ -30,7 +39,7 @@
           {
             "name": "environmentId",
             "in": "query",
-            "description": "Environment, matched against physical scope.",
+            "description": "Required environment.",
             "required": true,
             "schema": {
               "type": "string"
@@ -39,18 +48,99 @@
           {
             "name": "version",
             "in": "query",
-            "description": "The definitions version the caller read the action from. A different\nactive version refuses `defs.stale` (409); absent calls the active one.",
+            "description": "A past version; absent selects the current one.",
             "required": false,
             "schema": {
               "type": "integer",
               "format": "int64",
               "minimum": 0
             }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The definition version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/definitions/{id}:retire": {
+      "post": {
+        "tags": [
+          "crate::definition_routes"
+        ],
+        "summary": "`POST /v1/definitions/{id}:retire`: record a retired version; history\nstays readable.\n# Errors\nA denied caller (403), an unknown id (404 `definition.not_found`), a stale\n`expectedVersion` (409), an already retired definition (422).",
+        "operationId": "retire_definition",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The definition id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           },
           {
-            "name": "actionId",
-            "in": "path",
-            "description": "The admitted action identity.",
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
             "required": true,
             "schema": {
               "type": "string"
@@ -61,7 +151,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ActionRequest"
+                "$ref": "#/components/schemas/RetireDefinitionRequest"
               }
             }
           },
@@ -69,11 +159,223 @@
         },
         "responses": {
           "200": {
-            "description": "The call committed, or replayed an identical earlier call.",
+            "description": "The retired version.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ActionReceipt"
+                  "$ref": "#/components/schemas/InstallDefinitionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: the definition changed since it was read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused: the definition is not admissible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/definitions:admit": {
+      "post": {
+        "tags": [
+          "crate::definition_routes"
+        ],
+        "summary": "`POST /v1/definitions:admit`: run the kind's validator. Side-effect free.\n# Errors\nA denied caller (403), a malformed request or id (400), an unknown kind\n(422 `definition.kind_unknown`), or a host failure.",
+        "operationId": "admit_definition",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdmitDefinitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The admission decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdmitDefinitionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: over a resource bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused: the definition is not admissible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/definitions:install": {
+      "post": {
+        "tags": [
+          "crate::definition_routes"
+        ],
+        "summary": "`POST /v1/definitions:install`: re-admit, then install the next version\nthrough the governed definitions install.\n# Errors\nAs [`admit_definition`]; an inadmissible payload (422 `definition.refused`\nwith diagnostics); a stale `expectedVersion` (409\n`definition.version_conflict`).",
+        "operationId": "install_definition",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallDefinitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The installed version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallDefinitionResponse"
                 }
               }
             }
@@ -99,7 +401,7 @@
             }
           },
           "409": {
-            "description": "The request was refused: a stale pin or a conflicting retry.",
+            "description": "The request was refused: the definition changed since it was read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -109,7 +411,7 @@
             }
           },
           "413": {
-            "description": "The request was refused: the body exceeds the host bound.",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -119,7 +421,7 @@
             }
           },
           "422": {
-            "description": "The request was refused: a law or precondition does not hold.",
+            "description": "The request was refused: the definition is not admissible.",
             "content": {
               "application/json": {
                 "schema": {
@@ -128,8 +430,107 @@
               }
             }
           },
-          "429": {
-            "description": "The request was refused: a declared limit was exceeded.",
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/definitions:list": {
+      "get": {
+        "tags": [
+          "crate::definition_routes"
+        ],
+        "summary": "`GET /v1/definitions:list`: the current version of each definition of a\nkind, ordered by id, retired ones only with `include=retired`.\n# Errors\nA denied caller (403), a missing kind, a bad limit or cursor (400).",
+        "operationId": "list_definitions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Required organization.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Required environment.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "The kind to list.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "`retired` also lists retired definitions.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–100 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The previous page's cursor, bound to `kind` and `include`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of definitions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -592,94 +993,6 @@
   },
   "components": {
     "schemas": {
-      "ActionCallOutcome": {
-        "type": "string",
-        "description": "Whether this call committed now or replayed an earlier identical call.",
-        "enum": [
-          "committed",
-          "replayed"
-        ]
-      },
-      "ActionCommit": {
-        "type": "object",
-        "description": "The commit that carried the call.",
-        "required": [
-          "receiptHash",
-          "commitSeq",
-          "recordedAtMs"
-        ],
-        "properties": {
-          "commitSeq": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The commit's ledger position.",
-            "minimum": 0
-          },
-          "receiptHash": {
-            "type": "string",
-            "description": "The receipt hash for a reader with Values over the whole cell, else\nits keyed handle (D53): the raw hash chains every earlier event."
-          },
-          "recordedAtMs": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The commit's logical time (Unix milliseconds).",
-            "minimum": 0
-          }
-        }
-      },
-      "ActionReceipt": {
-        "type": "object",
-        "description": "A committed or replayed call: the target and the commit that wrote it.",
-        "required": [
-          "outcome",
-          "objectType",
-          "objectId",
-          "version",
-          "receipt"
-        ],
-        "properties": {
-          "objectId": {
-            "type": "string",
-            "description": "The target's id."
-          },
-          "objectType": {
-            "type": "string",
-            "description": "The target's concrete object type."
-          },
-          "outcome": {
-            "$ref": "#/components/schemas/ActionCallOutcome",
-            "description": "Committed now, or replayed."
-          },
-          "receipt": {
-            "$ref": "#/components/schemas/ActionCommit",
-            "description": "The original commit, the same on every replay."
-          },
-          "version": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The target's version as the original commit wrote it.",
-            "minimum": 0
-          }
-        }
-      },
-      "ActionRequest": {
-        "type": "object",
-        "description": "`POST /v1/actions/{actionId}`: one call. The actor never travels in the body.",
-        "required": [
-          "input",
-          "idempotencyKey"
-        ],
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "description": "The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes."
-          },
-          "input": {
-            "$ref": "#/components/schemas/NornActionInput"
-          }
-        },
-        "additionalProperties": false
-      },
       "AdHocTraceRequest": {
         "type": "object",
         "description": "`POST /v1/questions:trace`: one bucket of an ad-hoc question's answer.",
@@ -704,6 +1017,230 @@
         },
         "additionalProperties": false
       },
+      "AdmitDefinitionRequest": {
+        "type": "object",
+        "description": "`POST /v1/definitions:admit`.",
+        "required": [
+          "kind",
+          "id",
+          "payload"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The definition id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`dashboard`, `question`, `agent` or `binding`."
+          },
+          "payload": {
+            "type": "object",
+            "description": "The kind's payload."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdmitDefinitionResponse": {
+        "type": "object",
+        "description": "The admission decision.",
+        "required": [
+          "admitted",
+          "diagnostics",
+          "restatement",
+          "restatementSha256"
+        ],
+        "properties": {
+          "admitted": {
+            "type": "boolean",
+            "description": "True when no finding is an error."
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefusalDiagnostic"
+            },
+            "description": "Every finding, each pointing into the payload."
+          },
+          "restatement": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The plain-words restatement of the admitted payload a signer signs\n(D59); null when not admitted or the kind has no restatement."
+          },
+          "restatementSha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lower-case hex SHA-256 of `restatement`; null with it."
+          }
+        }
+      },
+      "DefinitionDocument": {
+        "type": "object",
+        "description": "One version of one definition.",
+        "required": [
+          "id",
+          "kind",
+          "version",
+          "lifecycle",
+          "payload",
+          "receipt",
+          "signoff",
+          "restatement",
+          "restatementSha256"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The definition id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Its kind."
+          },
+          "lifecycle": {
+            "type": "string",
+            "description": "`active` or `retired`."
+          },
+          "payload": {
+            "type": "object",
+            "description": "The admitted payload, as canonical JSON."
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/DefinitionReceipt",
+            "description": "The commit that installed this version."
+          },
+          "restatement": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The restatement of this version's payload, recomputed at read time\nagainst the cell's current declarations; null when the kind has none.\nWhen it no longer hashes to `signoff.restatementSha256`, the words the\nsigner read have changed meaning since they signed."
+          },
+          "restatementSha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lower-case hex SHA-256 of `restatement`; null with it."
+          },
+          "signoff": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SignoffDocument",
+                "description": "This version's sign-off; null when it was installed unsigned."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "This version.",
+            "minimum": 0
+          }
+        }
+      },
+      "DefinitionPage": {
+        "type": "object",
+        "description": "One page of definitions, ordered by id.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The next page's cursor; null on the last page."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DefinitionSummary"
+            },
+            "description": "This page."
+          }
+        }
+      },
+      "DefinitionReceipt": {
+        "type": "object",
+        "description": "The commit that installed a version.",
+        "required": [
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit sequence.",
+            "minimum": 0
+          },
+          "receiptHash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The commit receipt's hash, for a reader granted Values on every object\ntype of the cell; every other reader gets its keyed handle\n(`norn.receipt/1`, D53), since the receipt commits to the ledger head\nand so to every earlier event's values. Null when the cell holds no\nhandle key."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Host time of the commit, in Unix milliseconds.",
+            "minimum": 0
+          }
+        }
+      },
+      "DefinitionSummary": {
+        "type": "object",
+        "description": "One listed definition, without its payload.",
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "version",
+          "lifecycle",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The definition id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Its kind."
+          },
+          "lifecycle": {
+            "type": "string",
+            "description": "`active` or `retired`."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its title."
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When its current version was installed, in Unix milliseconds.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its current version.",
+            "minimum": 0
+          }
+        }
+      },
       "EvaluateRequest": {
         "type": "object",
         "description": "`POST /v1/questions:evaluate`: one ad-hoc question to admit and answer.",
@@ -717,6 +1254,80 @@
           }
         },
         "additionalProperties": false
+      },
+      "InstallDefinitionRequest": {
+        "type": "object",
+        "description": "`POST /v1/definitions:install`.",
+        "required": [
+          "kind",
+          "id",
+          "payload"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The id's current version; absent requires that the id is unused.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The definition id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`dashboard`, `question`, `agent` or `binding`."
+          },
+          "payload": {
+            "type": "object",
+            "description": "The kind's payload."
+          },
+          "signoff": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SignoffRequest",
+                "description": "A sign-off of the payload's plain-words restatement (D59). The host\nrecomputes the restatement and records the installing principal."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InstallDefinitionResponse": {
+        "type": "object",
+        "description": "An installed (or retired) version.",
+        "required": [
+          "installed",
+          "id",
+          "version",
+          "receipt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The definition id."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Always true."
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/DefinitionReceipt",
+            "description": "Its commit."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The new version.",
+            "minimum": 0
+          }
+        }
       },
       "LayoutSidecar": {
         "type": "object",
@@ -916,7 +1527,6 @@
       "NornActionInput": {
         "type": "object",
         "title": "Map_of_RuntimeValue",
-        "description": "Action business arguments as exact JSON values. A field declared `nornType: decimal` travels as its exact decimal text (`\"12.500\"`, VAL-EXACT-1); a number token there refuses `action.invalid_input`. Other number tokens keep their digits exactly.",
         "additionalProperties": {
           "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
         }
@@ -21583,60 +22193,86 @@
         "description": "An execution world."
       },
       "Refusal": {
-        "type": "object",
-        "description": "A refused request.",
-        "required": [
-          "format",
-          "retryable",
-          "reason",
-          "code",
-          "category",
-          "message",
-          "explanation"
-        ],
-        "properties": {
-          "category": {
-            "$ref": "#/components/schemas/RefusalCategory",
-            "description": "What the caller can do about it (the discriminant SDKs switch on)."
-          },
-          "code": {
-            "type": "string",
-            "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
-          },
-          "diagnostics": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RefusalDiagnostic"
-            },
-            "description": "Checker findings for an inadmissible submission (a question or a\ndefinition), each pointing into the submitted document. Absent when\nempty. Only ever produced after the caller is authorized for\neverything the submission reads, so no finding describes an\nungranted resource."
-          },
-          "explanation": {
-            "type": "string",
-            "description": "Why, and what would make the request admissible."
-          },
-          "format": {
-            "$ref": "#/components/schemas/RefusalFormat",
-            "description": "Versioned projection; stored checker receipts keep their original bytes."
-          },
-          "message": {
-            "type": "string",
-            "description": "One-line summary."
-          },
-          "reason": {
-            "anyOf": [
+        "allOf": [
+          {
+            "oneOf": [
               {
-                "$ref": "#/components/schemas/NornIrRefusalReason"
+                "type": "object",
+                "description": "The words a signer can sign: what the host reads the submission as.",
+                "properties": {
+                  "restatement": {
+                    "type": "string",
+                    "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
+                  },
+                  "restatementSha256": {
+                    "type": "string",
+                    "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
+                  }
+                }
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "On `definition.signoff_mismatch` only: the host's restatement of the\ncaller's own admitted payload, flattened into the refusal as\n`restatement` and `restatementSha256`. Absent otherwise."
           },
-          "retryable": {
-            "type": "boolean",
-            "description": "Engine-defined retryability, false unless explicitly supplied by the engine."
+          {
+            "type": "object",
+            "required": [
+              "format",
+              "retryable",
+              "reason",
+              "code",
+              "category",
+              "message",
+              "explanation"
+            ],
+            "properties": {
+              "category": {
+                "$ref": "#/components/schemas/RefusalCategory",
+                "description": "What the caller can do about it (the discriminant SDKs switch on)."
+              },
+              "code": {
+                "type": "string",
+                "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
+              },
+              "diagnostics": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RefusalDiagnostic"
+                },
+                "description": "Checker findings for an inadmissible submission (a question or a\ndefinition), each pointing into the submitted document. Absent when\nempty. Only ever produced after the caller is authorized for\neverything the submission reads, so no finding describes an\nungranted resource."
+              },
+              "explanation": {
+                "type": "string",
+                "description": "Why, and what would make the request admissible."
+              },
+              "format": {
+                "$ref": "#/components/schemas/RefusalFormat",
+                "description": "Versioned projection; stored checker receipts keep their original bytes."
+              },
+              "message": {
+                "type": "string",
+                "description": "One-line summary."
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NornIrRefusalReason"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "retryable": {
+                "type": "boolean",
+                "description": "Engine-defined retryability, false unless explicitly supplied by the engine."
+              }
+            }
           }
-        }
+        ],
+        "description": "A refused request."
       },
       "RefusalCategory": {
         "type": "string",
@@ -21664,6 +22300,13 @@
           "code": {
             "type": "string",
             "description": "Stable registered checker code: the rule that refused."
+          },
+          "law": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The law that refused, when a declared law did."
           },
           "message": {
             "type": "string",
@@ -21693,6 +22336,20 @@
           "norn/refusal@2"
         ]
       },
+      "RefusalRestatement": {
+        "type": "object",
+        "description": "The words a signer can sign: what the host reads the submission as.",
+        "properties": {
+          "restatement": {
+            "type": "string",
+            "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
+          },
+          "restatementSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
+          }
+        }
+      },
       "RefusalSpan": {
         "type": "object",
         "description": "A location in the submitted document.",
@@ -21705,6 +22362,61 @@
             "description": "RFC 6901 JSON pointer into the submitted document."
           }
         }
+      },
+      "RetireDefinitionRequest": {
+        "type": "object",
+        "description": "`POST /v1/definitions/{id}:retire`.",
+        "required": [
+          "expectedVersion"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The id's current version.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "SignoffDocument": {
+        "type": "object",
+        "description": "A recorded sign-off: every field set by the host.",
+        "required": [
+          "signer",
+          "signedAtMs",
+          "restatementSha256"
+        ],
+        "properties": {
+          "restatementSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of the host-recomputed restatement."
+          },
+          "signedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the signed version was installed, in Unix milliseconds.",
+            "minimum": 0
+          },
+          "signer": {
+            "type": "string",
+            "description": "The installing principal."
+          }
+        }
+      },
+      "SignoffRequest": {
+        "type": "object",
+        "description": "What a signer claims to have read.",
+        "required": [
+          "restatementSha256"
+        ],
+        "properties": {
+          "restatementSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of the UTF-8 restatement."
+          }
+        },
+        "additionalProperties": false
       }
     }
   }
