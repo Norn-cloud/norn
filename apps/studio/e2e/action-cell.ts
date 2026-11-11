@@ -38,9 +38,8 @@ function check(schema: Schema, value: unknown, at: string, problems: Problem[]) 
     return
   }
   if (type === "number" && schema.nornType?.kind === "decimal") {
-    // The cell decodes an exact decimal only from its text, at most its declared scale; a number token refuses.
-    const exact = typeof value === "string" ? DECIMAL.exec(value) : null
-    if (exact === null || (exact[1] ?? "").length > (schema.nornType.scale ?? 18)) problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
+    // The cell decodes an exact decimal only from its text; a number token refuses.
+    if (typeof value !== "string" || !servedDecimal(value, schema.nornType.scale ?? 18)) problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
     return
   }
   if (type === "number" && typeof value !== "number") return void problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
@@ -57,8 +56,32 @@ const DENIED = { code: "authz.denied", category: "permission", message: "the act
 /** The served route's input refusal to a caller without the refusal-detail grant: no field pointers. */
 const INVALID_INPUT = { format: "norn/refusal@2", retryable: false, reason: null, code: "action.invalid_input", category: "invalid", message: "the request is invalid", explanation: "diagnostic detail is unavailable under the caller's disclosure authority" }
 
-/** The exact decimal text grammar: optional `-`, no leading zeros, an optional fraction (captured), no exponent. */
-const DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.(\d+))?$/
+/** One JSON number token (RFC 8259): sign, integer digits, fraction and exponent captured. */
+const JSON_NUMBER = /^-?(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/
+/** rust_decimal's largest mantissa, 2^96 - 1. */
+const MAX_MANTISSA = 2n ** 96n - 1n
+
+/**
+ * Whether the served route decodes `text` as a declared decimal of `scale`, by its own rule:
+ * `norn_ir::Decimal::parse` (crates/norn-ir/src/runtime.rs) takes one JSON number token, exponent
+ * included, and refuses as inexact any value outside a 96-bit mantissa with at most 28 fractional
+ * digits once normalized; then `Schema::decode_action_input` (crates/norn-expr/src/schema.rs) checks it
+ * through `ScaledArithmetic::rescale` (vendor/zen/core/expression/src/scaled.rs), which refuses more
+ * fractional digits than `scale` and a coefficient at `scale` beyond that mantissa.
+ */
+function servedDecimal(text: string, scale: number): boolean {
+  const token = JSON_NUMBER.exec(text)
+  if (token === null) return false
+  const fraction = token[2] ?? ""
+  let digits = BigInt(`${token[1]}${fraction}`)
+  if (digits === 0n) return true
+  let exponent = Number(token[3] ?? "0") - fraction.length
+  while (digits % 10n === 0n) { digits /= 10n; exponent += 1 }
+  const fractional = Math.max(0, -exponent)
+  // Past 29 digits of scaling no coefficient fits the mantissa, so the bound also stops a huge exponent.
+  if (fractional > 28 || fractional > scale || exponent + scale > 29) return false
+  return digits * 10n ** BigInt(exponent + scale) <= MAX_MANTISSA
+}
 
 export interface ActionCell {
   /** Every call body the form sent, for assertions on what it asked. */
