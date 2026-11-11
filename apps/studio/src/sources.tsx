@@ -14,7 +14,7 @@ import { transport } from "./lib/transport.ts"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import type { MenuEntry } from "./shell.tsx"
 import { Iso } from "@/components/iso"
-import { useLocale } from "@/lib/locale"
+import { directionOf, useLocale } from "@/lib/locale"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
 export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
@@ -135,7 +135,7 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
           </TableCell>
           <TableCell className="whitespace-normal text-muted-foreground">
             {field.valueLabels !== undefined && field.valueLabels.size > 0
-              ? <span>{[...field.valueLabels].map(([value, label], index) => <span key={value}>{index > 0 && comma}{label}{technical && <> <Iso className="font-mono text-xs">{value}</Iso></>}</span>)}</span>
+              ? <span dir={directionOf(locale)}>{[...field.valueLabels].map(([value, label], index) => <span key={value}>{index > 0 && comma}{label}{technical && <> <Iso className="font-mono text-xs">{value}</Iso></>}</span>)}</span>
               : field.type}
           </TableCell>
         </TableRow>
