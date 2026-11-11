@@ -4,9 +4,10 @@
 Runs from a machine with an authenticated `boat` CLI and a clone of this repository that
 can push the metrics branch (the controller; schedule it with cron, see --help). It:
 
-1. fetches origin/main and exports that exact commit (tracked files only);
-2. one `boat run --type default` per snapshot the probes name (probes.json), pushing the export
-   and running `scripts/metrics/run_probes.py` (CARGO_INCREMENTAL=0, CI's pinned toolchain);
+1. fetches origin/main and resolves its commit;
+2. one `boat run --type default` per snapshot the probes name (probes.json): the VM fetches that
+   exact commit from the public repository into a git checkout and runs this script's own
+   `run_probes.py` against it (CARGO_INCREMENTAL=0, CI's pinned toolchain);
    `boat run` deletes the VM when the command ends, and this script then checks `boat info <id>`
    reports it gone, deleting it with --yes if not;
 3. turns each METRIC line into a record (runner boat, the VM's own ENV line, the commit
@@ -32,10 +33,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 from pathlib import Path
@@ -52,22 +53,6 @@ SANDBOX = re.compile(r"\bbx_[a-z0-9]{6,}\b")
 
 def boat(args: argparse.Namespace, *rest: str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run([*args.boat.split(), *rest], text=True, **kwargs)
-
-
-def export(repo: Path, sha: str, into: Path) -> Path:
-    # Its own directory name: a snapshot may hold an older ~/norn checkout.
-    tree = into / "norn-measured"
-    tree.mkdir()
-    archive = into / "src.tar"
-    record.git(repo, "archive", "--format=tar", "-o", str(archive), sha)
-    with tarfile.open(archive) as tar:
-        unsafe = [m.name for m in tar.getmembers() if m.issym() or m.islnk() or m.name.startswith(("/", ".."))
-                  or "/../" in m.name]
-        if unsafe:
-            raise SystemExit(f"refusing to upload links or unsafe paths: {unsafe[:5]}")
-        tar.extractall(tree, filter="data")
-    archive.unlink()
-    return tree
 
 
 def records_from(output: str, sha: str, date: str, sandbox: str | None, snapshot: str,
@@ -133,24 +118,22 @@ def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
             names: list[str]) -> tuple[list[dict], list[str], int]:
     """One `boat run` from `snapshot` for the probes `names`; boat deletes the VM when it ends."""
     with tempfile.TemporaryDirectory(prefix="norn-metrics-") as scratch:
-        # The upload holds the commit's exact tree and, beside it rather than inside it, this
-        # script's own probe runner and list: the cron's main checkout decides what is measured,
-        # and the measured tree is not touched (its gates check every file in it).
+        # Only this script's probe runner and list are uploaded, so the cron's main checkout
+        # decides what is measured. The VM fetches the measured commit itself into a real git
+        # checkout (the formal gate reads HEAD and checks every file in the tree).
         upload = Path(scratch) / "norn-metrics-run"
-        upload.mkdir()
-        export(repo, sha, upload)
         tools = upload / "metrics-tools"
-        tools.mkdir()
+        tools.mkdir(parents=True)
         for name in ("run_probes.py", "record.py", "record.schema.json"):
             shutil.copyfile(HERE / name, tools / name)
         shutil.copyfile(args.probes, tools / "probes.json")
-        command = ["python3", "metrics-tools/run_probes.py", "--root", "norn-measured",
-                   "--probes", "metrics-tools/probes.json"]
-        for name in names:
-            command += ["--only", name]
+        only = " ".join(f"--only {shlex.quote(name)}" for name in names)
+        script = (f"git init -q norn-measured && git -C norn-measured fetch -q --depth 1 "
+                  f"https://github.com/{REPOSITORY}.git {sha} && git -C norn-measured checkout -q FETCH_HEAD && "
+                  f"python3 metrics-tools/run_probes.py --root norn-measured --probes metrics-tools/probes.json {only}")
         ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
                    "--no-env", "--push", str(upload), "-e", "CARGO_INCREMENTAL=0",
-                   "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
+                   "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", "bash", "-c", script,
                    capture_output=True)
     sys.stderr.write(ran.stderr[-4000:])
     sandbox = next(iter(SANDBOX.findall(ran.stdout + ran.stderr)), None)
