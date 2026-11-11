@@ -131,6 +131,7 @@ fn invalid_at(pointer: &str, message: &str) -> Refusal {
         span: Some(RefusalSpan {
             pointer: pointer.to_owned(),
         }),
+        law: None,
     }];
     refusal
 }
