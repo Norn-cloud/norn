@@ -1344,10 +1344,28 @@ fn query_fanout_exact_cell_question_returns_80_with_stable_identities_for_author
     tags(&mut later, "H3", 2);
     store.commit(&later).expect("unauthorized commits");
     let second = store
-        .evaluate_question(&plan, context, authorized)
+        .evaluate_question(&plan, context.clone(), authorized)
         .expect("exact again");
     assert_ne!(second.revision, first.revision);
     assert_eq!(second.query_pin, first.query_pin);
     assert_eq!(second.rows, first.rows);
-    assert_eq!(second.lineage_ref, first.lineage_ref);
+    // The lineage ref is bound to the revision, so it moves; the contribution identity does not.
+    assert_ne!(second.lineage_ref, first.lineage_ref);
+    let retrace = store
+        .trace_question(
+            &plan,
+            context,
+            &second.lineage_ref,
+            "null",
+            authorized,
+            LineageDisclosure {
+                values: &mut |_| Ok(true),
+                source: &mut |_| Ok(false),
+            },
+        )
+        .expect("trace again");
+    let [again] = retrace.contributions.as_slice() else {
+        panic!("still one holding-grain contribution")
+    };
+    assert_eq!(again.fact, contribution.fact);
 }
