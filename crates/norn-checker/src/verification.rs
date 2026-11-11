@@ -255,10 +255,10 @@ pub fn check_law_set(
             {
                 // A law is closed: exceptions live only in its owner's
                 // artifact, so a redeclaration that changes them is refused.
-                let message = if inherited.exceptions != law.exceptions {
-                    "an installed law is closed: another artifact cannot add or change its exceptions; narrow your own law instead"
-                } else {
+                let message = if inherited.exceptions == law.exceptions {
                     "an existing law identity cannot be replaced; retain it and add a new conjunctive law identity"
+                } else {
+                    "an installed law is closed: another artifact cannot add or change its exceptions; narrow your own law instead"
                 };
                 out.push(finding(
                     codes::WEAKENS_INHERITED,

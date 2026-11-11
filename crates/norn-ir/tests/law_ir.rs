@@ -318,7 +318,7 @@ fn law_exceptions_round_trip_and_have_one_encoding() {
         canonicalize_json(serde_json::to_vec(&wire).expect("raw")).expect("canonical raw")
     );
     // Dropping the list gives back the original law and its bytes.
-    let mut plain = law.clone();
+    let mut plain = law;
     plain.exceptions.clear();
     let mut original = wire.clone();
     original
