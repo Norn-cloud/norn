@@ -1759,7 +1759,7 @@ impl EffectiveCatalog {
         artifacts: &[ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
     ) -> Self {
-        let findings: Vec<Diagnostic> = check_artifact_set_entity_model(
+        let mut findings: Vec<Diagnostic> = check_artifact_set_entity_model(
             artifacts,
             &EntityArtifactSetContext {
                 registry,
@@ -1794,7 +1794,15 @@ impl EffectiveCatalog {
             base: EntityModel::EMPTY,
             tenant: None,
         };
-        let mut effective = effective_object_types(&layer.as_model(), &context);
+        // A refused effective view is a blocking finding on every artifact; the
+        // catalog never serves an empty view as if no type were registered.
+        let mut effective = match effective_object_types(&layer.as_model(), &context) {
+            Ok(effective) => effective,
+            Err(refusal) => {
+                findings.push(refusal.diagnostic());
+                BTreeMap::new()
+            }
+        };
         let owners = Owners::new(&layer, artifacts);
         let blocking = |dependencies: &BTreeSet<&str>| {
             findings.iter().find(|finding| {

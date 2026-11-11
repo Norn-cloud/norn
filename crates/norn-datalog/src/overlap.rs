@@ -49,6 +49,54 @@ pub fn declared_metadata_v1() -> Program {
     }
 }
 
+/// Fixed one-edge query for a complete, selected registered definition catalog.
+///
+/// This is deliberately not the unbounded all-pairs `ancestor` pack. The
+/// checker supplies one root, one frontier and at most one registered parent
+/// edge per invocation, then meters the next invocation. Scope identifies the
+/// selected catalog within that invocation; IDs never cross catalog calls.
+/// Raw declared/incomplete `facts::Projection` is not a closed-world input.
+#[must_use]
+pub fn registered_inheritance_step_v1() -> Program {
+    Program {
+        version: Version::V1,
+        predicates: [
+            ("query_root", 2, RelationKind::Input),
+            ("frontier", 2, RelationKind::Input),
+            ("extends", 3, RelationKind::Input),
+            ("next", 2, RelationKind::Derived),
+            ("inheritance_cycle", 2, RelationKind::Derived),
+        ]
+        .into_iter()
+        .map(|(name, arity, kind)| Predicate {
+            name: name.to_owned(),
+            arity,
+            kind,
+        })
+        .collect(),
+        rules: vec![
+            rule(
+                "registered.inheritance.step",
+                Mode::Entailment,
+                atom("next", &["scope", "parent"]),
+                vec![
+                    atom("frontier", &["scope", "node"]),
+                    atom("extends", &["scope", "node", "parent"]),
+                ],
+            ),
+            rule(
+                "registered.inheritance.cycle",
+                Mode::Validation,
+                atom("inheritance_cycle", &["scope", "root"]),
+                vec![
+                    atom("query_root", &["scope", "root"]),
+                    atom("next", &["scope", "root"]),
+                ],
+            ),
+        ],
+    }
+}
+
 fn structural_rules() -> Vec<Rule> {
     vec![
         rule(

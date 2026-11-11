@@ -903,6 +903,9 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     CellError::EffectiveValues(error)
                 }
                 EffectiveValuesError::Runtime(error) => CellError::Value(error),
+                EffectiveValuesError::ViewRefused(refusal) => {
+                    CellError::EffectiveViewRefused(refusal)
+                }
                 EffectiveValuesError::ValueType { property, expected } => CellError::ValueType {
                     owner: object_type.to_owned(),
                     property,

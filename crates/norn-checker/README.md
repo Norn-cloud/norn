@@ -18,3 +18,68 @@ It holds every check over the typed IR in `norn-ir` (T1-CHK-1, #2524, moved them
 - Every EntityIR v2 expression site (computed properties, invariants, lifecycle guards) is parsed at T2 (T1-ONT-2, #2515; `object_types::check_zen_syntax`), and sites read their object through `self`. Boolean invariant type checking is implemented, including refusal of link/inverse-role reads. Remaining per-site type checking and environment references (each site's `self`/`input` binding) belong to T1-EXPR-5 (#2523). The golden receipt is `tests/golden/check-receipt.retail.json`; regenerate it with `NORN_CHECKER_UPDATE_GOLDENS=1 cargo test -p norn-checker --test check_receipt` and re-pin its hash.
 
 Retained definition receipts are verified against their recorded checker/profile and exact artifact set before re-admission. Legacy `receipt@1` evidence retains the historical identifier policy; upgraded `receipt@2` evidence records that policy explicitly. New installs and updates always enforce the current identifier limits. Identifier limits are defined in `norn-ir::identifier_limits`.
+
+## Bounded inheritance classification
+
+The existing inheritance-cycle diagnostic is derived by Ascent from
+`norn_datalog::overlap::registered_inheritance_step_v1()`. `build.rs` first
+runs the shared AST admission gate, checks the fixed nonrecursive schema, and
+projects its variable-only rules with `quote`. This is one fixed program;
+there is no runtime Datalog compiler or executor in `norn-datalog`.
+
+The adapter uses the complete selected registration map (base names win;
+local duplicates do not replace registered definitions). Raw declared,
+incomplete IR facts are not interpreted as a closed catalog. Each call owns
+its catalog-local integer IDs and queries only a root's reachable frontier.
+Each fresh Ascent invocation has three singleton inputs and at most two
+outputs. No all-pairs ancestor relation is materialized. Unknown parents
+retain their existing diagnostic, and descendants of a cycle are not cycle
+members. The old traversal exists only as a test oracle.
+
+The fixed profile limits registered types to 4,096, name/parent text to
+1,048,576 bytes, frontier invocations to 65,536, cumulative materialized facts
+to 1,048,576, and logical work to 32,000,000. Charges precede catalog copying,
+name comparisons, frontier evaluation, index rebuilding and materialization.
+Each invocation reserves all five relation rows and 256 logical work units,
+plus ordered-set costs; this is a conservative structural work bound, not a
+wall-clock measurement. Refusal emits the registered error
+`object_type.validation.inheritance_budget_exhausted` and stops before
+expression-environment, inverse, ancestry or effective-table construction.
+Local diagnostic filtering retains that refusal; effective views return no
+tables after refusal and never establish admission independently.
+
+Cycle findings expose `Diagnostic::structural_evidence()` and an optional
+`evidence` JSON member with `kind: structural`, the stored rule ID, and
+`basis: complete_registered_catalog`. This is a structural explanation label,
+not a certified proof, derivation-height claim or authorization decision.
+Existing diagnostic fields and receipt identities are not extended.
+
+`bash scripts/ci/ascent-no-clock-dependency-tree.sh` is a mandatory merge
+qualification gate for both checker and Datalog normal/build dependency trees,
+including their complete transitive dependencies across all targets. It runs
+standard `cargo tree --locked --offline --target all -p norn-checker
+-p norn-datalog --edges normal,build --prefix none --format '{p}'`, fails on
+Cargo errors or missing checker, Datalog, or Ascent 0.8.1 packages, and rejects
+exact `web-time`/`web_time` package names anywhere in that graph. Run it on
+Boat after standard lock resolution and dependency fetching; the script works
+from any current directory. CI must invoke this command as a required gate; workflow wiring is a
+separate change, and this slice does not wire it.
+`bash scripts/ci/ascent-no-clock-dependency-tree.sh --self-test` runs only
+internal fixture and command-failure checks, without invoking real Cargo.
+The vendored
+macro's `no_clock_` expansion guards remain independently required; generated
+build source also rejects `Instant`, `web_time`, and timeout tokens. Existing
+checker fixtures, the exhaustive small-graph oracle, exact resource boundaries,
+local/base isolation, and refusal paths must pass before qualification. The
+fixture oracle compares 56 selected registered-catalog snapshots from
+`fixtures/ir/entity-v2`: 13 standalone object types, two arrays, nine singular
+v2 roots (raw or enveloped), and 27 lifecycle models paired with their
+manifest-declared base, plus five catalog combinations used by the existing
+technical-view, artifact-set and tenant-model tests. Three interface fixtures
+supply base-name registration. There is no flattened cross-fixture catalog.
+Strict shape decoding, malformed/irrelevant-input probes, and independent
+base-wins/local-duplicate precedence assertions guard corpus coverage. These
+are structural graph comparisons, not claims that negative fixtures are
+semantically valid definitions. Source inspection alone is not runtime
+qualification. Frozen CI/dependency admission is a separate change; this
+slice adds no guard or workflow exceptions.
