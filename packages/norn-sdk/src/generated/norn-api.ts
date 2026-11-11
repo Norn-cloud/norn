@@ -4,6 +4,32 @@
  */
 
 export interface paths {
+    "/v1/actions/{actionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Commit or replay one admitted action for the verified `actor`, under the
+         *     held definition epoch. `disclosure` is the cell's read runtime: its handle
+         *     key and collection grants decide which receipt coordinate the actor sees.
+         *     # Errors
+         *     One opaque 403 before any storage read for a missing actor, denied
+         *     policy, foreign scope or unknown action; `defs.stale` (409) for a stale
+         *     pin; otherwise the kernel's typed refusal, its detail disclosed only
+         *     under an explicit diagnostic grant. A refusal commits nothing.
+         */
+        post: operations["call_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions/{question}/answer": {
         parameters: {
             query?: never;
@@ -99,6 +125,51 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Whether this call committed now or replayed an earlier identical call.
+         * @enum {string}
+         */
+        ActionCallOutcome: "committed" | "replayed";
+        /** @description The commit that carried the call. */
+        ActionCommit: {
+            /**
+             * Format: int64
+             * @description The commit's ledger position.
+             */
+            commitSeq: number;
+            /**
+             * @description The receipt hash for a reader with Values over the whole cell, else
+             *     its keyed handle (D53): the raw hash chains every earlier event.
+             */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description The commit's logical time (Unix milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /** @description A committed or replayed call: the target and the commit that wrote it. */
+        ActionReceipt: {
+            /** @description The target's id. */
+            objectId: string;
+            /** @description The target's concrete object type. */
+            objectType: string;
+            /** @description Committed now, or replayed. */
+            outcome: components["schemas"]["ActionCallOutcome"];
+            /** @description The original commit, the same on every replay. */
+            receipt: components["schemas"]["ActionCommit"];
+            /**
+             * Format: int64
+             * @description The target's version as the original commit wrote it.
+             */
+            version: number;
+        };
+        /** @description `POST /v1/actions/{actionId}`: one call. The actor never travels in the body. */
+        ActionRequest: {
+            /** @description The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes. */
+            idempotencyKey: string;
+            input: components["schemas"]["NornActionInput"];
+        };
         /** @description `POST /v1/questions:trace`: one bucket of an ad-hoc question's answer. */
         AdHocTraceRequest: {
             /** @description Canonical bucket key from that answer. */
@@ -8232,6 +8303,115 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    call_action: {
+        parameters: {
+            query: {
+                /** @description Organization, matched against physical scope. */
+                orgId: string;
+                /** @description Environment, matched against physical scope. */
+                environmentId: string;
+                /**
+                 * @description The definitions version the caller read the action from. A different
+                 *     active version refuses `defs.stale` (409); absent calls the active one.
+                 */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                /** @description The admitted action identity. */
+                actionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActionRequest"];
+            };
+        };
+        responses: {
+            /** @description The call committed, or replayed an identical earlier call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionReceipt"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the target is not visible. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: a stale pin or a conflicting retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the body exceeds the host bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: a law or precondition does not hold. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: a declared limit was exceeded. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     get_answer: {
         parameters: {
             query: {

@@ -166,14 +166,14 @@ pub fn decode_action_request(body: &str) -> Result<ActionRequest, Refusal> {
     Ok(request)
 }
 
-/// Commit or replay one admitted action for the verified `actor`, under the
-/// held definition epoch. `disclosure` is the cell's read runtime: its handle
-/// key and collection grants decide which receipt coordinate the actor sees.
+/// Call one admitted action as the verified caller: it commits, or an
+/// identical earlier call replays with its original receipt.
 /// # Errors
-/// One opaque 403 before any storage read for a missing actor, denied
-/// policy, foreign scope or unknown action; `defs.stale` (409) for a stale
-/// pin; otherwise the kernel's typed refusal, its detail disclosed only
-/// under an explicit diagnostic grant. A refusal commits nothing.
+/// One opaque 403, decided before any storage read, for a missing or
+/// unverified caller, a denied policy, a foreign scope or an unknown action;
+/// 409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
+/// refusal, its detail disclosed only under an explicit diagnostic grant. A
+/// refusal commits nothing.
 #[utoipa::path(post, path = "/v1/actions/{actionId}", params(ActionQuery, ("actionId" = String, Path, description = "The admitted action identity.")), request_body = ActionRequest, responses((status = 200, description = "The call committed, or replayed an identical earlier call.", body = ActionReceipt), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: the target is not visible.", body = Refusal), (status = 409, description = "The request was refused: a stale pin or a conflicting retry.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: a law or precondition does not hold.", body = Refusal), (status = 429, description = "The request was refused: a declared limit was exceeded.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn call_action<E: SqlEngine>(
     host: &DevHost<E>,
@@ -184,6 +184,8 @@ pub fn call_action<E: SqlEngine>(
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
 ) -> Result<ActionReceipt, Refusal> {
+    // `disclosure` is the cell's read runtime: its handle key and collection
+    // grants decide which receipt coordinate the caller sees (D53).
     let actor = actor
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(action_denied)?;

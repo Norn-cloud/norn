@@ -10,6 +10,157 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/actions/{actionId}": {
+      "post": {
+        "tags": [
+          "crate::actions"
+        ],
+        "summary": "Commit or replay one admitted action for the verified `actor`, under the\nheld definition epoch. `disclosure` is the cell's read runtime: its handle\nkey and collection grants decide which receipt coordinate the actor sees.\n# Errors\nOne opaque 403 before any storage read for a missing actor, denied\npolicy, foreign scope or unknown action; `defs.stale` (409) for a stale\npin; otherwise the kernel's typed refusal, its detail disclosed only\nunder an explicit diagnostic grant. A refusal commits nothing.",
+        "operationId": "call_action",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "The definitions version the caller read the action from. A different\nactive version refuses `defs.stale` (409); absent calls the active one.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "description": "The admitted action identity.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The call committed, or replayed an identical earlier call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: the target is not visible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: a stale pin or a conflicting retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: the body exceeds the host bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused: a law or precondition does not hold.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request was refused: a declared limit was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/questions/{question}/answer": {
       "get": {
         "tags": [
@@ -451,6 +602,94 @@
   },
   "components": {
     "schemas": {
+      "ActionCallOutcome": {
+        "type": "string",
+        "description": "Whether this call committed now or replayed an earlier identical call.",
+        "enum": [
+          "committed",
+          "replayed"
+        ]
+      },
+      "ActionCommit": {
+        "type": "object",
+        "description": "The commit that carried the call.",
+        "required": [
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit's ledger position.",
+            "minimum": 0
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt hash for a reader with Values over the whole cell, else\nits keyed handle (D53): the raw hash chains every earlier event."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit's logical time (Unix milliseconds).",
+            "minimum": 0
+          }
+        }
+      },
+      "ActionReceipt": {
+        "type": "object",
+        "description": "A committed or replayed call: the target and the commit that wrote it.",
+        "required": [
+          "outcome",
+          "objectType",
+          "objectId",
+          "version",
+          "receipt"
+        ],
+        "properties": {
+          "objectId": {
+            "type": "string",
+            "description": "The target's id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The target's concrete object type."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ActionCallOutcome",
+            "description": "Committed now, or replayed."
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/ActionCommit",
+            "description": "The original commit, the same on every replay."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The target's version as the original commit wrote it.",
+            "minimum": 0
+          }
+        }
+      },
+      "ActionRequest": {
+        "type": "object",
+        "description": "`POST /v1/actions/{actionId}`: one call. The actor never travels in the body.",
+        "required": [
+          "input",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes."
+          },
+          "input": {
+            "$ref": "#/components/schemas/NornActionInput"
+          }
+        },
+        "additionalProperties": false
+      },
       "AdHocTraceRequest": {
         "type": "object",
         "description": "`POST /v1/questions:trace`: one bucket of an ad-hoc question's answer.",
