@@ -53,7 +53,9 @@ pub fn lower_deontic_law(rule: &DeonticRule) -> Result<LoweredDeonticLaw, LawLow
     if !rule.exceptions.is_empty() && !rule.law.exceptions.is_empty() {
         return Err(LawLoweringRefusal::ExceptionHome);
     }
-    if !rule.exceptions.is_empty() || !rule.law.exceptions.is_empty() || !rule.defeated_by.is_empty()
+    if !rule.exceptions.is_empty()
+        || !rule.law.exceptions.is_empty()
+        || !rule.defeated_by.is_empty()
     {
         return Err(LawLoweringRefusal::Defeasible);
     }

@@ -1247,7 +1247,10 @@ fn law_exception_tree_admits_nested_and_overlapping_siblings() {
         exception("unpaid", LAW, "self.paid == false"),
         exception("open_and_paid", "open_order", "self.paid == true"),
     ];
-    assert_eq!(run(vec![excepted(tree.clone())], &entities()), Vec::<String>::new());
+    assert_eq!(
+        run(vec![excepted(tree.clone())], &entities()),
+        Vec::<String>::new()
+    );
     let declared: Vec<norn_ir::LawException> =
         serde_json::from_value(Value::Array(tree)).expect("typed tree");
     assert_eq!(check_tree(LAW, &declared), Ok(()));
@@ -1274,7 +1277,11 @@ fn law_exception_tree_admits_nested_and_overlapping_siblings() {
         reversed.reverse();
         let mut flipped = matched.clone();
         flipped.reverse();
-        assert_eq!(fold(LAW, &reversed, &flipped), (lifted, applied), "{matched:?}");
+        assert_eq!(
+            fold(LAW, &reversed, &flipped),
+            (lifted, applied),
+            "{matched:?}"
+        );
     }
 }
 
@@ -1313,7 +1320,10 @@ fn law_exception_tree_shape_refusals_name_the_declaration() {
             "/payload/exceptions/1/overrides",
         ),
         (
-            vec![exception("twice", LAW, "true"), exception("twice", LAW, "true")],
+            vec![
+                exception("twice", LAW, "true"),
+                exception("twice", LAW, "true"),
+            ],
             exception::INVALID_DECLARATION,
             "/payload/exceptions/1",
         ),
@@ -1327,8 +1337,16 @@ fn law_exception_tree_shape_refusals_name_the_declaration() {
             exception::INVALID_DECLARATION,
             "/payload/exceptions/0",
         ),
-        (vec![blank_rationale], exception::INVALID_DECLARATION, "/payload/exceptions/0"),
-        (vec![bad_source], exception::INVALID_DECLARATION, "/payload/exceptions/0"),
+        (
+            vec![blank_rationale],
+            exception::INVALID_DECLARATION,
+            "/payload/exceptions/0",
+        ),
+        (
+            vec![bad_source],
+            exception::INVALID_DECLARATION,
+            "/payload/exceptions/0",
+        ),
         (
             (0..=norn_checker::law_exceptions::MAX_LAW_EXCEPTIONS)
                 .map(|i| exception(&format!("e{i}"), LAW, "true"))
@@ -1345,8 +1363,11 @@ fn law_exception_tree_shape_refusals_name_the_declaration() {
             "{code} at {pointer}: {findings:?}"
         );
         assert!(
-            run(vec![serde_json::to_value(&artifact).expect("wire")], &entities())
-                .contains(&code.to_owned())
+            run(
+                vec![serde_json::to_value(&artifact).expect("wire")],
+                &entities()
+            )
+            .contains(&code.to_owned())
         );
     }
 }
@@ -1355,7 +1376,10 @@ fn law_exception_tree_shape_refusals_name_the_declaration() {
 fn law_exception_conditions_type_check_and_invariant_laws_refuse_them() {
     const LAW: &str = "erpnext.no_unpaid_ship";
     for condition in ["self.missing == true", "self.paid", "self.status"] {
-        let findings = run(vec![excepted(vec![exception("e", LAW, condition)])], &entities());
+        let findings = run(
+            vec![excepted(vec![exception("e", LAW, condition)])],
+            &entities(),
+        );
         // `self.paid` is Boolean and admits; the other two do not type as Boolean.
         assert_eq!(
             findings.contains(&codes::PREDICATE_TYPE.to_owned()),

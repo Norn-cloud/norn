@@ -194,9 +194,16 @@ fn repository_laws() -> Vec<(String, Value)> {
     fn walk(value: &Value, pointer: &str, key: &str, out: &mut Vec<(String, Value)>) {
         match value {
             Value::Object(map) => {
-                if ["lawVersion", "id", "subject", "scope", "modality", "response"]
-                    .iter()
-                    .all(|member| map.contains_key(*member))
+                if [
+                    "lawVersion",
+                    "id",
+                    "subject",
+                    "scope",
+                    "modality",
+                    "response",
+                ]
+                .iter()
+                .all(|member| map.contains_key(*member))
                 {
                     out.push((format!("{key}#{pointer}"), value.clone()));
                 }
@@ -277,14 +284,18 @@ fn every_repository_law_keeps_its_canonical_bytes_and_pin() {
         &std::fs::read_to_string(&golden_path).expect("golden pins are checked in"),
     )
     .expect("golden pins");
-    assert_eq!(actual, golden, "a law's pin changed or a law was added or removed");
+    assert_eq!(
+        actual, golden,
+        "a law's pin changed or a law was added or removed"
+    );
 }
 
 fn excepted_law() -> Value {
     let goldens: Vec<Value> =
         serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("goldens");
     let mut law = goldens[0]["payload"].clone();
-    let source = serde_json::json!({"artifactId": "erpnext.no_unpaid_ship.law", "pointer": "/payload"});
+    let source =
+        serde_json::json!({"artifactId": "erpnext.no_unpaid_ship.law", "pointer": "/payload"});
     law["exceptions"] = serde_json::json!([
         {"id": "prepaid", "overrides": law["id"], "condition": "self.prepaid == true",
          "rationale": "Prepaid orders ship.", "source": source},
@@ -310,7 +321,10 @@ fn law_exceptions_round_trip_and_have_one_encoding() {
     let mut plain = law.clone();
     plain.exceptions.clear();
     let mut original = wire.clone();
-    original.as_object_mut().expect("object").remove("exceptions");
+    original
+        .as_object_mut()
+        .expect("object")
+        .remove("exceptions");
     assert_eq!(serde_json::to_value(&plain).expect("encoded"), original);
     // An explicit empty list, null, or an unknown exception member is refused.
     for invalid in [serde_json::json!([]), Value::Null] {

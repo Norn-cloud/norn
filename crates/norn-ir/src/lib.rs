@@ -260,8 +260,8 @@ pub mod canonical {
 
 pub mod verification;
 pub use verification::{
-    LawException, LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity, LawStateScope,
-    LawTiming,
+    LawException, LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity,
+    LawStateScope, LawTiming,
 };
 
 pub const SUPPORTED_IR_VERSION: &str = "0.1";

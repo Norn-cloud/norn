@@ -55,9 +55,9 @@ impl ExceptionTreeRefusal {
     #[must_use]
     pub const fn index(self) -> Option<usize> {
         match self {
-            Self::InvalidDeclaration(index) | Self::DanglingOverride(index) | Self::Cycle(index) => {
-                Some(index)
-            }
+            Self::InvalidDeclaration(index)
+            | Self::DanglingOverride(index)
+            | Self::Cycle(index) => Some(index),
             Self::Limit => None,
         }
     }

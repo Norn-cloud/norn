@@ -260,7 +260,12 @@ pub fn check_law_set(
                 } else {
                     "an existing law identity cannot be replaced; retain it and add a new conjunctive law identity"
                 };
-                out.push(finding(codes::WEAKENS_INHERITED, artifact, "/payload/id", message));
+                out.push(finding(
+                    codes::WEAKENS_INHERITED,
+                    artifact,
+                    "/payload/id",
+                    message,
+                ));
             }
         }
         if closure_refused {

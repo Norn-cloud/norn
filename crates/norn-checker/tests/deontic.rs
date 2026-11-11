@@ -1521,16 +1521,21 @@ fn exceptions_have_one_home_on_a_rule_or_its_law() {
     use norn_checker::law_exceptions::{ExceptionTreeRefusal, codes};
     // R4: a law-level tree is still defeasible for whole-law lowering.
     let mut rule = obligation().expect("fixture");
-    rule.law
-        .exceptions
-        .push(law_exception("emergency", "sales.approve", "self.emergency == true"));
+    rule.law.exceptions.push(law_exception(
+        "emergency",
+        "sales.approve",
+        "self.emergency == true",
+    ));
     assert_eq!(
         lower_deontic_law(&rule),
         Err(LawLoweringRefusal::Defeasible)
     );
     assert_eq!(exception_home(&rule), Some(rule.law.exceptions.as_slice()));
-    rule.exceptions
-        .push(law_exception("emergency", "sales.approve", "self.emergency == true"));
+    rule.exceptions.push(law_exception(
+        "emergency",
+        "sales.approve",
+        "self.emergency == true",
+    ));
     assert_eq!(
         lower_deontic_law(&rule),
         Err(LawLoweringRefusal::ExceptionHome)
@@ -1626,16 +1631,20 @@ fn layer_protection_reads_law_exception_trees_in_both_directions() {
         let (entity, mut low, mut high) = admission_fixture();
         let narrowed = if exempt_base { &mut low } else { &mut high };
         let id = narrowed.law.id.clone();
-        narrowed.law.exceptions.push(law_exception("narrow", &id, "true"));
+        narrowed
+            .law
+            .exceptions
+            .push(law_exception("narrow", &id, "true"));
         if reenabled {
             narrowed
                 .law
                 .exceptions
                 .push(law_exception("unless_paid", "narrow", "self.paid"));
-            narrowed
-                .law
-                .exceptions
-                .push(law_exception("unless_unpaid", "narrow", "self.paid == false"));
+            narrowed.law.exceptions.push(law_exception(
+                "unless_unpaid",
+                "narrow",
+                "self.paid == false",
+            ));
         }
         let mut installed = entity.clone();
         installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low]});
