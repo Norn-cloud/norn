@@ -553,8 +553,7 @@ mod tests {
         fork.commit(&empty())?;
         let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
         let path = dir.path().join("fork.sqlite");
-        fork.conn
-            .execute_batch(&format!("VACUUM INTO '{}'", path.display()))?;
+        fork.conn.backup_to_file(&path)?;
         drop(fork);
 
         let mut opened = CellStore::open_bound(&path, model, StoreOptions::default(), &id)?;

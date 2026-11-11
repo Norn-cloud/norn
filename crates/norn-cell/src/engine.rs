@@ -550,6 +550,25 @@ impl crate::fork::ForkEngine for NativeEngine {
     }
 }
 
+/// Test support: copy committed state to a file, as a fork copies it.
+#[cfg(all(test, feature = "native"))]
+impl NativeEngine {
+    pub(crate) fn backup_to_file(&self, path: &std::path::Path) -> Result<(), CellError> {
+        let mut file = rusqlite::Connection::open(path)?;
+        let done = {
+            let backup = rusqlite::backup::Backup::new(&self.conn, &mut file)?;
+            backup.step(-1)?
+        };
+        if done == rusqlite::backup::StepResult::Done {
+            Ok(())
+        } else {
+            Err(CellError::Engine(
+                "backup did not complete in one step".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(feature = "native")]
 struct UserSql<'a>(&'a std::sync::atomic::AtomicBool);
 
