@@ -46,7 +46,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -98,7 +97,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -151,7 +149,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -203,7 +200,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -256,7 +252,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -295,7 +290,7 @@
         "https://www.heppnetz.de/ontologies/goodrelations/v1.html"
       ],
       "norn": {
-        "overlap": "Offers, quantitative price specifications and business functions; mapping evidence only per Astra #2986.",
+        "overlap": "Offers, quantitative price specifications and business functions; mapping evidence only.",
         "concepts": [
           "canon.Item",
           "canon.Catalog"
@@ -309,7 +304,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -364,7 +358,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -418,7 +411,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "GTIN/GLN identify items and locations at retail."
       },
@@ -473,7 +465,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -526,9 +517,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
-        "reason": "Customs tariff codes; jewelry is HS chapter 71."
+        "reason": "Customs tariff codes on every cross-border item."
       },
       "notes": "WCO legal notes/explanatory notes and national tariff extensions are separate artifacts; none claimed acquired or licensed. Redistribution: unverified.",
       "origin": "catalogue-2026-10-21"
@@ -581,10 +571,9 @@
           "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
           "registry/core/artifacts/std.value_types.entity.json"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -625,7 +614,7 @@
         "https://schema.org/version/30.1/schemaorg-all-https.jsonld"
       ],
       "norn": {
-        "overlap": "Product/offer/order/service exchange vocabulary; explicit #2986 direction forbids Core semantic authority.",
+        "overlap": "Product/offer/order/service exchange vocabulary; explicit direction forbids Core semantic authority.",
         "concepts": [
           "core.Agent",
           "canon.Party",
@@ -642,7 +631,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Interop ids (sameAs) for public-facing records."
       },
@@ -697,9 +685,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P0",
-        "reason": "Units and precision gate every quantity, including gram weights for jewelry."
+        "reason": "Units and precision gate every quantity."
       },
       "notes": "Licence page heading identifies version 1.1 (June 2024), while its introductory acceptance text still says version 1.0. Preserve the selected notice rather than silently normalizing that discrepancy. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
@@ -743,12 +730,11 @@
         "proposedConcepts": [
           "ProductClassification"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Unit codes on e-invoices and EDI."
       },
@@ -800,7 +786,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },
@@ -852,7 +837,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Item identity and classification drive catalog, tax and customs."
       },

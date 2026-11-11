@@ -43,12 +43,11 @@
           "LegalSource",
           "LawException"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Prioritized default logic matches Norn's exception trees (#1207); tax and labour rules as code."
       },
@@ -96,12 +95,11 @@
         "proposedConcepts": [
           "LegalSource"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Stable identifiers for legal-source provenance links."
       },
@@ -152,7 +150,6 @@
         "importerIssue": "Norn-cloud/norn#351"
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Legislation text as the source each law links to."
       },
@@ -204,7 +201,6 @@
         "importerIssue": "Norn-cloud/norn#351"
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Interchange for defeasible norms; ~9% coverage in research (#1128)."
       },
@@ -257,7 +253,6 @@
         "importerIssue": "Norn-cloud/norn#351"
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Law-as-code feeds country packs and defeasible laws."
       },

@@ -35,7 +35,7 @@
         "https://raw.githubusercontent.com/iofoundry/ontology/Release_202603/LICENSE"
       ],
       "norn": {
-        "overlap": "Industrial asset, process, role and resource concepts; industry pack only under #2986 Astra direction.",
+        "overlap": "Industrial asset, process, role and resource concepts; industry pack only.",
         "concepts": [
           "core.Process",
           "core.Conversion",
@@ -51,9 +51,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
-        "reason": "Production orders and recipes are needed for in-house manufacturing."
+        "reason": "Production orders, routings and recipes are SAP PP table stakes."
       },
       "notes": "Use the active iofoundry/ontology repository, not the archived 2022 iofoundry/Core beta. OWL axioms require an explicit supported import profile. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
@@ -107,9 +106,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
-        "reason": "Production orders and recipes are needed for in-house manufacturing."
+        "reason": "Production orders, routings and recipes are SAP PP table stakes."
       },
       "notes": "Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
@@ -161,7 +159,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Recipes and batches for in-house manufacturing."
       },
@@ -214,9 +211,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
-        "reason": "Production orders and recipes are needed for in-house manufacturing."
+        "reason": "Production orders, routings and recipes are SAP PP table stakes."
       },
       "notes": "Redistribution: prohibited-without-permission.",
       "origin": "catalogue-2026-10-21"
@@ -264,9 +260,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P2",
-        "reason": "Precious-metal fineness and purity bounds for jewelry; Norn records fineness as measured values."
+        "reason": "Precious-metal fineness and purity bounds; Norn records fineness as measured values."
       },
       "notes": "Use only the published fineness numbers as facts (e.g. 750 for 18 ct gold); never feed ISO text to a model.",
       "origin": "atlas-2026-11-11"
@@ -317,9 +312,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
-        "reason": "Production orders and recipes are needed for in-house manufacturing."
+        "reason": "Production orders, routings and recipes are SAP PP table stakes."
       },
       "notes": "Redistribution: prohibited-without-permission.",
       "origin": "catalogue-2026-10-21"
@@ -373,7 +367,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "ISA-95 production orders and material lots."
       },
@@ -430,9 +423,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
-        "reason": "Production orders and recipes are needed for in-house manufacturing."
+        "reason": "Production orders, routings and recipes are SAP PP table stakes."
       },
       "notes": "MIT claim is established by the selected file's embedded grant, not by assigning one blanket licence to the entire UA-Nodeset repository. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"

@@ -44,7 +44,7 @@ def entry(entry_id="alpha-standard", **changes):
             "mappingEvidence": [],
             "importerIssue": None,
         },
-        "priority": {"customer1": "P1", "sapParity": "P0", "reason": "Test."},
+        "priority": {"sapParity": "P0", "reason": "Test."},
         "origin": "atlas-2026-11-11",
     }
     for key, value in changes.items():
@@ -87,6 +87,9 @@ class AtlasTests(unittest.TestCase):
     def test_schema_rejects_unknown_fields_and_values(self):
         self.refuses("unknown field", entry(extra=1))
         self.refuses("not one of", entry(reuse="maybe"))
+        self.refuses("unknown field customer1", entry(priority={"customer1": "P0"}))
+        self.refuses("does not match", entry("alpha-standard\n"))
+        self.refuses("importerIssue: matches no allowed form", entry(norn={"mapping": "planned", "importerIssue": "Norn-cloud/norn-platform#1"}))
         self.refuses("missing priority", {k: v for k, v in entry().items() if k != "priority"})
 
     def test_file_name_and_primary_domain_must_agree(self):
@@ -132,10 +135,11 @@ class AtlasTests(unittest.TestCase):
 
     def test_next_mappings_rank_priority_then_planned_and_skip_reference_only(self):
         rows = [
-            entry("c-later", priority={"customer1": "P2", "sapParity": "P2"}),
+            entry("c-later", priority={"sapParity": "P2"}),
             entry("b-planned", norn={"mapping": "planned", "importerIssue": "Norn-cloud/norn#1"}),
             entry("a-none"),
-            entry("d-reference", reuse="reference-only", priority={"customer1": "P0", "sapParity": "P0"}),
+            entry("d-reference", reuse="reference-only", priority={"sapParity": "P0"}),
+            entry("e-watch", priority={"sapParity": "watch"}),
         ]
         ranked = [row["id"] for row in atlas.next_mappings({"finance": rows})]
         self.assertEqual(ranked, ["b-planned", "a-none", "c-later"])

@@ -43,7 +43,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Industry vertical outside the ERP core; later."
       },
@@ -89,7 +88,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Industry vertical outside the ERP core; later."
       },

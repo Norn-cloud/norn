@@ -2,8 +2,8 @@
 
 Ring 1 format-family readers: source bytes → `SourceSchemaIR`, with a `LossReport` for every source element. Pure: no network, file system or clock. The crate boundary is `boundary.json`, enforced by `norn-skeleton-guard`.
 
-- `xsd`: the XML Schema reader. Qualified names, particles (sequence/choice/all with exact `minOccurs`/`maxOccurs`), facets, `nillable` and annotations are kept in the source graph; DTDs and unbound QNames are refused; `import`/`include` locations are recorded as evidence and never fetched. A field's type candidate follows simple types and simple content to its XML Schema built-in; unbounded numerics stay `json` so nothing narrows to a fixed decimal scale.
-- `pack`: the format-independent projection of a pack's selected datasets (identifier-safe field names, native types, `parent_child` nesting, `flatten` paths that read nested single values) and `check_contract`, which verifies that a pack's hand-written source contract claims no more than that projection.
+- `xsd`: the XML Schema reader. Pins and sizes are checked before any byte is parsed, each file is parsed once, and hostile input is refused with a typed `format.xsd.invalid` diagnostic: files over 16 MiB (64 MiB per bundle), nesting deeper than 256, more than 250,000 elements, or namespace declarations beyond 64 per element, 128 in scope or 4,096 declaring elements per file (scopes are shared, not copied per node). Qualified names, particles (sequence/choice/all with exact `minOccurs`/`maxOccurs`), facets, `nillable` and annotations are kept in the source graph; DTDs and unbound QNames are refused; `import`/`include` locations are recorded as evidence and never fetched. A field's type candidate follows simple types and simple content to its XML Schema built-in; unbounded numerics stay `json` so nothing narrows to a fixed decimal scale.
+- `pack`: the format-independent projection of a pack's selected datasets (identifier-safe field names, native types, `parent_child` nesting, `flatten` paths that read nested single values, refusing any step that can occur more than once) and `check_contract`, which verifies that a pack's hand-written source contract claims no more than that projection.
 - `contract`: the `SchemaImporter` trait and the loss ledger every reader fills before lowering.
 - `type_tables`: deterministic RuleIR v2 decision tables evaluated through `norn-decisions`.
 
@@ -18,8 +18,8 @@ A standard or system is a pack, not Rust, and a pack never commits schema payloa
 `norn-format-read` reads the hash-pinned originals and checks the compiled contract against their projection: every contract field must exist upstream with the same native type and the reader's type candidate, and may be required only where upstream requires it. Originals are fetched by whoever runs the check, never committed. `--emit <file>` writes the whole projection for review, and refuses any path inside the repository.
 
 ```sh
-cargo run -p norn-formats --bin norn-format-read -- registry/packs/ubl/source.read.json --originals <dir>
-cargo run -p norn-formats --bin norn-format-read -- registry/packs/ubl/source.read.json --originals <dir> --emit /tmp/ubl-projection.txt
+cargo run -p norn-formats --bin norn-format-read -- <pack>/source.read.json --originals <dir>
+cargo run -p norn-formats --bin norn-format-read -- <pack>/source.read.json --originals <dir> --emit /tmp/projection.txt
 ```
 
 The check is not in PR CI yet: it needs the originals, fetched by pin. It moves to the nightly lane as a follow-up. Offline, `tests/pack.rs` exercises the reader, the projection and the contract check on a synthetic invoice-shaped schema.

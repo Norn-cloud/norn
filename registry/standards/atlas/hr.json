@@ -55,7 +55,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "HR and payroll come after the commerce and ledger core."
       },
@@ -108,12 +107,11 @@
           "Position",
           "Skill"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "HR and payroll come after the commerce and ledger core."
       },
@@ -168,7 +166,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "HR and payroll come after the commerce and ledger core."
       },
@@ -223,7 +220,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "HR and payroll come after the commerce and ledger core."
       },

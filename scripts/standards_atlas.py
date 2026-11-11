@@ -95,7 +95,11 @@ def validate(value, schema: dict, root: dict, where: str, errors: list[str]) -> 
     if isinstance(value, str):
         if len(value) < schema.get("minLength", 0):
             errors.append(f"{where}: must not be empty")
-        if "pattern" in schema and not re.search(schema["pattern"], value):
+        # `$` also matches before a final newline; require true end of input.
+        pattern = schema.get("pattern")
+        if pattern is not None and pattern.endswith("$") and not pattern.endswith("\\$"):
+            pattern = pattern[:-1] + r"\Z"
+        if pattern is not None and not re.search(pattern, value):
             errors.append(f"{where}: {value!r} does not match {schema['pattern']}")
     if isinstance(value, list):
         if len(value) < schema.get("minItems", 0):
@@ -209,14 +213,12 @@ def entry_rules(entry: dict, where: str, concepts: set[str], root: Path) -> list
 
 
 def _rank(entry: dict) -> tuple:
-    priority = entry["priority"]
-    customer, sap = PRIORITY_RANK[priority["customer1"]], PRIORITY_RANK[priority["sapParity"]]
     planned = 0 if entry["norn"]["mapping"] == "planned" else 1
-    return (min(customer, sap), customer + sap, planned, entry["id"])
+    return (PRIORITY_RANK[entry["priority"]["sapParity"]], planned, entry["id"])
 
 
 def next_mappings(atlas: dict[str, list[dict]], limit: int = TOP_N) -> list[dict]:
-    """Unmapped entries, best first: priority, then planned work, then id."""
+    """Unmapped entries, best first: SAP-parity priority, then planned work, then id."""
     pending = [
         entry
         for entries in atlas.values()
@@ -224,6 +226,7 @@ def next_mappings(atlas: dict[str, list[dict]], limit: int = TOP_N) -> list[dict
         if entry["norn"]["mapping"] in ("none", "planned")
         and entry["machineReadable"] != "no"
         and entry["reuse"] != "reference-only"
+        and entry["priority"]["sapParity"] in ("P0", "P1", "P2")
     ]
     return sorted(pending, key=_rank)[:limit]
 
@@ -278,11 +281,11 @@ def render(atlas: dict[str, list[dict]]) -> str:
         "",
         "## Next mappings",
         "",
-        "Unmapped, machine-readable and reusable entries, ranked by the better of the",
-        "customer #1 and SAP-parity priorities, then by combined priority, then planned first.",
+        "Unmapped, machine-readable and reusable entries, ranked by SAP-parity priority,",
+        "then planned work first, then id.",
         "",
-        "| # | Entry | Domain | Customer #1 | SAP parity | Mapping | Issue | Norn targets |",
-        "| ---: | --- | --- | --- | --- | --- | --- | --- |",
+        "| # | Entry | Domain | SAP parity | Mapping | Issue | Norn targets |",
+        "| ---: | --- | --- | --- | --- | --- | --- |",
     ]
     for number, entry in enumerate(next_mappings(atlas), start=1):
         norn = entry["norn"]
@@ -290,8 +293,8 @@ def render(atlas: dict[str, list[dict]]) -> str:
             norn["concepts"] + norn["irTargets"] + [f"*{name}*" for name in norn["proposedConcepts"]]
         ) or "—"
         lines.append(
-            f"| {number} | `{entry['id']}` | {entry['domains'][0]} | {entry['priority']['customer1']} "
-            f"| {entry['priority']['sapParity']} | {norn['mapping']} | {norn['importerIssue'] or '—'} | {targets} |"
+            f"| {number} | `{entry['id']}` | {entry['domains'][0]} | {entry['priority']['sapParity']} "
+            f"| {norn['mapping']} | {norn['importerIssue'] or '—'} | {targets} |"
         )
     concept_use = defaultdict(int)
     for entry in entries:

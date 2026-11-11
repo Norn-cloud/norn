@@ -56,7 +56,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Authorization decisions compile to Cedar."
       },
@@ -112,7 +111,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -169,7 +167,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -219,7 +216,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -277,7 +273,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -329,7 +324,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -387,7 +381,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -444,11 +437,10 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
-      "notes": "Quoted issue search returned []; broader Open Semantic search returned adjacent analytics #3203, not an explicit OSI task. README says Apache Ossie was formerly OSI; neither Open Source Initiative nor OSI networking model. No tagged release verified. Redistribution: license-conditions.",
+      "notes": "Quoted issue search returned []; broader Search found adjacent analytics work, not an explicit OSI task. README says Apache Ossie was formerly OSI; neither Open Source Initiative nor OSI networking model. No tagged release verified. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
     },
     {
@@ -503,7 +495,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Provenance on every ledger entry and observed link."
       },
@@ -559,7 +550,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -616,7 +606,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -673,7 +662,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Provenance, policy and consent support audit and reuse."
       },
@@ -732,7 +720,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Provenance, policy and consent support audit and reuse."
       },

@@ -66,6 +66,24 @@ fn whole(value: &str) -> Result<u64, String> {
         .parse()
         .map_err(|error| format!("invalid or out-of-profile occurrence {value}: {error}"))
 }
+/// A particle's `minOccurs` and `maxOccurs` (`None` for `unbounded`), parsed
+/// numerically in this one place: `"00"`, `"+0"` and `"0"` all mean zero.
+pub(crate) fn occurrences(node: &XsdNode) -> Result<(u64, Option<u64>), String> {
+    let min = node
+        .attributes
+        .get("minOccurs")
+        .map_or(Ok(1), |v| whole(v))?;
+    let max = match node.attr("maxOccurs") {
+        "" => Some(1),
+        "unbounded" => None,
+        value => Some(whole(value)?),
+    };
+    if max.is_some_and(|max| min > max) {
+        return Err(format!("minOccurs exceeds maxOccurs: {}", node.id));
+    }
+    Ok((min, max))
+}
+
 pub(crate) fn describe(nodes: &[XsdNode]) -> Result<XsdProfile, String> {
     let mut profile = XsdProfile {
         particles: Vec::new(),
@@ -103,18 +121,10 @@ pub(crate) fn describe(nodes: &[XsdNode]) -> Result<XsdProfile, String> {
             .iter()
             .any(|kind| node.is(kind))
         {
-            let min = node
-                .attributes
-                .get("minOccurs")
-                .map_or(Ok(1), |v| whole(v))?;
-            let max = match node.attr("maxOccurs") {
-                "" => OccurrenceLimit::Finite("1".into()),
-                "unbounded" => OccurrenceLimit::Unbounded,
-                value => OccurrenceLimit::Finite(whole(value)?.to_string()),
-            };
-            if matches!(&max,OccurrenceLimit::Finite(bound) if min>whole(bound)?) {
-                return Err(format!("minOccurs exceeds maxOccurs: {}", node.id));
-            }
+            let (min, max) = occurrences(node)?;
+            let max = max.map_or(OccurrenceLimit::Unbounded, |max| {
+                OccurrenceLimit::Finite(max.to_string())
+            });
             let kind = node.name.rsplit('}').next().unwrap_or_default().to_owned();
             profile.particles.push(Particle {
                 node: node.id.clone(),

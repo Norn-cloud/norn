@@ -48,7 +48,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -101,7 +100,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -154,7 +152,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -207,7 +204,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -260,7 +256,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -313,7 +308,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -367,7 +361,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -420,7 +413,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -473,7 +465,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "Trade terms on every cross-border order."
       },
@@ -507,8 +498,7 @@
       "machineReadable": "no",
       "artifactUrl": "https://unece.org/sites/default/files/2023-10/Rec5-ECE-TRADE-458E.pdf",
       "evidenceUrls": [
-        "https://unece.org/sites/default/files/2023-10/Rec5-ECE-TRADE-458E.pdf",
-        "https://github.com/Norn-cloud/norn-platform/issues/2986#issuecomment-6315013276"
+        "https://unece.org/sites/default/files/2023-10/Rec5-ECE-TRADE-458E.pdf"
       ],
       "norn": {
         "overlap": "External trade-term identifiers only; neither obligations nor jurisdictional interpretations enter Core.",
@@ -527,7 +517,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -583,7 +572,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -637,10 +625,9 @@
         "mappingEvidence": [
           "registry/core/artifacts/std.value_types.entity.json"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },
@@ -695,7 +682,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Shipping and locations matter once cross-border trade starts."
       },

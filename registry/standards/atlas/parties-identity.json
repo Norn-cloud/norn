@@ -42,12 +42,11 @@
         "proposedConcepts": [
           "ContactPoint"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Every document hangs on parties and identity."
       },
@@ -96,12 +95,11 @@
           "ContactPoint",
           "PostalAddress"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Every document hangs on parties and identity."
       },
@@ -155,7 +153,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Every document hangs on parties and identity."
       },
@@ -201,14 +198,13 @@
         "proposedConcepts": [
           "PostalAddress"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P1",
-        "reason": "Address formats for customer #1's country."
+        "reason": "Address formats for Egypt."
       },
       "notes": "Observed Arabic field format and 27 governorate sub_keys/sub_isoids. Never transplant the code repository's Apache licence to these data; live data must be pinned/hashed before admission. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
@@ -262,7 +258,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Every document hangs on parties and identity."
       },
@@ -310,12 +305,11 @@
           "ContactPoint",
           "PostalAddress"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Every document hangs on parties and identity."
       },
@@ -342,7 +336,7 @@
         "termsUrl": "https://docs.oasis-open.org/security/saml/v2.0/errata05/os/saml-v2.0-errata05-os.html",
         "checked": "2026-11-11"
       },
-      "reuse": "code-reusable",
+      "reuse": "vocabulary-only",
       "formats": [
         "XSD",
         "spec-PDF"
@@ -364,16 +358,15 @@
           "ContactPoint",
           "PostalAddress"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Every document hangs on parties and identity."
       },
-      "notes": "Vendor the XSDs unmodified, with the OASIS notice. The OASIS policy does not let us edit the originals, so put extensions in separate files.",
+      "notes": "Vendor the XSDs unmodified, with the OASIS notice. The OASIS policy does not let us edit the originals, so put extensions in separate files. Reuse: OASIS permits implementation derivatives but not modification of the specification documents, so vocabulary-only.",
       "origin": "atlas-2026-11-11"
     },
     {
@@ -429,7 +422,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Interop ids (sameAs) for parties."
       },
@@ -477,12 +469,11 @@
           "ContactPoint",
           "PostalAddress"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "User and group provisioning for the dogfood identity module."
       },
@@ -537,7 +528,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Every document hangs on parties and identity."
       },
@@ -584,12 +574,11 @@
           "ContactPoint",
           "PostalAddress"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Every document hangs on parties and identity."
       },
@@ -644,7 +633,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Every document hangs on parties and identity."
       },

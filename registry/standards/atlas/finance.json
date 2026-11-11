@@ -50,16 +50,15 @@
           "FinancialInstrument",
           "LegalEntity"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2752"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Finance alignment ontology; MIT, so the OWL can be imported."
       },
-      "notes": "#2752's historical LinkML title does not override #2986's current SourceSchemaIR/profile direction. Preserve asserted/inferred distinction and unsupported axioms; recurrence does not establish equivalence. Redistribution: license-conditions.",
+      "notes": "A historical LinkML title does not override the current SourceSchemaIR/profile direction. Preserve asserted/inferred distinction and unsupported axioms; recurrence does not establish equivalence. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
     },
     {
@@ -109,7 +108,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P2",
         "reason": "Money and instrument identity underpin every ledger."
       },
@@ -162,10 +160,9 @@
         "mappingEvidence": [
           "crates/norn-ir/src/entity_v2/property.rs"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P0",
         "reason": "Every money amount carries an ISO 4217 currency."
       },
@@ -211,12 +208,11 @@
           "Currency",
           "FinancialInstrument"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Historic currencies keep old ledgers valid."
       },

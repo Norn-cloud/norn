@@ -48,7 +48,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Alignment backbone; not on the customer path."
       },
@@ -102,7 +101,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Alignment backbone; not on the customer path."
       },
@@ -157,7 +155,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Alignment backbone; not on the customer path."
       },
@@ -197,7 +194,7 @@
         "https://github.com/semanticarts/gist/releases/tag/v14.1.0"
       ],
       "norn": {
-        "overlap": "Primary external alignment vocabulary per #2986; preserve gist namespace and proposed correspondences.",
+        "overlap": "Primary external alignment vocabulary; preserve gist namespace and proposed correspondences.",
         "concepts": [
           "core.Agent",
           "core.Resource",
@@ -211,7 +208,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Alignment backbone; not on the customer path."
       },
@@ -264,7 +260,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Alignment backbone; not on the customer path."
       },
@@ -316,7 +311,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Alignment backbone; not on the customer path."
       },
@@ -370,7 +364,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Alignment backbone; not on the customer path."
       },

@@ -611,30 +611,68 @@ fn check_evidence_list(
 // Source compiler output is a proposal. Canonical admission remains owned by
 // the checker, rather than duplicated in the IO-free syntax compiler.
 fn check_standard_source_admission(document: &SourceSchemaIr, out: &mut Vec<Diagnostic>) {
-    if document.adapter.name != "norn.formats.xsd" {
+    if document.adapter.name != norn_ir::source_schema::XSD_READER_ADAPTER {
         return;
     }
-    let slot = "norn.formats.xsd/0.1.0";
+    let slot = norn_ir::source_schema::XSD_READER_EXTENSION;
     let admission = document
         .extensions
         .as_ref()
         .and_then(|slots| slots.get(slot))
         .and_then(norn_ir::JsonValue::as_object)
         .and_then(|profile| profile.get("admission"));
+    // JSON Pointer to the admission: the slot name's `/` escapes as `~1`.
+    let pointer = format!(
+        "/extensions/{}/admission",
+        slot.replace('~', "~0").replace('/', "~1")
+    );
     match admission {
         Some(source) => {
             for mut diagnostic in crate::ontology::check_source_admission(source) {
-                diagnostic.path = Some(format!(
-                    "/extensions/norn.formats.xsd~10.1.0/admission/{}",
-                    diagnostic.path.unwrap_or_default()
-                ));
+                // The pack checker validates the admission as `sources[0]` of a
+                // synthetic pack and reports a dotted path; translate the part
+                // inside that source into JSON Pointer segments.
+                let inner = diagnostic.path.take().unwrap_or_default();
+                diagnostic.path = Some(format!("{pointer}{}", admission_pointer(&inner)));
                 out.push(diagnostic.into());
             }
         }
         None => out.push(error(
             codes::INVALID_EVIDENCE,
             "XSD evidence requires an OntologySource admission declaration".into(),
-            Span::pointer("/extensions/norn.formats.xsd~10.1.0/admission"),
+            Span::pointer(pointer),
         )),
+    }
+}
+
+/// The JSON Pointer suffix (`/license`, `/files/0/sha256`) for a dotted pack
+/// checker path inside the single admitted source (`payload.sources[0].license`).
+fn admission_pointer(dotted: &str) -> String {
+    let inner = dotted
+        .strip_prefix("payload.sources[0]")
+        .or_else(|| dotted.strip_prefix("sources[0]"))
+        .unwrap_or(dotted);
+    let mut pointer = String::new();
+    for part in inner.split('.').filter(|part| !part.is_empty()) {
+        for segment in part.split(['[', ']']).filter(|segment| !segment.is_empty()) {
+            pointer.push('/');
+            pointer.push_str(&segment.replace('~', "~0").replace('/', "~1"));
+        }
+    }
+    pointer
+}
+
+#[cfg(test)]
+mod admission_pointer_tests {
+    use super::admission_pointer;
+
+    #[test]
+    fn a_pack_checker_path_becomes_a_pointer_inside_the_admission() {
+        assert_eq!(admission_pointer("payload.sources[0].license"), "/license");
+        assert_eq!(
+            admission_pointer("payload.sources[0].files[1].sha256"),
+            "/files/1/sha256"
+        );
+        assert_eq!(admission_pointer(""), "");
     }
 }

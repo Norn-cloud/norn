@@ -45,7 +45,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Sustainability reporting, a later statutory layer."
       },
@@ -95,7 +94,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Sustainability reporting, a later statutory layer."
       },
@@ -144,7 +142,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Sustainability reporting, a later statutory layer."
       },
@@ -192,7 +189,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Sustainability reporting, a later statutory layer."
       },
@@ -242,7 +238,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Sustainability reporting, a later statutory layer."
       },
@@ -290,7 +285,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Sustainability reporting, a later statutory layer."
       },
@@ -340,7 +334,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Sustainability reporting, a later statutory layer."
       },

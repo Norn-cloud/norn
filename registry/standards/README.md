@@ -41,13 +41,13 @@ python3 scripts/test_standards_atlas.py
   `registry/packs` (the validator checks); `irTargets` names the IR a mapping
   lowers into (for example `LawIR` for legal rules, `ValueType` for code
   lists); `proposedConcepts` names concepts the atlas needs that the registry
-  does not have yet. `mapping` is `none`, `planned` (an open issue in
-  `importerIssue` owns it), `partial` or `done` (both cite repository paths in
-  `mappingEvidence`).
-- **`priority`**: `customer1` ranks the entry for customer #1, a jewelry
-  retail and manufacturing business in MENA; `sapParity` ranks it for the
-  roadmap to SAP-class breadth. `P0` is needed now, `P1` next, `P2` later,
-  `watch` and `ignore` stay out of the mapping queue.
+  does not have yet. `mapping` is `none`, `planned` (an open issue in this
+  repository, `importerIssue`, owns it), `partial` or `done` (both cite
+  repository paths in `mappingEvidence`).
+- **`priority`**: `sapParity` ranks the entry for the roadmap to SAP-class
+  breadth. `P0` is needed now, `P1` next, `P2` later; `watch` and `ignore`
+  stay out of the mapping queue. Deployment-specific priorities are not
+  recorded in this public atlas.
 - **`origin`**: `catalogue-2026-10-21` entries come from the earlier standards
   research catalogue, with its licence and version checks; `atlas-2026-11-11`
   entries were researched for this atlas.
@@ -59,6 +59,6 @@ python3 scripts/test_standards_atlas.py
 - External schemas never become Core authority. A concept enters Core only by
   the admission rule in norn#1128 (three standard families, two domains or
   money/identity, one real system).
-- No business or customer names. Describe customers generically.
+- No business, customer or deployment data, and no links to private repositories; the schema accepts only issues in this repository.
 - When a licence or version is re-read, update `licence.checked`; when it
   cannot be read, say why in `licence.basis` and keep it `unverified`.

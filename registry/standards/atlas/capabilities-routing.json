@@ -47,7 +47,6 @@
         "importerIssue": "Norn-cloud/norn#1217"
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Capability and routing design (#1217)."
       },
@@ -102,7 +101,6 @@
         "importerIssue": "Norn-cloud/norn#1217"
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Capability and routing design (#1217)."
       },
@@ -161,7 +159,6 @@
         "importerIssue": "Norn-cloud/norn#1217"
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Norn emits OpenAPI; connectors and capabilities need OpenAPI ingress."
       },
@@ -217,7 +214,6 @@
         "importerIssue": "Norn-cloud/norn#1217"
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Assay and scale observations are SOSA observations."
       },

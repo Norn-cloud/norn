@@ -11,7 +11,7 @@
 
 use norn_formats::SchemaImporter;
 use norn_formats::pack::{Flatten, ProjectionSpec, check_contract, project};
-use norn_formats::xsd::{XsdConfig, XsdFile, XsdReader};
+use norn_formats::xsd::{XsdConfig, XsdFile, XsdReader, repeating_fields};
 use norn_ir::OntologySource;
 use serde_json::{Value, json};
 
@@ -19,7 +19,7 @@ const PATH: &str = "https://example.test/synthetic-invoice/1.0/invoice-shaped.xs
 const XSD: &[u8] = include_bytes!("fixtures/synthetic/invoice-shaped.xsd");
 const DOC: &str = "{urn:test:invoice}InvoiceDocumentType";
 
-fn projection() -> Value {
+fn schema() -> norn_ir::source_schema::SourceSchemaIr {
     let mut admission =
         serde_json::from_str::<OntologySource>(include_str!("fixtures/synthetic/source.json"))
             .unwrap();
@@ -35,21 +35,32 @@ fn projection() -> Value {
         path: PATH,
         bytes: XSD,
     }];
-    let schema = XsdReader.import(&files, &config).source_schema.unwrap();
-    let flat = |path: &[&str], name: &str| Flatten {
+    XsdReader.import(&files, &config).source_schema.unwrap()
+}
+
+fn flat(path: &[&str], name: &str) -> Flatten {
+    Flatten {
         dataset: DOC.into(),
         path: path.iter().map(|s| (*s).to_owned()).collect(),
         name: name.into(),
-    };
-    let spec = ProjectionSpec {
+    }
+}
+
+fn spec(flatten: Vec<Flatten>) -> ProjectionSpec {
+    ProjectionSpec {
         contract: "unused".into(),
         select: vec![DOC.into(), "{urn:test:invoice}LineType".into()],
-        flatten: vec![
-            flat(&["Supplier", "Endpoint"], "supplier_endpoint"),
-            flat(&["Totals", "Payable"], "payable"),
-        ],
-    };
-    project(&schema, &spec).unwrap()
+        flatten,
+    }
+}
+
+fn projection() -> Value {
+    let schema = schema();
+    let spec = spec(vec![
+        flat(&["Supplier", "Endpoint"], "supplier_endpoint"),
+        flat(&["Totals", "Payable"], "payable"),
+    ]);
+    project(&schema, &spec, &repeating_fields(&schema)).unwrap()
 }
 
 /// A faithful contract: four of the document's fields, as a mapping reads them.
@@ -130,5 +141,89 @@ fn a_contract_for_other_originals_fails() {
     assert!(
         problems.iter().any(|p| p.contains("rawMetadata")),
         "{problems:?}"
+    );
+}
+
+#[test]
+fn a_different_native_type_fails() {
+    let problems = mutated(|c| c["fields"][0]["nativeType"] = json!("{urn:test:invoice}Other"));
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("ID has a different native type")),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_dataset_naming_another_upstream_type_fails() {
+    let problems =
+        mutated(|c| c["datasets"][0]["nativeName"] = json!("{urn:test:invoice}LineType"));
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("names a different upstream type")),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_nesting_missing_upstream_fails() {
+    let problems = mutated(|c| c["constraints"][0]["collection"] = json!("Lines"));
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("does not exist upstream")),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_constraint_kind_upstream_lacks_fails() {
+    let problems = mutated(|c| {
+        c["constraints"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "pk", "kind": "primary_key",
+            "dataset": "InvoiceDocumentType", "fields": ["ID"], "origin": "declared"}));
+    });
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("primary_key InvoiceDocumentType[ID]")),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_row_missing_its_keys_is_refused_not_skipped() {
+    let problems = mutated(|c| {
+        c["fields"][0].as_object_mut().unwrap().remove("name");
+        c["datasets"][0].as_object_mut().unwrap().remove("id");
+    });
+    assert!(
+        problems
+            .iter()
+            .any(|p| p == "a contract field has no dataset or name"),
+        "{problems:?}"
+    );
+    assert!(
+        problems.iter().any(|p| p == "a contract dataset has no id"),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn flattening_through_a_repeating_step_is_refused() {
+    let schema = schema();
+    let refused = project(
+        &schema,
+        &spec(vec![flat(&["Line", "ID"], "first_line")]),
+        &repeating_fields(&schema),
+    );
+    assert!(
+        refused
+            .unwrap_err()
+            .contains("step Line can occur more than once")
     );
 }

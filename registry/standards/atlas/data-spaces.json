@@ -48,7 +48,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Industrial data-space participation, later."
       },
@@ -101,11 +100,10 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Industrial data-space participation, later."
       },
-      "notes": "Source declares development namespace; no stable release claim. Newer v250 documentation is reachable, but attempted /gaia-x/2.5.0 and /gaia-x/250 negotiation URLs returned 404; their ontology byte identity/date remains unverified. Source use of LinkML does not reintroduce LinkML into Norn (#2986). FAQ describes separate CC-BY-ND specification prose; no PDF admitted. Redistribution: license-conditions.",
+      "notes": "Source declares development namespace; no stable release claim. Newer v250 documentation is reachable, but attempted /gaia-x/2.5.0 and /gaia-x/250 negotiation URLs returned 404; their ontology byte identity/date remains unverified. Source use of LinkML does not reintroduce LinkML into Norn. FAQ describes separate CC-BY-ND specification prose; no PDF admitted. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
     },
     {
@@ -152,7 +150,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Industrial data-space participation, later."
       },

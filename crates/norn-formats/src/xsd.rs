@@ -12,9 +12,52 @@ use norn_ir::{ArtifactEnvelope, Diagnostic, DiagnosticSeverity, OntologySource};
 use quick_xml::{Reader, events::Event};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 const XS: &str = "http://www.w3.org/2001/XMLSchema";
+const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+/// Largest admitted schema file.
+pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
+/// Largest admitted bundle of schema files.
+pub const MAX_BUNDLE_BYTES: usize = 64 * 1024 * 1024;
+/// Deepest admitted element nesting.
+pub const MAX_DEPTH: usize = 256;
+/// Most elements admitted in one file.
+pub const MAX_NODES: usize = 250_000;
+/// Most namespace declarations on one element.
+pub const MAX_DECLARATIONS_PER_ELEMENT: usize = 64;
+/// Most namespace bindings in scope at once.
+pub const MAX_IN_SCOPE: usize = 128;
+/// Most elements in one file that declare namespaces (each opens a scope).
+pub const MAX_SCOPES: usize = 4096;
+
+/// In-scope namespace bindings, shared by an element and every descendant
+/// that declares none of its own, so memory grows with declarations, not
+/// with nodes.
+#[derive(Debug, Default)]
+pub struct Scope(Rc<BTreeMap<String, String>>);
+impl Clone for Scope {
+    fn clone(&self) -> Self {
+        Self(Rc::clone(&self.0))
+    }
+}
+impl std::ops::Deref for Scope {
+    type Target = BTreeMap<String, String>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl Serialize for Scope {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for Scope {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        BTreeMap::deserialize(deserializer).map(|map| Self(Rc::new(map)))
+    }
+}
 /// One caller-supplied schema; imports are never fetched implicitly.
 #[derive(Clone, Copy)]
 pub struct XsdFile<'a> {
@@ -46,7 +89,10 @@ pub struct XsdNode {
     /// Expanded attribute names and decoded lexical values.
     pub attributes: BTreeMap<String, String>,
     /// In-scope namespace bindings, including the default namespace.
-    pub namespaces: BTreeMap<String, String>,
+    pub namespaces: Scope,
+    /// Prefixes this element itself declares (`""` for the default).
+    #[serde(skip)]
+    pub declared: Vec<String>,
     /// Parent node identity; absence denotes the document element.
     pub parent: Option<String>,
     /// Original text content, including documentation.
@@ -93,12 +139,12 @@ fn parse_node(
     nodes: &[XsdNode],
     stack: &[usize],
     path: &str,
+    scopes: &mut usize,
 ) -> Result<XsdNode, String> {
-    let mut ns = stack
+    let parent_scope = stack
         .last()
         .and_then(|i| nodes.get(*i))
-        .map_or_else(BTreeMap::new, |n| n.namespaces.clone());
-    ns.insert("xml".into(), "http://www.w3.org/XML/1998/namespace".into());
+        .map(|n| n.namespaces.clone());
     let attrs = start
         .attributes()
         .map(|a| {
@@ -114,20 +160,44 @@ fn parse_node(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let mut declarations = Vec::new();
     for (key, value) in &attrs {
-        if (key == "xmlns:xml" && value != "http://www.w3.org/XML/1998/namespace")
-            || key == "xmlns:xmlns"
-            || (key != "xmlns:xml" && value == "http://www.w3.org/XML/1998/namespace")
-            || value == "http://www.w3.org/2000/xmlns/"
+        let declaration = key == "xmlns" || key.starts_with("xmlns:");
+        // Reserved-namespace rules govern namespace declarations only; an
+        // ordinary attribute such as `xs:import/@namespace` may name them.
+        if declaration
+            && ((key == "xmlns:xml" && value != XML_NS)
+                || key == "xmlns:xmlns"
+                || (key != "xmlns:xml" && value == XML_NS)
+                || value == "http://www.w3.org/2000/xmlns/")
         {
             return Err("invalid reserved namespace binding".into());
         }
         if key == "xmlns" {
-            ns.insert(String::new(), value.clone());
+            declarations.push((String::new(), value.clone()));
         } else if let Some(prefix) = key.strip_prefix("xmlns:") {
-            ns.insert(prefix.into(), value.clone());
+            declarations.push((prefix.to_owned(), value.clone()));
         }
     }
+    let ns = if declarations.is_empty() {
+        parent_scope.unwrap_or_else(root_scope)
+    } else {
+        *scopes = scopes.saturating_add(1);
+        if declarations.len() > MAX_DECLARATIONS_PER_ELEMENT || *scopes > MAX_SCOPES {
+            return Err("namespace binding limit".into());
+        }
+        let mut map = parent_scope
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| (*root_scope()).clone());
+        for (prefix, value) in &declarations {
+            map.insert(prefix.clone(), value.clone());
+        }
+        if map.len() > MAX_IN_SCOPE {
+            return Err("namespace binding limit".into());
+        }
+        Scope(Rc::new(map))
+    };
     let name = expanded(start.name().as_ref(), &ns, false)?;
     let mut attributes = BTreeMap::new();
     for (key, value) in attrs {
@@ -145,6 +215,7 @@ fn parse_node(
         name,
         attributes,
         namespaces: ns,
+        declared: declarations.into_iter().map(|(prefix, _)| prefix).collect(),
         parent: stack
             .last()
             .and_then(|i| nodes.get(*i))
@@ -153,8 +224,16 @@ fn parse_node(
     })
 }
 
+/// The scope every document starts with: only the reserved `xml` prefix.
+fn root_scope() -> Scope {
+    Scope(Rc::new(BTreeMap::from([(
+        "xml".to_owned(),
+        XML_NS.to_owned(),
+    )])))
+}
+
 fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
-    if file.bytes.len() > 16 * 1024 * 1024 {
+    if file.bytes.len() > MAX_FILE_BYTES {
         return Err("schema exceeds 16 MiB".into());
     }
     std::str::from_utf8(file.bytes).map_err(|error| error.to_string())?;
@@ -162,6 +241,7 @@ fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
     let mut nodes: Vec<XsdNode> = Vec::new();
     let mut stack: Vec<usize> = Vec::new();
     let mut root_seen = false;
+    let mut scopes = 0_usize;
     loop {
         let event = reader.read_event().map_err(|e| e.to_string())?;
         let empty = matches!(&event, Event::Empty(_));
@@ -173,11 +253,21 @@ fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
                     }
                     root_seen = true;
                 }
-                if stack.len() > 256 || nodes.len() > 250_000 {
-                    return Err("XML complexity limit".into());
+                if stack.len() >= MAX_DEPTH {
+                    return Err("XML depth limit".into());
+                }
+                if nodes.len() >= MAX_NODES {
+                    return Err("XML node limit".into());
                 }
                 let index = nodes.len();
-                let node = parse_node(&start, reader.decoder(), &nodes, &stack, file.path)?;
+                let node = parse_node(
+                    &start,
+                    reader.decoder(),
+                    &nodes,
+                    &stack,
+                    file.path,
+                    &mut scopes,
+                )?;
                 nodes.push(node);
                 if !empty {
                     stack.push(index);
@@ -246,27 +336,44 @@ pub(crate) fn semantic_nodes(nodes: &[XsdNode]) -> Vec<&XsdNode> {
         .collect()
 }
 
-fn inventory(files: &[XsdFile<'_>]) -> Vec<SourceElement> {
+/// The parse of each file, in input order; computed once per import.
+type Parsed = Vec<Result<Vec<XsdNode>, String>>;
+
+/// Every source element, inventoried before lowering. Unadmitted bytes are
+/// never parsed: their inventory is the file alone.
+fn inventory_of(files: &[XsdFile<'_>], parsed: Option<&Parsed>) -> Vec<SourceElement> {
     let mut elements = Vec::new();
-    for file in files {
+    for (i, file) in files.iter().enumerate() {
         elements.push(SourceElement::definition("xsd.file", file.path));
-        if let Ok(nodes) = parse(*file) {
-            for node in nodes {
-                elements.push(SourceElement::definition("xsd.node", &node.id));
-                if !node.text.is_empty() {
-                    elements.push(SourceElement::definition("xsd.text", &node.id));
-                }
-                for prefix in node.namespaces.keys() {
-                    elements.push(SourceElement::definition(
-                        "xsd.namespace",
-                        &format!("{}@{prefix}", node.id),
-                    ));
-                }
-                for key in node.attributes.keys() {
-                    elements.push(SourceElement::definition(
-                        "xsd.attribute",
-                        &format!("{}@{key}", node.id),
-                    ));
+        let Some(Ok(nodes)) = parsed.and_then(|p| p.get(i)) else {
+            continue;
+        };
+        for node in nodes {
+            elements.push(SourceElement::definition("xsd.node", &node.id));
+            if !node.text.is_empty() {
+                elements.push(SourceElement::definition("xsd.text", &node.id));
+            }
+            for prefix in &node.declared {
+                elements.push(SourceElement::definition(
+                    "xsd.namespace",
+                    &format!("{}@{prefix}", node.id),
+                ));
+            }
+            for key in node.attributes.keys() {
+                elements.push(SourceElement::definition(
+                    "xsd.attribute",
+                    &format!("{}@{key}", node.id),
+                ));
+            }
+        }
+        let mut datasets = Vec::new();
+        let mut names = BTreeSet::new();
+        let mut repeating = BTreeSet::new();
+        if discover_file(nodes, &mut datasets, &mut names, &mut repeating).is_ok() {
+            for (id, _, fields) in datasets {
+                elements.push(SourceElement::dataset(&id));
+                for (field, _) in fields {
+                    elements.push(SourceElement::field(&id, &field.name));
                 }
             }
         }
@@ -291,29 +398,18 @@ impl SchemaImporter for XsdReader {
     type Config = XsdConfig;
     fn adapter(&self) -> SourceAdapter {
         SourceAdapter {
-            name: "norn.formats.xsd".into(),
+            name: norn_ir::source_schema::XSD_READER_ADAPTER.into(),
             version: "0.1.0".into(),
         }
     }
-    fn inventory(&self, source: Self::Source<'_>, _: &Self::Config) -> Vec<SourceElement> {
-        let mut all = inventory(source);
-        for file in source {
-            if let Ok((_, datasets)) = discover(&[*file]) {
-                for (id, _, fields) in datasets {
-                    all.push(SourceElement::dataset(&id));
-                    for (field, _) in fields {
-                        all.push(SourceElement::field(&id, &field.name));
-                    }
-                }
-            }
-        }
-        all
+    fn inventory(&self, source: Self::Source<'_>, config: &Self::Config) -> Vec<SourceElement> {
+        let parsed = admit(source, config)
+            .is_ok()
+            .then(|| source.iter().map(|file| parse(*file)).collect::<Parsed>());
+        inventory_of(source, parsed.as_ref())
     }
     fn import(&self, files: Self::Source<'_>, config: &Self::Config) -> SchemaImport {
         let mut ledger = LossLedger::new();
-        for element in self.inventory(files, config) {
-            ledger.declare(element);
-        }
         let mut output = SchemaImport {
             provenance: ImportProvenance {
                 adapter: self.adapter(),
@@ -333,12 +429,37 @@ impl SchemaImporter for XsdReader {
             diagnostics: Vec::new(),
             loss_report: LossLedger::new().finish(),
         };
-        match lower(files,config,&mut output,&mut ledger) {
-            Ok(())=>ledger.resolve_open(|_|Some(deferred("Preserved in source graph; not an executable XML constraint or reversible mapping"))),
-            Err(error)=>{
-                output.diagnostics.push(Diagnostic {code:crate::codes::XSD_INVALID.code.into(),severity:DiagnosticSeverity::Error,message:error.clone(),artifact_id:None,path:None,remediation:Some(crate::codes::XSD_INVALID.remediation.clone())});
-                output.source_schema=None;output.layers.clear();
-                ledger.resolve_open(|_|Some(rejected(&error)));
+        // Pins and sizes first: unadmitted bytes never reach the XML parser.
+        let result = if let Err(error) = admit(files, config) {
+            for element in inventory_of(files, None) {
+                ledger.declare(element);
+            }
+            Err(error)
+        } else {
+            let parsed: Parsed = files.iter().map(|file| parse(*file)).collect();
+            for element in inventory_of(files, Some(&parsed)) {
+                ledger.declare(element);
+            }
+            lower(files, config, parsed, &mut output, &mut ledger)
+        };
+        match result {
+            Ok(()) => ledger.resolve_open(|_| {
+                Some(deferred(
+                    "Preserved in source graph; not an executable XML constraint or reversible mapping",
+                ))
+            }),
+            Err(error) => {
+                output.diagnostics.push(Diagnostic {
+                    code: crate::codes::XSD_INVALID.code.into(),
+                    severity: DiagnosticSeverity::Error,
+                    message: error.clone(),
+                    artifact_id: None,
+                    path: None,
+                    remediation: Some(crate::codes::XSD_INVALID.remediation.clone()),
+                });
+                output.source_schema = None;
+                output.layers.clear();
+                ledger.resolve_open(|_| Some(rejected(&error)));
             }
         }
         output.loss_report = ledger.finish();
@@ -353,11 +474,11 @@ struct Lowered {
 fn lower(
     files: &[XsdFile<'_>],
     config: &XsdConfig,
+    parsed: Parsed,
     output: &mut SchemaImport,
     ledger: &mut LossLedger,
 ) -> Result<(), String> {
-    admit(files, config)?;
-    let (nodes, datasets) = discover(files)?;
+    let (nodes, datasets, repeating) = discover(parsed)?;
     let profile = crate::xsd_profile::describe(&nodes)?;
     let documents = files
         .iter()
@@ -374,7 +495,16 @@ fn lower(
     output.provenance.tables = vec![scalar_table.pin().clone()];
     output.provenance.evaluator = Some(crate::type_tables::evaluator_pin());
     let lowered = lower_datasets(datasets, &nodes, &mut scalar_table, ledger)?;
-    let extensions=serde_json::from_value(json!({"norn.formats.xsd/0.1.0":{"profile":profile,"nodes":nodes,"admission":config.admission,"documents":documents}})).map_err(|error|error.to_string())?;
+    let mut slots = serde_json::Map::new();
+    slots.insert(
+        norn_ir::source_schema::XSD_READER_EXTENSION.to_owned(),
+        json!({
+            "profile": profile, "nodes": nodes, "admission": config.admission,
+            "documents": documents, "repeatingFields": repeating,
+        }),
+    );
+    let extensions = serde_json::from_value(serde_json::Value::Object(slots))
+        .map_err(|error| error.to_string())?;
     output.source_schema = Some(SourceSchemaIr {
         format: SourceSchemaFormat::V1,
         source: SourceIdentity {
@@ -469,80 +599,120 @@ fn lower_datasets(
 }
 
 pub(crate) type DiscoveredDataset = (String, String, Vec<(SourceField, String)>);
-fn discover(files: &[XsdFile<'_>]) -> Result<(Vec<XsdNode>, Vec<DiscoveredDataset>), String> {
-    let mut all_nodes = Vec::new();
+
+/// Every file's nodes, its datasets, and the field names that can repeat.
+type Discovery = (Vec<XsdNode>, Vec<DiscoveredDataset>, BTreeSet<String>);
+
+/// Datasets and fields across every file, with the fields that can repeat.
+fn discover(parsed: Parsed) -> Result<Discovery, String> {
     let mut datasets: Vec<DiscoveredDataset> = Vec::new();
-    let mut names = std::collections::BTreeSet::new();
-    for file in files {
-        let nodes = parse(*file)?;
-        let node_index: BTreeMap<&str, &XsdNode> =
-            nodes.iter().map(|n| (n.id.as_str(), n)).collect();
-        let root = nodes.first().ok_or("empty schema")?;
-        let ns = root.attr("targetNamespace");
-        let mut owners: BTreeMap<&str, Option<usize>> = BTreeMap::new();
-        for node in semantic_nodes(&nodes) {
-            for key in ["ref", "type", "base", "itemType", "substitutionGroup"] {
-                if node.name.starts_with(&format!("{{{XS}}}")) && !node.attr(key).is_empty() {
-                    node.qname(node.attr(key))?;
-                }
-            }
-            let inherited = node
-                .parent
-                .as_deref()
-                .and_then(|p| owners.get(p))
-                .copied()
-                .flatten();
-            let owner = if node.is("complexType") {
-                if node.attr("name").is_empty() {
-                    None
-                } else {
-                    let name = format!("{{{ns}}}{}", node.attr("name"));
-                    if !names.insert(name.clone()) {
-                        return Err(format!("duplicate type {name}"));
-                    }
-                    let index = datasets.len();
-                    datasets.push((name.clone(), name, Vec::new()));
-                    Some(index)
-                }
-            } else {
-                inherited
-            };
-            owners.insert(&node.id, owner);
-            if !node.is("element") && !node.is("attribute") {
-                continue;
-            }
-            let Some(index) = inherited else {
-                continue;
-            };
-            let Some((name, _, fields)) = datasets.get_mut(index) else {
-                continue;
-            };
-            let field_name = if child_name(node).is_empty() {
-                return Err("unnamed field".into());
-            } else if node.attr("ref").is_empty() {
-                {
-                    let qualified = node.attr("form") == "qualified"
-                        || (node.attr("form").is_empty()
-                            && root.attr(if node.is("attribute") {
-                                "attributeFormDefault"
-                            } else {
-                                "elementFormDefault"
-                            }) == "qualified");
-                    format!(
-                        "{{{}}}{}",
-                        if qualified { ns } else { "" },
-                        node.attr("name")
-                    )
-                }
-            } else {
-                node.qname(node.attr("ref"))?
-            };
-            fields.push((SourceField { dataset:name.clone(), name:format!("{field_name}@{}", node.id), ordinal:norn_ir::WholeNumber(u64::try_from(fields.len()).map_err(|error|error.to_string())?), native_type: if node.attr("type").is_empty() { "xsd:unresolved".into() } else { node.qname(node.attr("type"))? }, type_candidate:TypeCandidate {normalized:NormalizedType::Json,origin:Origin::Inferred}, required:Some(required(node, &node_index)),markings:Vec::new(),description:Some(format!("Source node {}; presence, nil, order and occurrence bounds remain distinct in the source graph",node.id)) },node.id.clone()));
-        }
-        all_nodes.extend(nodes);
+    let mut names = BTreeSet::new();
+    let mut repeating = BTreeSet::new();
+    let files = parsed.into_iter().collect::<Result<Vec<_>, _>>()?;
+    for nodes in &files {
+        discover_file(nodes, &mut datasets, &mut names, &mut repeating)?;
     }
-    crate::xsd_projection::resolve_fields(&all_nodes, &mut datasets)?;
-    Ok((all_nodes, datasets))
+    let all_nodes: Vec<XsdNode> = files.into_iter().flatten().collect();
+    crate::xsd_projection::resolve_fields(&all_nodes, &mut datasets, &repeating)?;
+    Ok((all_nodes, datasets, repeating))
+}
+
+/// One file's complex types as datasets and their elements and attributes as
+/// fields; records each field that can occur more than once.
+fn discover_file(
+    nodes: &[XsdNode],
+    datasets: &mut Vec<DiscoveredDataset>,
+    names: &mut BTreeSet<String>,
+    repeating: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let node_index: BTreeMap<&str, &XsdNode> = nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let root = nodes.first().ok_or("empty schema")?;
+    let ns = root.attr("targetNamespace");
+    let mut owners: BTreeMap<&str, Option<usize>> = BTreeMap::new();
+    for node in semantic_nodes(nodes) {
+        for key in ["ref", "type", "base", "itemType", "substitutionGroup"] {
+            if node.name.starts_with(&format!("{{{XS}}}")) && !node.attr(key).is_empty() {
+                node.qname(node.attr(key))?;
+            }
+        }
+        let inherited = node
+            .parent
+            .as_deref()
+            .and_then(|p| owners.get(p))
+            .copied()
+            .flatten();
+        let owner = if node.is("complexType") {
+            if node.attr("name").is_empty() {
+                None
+            } else {
+                let name = format!("{{{ns}}}{}", node.attr("name"));
+                if !names.insert(name.clone()) {
+                    return Err(format!("duplicate type {name}"));
+                }
+                let index = datasets.len();
+                datasets.push((name.clone(), name, Vec::new()));
+                Some(index)
+            }
+        } else {
+            inherited
+        };
+        owners.insert(&node.id, owner);
+        if !node.is("element") && !node.is("attribute") {
+            continue;
+        }
+        let Some(index) = inherited else {
+            continue;
+        };
+        let Some((name, _, fields)) = datasets.get_mut(index) else {
+            continue;
+        };
+        let field_name = if child_name(node).is_empty() {
+            return Err("unnamed field".into());
+        } else if node.attr("ref").is_empty() {
+            let qualified = node.attr("form") == "qualified"
+                || (node.attr("form").is_empty()
+                    && root.attr(if node.is("attribute") {
+                        "attributeFormDefault"
+                    } else {
+                        "elementFormDefault"
+                    }) == "qualified");
+            format!(
+                "{{{}}}{}",
+                if qualified { ns } else { "" },
+                node.attr("name")
+            )
+        } else {
+            node.qname(node.attr("ref"))?
+        };
+        let field_name = format!("{field_name}@{}", node.id);
+        if repeats(node, &node_index)? {
+            repeating.insert(field_name.clone());
+        }
+        let field = SourceField {
+            dataset: name.clone(),
+            name: field_name,
+            ordinal: norn_ir::WholeNumber(
+                u64::try_from(fields.len()).map_err(|error| error.to_string())?,
+            ),
+            native_type: if node.attr("type").is_empty() {
+                "xsd:unresolved".into()
+            } else {
+                node.qname(node.attr("type"))?
+            },
+            type_candidate: TypeCandidate {
+                normalized: NormalizedType::Json,
+                origin: Origin::Inferred,
+            },
+            required: Some(required(node, &node_index)?),
+            markings: Vec::new(),
+            description: Some(format!(
+                "Source node {}; presence, nil, order and occurrence bounds remain distinct in the source graph",
+                node.id
+            )),
+        };
+        fields.push((field, node.id.clone()));
+    }
+    Ok(())
 }
 fn admit(files: &[XsdFile<'_>], config: &XsdConfig) -> Result<(), String> {
     let source = &config.admission;
@@ -557,7 +727,17 @@ fn admit(files: &[XsdFile<'_>], config: &XsdConfig) -> Result<(), String> {
                 .into(),
         );
     }
-    let mut paths = std::collections::BTreeSet::new();
+    let mut total = 0_usize;
+    for file in files {
+        if file.bytes.len() > MAX_FILE_BYTES {
+            return Err(format!("schema exceeds 16 MiB: {}", file.path));
+        }
+        total = total.saturating_add(file.bytes.len());
+    }
+    if total > MAX_BUNDLE_BYTES {
+        return Err("schema bundle exceeds 64 MiB".into());
+    }
+    let mut paths = BTreeSet::new();
     for file in files {
         if !paths.insert(file.path) {
             return Err("duplicate input path".into());
@@ -580,25 +760,81 @@ fn child_name(node: &XsdNode) -> &str {
     }
 }
 
-/// Whether every valid instance carries the field: an attribute with
-/// `use="required"`, or an element whose own and enclosing particles all have
-/// `minOccurs` ≥ 1 and that sits in no `choice`.
-fn required(node: &XsdNode, index: &BTreeMap<&str, &XsdNode>) -> bool {
+/// Whether every valid instance carries a non-null value: an attribute with
+/// `use="required"`, or a non-nillable element whose own and enclosing
+/// particles all have `minOccurs` ≥ 1 and that sits in no `choice`.
+fn required(node: &XsdNode, index: &BTreeMap<&str, &XsdNode>) -> Result<bool, String> {
     if node.is("attribute") {
-        return node.attr("use") == "required";
+        return Ok(node.attr("use") == "required");
+    }
+    // `required` means non-null: a nillable element may carry a nil value.
+    if matches!(node.attr("nillable"), "true" | "1") {
+        return Ok(false);
     }
     let mut current = Some(node);
     while let Some(particle) = current {
         if particle.is("complexType") {
-            return true;
+            return Ok(true);
         }
-        if particle.is("choice") || particle.attr("minOccurs") == "0" {
-            return false;
+        if particle.is("choice") || crate::xsd_profile::occurrences(particle)?.0 == 0 {
+            return Ok(false);
         }
         current = particle
             .parent
             .as_deref()
             .and_then(|id| index.get(id).copied());
     }
-    true
+    Ok(true)
+}
+
+/// Whether the field can occur more than once in one record: its own or an
+/// enclosing particle allows more than one occurrence.
+fn repeats(node: &XsdNode, index: &BTreeMap<&str, &XsdNode>) -> Result<bool, String> {
+    if node.is("attribute") {
+        return Ok(false);
+    }
+    let mut current = Some(node);
+    while let Some(particle) = current {
+        if particle.is("complexType") {
+            return Ok(false);
+        }
+        if crate::xsd_profile::occurrences(particle)?.1 != Some(1) {
+            return Ok(true);
+        }
+        current = particle
+            .parent
+            .as_deref()
+            .and_then(|id| index.get(id).copied());
+    }
+    Ok(false)
+}
+
+/// The fields of a reader-produced source schema that can repeat, by
+/// `(dataset, field)`; empty for schemas this reader did not produce.
+#[must_use]
+pub fn repeating_fields(schema: &SourceSchemaIr) -> BTreeSet<(String, String)> {
+    let names: BTreeSet<&str> = schema
+        .extensions
+        .as_ref()
+        .and_then(|slots| slots.get(norn_ir::source_schema::XSD_READER_EXTENSION))
+        .and_then(norn_ir::JsonValue::as_object)
+        .and_then(|slot| slot.get("repeatingFields"))
+        .and_then(norn_ir::JsonValue::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|name| match name {
+            norn_ir::JsonValue::String(name) => Some(name.as_str()),
+            norn_ir::JsonValue::Null
+            | norn_ir::JsonValue::Bool(_)
+            | norn_ir::JsonValue::Number(_)
+            | norn_ir::JsonValue::Array(_)
+            | norn_ir::JsonValue::Object(_) => None,
+        })
+        .collect();
+    schema
+        .fields
+        .iter()
+        .filter(|field| names.contains(field.name.as_str()))
+        .map(|field| (field.dataset.clone(), field.name.clone()))
+        .collect()
 }

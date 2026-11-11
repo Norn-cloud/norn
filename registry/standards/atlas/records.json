@@ -47,7 +47,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Signatures and records retention follow statutory documents."
       },
@@ -96,7 +95,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Signatures and records retention follow statutory documents."
       },
@@ -146,7 +144,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Signatures and records retention follow statutory documents."
       },
@@ -200,7 +197,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Signatures and records retention follow statutory documents."
       },
@@ -250,7 +246,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Signatures and records retention follow statutory documents."
       },
@@ -300,7 +295,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Signatures and records retention follow statutory documents."
       },

@@ -47,7 +47,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Addresses and regions are needed on every party."
       },
@@ -101,10 +100,9 @@
         "mappingEvidence": [
           "crates/norn-ir/src/entity_v2/property.rs"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P0",
         "reason": "Countries on every address, tax and customs record."
       },
@@ -152,12 +150,11 @@
           "PostalAddress",
           "GeoPoint"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P1",
         "reason": "Addresses and regions are needed on every party."
       },
@@ -204,12 +201,11 @@
           "PostalAddress",
           "GeoPoint"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Addresses and regions are needed on every party."
       },
@@ -262,7 +258,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Addresses and regions are needed on every party."
       },
@@ -317,7 +312,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Addresses and regions are needed on every party."
       },
@@ -370,7 +364,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Addresses and regions are needed on every party."
       },

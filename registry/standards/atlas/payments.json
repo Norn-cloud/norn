@@ -48,7 +48,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -102,7 +101,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -156,7 +154,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Card-present and QR payments at retail."
       },
@@ -211,7 +208,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -263,10 +259,9 @@
         "mappingEvidence": [
           "registry/core/artifacts/std.value_types.entity.json"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -319,12 +314,11 @@
           "BankAccount",
           "PaymentInstruction"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -375,7 +369,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -427,12 +420,11 @@
           "BankStatement",
           "Reconciliation"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2739"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank statements feed reconciliation."
       },
@@ -484,12 +476,11 @@
           "BankAccount",
           "PaymentInstruction"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -544,12 +535,11 @@
           "BankAccount",
           "PaymentInstruction"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2739"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -601,12 +591,11 @@
           "PaymentInstruction",
           "BankAccount"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2739"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank payment files are SAP-class table stakes."
       },
@@ -660,7 +649,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -711,7 +699,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -766,7 +753,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P1",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -819,7 +805,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -873,7 +858,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "De-facto payment object model; MIT."
       },
@@ -926,7 +910,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -979,7 +962,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -1031,7 +1013,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },
@@ -1087,7 +1068,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Bank and card rails settle every sale; SAP-class ERPs ship bank communication."
       },

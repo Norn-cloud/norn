@@ -28,7 +28,7 @@
     "date": { "type": "string", "pattern": "^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$" },
     "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
     "text": { "type": "string", "minLength": 1 },
-    "issue": { "type": "string", "pattern": "^Norn-cloud/norn(-platform)?#[0-9]+$" },
+    "issue": { "type": "string", "pattern": "^Norn-cloud/norn#[0-9]+$" },
     "entry": {
       "type": "object",
       "additionalProperties": false,
@@ -99,9 +99,8 @@
         "priority": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["customer1", "sapParity", "reason"],
+          "required": ["sapParity", "reason"],
           "properties": {
-            "customer1": { "$ref": "#/$defs/priority" },
             "sapParity": { "$ref": "#/$defs/priority" },
             "reason": { "$ref": "#/$defs/text" }
           }

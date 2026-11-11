@@ -10,31 +10,31 @@ Total: **288** entries in **35** domains.
 
 | Domain | Entries | Mapped | Mapped % | Planned | Licence verified | Code-reusable |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| accounting-reporting | 6 | 1 | 17% | 4 | 6 | 1 |
+| accounting-reporting | 6 | 1 | 17% | 0 | 6 | 0 |
 | agriculture | 6 | 0 | 0% | 0 | 3 | 2 |
 | ai-agents | 7 | 0 | 0% | 2 | 7 | 4 |
-| canon-systems | 29 | 4 | 14% | 16 | 20 | 10 |
+| canon-systems | 29 | 4 | 14% | 1 | 20 | 10 |
 | capabilities-routing | 4 | 1 | 25% | 3 | 4 | 4 |
 | data-spaces | 3 | 0 | 0% | 0 | 3 | 2 |
 | education | 8 | 0 | 0% | 0 | 1 | 1 |
-| einvoicing-tax | 24 | 0 | 0% | 9 | 10 | 1 |
+| einvoicing-tax | 24 | 0 | 0% | 0 | 10 | 1 |
 | energy | 5 | 0 | 0% | 0 | 2 | 2 |
-| finance | 4 | 1 | 25% | 2 | 2 | 1 |
-| geo | 7 | 1 | 14% | 2 | 4 | 0 |
+| finance | 4 | 1 | 25% | 0 | 2 | 1 |
+| geo | 7 | 1 | 14% | 0 | 4 | 0 |
 | governance | 13 | 4 | 31% | 0 | 8 | 7 |
 | healthcare | 5 | 0 | 0% | 0 | 3 | 1 |
-| hr | 4 | 2 | 50% | 1 | 2 | 1 |
-| i18n | 13 | 2 | 15% | 7 | 9 | 3 |
-| infra-it | 8 | 0 | 0% | 1 | 6 | 5 |
+| hr | 4 | 2 | 50% | 0 | 2 | 1 |
+| i18n | 13 | 2 | 15% | 0 | 9 | 3 |
+| infra-it | 8 | 0 | 0% | 1 | 6 | 4 |
 | insurance | 1 | 0 | 0% | 0 | 0 | 0 |
 | iot-buildings | 6 | 0 | 0% | 1 | 4 | 4 |
-| law | 5 | 0 | 0% | 5 | 3 | 3 |
+| law | 5 | 0 | 0% | 3 | 3 | 3 |
 | logistics | 13 | 1 | 8% | 0 | 5 | 4 |
 | manufacturing | 8 | 0 | 0% | 0 | 4 | 3 |
-| parties-identity | 12 | 1 | 8% | 7 | 12 | 7 |
-| payments | 20 | 1 | 5% | 5 | 9 | 5 |
+| parties-identity | 12 | 1 | 8% | 0 | 12 | 6 |
+| payments | 20 | 1 | 5% | 0 | 9 | 5 |
 | process-rules | 3 | 1 | 33% | 0 | 3 | 0 |
-| products-units | 16 | 4 | 25% | 1 | 7 | 4 |
+| products-units | 16 | 4 | 25% | 0 | 7 | 4 |
 | records | 6 | 0 | 0% | 0 | 2 | 2 |
 | social-marketing | 2 | 0 | 0% | 0 | 0 | 0 |
 | supply-chain | 12 | 1 | 8% | 0 | 5 | 1 |
@@ -44,39 +44,39 @@ Total: **288** entries in **35** domains.
 | transport | 3 | 0 | 0% | 0 | 3 | 2 |
 | travel | 2 | 0 | 0% | 0 | 0 | 0 |
 | upper-ontology | 7 | 0 | 0% | 0 | 6 | 6 |
-| workspace | 8 | 0 | 0% | 8 | 8 | 4 |
-| **all** | **288** | **28** | **10%** | **74** | **169** | **93** |
+| workspace | 8 | 0 | 0% | 0 | 8 | 4 |
+| **all** | **288** | **28** | **10%** | **11** | **169** | **90** |
 
 | Mapping | Entries |
 | --- | ---: |
 | done | 3 |
 | partial | 25 |
-| planned | 74 |
-| none | 186 |
+| planned | 11 |
+| none | 249 |
 
 | Reuse | Entries |
 | --- | ---: |
-| code-reusable | 93 |
-| vocabulary-only | 146 |
+| code-reusable | 90 |
+| vocabulary-only | 149 |
 | reference-only | 49 |
 
 ## Next mappings
 
-Unmapped, machine-readable and reusable entries, ranked by the better of the
-customer #1 and SAP-parity priorities, then by combined priority, then planned first.
+Unmapped, machine-readable and reusable entries, ranked by SAP-parity priority,
+then planned work first, then id.
 
-| # | Entry | Domain | Customer #1 | SAP parity | Mapping | Issue | Norn targets |
-| ---: | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `apache-ofbiz` | canon-systems | P1 | P0 | planned | Norn-cloud/norn#1238 | canon.Party, canon.PartyRole, canon.Item, canon.Catalog, canon.Holding, canon.OrderLine, canon.Delivery, canon.Posting, canon.Settlement, core.Order, core.Hold, core.Claim, core.Process, core.Conversion, core.LedgerEffect, canon.Invoice, LawIR, *Account*, *FiscalPeriod*, *PriceRule*, *Return* |
-| 2 | `egypt-eta-invoice-v1` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, canon.Invoice, SourceSchemaIR, LawIR, *TaxRule*, *TaxCategory* |
-| 3 | `egypt-eta-receipt-v1-2` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, canon.Invoice, SourceSchemaIR, LawIR, *TaxRule*, *TaxCategory* |
-| 4 | `egypt-eta-retail-receipt-v1-2` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, canon.Invoice, SourceSchemaIR, LawIR, *TaxRule*, *TaxCategory* |
-| 5 | `iso20022-camt-053` | payments | P1 | P0 | planned | Norn-cloud/norn-platform#2739 | canon.Settlement, canon.SettlementObservation, core.EconomicEvent, SourceSchemaIR, MappingIR, *BankStatement*, *Reconciliation* |
-| 6 | `iso20022-external-code-sets` | payments | P1 | P0 | planned | Norn-cloud/norn-platform#3453 | canon.Settlement, canon.SettlementObservation, core.EconomicEvent, ValueType, *BankAccount*, *PaymentInstruction* |
-| 7 | `iso20022-pain-001` | payments | P1 | P0 | planned | Norn-cloud/norn-platform#2739 | canon.Settlement, canon.SettlementObservation, core.EconomicEvent, SourceSchemaIR, MappingIR, *PaymentInstruction*, *BankAccount* |
-| 8 | `iso3166-2-debian-eg` | geo | P0 | P1 | planned | Norn-cloud/norn-platform#3453 | location.Region, *PostalAddress*, *GeoPoint* |
-| 9 | `iso4217-historical-six` | finance | P1 | P0 | planned | Norn-cloud/norn-platform#3453 | core.value_types, *Currency*, *FinancialInstrument* |
-| 10 | `libaddressinput-eg-data` | parties-identity | P0 | P1 | planned | Norn-cloud/norn-platform#3774 | location.Region, *PostalAddress* |
+| # | Entry | Domain | SAP parity | Mapping | Issue | Norn targets |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 1 | `apache-ofbiz` | canon-systems | P0 | planned | Norn-cloud/norn#1238 | canon.Party, canon.PartyRole, canon.Item, canon.Catalog, canon.Holding, canon.OrderLine, canon.Delivery, canon.Posting, canon.Settlement, core.Order, core.Hold, core.Claim, core.Process, core.Conversion, core.LedgerEffect, LawIR, *Invoice*, *Account*, *FiscalPeriod*, *PriceRule*, *Return* |
+| 2 | `berlin-group-openfinance-ais` | payments | P0 | none | — | canon.Settlement, canon.SettlementObservation, core.EconomicEvent, *BankAccount*, *PaymentInstruction* |
+| 3 | `brazil-nfe` | einvoicing-tax | P0 | none | — | core.Claim, canon.Party, canon.Item, canon.OrderLine, *Invoice*, *TaxRule*, *TaxCategory* |
+| 4 | `cpa-2-2` | products-units | P0 | none | — | canon.Item, canon.Catalog, *ProductClassification* |
+| 5 | `cpc-2-1` | products-units | P0 | none | — | canon.Item, canon.Catalog, *ProductClassification* |
+| 6 | `cpc-3` | products-units | P0 | none | — | canon.Item, canon.Catalog, *ProductClassification* |
+| 7 | `cpv-2008` | products-units | P0 | none | — | canon.Item, canon.Catalog, *ProductClassification* |
+| 8 | `en16931-ubl-validation-1-3-17` | einvoicing-tax | P0 | none | — | core.Claim, canon.Party, canon.Item, canon.OrderLine, LawIR, *Invoice*, *TaxRule*, *TaxCategory* |
+| 9 | `epc-sepa-rulebooks` | payments | P0 | none | — | canon.Settlement, canon.SettlementObservation, core.EconomicEvent, *BankAccount*, *PaymentInstruction* |
+| 10 | `factur-x-zugferd` | einvoicing-tax | P0 | none | — | core.Claim, canon.Party, canon.Item, canon.OrderLine, *Invoice*, *TaxRule*, *TaxCategory* |
 
 ## Norn concepts by atlas demand
 
@@ -90,7 +90,6 @@ customer #1 and SAP-parity priorities, then by combined priority, then planned f
 | `core.Claim` | 29 |
 | `canon.Posting` | 28 |
 | `canon.Delivery` | 27 |
-| `canon.Invoice` | 25 |
 | `core.Agent` | 25 |
 | `canon.SettlementObservation` | 20 |
 | `location.Region` | 20 |
@@ -115,6 +114,7 @@ customer #1 and SAP-parity priorities, then by combined priority, then planned f
 
 | Proposed concept (not yet in the registry) | Entries |
 | --- | ---: |
+| *Invoice* | 25 |
 | *Shipment* | 24 |
 | *TaxCategory* | 24 |
 | *TaxRule* | 24 |

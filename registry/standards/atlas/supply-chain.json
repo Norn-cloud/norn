@@ -52,11 +52,10 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P0",
         "reason": "North American EDI."
       },
-      "notes": "Schemas and code lists are delivered through the licensed Glass product. HIPAA-mandated implementation guides moved to 008060.",
+      "notes": "Schemas and code lists are delivered through the licensed Glass product. X12 recommends 008060 to advance the HIPAA-mandated transactions; HHS adoption of a successor to 5010 is at the proposed-rule stage, so mandated use remains 5010.",
       "origin": "atlas-2026-11-11"
     },
     {
@@ -109,7 +108,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -164,7 +162,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -224,7 +221,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -279,7 +275,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -336,7 +331,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -393,7 +387,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -451,7 +444,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "GTIN/GLN allocation and check-digit rules."
       },
@@ -506,7 +498,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -560,7 +551,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -602,7 +592,7 @@
         "https://opensource.unicc.org/un/unece/uncefact/vocab-bsp"
       ],
       "norn": {
-        "overlap": "Modular commerce alignment vocabulary per Astra #2986; trade parties/products/agreements/delivery/payment remain source-namespaced and do not become Core authority.",
+        "overlap": "Modular commerce alignment vocabulary; trade parties/products/agreements/delivery/payment remain source-namespaced and do not become Core authority.",
         "concepts": [
           "canon.Item",
           "canon.Holding",
@@ -619,7 +609,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "Trade documents and item identity are SAP SD/MM table stakes."
       },
@@ -674,7 +663,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "EDI messages SAP IDoc exchanges map to."
       },

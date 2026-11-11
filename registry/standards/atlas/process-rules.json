@@ -51,7 +51,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Process models SAP-class suites export."
       },
@@ -107,7 +106,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Process and decision models are how SAP-class suites configure behaviour."
       },
@@ -166,7 +164,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Decision tables use the DMN hit-policy profile."
       },

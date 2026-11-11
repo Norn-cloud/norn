@@ -46,10 +46,9 @@
         "mappingEvidence": [
           "crates/norn-ir/schema/structured_requirement.schema.json"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3438"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -99,7 +98,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -149,10 +147,9 @@
         "mappingEvidence": [
           "crates/norn-ir/schema/structured_requirement.schema.json"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3438"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -199,12 +196,11 @@
         "proposedConcepts": [
           "Calendar"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3438"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Hijri (Umm al-Qura) display beside Gregorian; storage stays ISO 8601."
       },
@@ -252,12 +248,11 @@
           "Locale",
           "MessageCatalog"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -309,7 +304,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -357,12 +351,11 @@
           "Locale",
           "MessageCatalog"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -412,7 +405,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -460,12 +452,11 @@
           "Locale",
           "MessageCatalog"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -515,7 +506,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Arabic and English from day one: localized labels, messages and calendars."
       },
@@ -562,12 +552,11 @@
           "LocalizedText",
           "Locale"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P1",
         "reason": "Arabic and English names, plurals, numerals and calendars."
       },
@@ -613,12 +602,11 @@
           "MessageCatalog",
           "LocalizedText"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3438"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Refusal and label message catalogs in Arabic and English."
       },
@@ -662,12 +650,11 @@
         "proposedConcepts": [
           "LocalizedText"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3438"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Mixed Arabic/Latin text needs bidi isolation in every rendered value."
       },

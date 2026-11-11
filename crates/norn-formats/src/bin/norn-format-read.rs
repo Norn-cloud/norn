@@ -16,7 +16,7 @@ use std::process::ExitCode;
 
 use norn_formats::SchemaImporter;
 use norn_formats::pack::{ProjectionSpec, check_contract, project, render_review_module};
-use norn_formats::xsd::{XsdConfig, XsdFile, XsdReader};
+use norn_formats::xsd::{MAX_FILE_BYTES, XsdConfig, XsdFile, XsdReader, repeating_fields};
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{DiagnosticSeverity, OntologySource};
 
@@ -37,10 +37,28 @@ struct Manifest {
     projection: ProjectionSpec,
 }
 
+/// Read at most `MAX_FILE_BYTES` (plus one, to detect excess) from `path`.
+fn read_bounded(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let limit = u64::try_from(MAX_FILE_BYTES).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(format!("{}: exceeds 16 MiB", path.display()));
+    }
+    Ok(bytes)
+}
+
 fn read(manifest: &Manifest, originals: &Path) -> Result<SourceSchemaIr, String> {
     let pins = manifest.admission.files.clone().unwrap_or_default();
     if pins.is_empty() {
         return Err("admission pins no file".into());
+    }
+    if !manifest.originals_base.ends_with('/') {
+        return Err("originalsBase must end with `/`".into());
     }
     let bytes = pins
         .iter()
@@ -48,9 +66,13 @@ fn read(manifest: &Manifest, originals: &Path) -> Result<SourceSchemaIr, String>
             let relative = pin
                 .path
                 .strip_prefix(&manifest.originals_base)
-                .filter(|rest| !rest.is_empty() && !rest.split('/').any(|step| step == ".."))
-                .ok_or_else(|| format!("{} is not under originalsBase", pin.path))?;
-            std::fs::read(originals.join(relative)).map_err(|e| format!("{}: {e}", pin.path))
+                .filter(|rest| {
+                    !rest.is_empty()
+                        && !rest.starts_with('/')
+                        && !rest.split('/').any(|step| step.is_empty() || step == "..")
+                })
+                .ok_or_else(|| format!("{} is not a file under originalsBase", pin.path))?;
+            read_bounded(&originals.join(relative))
         })
         .collect::<Result<Vec<_>, _>>()?;
     match manifest.format.as_str() {
@@ -100,15 +122,20 @@ fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<()
     let manifest: Manifest =
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
     let schema = read(&manifest, originals)?;
-    let projection = project(&schema, &manifest.projection)?;
+    let projection = project(&schema, &manifest.projection, &repeating_fields(&schema))?;
     if let Some(target) = emit {
+        // A symlinked target could land inside the tree; refuse it outright.
+        if std::fs::symlink_metadata(target).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(format!(
+                "{}: --emit refuses a symbolic link",
+                target.display()
+            ));
+        }
         let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
         let parent = parent.unwrap_or_else(|| Path::new("."));
-        if let (Some(repo), Some(dir)) = (
-            repository_of(manifest_path),
-            std::fs::canonicalize(parent).ok(),
-        ) && dir.starts_with(&repo)
-        {
+        let resolved =
+            std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        if repository_of(manifest_path).is_some_and(|repo| resolved.starts_with(&repo)) {
             return Err(format!(
                 "{}: --emit never writes upstream-derived schema into the repository",
                 target.display()

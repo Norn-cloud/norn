@@ -46,7 +46,6 @@
         "importerIssue": "Norn-cloud/norn#1217"
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Agent interoperability, outside the ERP core."
       },
@@ -99,7 +98,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Agent interoperability, outside the ERP core."
       },
@@ -149,7 +147,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Agent interoperability, outside the ERP core."
       },
@@ -199,7 +196,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Agent interoperability, outside the ERP core."
       },
@@ -252,7 +248,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Agent interoperability, outside the ERP core."
       },
@@ -307,7 +302,6 @@
         "importerIssue": "Norn-cloud/norn#1217"
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "Agents act through MCP."
       },
@@ -360,7 +354,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Agent interoperability, outside the ERP core."
       },

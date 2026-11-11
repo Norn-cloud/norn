@@ -46,7 +46,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
@@ -97,7 +96,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
@@ -148,7 +146,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
@@ -200,7 +197,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
@@ -255,7 +251,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
@@ -306,7 +301,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
@@ -357,7 +351,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
@@ -384,7 +377,7 @@
         "termsUrl": "https://docs.oasis-open.org/tosca/TOSCA/v2.0/TOSCA-v2.0.md",
         "checked": "2026-11-11"
       },
-      "reuse": "code-reusable",
+      "reuse": "vocabulary-only",
       "formats": [
         "spec-HTML",
         "spec-PDF",
@@ -409,11 +402,10 @@
         "importerIssue": "Norn-cloud/norn#1217"
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
-      "notes": "The v2.0 directory publishes only spec text (html/md/pdf) and pptx diagram sources, with no normative schema or type-definition files. TOSCA files are YAML.",
+      "notes": "The v2.0 directory publishes only spec text (html/md/pdf) and pptx diagram sources, with no normative schema or type-definition files. TOSCA files are YAML. Reuse: the selected artifact is specification prose; OASIS permits implementation derivatives but not modification of the specification, so vocabulary-only.",
       "origin": "atlas-2026-11-11"
     }
   ]

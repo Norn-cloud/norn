@@ -1,4 +1,4 @@
-//! The shared schema-importer contract (#2733): one pure trait every schema
+//! The shared format-reader contract: one pure trait every format reader
 //! importer implements, its typed output, and the typed [`LossReport`] that
 //! accounts for every source element.
 //!
@@ -85,7 +85,7 @@ pub struct SchemaImport {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactLayer {
-    /// Stable layer name (`shopify.admin`, `frappe.entities`).
+    /// Stable layer name (`xsd.technical`).
     pub name: String,
     /// `Some` when the layer is a tenant layer (extensions); `None` for a
     /// registry/source layer.
@@ -226,11 +226,10 @@ pub enum SourceElement {
         /// Which facet.
         facet: Facet,
     },
-    /// Any other source definition (a GraphQL enum or interface, a Frappe
-    /// Workflow, a Shopify metafield definition).
+    /// Any other source definition (a GraphQL enum or interface, a workflow
+    /// definition, a custom-field definition).
     Definition {
-        /// A stable family token (`graphql.enum`, `frappe.workflow`,
-        /// `shopify.metafield_definition`).
+        /// A stable family token (`xsd.node`, `xsd.attribute`, `graphql.enum`).
         family: String,
         /// The definition's identity within the family.
         name: String,
@@ -456,7 +455,7 @@ pub enum NornHome {
     AccessIr,
     /// `RuleIR` (validations, conditional behaviour, guards).
     RuleIr,
-    /// `WidgetIR` (layout, presentation; see `frappe_ui`).
+    /// `WidgetIR` (layout, presentation).
     WidgetIr,
     /// `MappingIR` (source-record identity and value transforms).
     MappingIr,
@@ -481,7 +480,7 @@ pub enum DropReason {
     /// Introspection or API-plumbing metadata of the source schema itself
     /// (root operation types, the `Node` interface's fetch-by-id contract).
     SchemaPlumbing,
-    /// Credential material (a Frappe `Password` field). Secret values never
+    /// Credential material (a password field). Secret values never
     /// enter the ontology; the secrets store owns them.
     SecretMaterial,
 }

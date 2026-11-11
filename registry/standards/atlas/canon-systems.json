@@ -49,7 +49,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -109,7 +108,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Apache-2.0 core banking: loans and savings logic."
       },
@@ -168,13 +166,13 @@
           "core.Claim",
           "core.Process",
           "core.Conversion",
-          "core.LedgerEffect",
-          "canon.Invoice"
+          "core.LedgerEffect"
         ],
         "irTargets": [
           "LawIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "Account",
           "FiscalPeriod",
           "PriceRule",
@@ -185,7 +183,6 @@
         "importerIssue": "Norn-cloud/norn#1238"
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "Apache-2.0 ERP on Silverston's universal data model: its logic can be ported with attribution."
       },
@@ -231,12 +228,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -289,12 +285,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -348,7 +343,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -415,9 +409,8 @@
         "importerIssue": "Norn-cloud/norn#215"
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P1",
-        "reason": "Customer #1's current system; the first differential oracle."
+        "reason": "The first differential oracle; a canon system with a mapped pack."
       },
       "notes": "534 standard DocType JSON definitions at the pinned commit 6de47690 (2026-10-21 manifest). GPL copyleft: Norn uses it as a behaviour reference only and must not copy source or DocType JSON into the Apache-2.0 repo. Mapping DocType and field names for import/export is fine.",
       "origin": "atlas-2026-11-11"
@@ -465,12 +458,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -527,7 +519,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -582,7 +573,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -637,7 +627,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -683,12 +672,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -745,7 +733,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P2",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -796,12 +783,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2986"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "The naming canon; CC-BY-4.0 so its schemas can be imported."
       },
@@ -853,12 +839,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "CC0 universal data model; free to adopt."
       },
@@ -923,10 +908,9 @@
           "registry/packs/odoo",
           "registry/packs/THREE-SYSTEMS.md"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -981,12 +965,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "The other tier-1 ERP data model."
       },
@@ -1038,12 +1021,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -1100,7 +1082,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P0",
         "reason": "REA is the core physics every module builds on."
       },
@@ -1152,12 +1133,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -1210,12 +1190,11 @@
           "Quote",
           "PriceBook"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2986"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "The CRM-layer canon."
       },
@@ -1270,12 +1249,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2986"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "The modelling canon for business-object semantics."
       },
@@ -1339,7 +1317,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P2",
         "reason": "Online retail channel in the MVP three-system mapping."
       },
@@ -1394,7 +1371,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "The universal data model OFBiz and Mantle implement."
       },
@@ -1443,12 +1419,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Debit/credit and pending-transfer invariants."
       },
@@ -1500,12 +1475,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -1556,12 +1530,11 @@
           "Employment",
           "Position"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3523"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -1612,12 +1585,11 @@
         ],
         "irTargets": [],
         "proposedConcepts": [],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3720"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },
@@ -1671,7 +1643,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "Canon systems define the vocabulary Norn maps between."
       },

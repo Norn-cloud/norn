@@ -107,6 +107,8 @@ fn unique(base: &str, taken: &mut BTreeSet<String>) -> String {
 /// nesting constraints between them.
 struct Projection<'s> {
     schema: &'s SourceSchemaIr,
+    /// `(dataset, field)` pairs the reader reports can occur more than once.
+    repeating: &'s BTreeSet<(String, String)>,
     /// Native name → source dataset id, over every dataset of the schema.
     by_native: BTreeMap<&'s str, &'s str>,
     /// Selected source dataset id → generated dataset id.
@@ -119,9 +121,10 @@ struct Projection<'s> {
 }
 
 impl<'s> Projection<'s> {
-    fn new(schema: &'s SourceSchemaIr) -> Self {
+    fn new(schema: &'s SourceSchemaIr, repeating: &'s BTreeSet<(String, String)>) -> Self {
         Self {
             schema,
+            repeating,
             by_native: schema
                 .datasets
                 .iter()
@@ -228,11 +231,11 @@ impl<'s> Projection<'s> {
         let mut current = source_id;
         let mut required = true;
         for step in init {
-            let field = self.step(current, step, flat)?;
+            let field = self.single(current, step, flat)?;
             required &= field.required == Some(true);
             current = self.source_id(&field.native_type, "flatten step")?;
         }
-        let field = self.step(current, last, flat)?;
+        let field = self.single(current, last, flat)?;
         required &= field.required == Some(true);
         let names = self.field_names.entry(source_id).or_default();
         if identifier(&flat.name) != flat.name || !names.insert(flat.name.clone()) {
@@ -251,6 +254,27 @@ impl<'s> Projection<'s> {
             "required": required,
         }));
         Ok(())
+    }
+
+    /// The field `step` of `dataset`, refused when it can occur more than once:
+    /// a flattened value names exactly one occurrence.
+    fn single(
+        &self,
+        dataset: &str,
+        step: &str,
+        flat: &Flatten,
+    ) -> Result<&'s norn_ir::source_schema::SourceField, String> {
+        let field = self.step(dataset, step, flat)?;
+        if self
+            .repeating
+            .contains(&(field.dataset.clone(), field.name.clone()))
+        {
+            return Err(format!(
+                "flatten {}: step {step} can occur more than once; map it as a nested collection",
+                flat.name
+            ));
+        }
+        Ok(field)
     }
 
     /// The first field of `dataset` whose local name is `step`.
@@ -294,14 +318,20 @@ impl<'s> Projection<'s> {
 
 /// The projection of `schema`: selected datasets, their fields (plus flatten
 /// paths) and the `parent_child` constraints between them, shaped like a
-/// `source_schema` payload.
+/// `source_schema` payload. `repeating` names the `(dataset, field)` pairs the
+/// format reader knows can occur more than once; a flatten path through one
+/// is refused.
 ///
 /// # Errors
 ///
 /// When the selection is empty, names a dataset the schema lacks, or a
 /// flatten path does not resolve.
-pub fn project(schema: &SourceSchemaIr, spec: &ProjectionSpec) -> Result<Value, String> {
-    let mut projection = Projection::new(schema);
+pub fn project(
+    schema: &SourceSchemaIr,
+    spec: &ProjectionSpec,
+    repeating: &BTreeSet<(String, String)>,
+) -> Result<Value, String> {
+    let mut projection = Projection::new(schema, repeating);
     projection.select(&spec.select)?;
     projection.project_fields();
     for flat in &spec.flatten {
@@ -339,19 +369,31 @@ fn text<'v>(value: &'v Value, pointer: &str) -> Option<&'v str> {
 
 /// Every way the contract `payload` (a compiled `source_schema` payload)
 /// claims more than the `projection` of the pinned originals. Empty when the
-/// contract is a faithful subset.
+/// contract is a faithful subset. A contract row missing its identifying keys
+/// is a problem, never skipped.
 #[must_use]
 pub fn check_contract(contract: &Value, projection: &Value) -> Vec<String> {
     let mut problems = Vec::new();
     if text(contract, "/rawMetadata/sha256") != text(projection, "/rawMetadata/sha256") {
         problems.push("contract rawMetadata does not pin the originals' bundle".to_owned());
     }
+    let rows = |value: &'_ Value, key: &str| -> Vec<Value> {
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
     let dataset_key = |d: &Value| text(d, "/id").map(str::to_owned);
     let upstream_datasets = by_key(projection.get("datasets"), &dataset_key);
-    for (id, dataset) in by_key(contract.get("datasets"), &dataset_key) {
+    for dataset in rows(contract, "datasets") {
+        let Some(id) = dataset_key(&dataset) else {
+            problems.push("a contract dataset has no id".to_owned());
+            continue;
+        };
         match upstream_datasets.get(&id) {
             None => problems.push(format!("dataset {id} is not selected upstream")),
-            Some(up) if text(up, "/nativeName") != text(dataset, "/nativeName") => {
+            Some(up) if text(up, "/nativeName") != text(&dataset, "/nativeName") => {
                 problems.push(format!("dataset {id} names a different upstream type"));
             }
             Some(_) => {}
@@ -359,40 +401,63 @@ pub fn check_contract(contract: &Value, projection: &Value) -> Vec<String> {
     }
     let field_key = |f: &Value| Some(format!("{}.{}", text(f, "/dataset")?, text(f, "/name")?));
     let upstream_fields = by_key(projection.get("fields"), &field_key);
-    for (id, field) in by_key(contract.get("fields"), &field_key) {
+    for field in rows(contract, "fields") {
+        let Some(id) = field_key(&field) else {
+            problems.push("a contract field has no dataset or name".to_owned());
+            continue;
+        };
         let Some(up) = upstream_fields.get(&id) else {
             problems.push(format!("field {id} does not exist upstream"));
             continue;
         };
-        if text(up, "/nativeType") != text(field, "/nativeType") {
+        if text(up, "/nativeType") != text(&field, "/nativeType") {
             problems.push(format!("field {id} has a different native type upstream"));
         }
-        if text(up, "/typeCandidate/type") != text(field, "/typeCandidate/type") {
+        if text(up, "/typeCandidate/type") != text(&field, "/typeCandidate/type") {
             problems.push(format!(
                 "field {id} claims type {:?}; the reader's candidate is {:?}",
-                text(field, "/typeCandidate/type"),
+                text(&field, "/typeCandidate/type"),
                 text(up, "/typeCandidate/type")
             ));
         }
         let required = |v: &Value| v.get("required").and_then(Value::as_bool) == Some(true);
-        if required(field) && !required(up) {
+        if required(&field) && !required(up) {
             problems.push(format!("field {id} is required but optional upstream"));
         }
     }
-    let nest_key = |c: &Value| {
-        (text(c, "/kind") == Some("parent_child")).then(|| {
-            format!(
-                "{}<{}.{}",
-                text(c, "/dataset").unwrap_or_default(),
-                text(c, "/target/dataset").unwrap_or_default(),
-                text(c, "/collection").unwrap_or_default()
-            )
-        })
+    // Every constraint the contract declares (of any kind) must exist upstream
+    // with the same datasets, fields, target and collection.
+    let constraint_key = |c: &Value| {
+        let fields = |pointer: &str| {
+            c.pointer(pointer)
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default()
+        };
+        Some(format!(
+            "{} {}[{}] -> {}[{}] .{}",
+            text(c, "/kind")?,
+            text(c, "/dataset")?,
+            fields("/fields"),
+            text(c, "/target/dataset").unwrap_or_default(),
+            fields("/target/fields"),
+            text(c, "/collection").unwrap_or_default()
+        ))
     };
-    let upstream_nests = by_key(projection.get("constraints"), &nest_key);
-    for id in by_key(contract.get("constraints"), &nest_key).keys() {
-        if !upstream_nests.contains_key(id) {
-            problems.push(format!("nesting {id} does not exist upstream"));
+    let upstream_constraints = by_key(projection.get("constraints"), &constraint_key);
+    for constraint in rows(contract, "constraints") {
+        match constraint_key(&constraint) {
+            None => problems.push("a contract constraint has no kind or dataset".to_owned()),
+            Some(id) if !upstream_constraints.contains_key(&id) => {
+                problems.push(format!("constraint {id} does not exist upstream"));
+            }
+            Some(_) => {}
         }
     }
     problems

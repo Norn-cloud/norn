@@ -48,9 +48,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
-        "reason": "Islamic finance terms for MENA customers."
+        "reason": "Islamic finance contract terms (murabaha, ijara, sukuk) and their accounting."
       },
       "notes": "The standards are free to read but copyright-protected. Printed editions are sold. The Shari'ah Standards count was not confirmed on the site.",
       "origin": "atlas-2026-11-11"
@@ -97,12 +96,11 @@
           "FiscalPeriod",
           "ReportingConcept"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "IFRS reporting concepts; commercial use needs permission."
       },
@@ -139,7 +137,7 @@
         "https://www.iso.org/standard/67199.html"
       ],
       "norn": {
-        "overlap": "REA is a conceptual design-check request on #2986, not permission to import prose or replace ruled ledger semantics.",
+        "overlap": "REA is a conceptual design check, not permission to import prose or replace ruled ledger semantics.",
         "concepts": [
           "core.Agent",
           "core.Resource",
@@ -159,7 +157,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "The ISO text is paywalled; the REA concepts are already Norn's core physics."
       },
@@ -209,12 +206,11 @@
           "FiscalPeriod",
           "ReportingConcept"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P1",
         "reason": "Ledger depth is the core of SAP parity."
       },
@@ -241,7 +237,7 @@
         "termsUrl": "https://www.xbrl.org/Specification/XBRL-2.1/REC-2003-12-31/XBRL-2.1-REC-2003-12-31+corrected-errata-2013-02-20.html",
         "checked": "2026-11-11"
       },
-      "reuse": "code-reusable",
+      "reuse": "vocabulary-only",
       "formats": [
         "XSD",
         "XBRL",
@@ -267,16 +263,15 @@
           "FiscalPeriod",
           "ReportingConcept"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "Calculation linkbases are executable summation laws."
       },
-      "notes": "Verbatim redistribution only: the base XSDs can be vendored unmodified with the notice, but not edited. Taxonomies (IFRS, US GAAP, ESEF) carry their own licences.",
+      "notes": "Verbatim redistribution only: the base XSDs can be vendored unmodified with the notice, but not edited. Taxonomies (IFRS, US GAAP, ESEF) carry their own licences. Reuse: copying is permitted unmodified with the notice; adaptation is not, so vocabulary-only.",
       "origin": "atlas-2026-11-11"
     },
     {
@@ -322,12 +317,11 @@
           "FiscalPeriod",
           "ReportingConcept"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Ledger depth is the core of SAP parity."
       },

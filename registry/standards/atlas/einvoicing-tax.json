@@ -38,11 +38,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -51,7 +51,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P0",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -99,25 +98,24 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "LawIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P1",
-        "reason": "Statutory e-invoicing in customer #1's jurisdiction."
+        "reason": "Statutory e-invoicing in Egypt."
       },
       "notes": "The official API documents jsonSchema/xmlSchema fields. This records that acquisition route, not a downloaded schema. Credit/debit notes and export types are separate document versions in the Types index; applicable active versions must be discovered, not assumed. Redistribution: unverified.",
       "origin": "catalogue-2026-10-21"
@@ -161,25 +159,24 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "LawIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P1",
-        "reason": "Statutory e-receipts for retail sales in customer #1's jurisdiction."
+        "reason": "Statutory e-receipts for retail sales in Egypt."
       },
       "notes": "Get Receipt returns source JSON; that business document is not a reusable schema corpus. Receipt reference HTML is not admitted as source payload. Retail-specific variants are catalogued separately. Redistribution: unverified.",
       "origin": "catalogue-2026-10-21"
@@ -222,25 +219,24 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "LawIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P1",
-        "reason": "Statutory e-receipts for retail sales in customer #1's jurisdiction."
+        "reason": "Statutory e-receipts for retail sales in Egypt."
       },
       "notes": "Applicability is a taxpayer/profile decision still to verify; cataloguing this variant does not assert it is mandatory for every Egyptian retailer. Redistribution: unverified.",
       "origin": "catalogue-2026-10-21"
@@ -281,20 +277,19 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "The EU semantic invoice model."
       },
@@ -336,22 +331,21 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [
           "LawIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -393,22 +387,21 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [
           "LawIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "Executable BR rules become candidate laws."
       },
@@ -453,11 +446,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -466,7 +459,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -509,11 +501,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -522,7 +514,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P0",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -567,11 +558,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -580,7 +571,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -626,11 +616,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -639,7 +629,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P1",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -681,11 +670,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -694,7 +683,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P0",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -737,27 +725,26 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "MappingIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2739"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "UBL is the base of EN 16931, Peppol and several national CTC schemes."
       },
-      "notes": "Peppol's UBL 2.1 use does not mean the latest UBL release is the right syntax for every jurisdiction. Invoice is an entry point, not proof all UBL documents have been acquired. Redistribution: license-conditions. The UBL 2.3 Invoice pack (registry/packs/ubl) maps the same Invoice model through the generic XSD reader; this release still needs its own pinned read.",
+      "notes": "Peppol's UBL 2.1 use does not mean the latest UBL release is the right syntax for every jurisdiction. Invoice is an entry point, not proof all UBL documents have been acquired. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
     },
     {
@@ -795,27 +782,26 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "MappingIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#2739"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P0",
         "reason": "UBL is the base of EN 16931, Peppol and several national CTC schemes."
       },
-      "notes": "Profile-required UBL 2.1 is separately catalogued; current broad UBL coverage uses 2.5. Never transfer a GitHub build-tool licence to the normative standard distribution. Redistribution: license-conditions. The UBL 2.3 Invoice pack (registry/packs/ubl) maps the same Invoice model through the generic XSD reader; this release still needs its own pinned read.",
+      "notes": "Profile-required UBL 2.1 is separately catalogued; current broad UBL coverage uses 2.5. Never transfer a GitHub build-tool licence to the normative standard distribution. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
     },
     {
@@ -854,11 +840,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -867,7 +853,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -909,11 +894,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -922,7 +907,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "Audit-file export is a statutory ERP feature in many countries."
       },
@@ -963,11 +947,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -976,7 +960,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -1020,22 +1003,21 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [
           "LawIR"
         ],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3384"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -1078,11 +1060,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1091,7 +1073,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "P0",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -1133,11 +1114,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1146,9 +1127,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
-        "reason": "MENA e-invoicing."
+        "reason": "National e-invoicing (Saudi Arabia)."
       },
       "notes": "The implementation-rules page records an update on 19 May 2023; it does not establish the SDK artifact release. PDF implementation guides are documentation, not machine-readable source payloads. Redistribution: unverified.",
       "origin": "catalogue-2026-10-21"
@@ -1189,11 +1169,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1202,7 +1182,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P1",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },
@@ -1248,11 +1227,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1261,9 +1240,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
-        "reason": "MENA e-invoicing."
+        "reason": "National e-invoicing (UAE)."
       },
       "notes": "The live URL is mutable; the observed date/version is not an immutable content pin. MoF identifies PINT AE and ASP exchange; do not invent a separate public FTA OpenAPI/schema corpus or claim ASP readiness. Redistribution: unverified.",
       "origin": "catalogue-2026-10-21"
@@ -1305,11 +1283,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1318,9 +1296,8 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
-        "reason": "MENA e-invoicing."
+        "reason": "National e-invoicing (UAE)."
       },
       "notes": "TDD supports reporting by issuer and receiver; it is not interchangeable with PINT AE invoice payloads. Self-billing is another separately advertised AE profile, not silently covered by these two archives. Redistribution: unverified.",
       "origin": "catalogue-2026-10-21"
@@ -1361,11 +1338,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine",
-          "canon.Invoice"
+          "canon.OrderLine"
         ],
         "irTargets": [],
         "proposedConcepts": [
+          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1374,7 +1351,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P0",
         "reason": "SAP-class ERPs ship statutory e-invoicing per country."
       },

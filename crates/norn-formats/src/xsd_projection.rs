@@ -54,6 +54,7 @@ pub(crate) fn property(
 pub(crate) fn resolve_fields(
     nodes: &[XsdNode],
     datasets: &mut [crate::xsd::DiscoveredDataset],
+    repeating: &std::collections::BTreeSet<String>,
 ) -> Result<(), String> {
     let by_id = nodes
         .iter()
@@ -85,10 +86,10 @@ pub(crate) fn resolve_fields(
             continue;
         };
         if root.is("schema") {
-            types.insert(
-                format!("{{{}}}{}", root.attr("targetNamespace"), node.attr("name")),
-                node,
-            );
+            let name = format!("{{{}}}{}", root.attr("targetNamespace"), node.attr("name"));
+            if types.insert(name.clone(), node).is_some() {
+                return Err(format!("duplicate global type {name}"));
+            }
         }
     }
     let mut children: BTreeMap<&str, Vec<&XsdNode>> = BTreeMap::new();
@@ -111,20 +112,25 @@ pub(crate) fn resolve_fields(
                     field.native_type = def.qname(def.attr("type"))?;
                 }
             }
-            field.type_candidate.normalized =
-                match builtin(&field.native_type, &types, 0)?.as_deref() {
-                    Some(
-                        "string" | "normalizedString" | "token" | "anyURI" | "language" | "Name"
-                        | "NCName" | "NMTOKEN" | "ID" | "IDREF",
-                    ) => NormalizedType::String,
-                    Some("boolean") => NormalizedType::Boolean,
-                    Some("date") => NormalizedType::Date,
-                    Some("dateTime") => NormalizedType::Datetime,
-                    Some("time") => NormalizedType::Time,
-                    // Unbounded numeric lexical values remain strings in the runtime
-                    // projection; never silently narrow to Norn's fixed decimal scale.
-                    _ => NormalizedType::Json,
-                };
+            // A field that can occur more than once is a list, never a scalar.
+            let base = if repeating.contains(&field.name) {
+                None
+            } else {
+                builtin(&field.native_type, &types, 0)?
+            };
+            field.type_candidate.normalized = match base.as_deref() {
+                Some(
+                    "string" | "normalizedString" | "token" | "anyURI" | "language" | "Name"
+                    | "NCName" | "NMTOKEN" | "ID" | "IDREF",
+                ) => NormalizedType::String,
+                Some("boolean") => NormalizedType::Boolean,
+                Some("date") => NormalizedType::Date,
+                Some("dateTime") => NormalizedType::Datetime,
+                Some("time") => NormalizedType::Time,
+                // Unbounded numeric lexical values remain strings in the runtime
+                // projection; never silently narrow to Norn's fixed decimal scale.
+                _ => NormalizedType::Json,
+            };
         }
     }
     Ok(())

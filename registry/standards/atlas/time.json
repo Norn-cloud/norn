@@ -47,10 +47,9 @@
         "mappingEvidence": [
           "crates/norn-cell/src/history.rs"
         ],
-        "importerIssue": "Norn-cloud/norn-platform#3453"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P0",
         "sapParity": "P1",
         "reason": "Effective time and periods need the pinned tz version."
       },
@@ -104,7 +103,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
       },
@@ -153,7 +151,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "ignore",
         "sapParity": "ignore",
         "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
       },
@@ -205,7 +202,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
       },
@@ -255,7 +251,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
       },
@@ -307,7 +302,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "watch",
         "sapParity": "watch",
         "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
       },
@@ -359,7 +353,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
       },
@@ -413,7 +406,6 @@
         "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P1",
         "reason": "Dates, zones and holidays drive periods, payroll and SLAs."
       },

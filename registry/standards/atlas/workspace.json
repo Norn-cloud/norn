@@ -41,12 +41,11 @@
         "proposedConcepts": [
           "CalendarEvent"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "The dogfood workspace needs calendars, contacts and mail."
       },
@@ -93,12 +92,11 @@
         "proposedConcepts": [
           "Contact"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "The dogfood workspace needs calendars, contacts and mail."
       },
@@ -142,12 +140,11 @@
         "proposedConcepts": [
           "CalendarEvent"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P1",
         "sapParity": "P2",
         "reason": "The dogfood workspace needs calendars, contacts and mail."
       },
@@ -190,12 +187,11 @@
         "proposedConcepts": [
           "Message"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "The dogfood workspace needs calendars, contacts and mail."
       },
@@ -238,12 +234,11 @@
         "proposedConcepts": [
           "Message"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "The dogfood workspace needs calendars, contacts and mail."
       },
@@ -290,12 +285,11 @@
         "proposedConcepts": [
           "Message"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "The dogfood workspace needs calendars, contacts and mail."
       },
@@ -341,12 +335,11 @@
         "proposedConcepts": [
           "CalendarEvent"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "The dogfood workspace needs calendars, contacts and mail."
       },
@@ -390,12 +383,11 @@
           "Message",
           "Document"
         ],
-        "mapping": "planned",
+        "mapping": "none",
         "mappingEvidence": [],
-        "importerIssue": "Norn-cloud/norn-platform#3774"
+        "importerIssue": null
       },
       "priority": {
-        "customer1": "P2",
         "sapParity": "P2",
         "reason": "The dogfood workspace needs calendars, contacts and mail."
       },

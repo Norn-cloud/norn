@@ -299,3 +299,149 @@ fn xsd_nested_schema_examples_cannot_define_global_elements() {
         "{http://www.w3.org/2001/XMLSchema}string"
     );
 }
+
+fn refusal(bytes: &[u8]) -> String {
+    let files = [XsdFile {
+        path: "https://example.test/synthetic-document/1.0/profile.xsd",
+        bytes,
+    }];
+    let result = XsdReader.import(&files, &synthetic(bytes));
+    assert!(
+        result.source_schema.is_none(),
+        "hostile input must be refused"
+    );
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "format.xsd.invalid")
+        .expect("a typed format.xsd.invalid refusal");
+    diagnostic.message.clone()
+}
+
+fn schema_with(body: &str) -> Vec<u8> {
+    format!(r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">{body}</xs:schema>"#)
+        .into_bytes()
+}
+
+#[test]
+fn xsd_oversized_file_is_refused_before_parsing() {
+    let mut bytes = schema_with("");
+    bytes.resize(norn_formats::xsd::MAX_FILE_BYTES + 1, b' ');
+    assert!(refusal(&bytes).starts_with("schema exceeds 16 MiB"));
+}
+
+#[test]
+fn xsd_depth_limit_is_a_typed_refusal() {
+    let depth = norn_formats::xsd::MAX_DEPTH + 1;
+    let body = format!("{}{}", "<a>".repeat(depth), "</a>".repeat(depth));
+    assert_eq!(refusal(&schema_with(&body)), "XML depth limit");
+}
+
+#[test]
+fn xsd_node_limit_is_a_typed_refusal() {
+    let body = "<a/>".repeat(norn_formats::xsd::MAX_NODES);
+    assert_eq!(refusal(&schema_with(&body)), "XML node limit");
+}
+
+#[test]
+fn xsd_namespace_declarations_per_element_are_capped() {
+    let declarations: String = (0..=norn_formats::xsd::MAX_DECLARATIONS_PER_ELEMENT)
+        .map(|i| format!(r#" xmlns:p{i}="urn:p{i}""#))
+        .collect();
+    let body = format!("<a{declarations}/>");
+    assert_eq!(refusal(&schema_with(&body)), "namespace binding limit");
+}
+
+#[test]
+fn xsd_namespace_scopes_per_file_are_capped() {
+    let body: String = (0..=norn_formats::xsd::MAX_SCOPES)
+        .map(|i| format!(r#"<a xmlns:p="urn:p{i}"/>"#))
+        .collect();
+    assert_eq!(refusal(&schema_with(&body)), "namespace binding limit");
+}
+
+#[test]
+fn xsd_unpinned_bytes_are_never_parsed() {
+    // Malformed XML with a wrong pin: the refusal is the pin, not a parse error,
+    // and the inventory is the file alone.
+    let bytes = b"<not xml";
+    let files = [XsdFile {
+        path: "https://example.test/synthetic-document/1.0/profile.xsd",
+        bytes,
+    }];
+    let mut config = synthetic(bytes);
+    config.admission.files.as_mut().unwrap()[0].sha256 = "0".repeat(64);
+    let result = XsdReader.import(&files, &config);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.starts_with("unadmitted bytes"))
+    );
+    assert_eq!(XsdReader.inventory(&files, &config).len(), 1);
+}
+
+#[test]
+fn xsd_min_occurs_is_numeric_and_repeats_are_lists() {
+    let xml = br#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:t" elementFormDefault="qualified">
+      <xs:complexType name="R"><xs:sequence>
+        <xs:element name="a" type="xs:string" minOccurs="00"/>
+        <xs:element name="b" type="xs:string" minOccurs="+0"/>
+        <xs:element name="c" type="xs:string" maxOccurs="unbounded"/>
+        <xs:element name="d" type="xs:string"/>
+      </xs:sequence></xs:complexType></xs:schema>"#;
+    let files = [XsdFile {
+        path: "https://example.test/synthetic-document/1.0/profile.xsd",
+        bytes: xml,
+    }];
+    let schema = XsdReader
+        .import(&files, &synthetic(xml))
+        .source_schema
+        .unwrap();
+    let field = |local: &str| {
+        schema
+            .fields
+            .iter()
+            .find(|f| f.name.contains(&format!("}}{local}@")))
+            .unwrap()
+    };
+    assert_eq!(field("a").required, Some(false));
+    assert_eq!(field("b").required, Some(false));
+    assert_eq!(field("d").required, Some(true));
+    use norn_ir::source_schema::NormalizedType::{Json, String as Text};
+    assert_eq!(
+        field("c").type_candidate.normalized,
+        Json,
+        "a repeating string is a list"
+    );
+    assert_eq!(field("d").type_candidate.normalized, Text);
+    let repeating = norn_formats::xsd::repeating_fields(&schema);
+    assert!(repeating.iter().any(|(_, name)| name.contains("}c@")));
+    assert_eq!(repeating.len(), 1);
+}
+
+#[test]
+fn xsd_reserved_namespaces_may_be_named_by_ordinary_attributes() {
+    let xml = br#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:import namespace="http://www.w3.org/XML/1998/namespace"/><xs:complexType name="R"/></xs:schema>"#;
+    let files = [XsdFile {
+        path: "https://example.test/synthetic-document/1.0/profile.xsd",
+        bytes: xml,
+    }];
+    let result = XsdReader.import(&files, &synthetic(xml));
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    assert!(result.source_schema.is_some());
+}
+
+#[test]
+fn xsd_nillable_elements_are_never_non_null() {
+    let xml = br#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:t" elementFormDefault="qualified"><xs:complexType name="R"><xs:sequence><xs:element name="v" type="xs:string" nillable="true"/></xs:sequence></xs:complexType></xs:schema>"#;
+    let files = [XsdFile {
+        path: "https://example.test/synthetic-document/1.0/profile.xsd",
+        bytes: xml,
+    }];
+    let schema = XsdReader
+        .import(&files, &synthetic(xml))
+        .source_schema
+        .unwrap();
+    assert_eq!(schema.fields[0].required, Some(false));
+}
