@@ -4112,7 +4112,7 @@ export interface components {
             sourcePath?: string;
         };
         /** @description Response slots resolve to existing ontology definitions. */
-        NornIrLawResponse: components["schemas"]["NornIrLawResponseOneOf0"] | components["schemas"]["NornIrLawResponseOneOf1"] | components["schemas"]["NornIrLawResponseOneOf2"] | components["schemas"]["NornIrLawResponseOneOf3"];
+        NornIrLawResponse: components["schemas"]["NornIrLawResponseOneOf0"] | components["schemas"]["NornIrLawResponseOneOf1"] | components["schemas"]["NornIrLawResponseOneOf2"] | components["schemas"]["NornIrLawResponseOneOf3"] | components["schemas"]["NornIrLawResponseOneOf4"];
         /** @description Boolean state predicate. */
         NornIrLawResponseOneOf0: {
             /** @description Ordinary ZEN text. */
@@ -4146,6 +4146,23 @@ export interface components {
             property: string;
             /** @description Transition member id. */
             transitionId: string;
+        };
+        /**
+         * @description TRANSLATION-PRESERVES-1: the subject is the source contract, the law's
+         *     condition is admission, and `self` in each assignment is the source record.
+         */
+        NornIrLawResponseOneOf4: {
+            assignments: components["schemas"]["NornIrLawResponseOneOf4PropertyAssignments"];
+            /** @enum {string} */
+            kind: "translation_preserves";
+            /** @description The named observation this law protects. */
+            observation: components["schemas"]["NornIrTranslationObservation"];
+            /** @description Exact target object type, the target contract. */
+            targetType: string;
+        };
+        /** @description Total executable map from target property id to ZEN over the source. */
+        NornIrLawResponseOneOf4PropertyAssignments: {
+            [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /** @description Named application boundary; authorization still comes from the envelope. */
         NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"] | components["schemas"]["NornIrLawRootOneOf4"];
@@ -6186,6 +6203,17 @@ export interface components {
             property: string;
             /** @description Transition member id. */
             transitionId: string;
+        } | {
+            /** @description Total executable map from target property id to ZEN over the source. */
+            assignments: {
+                [key: string]: components["schemas"]["NornIrRequirementZenExpression"];
+            };
+            /** @enum {string} */
+            kind: "translation_preserves";
+            /** @description The named observation this law protects. */
+            observation: components["schemas"]["NornIrRequirementTranslationObservation"];
+            /** @description Exact target object type, the target contract. */
+            targetType: string;
         };
         /** @description Named application boundary; authorization still comes from the envelope. */
         NornIrRequirementLawRoot: {
@@ -6324,6 +6352,15 @@ export interface components {
         };
         /** @enum {string} */
         NornIrRequirementTextDirection: "ltr" | "rtl";
+        /** @description One named observation, read on each side of a translation and compared exactly. */
+        NornIrRequirementTranslationObservation: {
+            /** @description Stable observation identity. */
+            id: string;
+            /** @description ZEN over the source record. */
+            source: string;
+            /** @description ZEN over the translated target record. */
+            target: string;
+        };
         /**
          * RequirementView
          * @description A read-only editor projection carries the original IR, not a parsed sentence.
@@ -7299,6 +7336,15 @@ export interface components {
          *     property id ([`MEMBER_ID_PATTERN`]).
          */
         NornIrTransitionId: string;
+        /** @description One named observation, read on each side of a translation and compared exactly. */
+        NornIrTranslationObservation: {
+            /** @description Stable observation identity. */
+            id: string;
+            /** @description ZEN over the source record. */
+            source: string;
+            /** @description ZEN over the translated target record. */
+            target: string;
+        };
         /**
          * @description Budget for one synchronous cell turn (§1 row 2): one aggregate budget that
          *     every triggered decision, validation, and helper debits.

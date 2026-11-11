@@ -1766,11 +1766,15 @@ struct DefinitionPreflight {
     migration: crate::migration::MigrationPlan,
 }
 
+/// CELL-ID-1: the identity a fresh provisioning binds; never invoked on a retry.
+type ProvisionIdentity<'a> =
+    RefCell<dyn FnMut() -> Result<norn_ir::cell_id::CellId, CellError> + 'a>;
+
 /// ID-NORMALIZED-RETAINED: only verified-prefix callers select retained input.
 #[derive(Clone, Copy)]
 enum CommitOrigin<'a> {
     Current,
-    Provisioning(&'a str),
+    Provisioning(&'a str, &'a ProvisionIdentity<'a>),
     Retained(&'a crate::export::ExportRecord),
 }
 
@@ -2022,18 +2026,26 @@ impl<E: SqlEngine> CellStore<E> {
     /// engine already contains a store for another format or model;
     /// [`CellError::LedgerCorrupt`] when its ledger does not verify; engine
     /// errors otherwise.
+    /// Fresh stores use SQLite's `lower`, `hex`, and `randomblob` functions.
+    /// Hosts excluding these functions must use [`Self::from_engine_with_identity_source`]
+    /// or [`Self::from_engine_bound`]. Reopening never invokes the identity source.
     pub fn from_engine(conn: E, model: Model) -> Result<Self, CellError> {
-        Self::init(conn, model)
+        Self::from_engine_with_identity_source(conn, model, crate::cell_identity::generate)
     }
 
     /// Staging only: callers verify the complete retained prefix before replay.
-    pub(crate) fn from_retained_engine(conn: E, model: Model) -> Result<Self, CellError> {
+    /// CELL-ID-1: the staged engine is created under the retained `cell_id`.
+    pub(crate) fn from_retained_engine(
+        conn: E,
+        model: Model,
+        cell_id: &norn_ir::cell_id::CellId,
+    ) -> Result<Self, CellError> {
         if !Self::engine_is_fresh(&conn)? {
             return Err(CellError::HistoricalValueUnproven(
                 "retained replay requires an empty engine".to_owned(),
             ));
         }
-        conn.transaction(|| Self::init_schema(&conn, &model))?;
+        conn.transaction(|| Self::init_schema(&conn, &model, &mut |_| Ok(cell_id.clone())))?;
         Ok(Self::unverified(conn, model))
     }
 
@@ -2048,6 +2060,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// Atomically initialize, bind and install a tenant's first admitted set.
     /// An identical request reopens the initial revision without writing.
     ///
+    /// A fresh engine's logical identity comes from SQLite's `lower`, `hex`,
+    /// and `randomblob` functions. Hosts excluding these functions must use
+    /// [`Self::provision_definitions_with_identity_source`].
+    ///
     /// # Errors
     /// Store failures roll back all schema and data. A changed request, scope,
     /// or invalid retained history refuses. Identical retries reopen the current model.
@@ -2057,6 +2073,31 @@ impl<E: SqlEngine> CellStore<E> {
         input: &InstalledDefinitionInput,
         scope: &str,
     ) -> Result<Self, CellError> {
+        Self::provision_definitions_with_identity_source(
+            conn,
+            model,
+            input,
+            scope,
+            crate::cell_identity::generate,
+        )
+    }
+
+    /// [`Self::provision_definitions`] with an injectable identity source.
+    /// CELL-ID-1: `source` is called only when the engine is fresh, inside the
+    /// provisioning transaction; a retry reopens the bound identity without
+    /// calling it. Callers that expect one identity check it with
+    /// [`Self::require_cell_id`].
+    ///
+    /// # Errors
+    /// As [`Self::provision_definitions`], plus an identity source failure,
+    /// which rolls the provisioning back.
+    pub fn provision_definitions_with_identity_source(
+        conn: E,
+        model: Model,
+        input: &InstalledDefinitionInput,
+        scope: &str,
+        mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<Self, CellError> {
         let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
         let mut store = Self::unverified(conn, model);
         // FORK-PIN-1: a fork reopened through provisioning stays a fork.
@@ -2065,7 +2106,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         if let Some(active) = Self::read_active_definitions(&store.conn)? {
             let installation = store
-                .journal_record(active.commit_seq)?
+                .local_export_record(active.commit_seq)?
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
@@ -2085,12 +2126,13 @@ impl<E: SqlEngine> CellStore<E> {
             expected_version: Some(0),
             retained: None,
         };
+        let fresh_identity = RefCell::new(|| source(&store.conn));
         store
             .commit_guarded_inner(
                 &batch,
                 Some(installation),
                 None,
-                CommitOrigin::Provisioning(&identity),
+                CommitOrigin::Provisioning(&identity, &fresh_identity),
                 |_reader| Ok::<(), CellError>(()),
                 &mut |_point| Ok(()),
             )
@@ -2202,7 +2244,11 @@ impl<E: SqlEngine> CellStore<E> {
         store
     }
 
-    fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
+    fn init_schema(
+        conn: &E,
+        model: &Model,
+        source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<(), CellError> {
         validate_store_format(conn)?;
         for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
             conn.execute_batch(statement)?;
@@ -2226,6 +2272,12 @@ impl<E: SqlEngine> CellStore<E> {
         match (meta("format")?, meta("ddl_hash")?) {
             (None, None) => {
                 let insert = format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
+                let cell_id = source(conn)?;
+                conn.execute(&insert, params!["binding:cell_id", cell_id.as_str()])?;
+                conn.execute(
+                    &insert,
+                    params!["binding:cell_identity_format", crate::cell_identity::FORMAT],
+                )?;
                 conn.execute(&insert, params!["format", STORE_FORMAT])?;
                 conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
             }
@@ -2260,15 +2312,25 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(())
     }
 
-    fn init(conn: E, model: Model) -> Result<Self, CellError> {
+    /// Open with an injectable identity source, called only for a fresh store.
+    /// CELL-ID-1: existing identities and legacy unqualified histories are retained.
+    ///
+    /// # Errors
+    /// Store admission or identity source failure.
+    pub fn from_engine_with_identity_source(
+        conn: E,
+        model: Model,
+        mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<Self, CellError> {
         model.validate_identity_profile()?;
-        conn.transaction(|| Self::init_schema(&conn, &model))?;
+        conn.transaction(|| Self::init_schema(&conn, &model, &mut source))?;
         let mut store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
         // caches; ordinary admission does not repeat the startup fold.
         let (head, boundary) = store.conn.transaction(|| {
+            crate::cell_identity::verify_history(&store.conn)?;
             let verified = store
                 .read()
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
@@ -2330,12 +2392,12 @@ impl<E: SqlEngine> CellStore<E> {
                             .to_owned(),
                     });
                 }
-                let record = self.journal_record(version.commit_seq)?.ok_or_else(|| {
-                    CellError::LedgerCorrupt {
+                let record = self
+                    .local_export_record(version.commit_seq)?
+                    .ok_or_else(|| CellError::LedgerCorrupt {
                         seq: version.commit_seq,
                         reason: "installed definitions have no typed export record".to_owned(),
-                    }
-                })?;
+                    })?;
                 let installation =
                     record
                         .definition_install
@@ -2443,11 +2505,28 @@ impl<E: SqlEngine> CellStore<E> {
     /// Bind the file to `value` under the identity key `key` (for example
     /// the tenant scope it serves): recorded on first use, and checked on
     /// every later open, so a file is never served under another identity.
+    /// Logical cell keys only validate an existing versioned binding; they
+    /// cannot add an identity or format marker to a legacy file.
     ///
     /// # Errors
     ///
     /// [`CellError::BindingMismatch`] when the file is bound to another value.
     pub fn bind(&mut self, key: &str, value: &str) -> Result<(), CellError> {
+        if key == crate::cell_identity::FORMAT_KEY {
+            if value == crate::cell_identity::FORMAT && self.cell_id()?.is_some() {
+                return Ok(());
+            }
+            return Err(CellError::BindingMismatch {
+                key: key.to_owned(),
+                expected: crate::cell_identity::FORMAT.to_owned(),
+                found: value.to_owned(),
+            });
+        }
+        if key == crate::cell_identity::KEY {
+            let id = norn_ir::cell_id::CellId::try_from(value.to_owned())
+                .map_err(|reason| CellError::Encoding(reason.to_owned()))?;
+            return self.require_cell_id(&id);
+        }
         let meta_key = format!("binding:{key}");
         self.conn.transaction(|| -> Result<(), CellError> {
             let found: Option<String> = self.conn.query_optional(
@@ -2783,9 +2862,14 @@ impl<E: SqlEngine> CellStore<E> {
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
         let result = self.conn.transaction(|| -> Result<_, GuardedError<X>> {
             probe(CommitPoint::Begun)?;
-            if let CommitOrigin::Provisioning(identity) = origin {
+            if let CommitOrigin::Provisioning(identity, fresh_identity) = origin {
                 if Self::engine_is_fresh(&self.conn)? {
-                    Self::init_schema(&self.conn, &self.model)?;
+                    Self::init_schema(&self.conn, &self.model, &mut |_| {
+                        let mut source = fresh_identity.try_borrow_mut().map_err(|error| {
+                            CellError::Engine(format!("cell identity source re-entered: {error}"))
+                        })?;
+                        (*source)()
+                    })?;
                     for (key, value) in [("binding:scope", batch.scope.as_str()), ("binding:provision", identity)] {
                         self.conn.execute(
                             &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
@@ -2809,6 +2893,7 @@ impl<E: SqlEngine> CellStore<E> {
                         || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
+                    crate::cell_identity::verify_history(&self.conn)?;
                     let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
                     self.verify_definition_history()?;
                     self.read().verify_value_history()?;
@@ -2826,7 +2911,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(_) => None },
+                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
                 )?;
                 crate::migration::apply_model_migration(
                     &self.conn,
@@ -3231,7 +3316,7 @@ impl<E: SqlEngine> CellStore<E> {
             generation,
             head.commit_seq,
         )?;
-        let outcome = match self.journal_record(head.commit_seq)? {
+        let outcome = match self.local_export_record(head.commit_seq)? {
             Some(record) => crate::payload_storage::encode_result(
                 &self.conn,
                 &record.batch.scope,
@@ -3451,6 +3536,7 @@ mod identity_history_tests {
         let current = Model::from_snapshot(&snapshot(1)).expect("current model");
         let mut template = CellStore::open_in_memory(current.clone()).expect("template");
         template.commit(&batch(vec![])).expect("template receipt");
+        let cell_id = template.cell_id().expect("cell id").expect("bound cell id");
         let template = template.export_record(1).expect("export").expect("record");
         let retained =
             Model::from_retained_snapshot(&snapshot(steps)).expect("retained projection");
@@ -3458,6 +3544,7 @@ mod identity_history_tests {
         let mut store = CellStore::from_retained_engine(
             NativeEngine::open(path, StoreOptions::default()).expect("engine"),
             retained,
+            &cell_id,
         )
         .expect("fresh staging engine");
         store.bind("scope", "s").expect("scope");
@@ -3653,7 +3740,15 @@ mod identity_history_tests {
                 &target,
                 current.clone(),
                 "s",
-                &BTreeMap::from([("scope".into(), "s".into())]),
+                // CELL-ID-RESTORE: restore names the source's logical identity.
+                &BTreeMap::from([
+                    ("scope".into(), "s".into()),
+                    ("cell_id".into(), records[0].bindings["cell_id"].clone()),
+                    (
+                        "cell_identity_format".into(),
+                        crate::cell_identity::FORMAT.into(),
+                    ),
+                ]),
                 StoreOptions::default(),
             )
             .await

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import type { Page, Route } from "@playwright/test"
 import { ACTIONS } from "./action-fixtures.ts"
 import type { ObjectCell } from "./object-cell.ts"
@@ -7,9 +8,12 @@ import type { ObjectCell } from "./object-cell.ts"
  * implements the served contract (apps/studio/src/lib/actions.ts, norn_api::actions) over the
  * object stand-in's canon.Holding population: closed-schema validation, exact decimals only as
  * their text (VAL-EXACT-1, docs/spec/core/01-values-identity.md), idempotent replay, and commits that
- * move the read snapshot. It refuses exactly as the served route does: input the schema refuses is
- * one 400 `action.invalid_input` with no field pointers, rule refusals carry no pointer, and an
- * unknown action, absent target or hidden target is the one opaque 403.
+ * move the read snapshot. Every refusal it serves on `POST` is the served route's own document and
+ * status (test/fixtures/action-call.json, which crates/norn-cell-do/tests/actions.rs pins to the
+ * route): input the schema refuses is one 400 `action.invalid_input` with no field pointers, a
+ * precondition refusal is one 422 with no diagnostics, and an unknown action, absent or hidden
+ * target, or foreign scope is the one opaque 403. `GET /v1/actions` has no served route yet, so the
+ * catalog and its scope refusal are this stand-in's own.
  */
 
 interface Problem { code: string; message: string; pointer: string | null }
@@ -50,11 +54,11 @@ function check(schema: Schema, value: unknown, at: string, problems: Problem[]) 
   }
 }
 
-/** The served route's one opaque denial (norn_api::actions::action_denied). */
-const DENIED = { code: "authz.denied", category: "permission", message: "the action request is not authorized", explanation: "access to the requested action is denied" }
-
-/** The served route's input refusal to a caller without the refusal-detail grant: no field pointers. */
-const INVALID_INPUT = { format: "norn/refusal@2", retryable: false, reason: null, code: "action.invalid_input", category: "invalid", message: "the request is invalid", explanation: "diagnostic detail is unavailable under the caller's disclosure authority" }
+/** The refusals the cell serves to a caller without the refusal-detail grant; `routeNotFound` answers a route it does not serve. */
+type Served = "denied" | "invalidInput" | "precondition" | "conflict" | "routeNotFound"
+const SERVED = JSON.parse(readFileSync(new URL("../test/fixtures/action-call.json", import.meta.url), "utf8")) as Record<Served, object> & { readonly status: Record<Served, number> }
+/** The cell's refusal `kind`, verbatim with its status: none of them names the request. */
+export const refuse = (route: Route, kind: Served) => route.fulfill({ status: SERVED.status[kind], json: SERVED[kind] })
 
 /** One JSON number token (RFC 8259): sign, integer digits, fraction and exponent captured. */
 const JSON_NUMBER = /^-?(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/
@@ -88,17 +92,30 @@ export interface ActionCell {
   readonly calls: { readonly actionId: string; readonly body: string }[]
   /** The next call fails as an outage (500, no refusal document). */
   failNext(): void
+  /** The next call is held open until the returned function releases it. */
+  holdNext(): () => void
 }
 
-export async function actionCell(page: Page, objects: ObjectCell): Promise<ActionCell> {
+export interface ActionCellOptions {
+  /**
+   * Opening a holding offers its undo on the receipt (`undo: { actionId, input }`, from the action's
+   * declared compensation). The served route does not send this yet: it is the shape requested on #1208,
+   * and this option goes when the route's own fixtures carry it (#1215).
+   */
+  readonly undoOpen?: boolean
+}
+
+export async function actionCell(page: Page, objects: ObjectCell, options: ActionCellOptions = {}): Promise<ActionCell> {
   const calls: { actionId: string; body: string }[] = []
   const keys = new Map<string, { actionId: string; input: string; receipt: unknown }>()
   let seq = 100
   let fail = false
+  let hold: Promise<void> | null = null
   await page.route("**/api/host/v1/actions**", async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
-    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } })
+    // A foreign scope: the call route's opaque denial; the catalog has no served route to follow.
+    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return request.method() === "GET" ? route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } }) : refuse(route, "denied")
     if (request.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
       return route.fulfill({ json: { items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
@@ -106,27 +123,29 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = request.postData() ?? ""
     calls.push({ actionId, body })
+    if (hold !== null) { const held = hold; hold = null; await held }
     if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
     const action = ACTIONS.find((a) => a.actionId === actionId)
     // An unknown action is the same opaque denial as an absent or hidden target.
-    if (action === undefined) return route.fulfill({ status: 403, json: DENIED })
+    if (action === undefined) return refuse(route, "denied")
     const { input, idempotencyKey } = JSON.parse(body) as { input: Record<string, unknown>; idempotencyKey: string }
     const inputText = JSON.stringify(input)
     const known = keys.get(idempotencyKey)
     if (known) {
-      if (known.actionId !== actionId || known.input !== inputText) return route.fulfill({ status: 409, json: { code: "action.idempotency_conflict", message: "That key was already used for a different call.", diagnostics: [{ code: "action.idempotency_conflict", message: "Key reused.", pointer: "/idempotencyKey" }] } })
+      if (known.actionId !== actionId || known.input !== inputText) return refuse(route, "conflict")
       return route.fulfill({ json: { ...(known.receipt as object), outcome: "replayed" } })
     }
     const problems: Problem[] = []
     check(action.inputSchema as unknown as Schema, input, "/input", problems)
-    if (problems.length > 0) return route.fulfill({ status: 400, json: INVALID_INPUT })
+    if (problems.length > 0) return refuse(route, "invalidInput")
     const id = String(input["id"])
     const index = objects.rows.findIndex((row) => row.id === id)
     const existing = objects.rows[index]
     if (action.effect === "fire_transition") {
       // An absent or hidden target is the one opaque denial, like an unknown or ungranted action.
-      if (existing === undefined || existing.withheld) return route.fulfill({ status: 403, json: DENIED })
-      if (existing.values["retired"] === "true") return route.fulfill({ status: 422, json: { code: "action.precondition_failed", category: "rule", message: "This holding is retired; it can't change any more.", diagnostics: [{ code: "action.precondition_failed", message: "The holding is retired.", pointer: null }] } })
+      if (existing === undefined || existing.withheld) return refuse(route, "denied")
+      // A retired holding fails the transitions' declared precondition.
+      if (existing.values["retired"] === "true") return refuse(route, "precondition")
     }
     const version = (existing?.version ?? 1) + (existing ? 1 : 0)
     const values = { ...(existing?.values ?? {}) }
@@ -140,9 +159,16 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     else objects.rows.push(row)
     objects.commit()
     seq += 1
-    const receipt = { outcome: "committed", objectType: "canon.Holding", objectId: id, version, receipt: { receiptHash: seq.toString(16).padStart(64, "c"), commitSeq: seq, recordedAtMs: Date.now() } }
+    const receipt = {
+      outcome: "committed", objectType: "canon.Holding", objectId: id, version, receipt: { receiptHash: seq.toString(16).padStart(64, "c"), commitSeq: seq, recordedAtMs: Date.now() },
+      ...options.undoOpen && actionId === "canon.holding.open" ? { undo: { actionId: "canon.holding.retire", input: { id } } } : {},
+    }
     keys.set(idempotencyKey, { actionId, input: inputText, receipt })
     return route.fulfill({ json: receipt })
   })
-  return { calls, failNext: () => { fail = true } }
+  return {
+    calls,
+    failNext: () => { fail = true },
+    holdNext: () => { let release = () => {}; hold = new Promise<void>((resolve) => { release = resolve }); return release },
+  }
 }

@@ -285,6 +285,7 @@ function response(response: Schemas["NornIrLawResponse"], catalog: Index): strin
     case "invariant": return `invariant ${code(response.invariantId)} of ${conceptRef(response.objectType, catalog)}`
     case "action": return `action ${code(response.artifactId)}`
     case "transition": return `transition ${code(response.transitionId)} of ${conceptRef(response.objectType, catalog)}.${code(response.property)}`
+    case "translation_preserves": return `translation to ${conceptRef(response.targetType, catalog)} preserves ${code(response.observation.id)}`
   }
 }
 

@@ -2051,6 +2051,13 @@ fn a_late_completion_never_writes_a_replacement_generation() {
 
 /// The commit/timer/perform scenario, start to finish.
 fn scenario(path: &Path) {
+    let identity =
+        norn_cell::cell_identity::CellId::try_from("00112233445566778899aabbccddeeff".to_owned())
+            .expect("same logical cell in each deterministic replay");
+    drop(
+        CellStore::open_bound(path, order_model(), StoreOptions::default(), &identity)
+            .expect("seed replay identity"),
+    );
     let mut cell = open(path);
     cell.commit(place()).expect("commits");
     let performed = cell.perform().expect("performs").expect("a command");

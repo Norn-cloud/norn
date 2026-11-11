@@ -225,3 +225,29 @@ refusal. Generated disclosure cases preserve exact sums and member identities.
 ## Admitted question locale views
 
 **QUESTION-LOCALE-1:** render an already admitted plan through #496's shared complete reviewed locale map, with explicit direction, no fallback and isolated semantic expressions. Every locale retains the original QuestionIR, its canonical digest, stable semantic slot IDs, numerator/denominator quantities and units, population, filters, dimensions, effective-time window and declared knowledge/freshness policy. A separate display binding digest pins metric definitions and numeric contracts. This view neither executes nor authenticates a cutoff; historical results retain their authenticated frontier/receipt-clock provenance through the host seam. AsOf stays AsOf. Named scenarios: generated `question_locale_identity` and `question_locale_identity_refuses_unknown_or_incomplete_wording_and_retains_denominator`. Ambiguity still refuses before plan admission; only Diag's shared typed hook may remove those refusals.
+
+### READ-LOCAL-1 — local read evidence
+
+A `norn.cell.read/v1` envelope carries one `(cell, world, revision)` frontier,
+completeness, exact-versus-stale semantics, definition generation/model/admission
+pins, and the existing CommitBinding policy/resource/authorization epoch pins.
+It never claims a global snapshot. Stale evidence retains its own local frontier.
+Token reuse compares the entire trusted context; exact requests refuse stale or
+partial evidence. Tokens describe authorized results and grant no authority.
+
+The native point-read envelope captures its value, durable cell identity,
+revision and definition pins in one store transaction. The server supplies its
+current authorized CommitBinding; resource mismatch refuses. This native profile
+supports main only. Internal `load` stays local, and legacy unqualified stores
+cannot issue portable tokens. No multi-cell vector, migration, or new authority
+model is introduced.
+
+Named scenarios: **READ-CONTEXT** refuses reuse across cell, world, revision,
+definition and authority contexts; **READ-EXACT** refuses stale/partial evidence;
+**READ-SNAPSHOT** binds the existing native point-read result to its local cut.
+Qualification selector `cell_local_read_envelope` covers these and two more:
+refused envelopes (unknown type, another resource, unqualified legacy history)
+leave the complete store state unchanged; a token never validates against a
+same-scope sibling cell at the same revision and authority, and a cell restored
+from its export reproduces the same context because its logical identity does
+not fork.

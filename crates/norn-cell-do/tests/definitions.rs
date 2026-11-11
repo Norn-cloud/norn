@@ -1,7 +1,9 @@
 //! Retained definitions (dashboards, agents) end to end through the fetch
 //! dispatch: admit is side-effect free, install and retire append a version
 //! through the governed definitions install, reads need only Population, and
-//! every denied request gets the one opaque 403.
+//! every denied request gets the one opaque 403. The refusals Studio's
+//! question-save stand-in serves are pinned in
+//! `apps/studio/test/fixtures/definition-call.json`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -32,6 +34,8 @@ const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 /// The host secret the cell's lineage handle key derives from.
 const HANDLE_KEY: [u8; 32] = [5; 32];
+/// The refusal documents Studio's stand-in (`apps/studio/e2e/question-save.e2e.ts`) serves.
+const FIXTURE: &str = include_str!("../../../apps/studio/test/fixtures/definition-call.json");
 
 /// The keyed receipt handle a reader without whole-world Values sees: the
 /// cell derives its handle key from the host secret and its scope.
@@ -695,6 +699,47 @@ fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_
         VIEWER,
     );
     assert_eq!(first["signoff"]["restatementSha256"], json!(right));
+}
+
+/// The served response is the fixture's document `name`, with the status the
+/// fixture's `status` member pins for it.
+fn served(fixture: &Value, name: &str, (status, document): &(u16, Value)) {
+    assert_eq!(
+        Some(u64::from(*status)),
+        fixture["status"][name].as_u64(),
+        "{name}: {document}"
+    );
+    assert_eq!(document, &fixture[name], "{name}");
+}
+
+/// Every refusal Studio's question-save stand-in serves, as the definitions
+/// routes serve it. The stand-in imports these documents, substituting only
+/// the mismatch's restatement and digest, which the cell recomputes from the
+/// caller's own payload.
+#[test]
+fn studio_definition_refusals_match_the_client_contract() {
+    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+    let body = json!({
+        "kind": "dashboard", "id": "studio.dashboard.signed", "payload": dashboard("Signed"),
+        "signoff": { "restatementSha256": sha256("something else") },
+    });
+    let unverifiable = cell(DefinitionKinds::default());
+    served(
+        &fixture,
+        "signoffUnavailable",
+        &post(&unverifiable, "/v1/definitions:install", ADMIN, &body),
+    );
+    let cell = cell(DefinitionKinds::default().with_restater(stub_restate));
+    served(
+        &fixture,
+        "signoffMismatch",
+        &post(&cell, "/v1/definitions:install", ADMIN, &body),
+    );
+    served(
+        &fixture,
+        "notFound",
+        &get(&cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER),
+    );
 }
 
 #[test]

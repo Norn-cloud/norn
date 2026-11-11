@@ -250,7 +250,8 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(self.read().next_commit_seq()?.saturating_sub(1))
     }
 
-    /// Return the immutable export record for one commit, verifying its local Norn1 hash.
+    /// Return a portable record after verifying its hash, events and versioned
+    /// cell identity against the owning store. Unqualified history stays local.
     ///
     /// # Errors
     ///
@@ -266,11 +267,24 @@ impl<E: SqlEngine> CellStore<E> {
         {
             return Err(CellError::ForkEvidenceForbidden);
         }
-        self.journal_record(commit_seq)
+        let Some(record) = self.local_export_record(commit_seq)? else {
+            return Ok(None);
+        };
+        let Some(record_cell_id) = crate::cell_identity::from_bindings(&record.bindings)? else {
+            return Err(CellError::BindingMismatch {
+                key: crate::cell_identity::KEY.to_owned(),
+                expected: "a qualified cell export".to_owned(),
+                found: String::new(),
+            });
+        };
+        self.require_cell_id(&record_cell_id)?;
+        Ok(Some(record))
     }
 
-    /// [`Self::export_record`] for the store's own use, fork-minted included.
-    pub(crate) fn journal_record(
+    /// [`Self::export_record`] for the store's own use: verified local
+    /// history without portable cell provenance, and in a fork its minted
+    /// commits too.
+    pub(crate) fn local_export_record(
         &self,
         commit_seq: u64,
     ) -> Result<Option<ExportRecord>, CellError> {

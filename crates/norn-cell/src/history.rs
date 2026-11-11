@@ -2007,8 +2007,10 @@ impl<E: SqlEngine> CellStore<E> {
         if previous != expected_head_hash {
             return Err(refused());
         }
+        let cell_id = crate::cell_identity::from_bindings(&first.bindings)?.ok_or_else(refused)?;
         let mut store =
-            Self::from_retained_engine(engine, Model::from_retained_snapshot(initial)?)?;
+            Self::from_retained_engine(engine, Model::from_retained_snapshot(initial)?, &cell_id)?;
+        store.require_cell_id(&cell_id)?;
         if store.export_commit_count()? != 0 {
             return Err(refused());
         }
@@ -2037,7 +2039,7 @@ impl<E: SqlEngine> CellStore<E> {
                 }
             }
             let rebuilt = store
-                .journal_record(record.receipt.body.commit_seq)?
+                .export_record(record.receipt.body.commit_seq)?
                 .ok_or_else(refused)?;
             // Format and previous export hash change in a big-bang rebuild. Every
             // replay-relevant field must otherwise remain exactly the same.
