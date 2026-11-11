@@ -19,6 +19,8 @@ export interface paths {
          *     # Errors
          *     One opaque 403, decided before any storage read, for a missing or
          *     unverified caller, a denied policy, a foreign scope or an unknown action;
+         *     the same opaque 403 for every visibility or permission refusal the kernel
+         *     decides (an invisible or absent target, a denied policy decision);
          *     409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
          *     refusal, its detail disclosed only under an explicit diagnostic grant. A
          *     refusal commits nothing.
@@ -8352,15 +8354,6 @@ export interface operations {
             };
             /** @description The request was refused: scope or authority denied. */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Refusal"];
-                };
-            };
-            /** @description The request was refused: the target is not visible. */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };
