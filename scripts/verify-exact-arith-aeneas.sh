@@ -4,6 +4,16 @@
 # FOLD-SCALED / VAL-ROUND / EXACT-RATIONAL-1 semantics in
 # verification/exact-arith-v1. Every seeded rounding and overflow mutant must
 # then extract, fail the same proof, and be refuted by a concrete vector.
+#
+# Refutation convention (#718): a mutant counts as detected only when a closed
+# proposition about a concrete run evaluates false. Gates whose code the
+# kernel can reduce use `decide` in the proof file (#1228). This code cannot:
+# the pinned Aeneas machine-integer library and its `partial_fixpoint` loops
+# are not kernel-reducible. So this gate generates concrete vectors and decides
+# them with `native_decide`, then greps for "Tactic `native_decide` evaluated
+# that the proposition ... is false". Every vector must hold on production.
+# The vectors live outside the proof tree and are never part of a claim; the
+# compiler is trusted only for "this mutant is wrong".
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
