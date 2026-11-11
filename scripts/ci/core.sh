@@ -165,9 +165,7 @@ PY
       rustup toolchain install nightly-2026-08-18 --profile minimal --no-self-update
       cargo install --locked cargo-public-api --version 0.52.0
       crates/norn-skeleton-guard/scripts/public-api-boundary.sh nightly-2026-08-18
-      use_jsonschema
-      python3 scripts/proof_enrollment.py
-      python3 scripts/test_proof_enrollment.py
+      # Proof enrollment and its tests run in `cheap`, which every CI run and `all` include.
       ensure_nextest
       python3 scripts/check_demo_scenarios.py
       cargo install --locked cargo-deny --version 0.19.0
@@ -187,10 +185,11 @@ PY
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
       (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
-      (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
+      # The SDK and demo UI typecheck and tests run in `cheap`; the diff below proves
+      # the regenerated SDK is the committed one those runs checked.
+      (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile)
       cargo run --locked -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json
       (cd packages/norn-sdk && bun run generate)
-      (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       python3 -m venv "$upstream/openapi-venv"
       "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
