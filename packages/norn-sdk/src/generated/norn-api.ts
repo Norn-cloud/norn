@@ -4070,6 +4070,13 @@ export interface components {
              * @enum {string}
              */
             labelsVersion: "0.1";
+            /**
+             * @description The locales this layer serves (a tenant's or a locale pack's): every
+             *     definition the artifact set and the installed base declare should
+             *     have a label in each. Missing ones are listed by a warning
+             *     (`labels.lint.missing_label`), never refused. Omitted when empty.
+             */
+            requiredLocales?: string[];
         };
         /** @description Reserved versioned extension slots, as on other artifact roots. */
         NornIrLabelsPayloadPropertyExtensions: {

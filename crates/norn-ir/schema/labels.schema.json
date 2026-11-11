@@ -21,6 +21,13 @@
     "labelsVersion": {
       "description": "The form selector; always `0.1`.",
       "$ref": "#/$defs/IrVersion01"
+    },
+    "requiredLocales": {
+      "description": "The locales this layer serves (a tenant's or a locale pack's): every\ndefinition the artifact set and the installed base declare should\nhave a label in each. Missing ones are listed by a warning\n(`labels.lint.missing_label`), never refused. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "additionalProperties": false,
