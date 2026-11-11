@@ -36,7 +36,7 @@ pub(super) struct ScaledInteger {
 /// Why exact scaled-integer arithmetic refused. Ledger lowering attaches the
 /// error code, the authoring path and the message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ScaledRefusal {
+pub(super) enum ScaledIntegerRefusal {
     /// Aligning to the target scale would discard digits.
     ScaleLoss,
     /// The alignment multiplier `10^gap` leaves `i128`.
@@ -60,23 +60,26 @@ pub(super) fn canonical(value: ScaledInteger) -> ScaledInteger {
 
 /// The coefficient of `value` at `target_scale`, refusing instead of rounding
 /// or overflowing.
-pub(super) fn rescale(value: ScaledInteger, target_scale: u8) -> Result<i128, ScaledRefusal> {
+pub(super) fn rescale(
+    value: ScaledInteger,
+    target_scale: u8,
+) -> Result<i128, ScaledIntegerRefusal> {
     let gap = match target_scale.checked_sub(value.scale) {
         Some(gap) => gap,
-        None => return Err(ScaledRefusal::ScaleLoss),
+        None => return Err(ScaledIntegerRefusal::ScaleLoss),
     };
     let multiplier = match checked_pow10(gap) {
         Some(multiplier) => multiplier,
-        None => return Err(ScaledRefusal::AlignmentMultiplierOverflow),
+        None => return Err(ScaledIntegerRefusal::AlignmentMultiplierOverflow),
     };
     match value.unscaled.checked_mul(multiplier) {
         Some(aligned) => Ok(aligned),
-        None => Err(ScaledRefusal::AlignmentOverflow),
+        None => Err(ScaledIntegerRefusal::AlignmentOverflow),
     }
 }
 
 /// The two coefficients aligned to the larger scale, and that scale.
-fn align(lhs: ScaledInteger, rhs: ScaledInteger) -> Result<(i128, i128, u8), ScaledRefusal> {
+fn align(lhs: ScaledInteger, rhs: ScaledInteger) -> Result<(i128, i128, u8), ScaledIntegerRefusal> {
     let target_scale = if lhs.scale >= rhs.scale {
         lhs.scale
     } else {
@@ -91,11 +94,11 @@ fn align(lhs: ScaledInteger, rhs: ScaledInteger) -> Result<(i128, i128, u8), Sca
 pub(super) fn checked_add(
     lhs: ScaledInteger,
     rhs: ScaledInteger,
-) -> Result<ScaledInteger, ScaledRefusal> {
+) -> Result<ScaledInteger, ScaledIntegerRefusal> {
     let (lhs, rhs, scale) = align(lhs, rhs)?;
     match lhs.checked_add(rhs) {
         Some(unscaled) => Ok(canonical(ScaledInteger { unscaled, scale })),
-        None => Err(ScaledRefusal::AdditionOverflow),
+        None => Err(ScaledIntegerRefusal::AdditionOverflow),
     }
 }
 
@@ -103,11 +106,11 @@ pub(super) fn checked_add(
 pub(super) fn checked_sub(
     lhs: ScaledInteger,
     rhs: ScaledInteger,
-) -> Result<ScaledInteger, ScaledRefusal> {
+) -> Result<ScaledInteger, ScaledIntegerRefusal> {
     let (lhs, rhs, scale) = align(lhs, rhs)?;
     match lhs.checked_sub(rhs) {
         Some(unscaled) => Ok(canonical(ScaledInteger { unscaled, scale })),
-        None => Err(ScaledRefusal::SubtractionOverflow),
+        None => Err(ScaledIntegerRefusal::SubtractionOverflow),
     }
 }
 
@@ -116,17 +119,17 @@ pub(super) fn checked_mul(
     lhs: ScaledInteger,
     rhs: ScaledInteger,
     max_scale: u8,
-) -> Result<ScaledInteger, ScaledRefusal> {
+) -> Result<ScaledInteger, ScaledIntegerRefusal> {
     let scale = match lhs.scale.checked_add(rhs.scale) {
         Some(scale) => scale,
-        None => return Err(ScaledRefusal::MultiplicationScaleOverflow),
+        None => return Err(ScaledIntegerRefusal::MultiplicationScaleOverflow),
     };
     if scale > max_scale {
-        return Err(ScaledRefusal::MultiplicationScaleAboveMaximum(scale));
+        return Err(ScaledIntegerRefusal::MultiplicationScaleAboveMaximum(scale));
     }
     match lhs.unscaled.checked_mul(rhs.unscaled) {
         Some(unscaled) => Ok(canonical(ScaledInteger { unscaled, scale })),
-        None => Err(ScaledRefusal::MultiplicationOverflow),
+        None => Err(ScaledIntegerRefusal::MultiplicationOverflow),
     }
 }
 

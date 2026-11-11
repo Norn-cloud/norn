@@ -374,7 +374,7 @@ def dec (c : ℤ) (s : ℕ) (h : -2 ^ 96 < c ∧ c < 2 ^ 96 := by decide) (hs : 
 
 def amount :
     Result (core.result.Result norn_checker_decimal.decimal.ScaledInteger
-      norn_checker_decimal.decimal.ScaledRefusal) → Option (Option (ℤ × ℕ))
+      norn_checker_decimal.decimal.ScaledIntegerRefusal) → Option (Option (ℤ × ℕ))
   | ok (.Ok v) => some (some (v.unscaled.val, v.scale.val))
   | ok (.Err _) => some none
   | _ => none
@@ -513,9 +513,9 @@ mutants = [
      "if lhs.scale >= rhs.scale {", "if lhs.scale <= rhs.scale {"),
     ("ledger-add-not-canonical", decimal,
      "Some(unscaled) => Ok(canonical(ScaledInteger { unscaled, scale })),\n"
-     "        None => Err(ScaledRefusal::AdditionOverflow),",
+     "        None => Err(ScaledIntegerRefusal::AdditionOverflow),",
      "Some(unscaled) => Ok(ScaledInteger { unscaled, scale }),\n"
-     "        None => Err(ScaledRefusal::AdditionOverflow),"),
+     "        None => Err(ScaledIntegerRefusal::AdditionOverflow),"),
     ("ledger-sub-swapped", decimal, "match lhs.checked_sub(rhs) {", "match rhs.checked_sub(lhs) {"),
     ("ledger-mul-max-scale-off-by-one", decimal,
      "if scale > max_scale {", "if scale >= max_scale {"),

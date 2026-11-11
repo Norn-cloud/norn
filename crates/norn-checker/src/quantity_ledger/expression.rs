@@ -15,7 +15,7 @@ use norn_ir::quantity_ledger::{
 };
 
 use super::checked_pow10;
-use super::decimal::{self, ScaledInteger, ScaledRefusal};
+use super::decimal::{self, ScaledInteger, ScaledIntegerRefusal};
 
 impl ScaledInteger {
     const fn zero() -> Self {
@@ -44,44 +44,44 @@ impl ScaledInteger {
 }
 
 /// Attaches the lowering code, path and message to a proved-core refusal.
-fn refusal_error(refusal: ScaledRefusal, path: &str) -> LedgerAmountLoweringError {
+fn refusal_error(refusal: ScaledIntegerRefusal, path: &str) -> LedgerAmountLoweringError {
     match refusal {
-        ScaledRefusal::ScaleLoss => error(
+        ScaledIntegerRefusal::ScaleLoss => error(
             LedgerAmountLoweringErrorCode::ScaleLoss,
             path,
             "internal rescale would discard precision",
         ),
-        ScaledRefusal::AlignmentMultiplierOverflow => error(
+        ScaledIntegerRefusal::AlignmentMultiplierOverflow => error(
             LedgerAmountLoweringErrorCode::ArithmeticOverflow,
             path,
             "power-of-ten alignment overflows signed i128",
         ),
-        ScaledRefusal::AlignmentOverflow => error(
+        ScaledIntegerRefusal::AlignmentOverflow => error(
             LedgerAmountLoweringErrorCode::ArithmeticOverflow,
             path,
             "scale alignment overflows signed i128",
         ),
-        ScaledRefusal::AdditionOverflow => error(
+        ScaledIntegerRefusal::AdditionOverflow => error(
             LedgerAmountLoweringErrorCode::ArithmeticOverflow,
             path,
             "addition overflows signed i128",
         ),
-        ScaledRefusal::SubtractionOverflow => error(
+        ScaledIntegerRefusal::SubtractionOverflow => error(
             LedgerAmountLoweringErrorCode::ArithmeticOverflow,
             path,
             "subtraction overflows signed i128",
         ),
-        ScaledRefusal::MultiplicationScaleOverflow => error(
+        ScaledIntegerRefusal::MultiplicationScaleOverflow => error(
             LedgerAmountLoweringErrorCode::ScaleOutOfRange,
             path,
             "multiplication scale overflows its u8 representation",
         ),
-        ScaledRefusal::MultiplicationScaleAboveMaximum(scale) => error(
+        ScaledIntegerRefusal::MultiplicationScaleAboveMaximum(scale) => error(
             LedgerAmountLoweringErrorCode::ScaleOutOfRange,
             path,
             format!("multiplication scale {scale} exceeds maximum {MAX_LEDGER_SCALE}"),
         ),
-        ScaledRefusal::MultiplicationOverflow => error(
+        ScaledIntegerRefusal::MultiplicationOverflow => error(
             LedgerAmountLoweringErrorCode::ArithmeticOverflow,
             path,
             "multiplication overflows signed i128",

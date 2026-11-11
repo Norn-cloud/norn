@@ -15,7 +15,7 @@ open Aeneas Aeneas.Std Result
 open norn_checker_decimal
 
 /-- The written refusal a production refusal stands for. -/
-def ofRust : decimal.ScaledRefusal → LedgerRefusal
+def ofRust : decimal.ScaledIntegerRefusal → LedgerRefusal
   | .ScaleLoss => .scaleLoss
   | .AlignmentMultiplierOverflow => .alignmentMultiplierOverflow
   | .AlignmentOverflow => .alignmentOverflow
@@ -26,7 +26,7 @@ def ofRust : decimal.ScaledRefusal → LedgerRefusal
   | .MultiplicationOverflow => .multiplicationOverflow
 
 /-- A production rescale result against the written one. -/
-def projRescale : core.result.Result Std.I128 decimal.ScaledRefusal → Except LedgerRefusal ℤ
+def projRescale : core.result.Result Std.I128 decimal.ScaledIntegerRefusal → Except LedgerRefusal ℤ
   | .Ok v => .ok v.val
   | .Err e => .error (ofRust e)
 
@@ -34,7 +34,7 @@ def projRescale : core.result.Result Std.I128 decimal.ScaledRefusal → Except L
     stored amount is the canonical form of the written result, and a refusal
     is the written refusal. -/
 def Outcome :
-    core.result.Result decimal.ScaledInteger decimal.ScaledRefusal →
+    core.result.Result decimal.ScaledInteger decimal.ScaledIntegerRefusal →
       Except LedgerRefusal (ℤ × ℕ) → Prop
   | .Ok c, .ok (u, s) => IsCanonicalForm u s c.unscaled.val c.scale.val
   | .Err e, .error r => ofRust e = r
@@ -103,7 +103,7 @@ local macro "try_simp" "[" extra:Lean.Parser.Tactic.simpLemma,* "]" : tactic => 
     core.convert.FromSame, lift, $extra,*])
 
 private def projAlign :
-    core.result.Result (Std.I128 × Std.I128 × Std.U8) decimal.ScaledRefusal →
+    core.result.Result (Std.I128 × Std.I128 × Std.U8) decimal.ScaledIntegerRefusal →
       Except LedgerRefusal (ℤ × ℤ × ℕ)
   | .Ok (a, b, t) => .ok (a.val, b.val, t.val)
   | .Err e => .error (ofRust e)
