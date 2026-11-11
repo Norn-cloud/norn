@@ -92,7 +92,8 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     const index = objects.rows.findIndex((row) => row.id === id)
     const existing = objects.rows[index]
     if (action.effect === "fire_transition") {
-      if (existing === undefined || existing.withheld) return route.fulfill({ status: 404, json: { code: "action.target_not_found", category: "not_found", message: "There is no such holding you can see.", diagnostics: [{ code: "action.target_not_found", message: "No such holding.", pointer: "/input/id" }] } })
+      // An absent or hidden target is the one opaque denial, like an unknown or ungranted action.
+      if (existing === undefined || existing.withheld) return route.fulfill({ status: 403, json: { code: "authz.denied", category: "permission", message: "the action request is not authorized", explanation: "access to the requested action is denied" } })
       if (existing.values["retired"] === "true") return route.fulfill({ status: 422, json: { code: "action.precondition_failed", category: "rule", message: "This holding is retired; it can't change any more.", diagnostics: [{ code: "action.precondition_failed", message: "The holding is retired.", pointer: null }] } })
     }
     const version = (existing?.version ?? 1) + (existing ? 1 : 0)

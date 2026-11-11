@@ -24,9 +24,10 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *        409 `action.idempotency_conflict` when the key was used for a different call.
  *        Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
  *
- *   404 `action.target_not_found` is the cell's refusal for a call whose target the caller cannot
- *   see. Any other 404 or 503, whatever its body (the cell's carries `route.not_found`), means the
- *   cell does not serve the route: Studio says so and offers no action.
+ *   A visibility or permission refusal is the one opaque 403 `authz.denied`, whatever the target or
+ *   action, so a refusal never tells a known action from an unknown one.
+ *   Any 404 or 503, whatever its body (the cell's carries `route.not_found`), means the cell does
+ *   not serve the route: Studio says so and offers no action.
  *
  * Studio never validates input. It encodes what was typed as faithfully as JSON allows and
  * shows the cell's refusal at the field its pointer names.
@@ -135,9 +136,6 @@ export async function callAction(actionId: string, input: string, idempotencyKey
   const text = await response.text()
   if (response.ok) return { kind: "receipt", receipt: JSON.parse(text) as ActionReceipt }
   const refusal = refusalOf(text)
-  // A 404 is the cell's own refusal only when it names the call's target; any other 404 or 503
-  // means the cell does not serve the route.
-  if (response.status === 404 && refusal?.code === "action.target_not_found") return { kind: "refused", status: 404, ...refusal }
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   if (refusal !== null) return { kind: "refused", status: response.status, ...refusal }
   throw new CellUnavailable(response.status)

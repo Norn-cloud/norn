@@ -257,6 +257,19 @@ fn send(
     authorization: Option<&str>,
     body: &str,
 ) -> (u16, Value) {
+    let (status, body) = send_raw(cell, method, path, query, authorization, body);
+    (status, serde_json::from_str(&body).unwrap())
+}
+
+/// The exact response bytes, for byte-for-byte comparisons.
+fn send_raw(
+    cell: &Cell,
+    method: &str,
+    path: &str,
+    query: &str,
+    authorization: Option<&str>,
+    body: &str,
+) -> (u16, String) {
     let Response { status, body } = server::handle_with(
         &cell.host,
         &cell.principals,
@@ -270,7 +283,7 @@ fn send(
             body,
         },
     );
-    (status, serde_json::from_str(&body).unwrap())
+    (status, body)
 }
 
 fn post(cell: &Cell, authorization: Option<&str>, body: &str) -> (u16, Value) {
@@ -332,28 +345,30 @@ fn the_route_refuses_before_any_effect() {
         Some(OPERATOR),
         &body,
     ));
-    let unknown = send(
+    let unknown = |authorization| {
+        send_raw(
+            &cell,
+            "POST",
+            "/v1/actions/constitution.melt.unknown",
+            SCOPE,
+            Some(authorization),
+            &body,
+        )
+    };
+    denied(send(
         &cell,
         "POST",
         "/v1/actions/constitution.melt.unknown",
         SCOPE,
         Some(OPERATOR),
         &body,
-    );
-    denied(unknown.clone());
+    ));
     // A verified principal the host admits but the PDP grants nothing: the
-    // kernel's denial is byte for byte the unknown-action document.
-    let forbidden = post(&cell, Some(VIEWER), &body);
-    assert_eq!(forbidden, unknown);
-    let unknown_for_viewer = send(
-        &cell,
-        "POST",
-        "/v1/actions/constitution.melt.unknown",
-        SCOPE,
-        Some(VIEWER),
-        &body,
-    );
-    assert_eq!(forbidden, unknown_for_viewer);
+    // kernel's refusal of a known action is byte for byte the unknown-action
+    // document, for the viewer and for an operator alike.
+    let forbidden = send_raw(&cell, "POST", ROUTE, SCOPE, Some(VIEWER), &body);
+    assert_eq!(forbidden, unknown(VIEWER));
+    assert_eq!(forbidden, unknown(OPERATOR));
     // A writer that records no loss breaks the fine-mass law: 10 != 8 + 0.
     let law = melt_body("melt-3", "10", "8", "law");
     let (status, violated) = post(&cell_with(OMITS_LOSS), Some(OPERATOR), &law);

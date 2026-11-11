@@ -174,11 +174,12 @@ pub fn decode_action_request(body: &str) -> Result<ActionRequest, Refusal> {
 /// # Errors
 /// One opaque 403, decided before any storage read, for a missing or
 /// unverified caller, a denied policy, a foreign scope or an unknown action;
-/// the same opaque 403 when the kernel's policy decision denies the call;
+/// the same opaque 403 for every visibility or permission refusal the kernel
+/// decides (an invisible or absent target, a denied policy decision);
 /// 409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
 /// refusal, its detail disclosed only under an explicit diagnostic grant. A
 /// refusal commits nothing.
-#[utoipa::path(post, path = "/v1/actions/{actionId}", params(ActionQuery, ("actionId" = String, Path, description = "The admitted action identity.")), request_body = ActionRequest, responses((status = 200, description = "The call committed, or replayed an identical earlier call.", body = ActionReceipt), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: the target is not visible.", body = Refusal), (status = 409, description = "The request was refused: a stale pin or a conflicting retry.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: a law or precondition does not hold.", body = Refusal), (status = 429, description = "The request was refused: a declared limit was exceeded.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(post, path = "/v1/actions/{actionId}", params(ActionQuery, ("actionId" = String, Path, description = "The admitted action identity.")), request_body = ActionRequest, responses((status = 200, description = "The call committed, or replayed an identical earlier call.", body = ActionReceipt), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 409, description = "The request was refused: a stale pin or a conflicting retry.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: a law or precondition does not hold.", body = Refusal), (status = 429, description = "The request was refused: a declared limit was exceeded.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn call_action<E: SqlEngine>(
     host: &DevHost<E>,
     query: &ActionQuery,
@@ -267,10 +268,14 @@ pub fn call_action<E: SqlEngine>(
     )
     .map_err(|error| {
         let refusal = error.refusal();
-        // A kernel PDP denial is the same opaque document as an unknown or
-        // ungranted action, so a denied caller learns nothing of which
-        // actions exist. Typed refusals stay for calls the PDP authorized.
-        if refusal.category == norn_kernel::RefusalCategory::Permission {
+        // Visibility and permission refusals are the one opaque action
+        // document: the kernel decides them per target, so a typed 404 or 403
+        // would tell a known action from an unknown one. Laws, preconditions,
+        // conflicts, invalid input and limits stay typed.
+        if matches!(
+            refusal.category,
+            norn_kernel::RefusalCategory::Visibility | norn_kernel::RefusalCategory::Permission
+        ) {
             return action_denied();
         }
         crate::refusal_disclosure::project_refusal(

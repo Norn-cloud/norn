@@ -26,6 +26,9 @@ const OPERATOR: &str = "user:operator";
 const AUDITOR: &str = "user:auditor";
 /// Admitted by the host operation policy but by no kernel action decision.
 const HOST_ONLY: &str = "user:host-only";
+/// Admitted by the host operation policy; the kernel's decision hides every
+/// target from it (`target_not_found`).
+const HIDDEN: &str = "user:hidden";
 
 /// Server policy keyed on the verified subject only.
 struct Policy;
@@ -37,7 +40,9 @@ impl Policy {
 impl Authorizer for Policy {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
         match (&request.operation, request.actor) {
-            (Operation::CallAction(_), Some(actor)) if Self::acts(actor) || actor == HOST_ONLY => {
+            (Operation::CallAction(_), Some(actor))
+                if Self::acts(actor) || actor == HOST_ONLY || actor == HIDDEN =>
+            {
                 Ok(())
             }
             _ => DenyAll.authorize(request),
@@ -53,6 +58,8 @@ impl Authorizer for Policy {
     fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         if Self::acts(request.actor) {
             Ok(())
+        } else if request.actor == HIDDEN {
+            Err(ActionDenial::Invisible)
         } else {
             Err(ActionDenial::Forbidden {
                 reason: codes::AUTHZ_DENIED.into(),
@@ -307,14 +314,18 @@ fn denials_are_one_opaque_document_and_commit_nothing() {
         assert_eq!(refused.status, 403);
         assert_eq!(serde_json::to_string(&refused).unwrap(), opaque);
     }
-    // The host grants every `CallAction` to HOST_ONLY; the kernel's decision
-    // denies it. That denial is the same document for a known action as for
-    // an unknown one, so it reveals no action's existence.
-    let (query, actor) = (scoped("org_demo"), Some(HOST_ONLY));
-    for action in [MELT_ACTION, "constitution.melt.unknown"] {
-        let refused = call(&host, &query, actor, action, &body).unwrap_err();
-        assert_eq!(refused.status, 403);
-        assert_eq!(serde_json::to_string(&refused).unwrap(), opaque);
+    // The host grants every `CallAction` to HOST_ONLY and HIDDEN; the kernel
+    // denies one (permission) and hides the target from the other
+    // (`target_not_found`). A known action with a made-up target reads byte
+    // for byte as an unknown action, so neither reveals which actions exist.
+    let bogus = melt_body("melt-bogus", "12", "10", "bogus");
+    let query = scoped("org_demo");
+    for actor in [Some(HOST_ONLY), Some(HIDDEN)] {
+        for action in [MELT_ACTION, "constitution.melt.unknown"] {
+            let refused = call(&host, &query, actor, action, &bogus).unwrap_err();
+            assert_eq!(refused.status, 403);
+            assert_eq!(serde_json::to_string(&refused).unwrap(), opaque);
+        }
     }
     assert_eq!(dump(&host), before);
 }
