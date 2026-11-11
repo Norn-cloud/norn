@@ -18,22 +18,25 @@ branched never reads as a removal. Additions pass. These fail:
   required on an input, a bound tightened, a pattern, format or const changed,
   an open object closed, a parameter or request body newly required;
 - a changed wire format: a `$ref` retargeted, a type alternative added to an
-  output, a property no longer required on an output, a CLI default or arity
-  changed, a diagnostic's severity changed.
+  output, a property no longer required on an output, a pattern, format or
+  bound removed or loosened on an output, an input's `default` changed or
+  removed, a CLI default or arity changed, a diagnostic's severity changed;
+- a contract-shaped file (a `schema`/`schemas` directory, `*.schema.json`,
+  `*.contract.json`) that is neither enrolled here nor listed as internal.
 
-The only escape is a line `contract-break-approved: <ruling>` in the pull
-request body, where `<ruling>` names the decision that approved the break
-(`D85`, `#1234` or a URL). In a merge group every merge step is checked against
-the body of the pull request it merges.
+The only escape is an entry for each break in `scripts/ci/contract-breaks.json`
+added by the change itself, naming the ruling that approved it. That file is a
+gate file: changing it needs an admin's `/approve-gates <head sha>` (the
+trusted-policy check), so a break is approved by the same mechanism as a gate
+change and never by the author alone. In a merge group every merge step is
+checked against the entries that step adds.
 
-In CI it runs inside the required `core` job (`core.sh cheap`). Adding the
-marker to a pull request body does not start a run: re-run `core`, and the
-check reads the body as it is now.
+In CI it runs inside the required `core` job (`core.sh cheap`).
 
 Usage:
   contract_diff.py --ci   # the GitHub event of this job (GITHUB_EVENT_NAME/PATH)
-  contract_diff.py --base REV --head REV [--body-file FILE]
-  contract_diff.py --merge-group BASE HEAD --bodies-file FILE
+  contract_diff.py --base REV --head REV
+  contract_diff.py --merge-group BASE HEAD
   contract_diff.py --surface ROOT   # print the extracted surface of a checkout
 """
 
@@ -55,14 +58,30 @@ CLI_SNAPSHOT = "crates/norn-cli/cli.contract.json"
 TS_CLI_DIR = "tools/norn-ts/src"
 TS_CLI_SNAPSHOT = "tools/norn-ts/cli.contract.json"
 DIAGNOSTIC_CODES = "crates/norn-checker/conformance/diagnostic-codes"
-SCHEMA_DIRS = ("crates/norn-ir/schema", "crates/norn-kernel/schema", "tools/norn-ts/schema")
-
-MARKER = re.compile(r"^\s*contract-break-approved:\s*(D\d+|#\d+|https?://\S+)\s*$", re.MULTILINE)
+SCHEMA_DIRS = ("crates/norn-ir/schema", "crates/norn-kernel/schema", "tools/norn-ts/schema",
+               "crates/norn-builtins/src/schemas", "crates/norn-projections/schemas")
+# Single schema files outside a schema directory. The metrics ledger is append-only
+# and kept forever, so its record format only ever changes additively.
+SCHEMA_FILES = ("scripts/metrics/record.schema.json",)
+APPROVALS = "scripts/ci/contract-breaks.json"
+# Contract-shaped files that are not external contracts: CI tooling records and
+# proof bookkeeping read only by this repository's own scripts. Adding to this
+# list changes this gate file, so it needs `/approve-gates` like any gate change.
+INTERNAL = ("scripts/ci/implementation-receipt.schema.json", "verification/coverage-v1/result.schema.json",
+            "verification/stripmine-2026-08-22/schemas/")
+# Example and test inputs are not contracts.
+NOT_CONTRACT_DIRS = ("fixtures", "test", "tests")
 CODE = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+")
 CODE_CONST = re.compile(r'const\s+[A-Z][A-Z0-9_]*\s*:\s*&(?:\'static\s+)?str\s*=\s*"(' + CODE.pattern + r')"\s*;')
 STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
 CODE_FN = re.compile(r"fn\s+code\s*\(")
-TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*(?:#\[[^\]]*\]\s*)*mod\s")
+# Refusal constructors whose first code-shaped string argument is a code:
+# `Refusal::new(StatusCode::X, "a.b", ..)`, `Refused::one("a.b", ..)`,
+# `Failure::setup("a.b", ..)`, `DiagnosticCode::new("a.b")`, `refused("a.b", ..)`.
+CODE_CALL = re.compile(r"\b(?:Refusal|Refused|Failure|DiagnosticCode)::[a-z_][a-z0-9_]*\s*\(|(?<![\w:.])refused\s*\(")
+# A `code: "a.b"` struct field initializer.
+CODE_FIELD = re.compile(r'\bcode\s*:\s*"(' + CODE.pattern + r')"')
+TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*(?:#\[[^\]]*\]\s*)*mod\s+\w+\s*([{;])")
 
 # A tree is how the check reads one revision: list the files under a directory
 # and read one file, or None when it does not exist.
@@ -110,7 +129,9 @@ def disk_tree(root: Path) -> Tree:
         base = root / directory
         if not base.is_dir():
             return []
-        return sorted(str(path.relative_to(root)) for path in base.rglob("*") if path.is_file())
+        skip = {"node_modules", "target", ".git"}
+        return sorted(str(path.relative_to(root)) for path in base.rglob("*")
+                      if path.is_file() and not skip & set(path.relative_to(root).parts))
 
     def read(path: str) -> str | None:
         try:
@@ -131,7 +152,7 @@ class Documents:
     """The two documents a schema comparison resolves `$ref`s in."""
     old: object
     new: object
-    seen: set[tuple[str, str]] = field(default_factory=set)
+    seen: set[tuple[str, str, frozenset[str]]] = field(default_factory=set)
 
 
 def resolve(root: object, ref: str) -> object | None:
@@ -268,6 +289,7 @@ def _alternatives(schemas: list, root: object) -> dict[str, object]:
 
 
 JSON_TYPES = {"null", "boolean", "number", "string", "array", "object"}
+_MISSING = object()
 ANNOTATIONS = {"description", "title", "examples", "default", "deprecated", "$comment", "readOnly", "writeOnly", "format"}
 
 
@@ -336,9 +358,10 @@ def compare_schema(old: object, new: object, where: str, directions: frozenset[s
     if old_ref is not None or new_ref is not None:
         if old_ref == new_ref:
             return  # The named schema itself is compared once, by name.
-        if (old_ref or "", new_ref or "") in docs.seen:
+        key = (old_ref or "", new_ref or "", directions)
+        if key in docs.seen:
             return
-        docs.seen.add((old_ref or "", new_ref or ""))
+        docs.seen.add(key)
         if old_ref is not None:
             old = resolve(docs.old, old_ref)
         if new_ref is not None:
@@ -380,11 +403,18 @@ def compare_schema(old: object, new: object, where: str, directions: frozenset[s
     for key in ("pattern", "format"):
         if key in new and old.get(key) != new.get(key):
             out.append(f"{where}: {key} changed from {json.dumps(old.get(key))} to {json.dumps(new.get(key))}")
+        elif key in old and key not in new and OUT in directions:
+            out.append(f"{where}: output {key} {json.dumps(old[key])} removed")
     for key, tighter in (("maximum", min), ("exclusiveMaximum", min), ("maxLength", min), ("maxItems", min),
                          ("maxProperties", min), ("minimum", max), ("exclusiveMinimum", max),
                          ("minLength", max), ("minItems", max), ("minProperties", max)):
         if key in new and (key not in old or tighter(old[key], new[key]) != old[key]):
             out.append(f"{where}: {key} tightened from {old.get(key)} to {new[key]}")
+        elif key in old and new.get(key) != old[key] and OUT in directions:
+            out.append(f"{where}: output {key} loosened from {old[key]} to {new.get(key, 'none')}")
+    if IN in directions and "default" in old and old["default"] != new.get("default", _MISSING):
+        after = json.dumps(new["default"]) if "default" in new else "removed"
+        out.append(f"{where}: input default changed from {json.dumps(old['default'])} to {after}")
     old_props = old.get("properties") or {}
     new_props = new.get("properties") or {}
     for name, schema in old_props.items():
@@ -609,16 +639,92 @@ def _function_body(text: str, start: int) -> str:
     return text[open_at:]
 
 
+def _without_comments(text: str) -> str:
+    """The source with `//` and `/* */` comments blanked (strings, raw strings
+    and char literals kept), so a code left in a comment is not a use."""
+    out, index, length = [], 0, len(text)
+    while index < length:
+        char = text[index]
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            index = length if end < 0 else end
+            continue
+        if text.startswith("/*", index):
+            depth, index = 1, index + 2
+            while index < length and depth:
+                if text.startswith("/*", index):
+                    depth, index = depth + 1, index + 2
+                elif text.startswith("*/", index):
+                    depth, index = depth - 1, index + 2
+                else:
+                    index += 1
+            out.append(" ")
+            continue
+        raw = re.match(r'r(#*)"', text[index:index + 260]) if char == "r" and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")) else None
+        if raw:
+            close = text.find('"' + raw.group(1), index + raw.end())
+            end = length if close < 0 else close + 1 + len(raw.group(1))
+            out.append(text[index:end])
+            index = end
+            continue
+        if char == '"':
+            match = STRING.match(text, index)
+            end = match.end() if match else index + 1
+            out.append(text[index:end])
+            index = end
+            continue
+        if char == "'":
+            match = re.match(r"'(?:\\.|[^\\'])'", text[index:index + 12])
+            if match:
+                out.append(match.group(0))
+                index += match.end()
+                continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
 def _without_tests(text: str) -> str:
-    test = TEST_MODULE.search(text)
-    return text[:test.start()] if test else text
+    """The source without comments and without every `#[cfg(test)] mod`
+    (inline or declared), wherever it sits in the file."""
+    text = _without_comments(text)
+    while True:
+        test = TEST_MODULE.search(text)
+        if not test:
+            return text
+        if test.group(1) == ";":
+            text = text[:test.start()] + text[test.end():]
+        else:
+            body = _function_body(text, test.end() - 1)
+            text = text[:test.start()] + text[test.end() - 1 + len(body):]
+
+
+def _call_codes(text: str) -> set[str]:
+    """The first code-shaped string argument of every refusal constructor call."""
+    codes = set()
+    for match in CODE_CALL.finditer(text):
+        depth, index = 1, match.end()
+        while index < len(text) and depth:
+            char = text[index]
+            if char == '"':
+                literal = STRING.match(text, index)
+                if literal and CODE.fullmatch(literal.group(1)):
+                    codes.add(literal.group(1))
+                    break
+                index = literal.end() if literal else index + 1
+                continue
+            depth += {"(": 1, ")": -1}.get(char, 0)
+            index += 1
+    return codes
 
 
 def rust_codes(text: str) -> set[str]:
-    """Refusal codes a Rust source declares: literals inside `fn code` bodies
-    and every `const NAME: &str = "a.b"` code constant, outside test modules."""
+    """Refusal codes a Rust source declares, outside comments and test
+    modules: literals inside `fn code` bodies, `const NAME: &str = "a.b"`
+    code constants, the code argument of refusal constructors and `code:
+    "a.b"` field initializers."""
     text = _without_tests(text)
-    codes = set(CODE_CONST.findall(text))
+    codes = set(CODE_CONST.findall(text)) | _call_codes(text) | set(CODE_FIELD.findall(text))
     for match in CODE_FN.finditer(text):
         for literal in STRING.findall(_function_body(text, match.end())):
             if CODE.fullmatch(literal):
@@ -627,7 +733,7 @@ def rust_codes(text: str) -> set[str]:
 
 
 def rust_literals(text: str) -> set[str]:
-    """Every code-shaped string literal outside test modules."""
+    """Every code-shaped string literal outside comments and test modules."""
     return {literal for literal in STRING.findall(_without_tests(text)) if CODE.fullmatch(literal)}
 
 
@@ -724,9 +830,41 @@ def compare_command(old: dict, new: dict, where: str, out: list[str]) -> None:
             compare_command(command, after, f"{where} {name}", out)
 
 
+def unenrolled_surfaces(tree: Tree) -> list[str]:
+    """Contract-shaped files this check neither compares nor lists as internal."""
+    enrolled = {OPENAPI, CLI_SNAPSHOT, TS_CLI_SNAPSHOT}
+    found = []
+    for path in tree.list("."):
+        parts = path.split("/")
+        if not path.endswith(".json") or path.startswith(".github/") or set(parts[:-1]) & set(NOT_CONTRACT_DIRS):
+            continue
+        shaped = path.endswith((".schema.json", ".contract.json")) or (len(parts) > 1 and parts[-2] in ("schema", "schemas"))
+        if not shaped or path in enrolled or path in SCHEMA_FILES or path.startswith(tuple(f"{d}/" for d in SCHEMA_DIRS)) \
+                or path.startswith(INTERNAL) or path.startswith(DIAGNOSTIC_CODES):
+            continue
+        found.append(path)
+    return found
+
+
+def approvals(tree: Tree) -> set[str]:
+    """The breaks `contract-breaks.json` approves, as `<break line>`."""
+    text = tree.read(APPROVALS)
+    if not text:
+        return set()
+    document = json.loads(text)
+    return {entry["break"] for entry in document.get("approved", [])
+            if isinstance(entry, dict) and isinstance(entry.get("break"), str)
+            and re.fullmatch(r"D\d+|#\d+|https?://\S+", str(entry.get("ruling", "")))}
+
+
 def schema_files(tree: Tree) -> dict[str, str]:
-    return {path: tree.read(path) or "" for directory in SCHEMA_DIRS for path in tree.list(directory)
-            if path.endswith(".json")}
+    files = {path: tree.read(path) or "" for directory in SCHEMA_DIRS for path in tree.list(directory)
+             if path.endswith(".json")}
+    for path in SCHEMA_FILES:
+        text = tree.read(path)
+        if text is not None:
+            files[path] = text
+    return files
 
 
 def diff(old: Tree, new: Tree) -> list[str]:
@@ -768,34 +906,32 @@ def diff(old: Tree, new: Tree) -> list[str]:
         out.append(f"authoring cli {command}: command removed")
     for flag in sorted(old_flags - new_flags):
         out.append(f"authoring cli {flag}: flag removed")
+    for path in unenrolled_surfaces(new):
+        out.append(f"{path}: contract-shaped file not enrolled in scripts/ci/contract_diff.py (enrol it, or list it as internal)")
     return out
 
 
-def approval(body: str | None) -> str | None:
-    match = MARKER.search(body or "")
-    return match.group(1) if match else None
-
-
-def verdict(breaks: list[str], body: str | None, label: str) -> bool:
+def verdict(old: Tree, new: Tree, label: str) -> bool:
+    """Pass when every break from `old` to `new` is approved by an entry that
+    `new` adds to `contract-breaks.json` (a gate file: `/approve-gates`)."""
+    breaks = diff(old, new)
     if not breaks:
         print(f"{label}: no contract breaks")
         return True
-    ruling = approval(body)
-    heading = f"{label}: {len(breaks)} non-additive contract change(s)"
-    print(heading + (f", approved by {ruling}" if ruling else ""))
+    approved = approvals(new) - approvals(old)
+    unapproved = [line for line in breaks if line not in approved]
+    print(f"{label}: {len(breaks)} non-additive contract change(s), {len(breaks) - len(unapproved)} approved")
     for line in breaks:
-        print(f"  - {line}")
-    if ruling:
+        print(f"  - {line}" + ("" if line in unapproved else "  [approved]"))
+    if not unapproved:
         return True
-    print("Frozen contracts are additive-only (D84). Make the change additive, or add the line\n"
-          "`contract-break-approved: <ruling>` (D<n>, #<issue> or a URL) to the pull request body.")
+    print(f"Frozen contracts are additive-only (D84). Make the change additive, or add each line above as\n"
+          f'{{"ruling": "D<n>", "break": "<line>"}} to {APPROVALS}; that gate file needs an admin\'s /approve-gates.')
     return False
 
 
-def merge_group(base: str, head: str, bodies: dict[str, list[str]] | Callable[[str], list[str]]) -> bool:
-    """Check each merge step of a queue group against its pull request's body.
-    `bodies` maps a pull request head to its bodies, or looks them up."""
-    bodies_of = bodies if callable(bodies) else (lambda sha: bodies.get(sha, []))
+def merge_group(base: str, head: str) -> bool:
+    """Check each merge step of a queue group against what that step adds."""
     ok, commit = True, git("rev-parse", head).strip()
     base = git("rev-parse", base).strip()
     for _ in range(64):
@@ -806,53 +942,24 @@ def merge_group(base: str, head: str, bodies: dict[str, list[str]] | Callable[[s
             print(f"merge group commit {commit} is not a two-parent merge")
             return False
         previous, pull_head = parents
-        breaks = diff(git_tree(previous), git_tree(commit))
-        body = "\n".join(bodies_of(pull_head)) if breaks else None
-        ok = verdict(breaks, body, f"merge of {pull_head[:12]}") and ok
+        ok = verdict(git_tree(previous), git_tree(commit), f"merge of {pull_head[:12]}") and ok
         commit = previous
     print("merge group is longer than 64 merges or misses its base")
     return False
 
 
-def github_get(path: str) -> object:
-    """A public GitHub API read. CI's gate step gets no token, so it is
-    unauthenticated: it runs only when a break needs its ruling."""
-    import urllib.request
-    api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
-    request = urllib.request.Request(f"{api}{path}", headers={"Accept": "application/vnd.github+json",
-                                                                 "User-Agent": "norn-contract-diff"})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.load(response)
-
-
-def ci(event_name: str, event: dict, repository: str, get: Callable[[str], object] = github_get) -> bool:
-    """The check for one GitHub event, as `core.sh cheap` runs it.
-
-    A pull request is judged against its merge-base, with its body read live
-    so that re-running the job after adding the marker sees it (a re-run
-    replays the original event payload, whose body is only the fallback). A
-    merge group checks each merge against the body of the pull request it
-    merges. Other events check nothing."""
+def ci(event_name: str, event: dict) -> bool:
+    """The check for one GitHub event, as `core.sh cheap` runs it: a pull
+    request against its merge-base, a merge group step by step. Other events
+    check nothing."""
     if event_name == "pull_request":
         pull = event["pull_request"]
         base, head = pull["base"]["sha"], pull["head"]["sha"]
         merge_base = git("merge-base", base, head).strip()
-        breaks = diff(git_tree(merge_base), git_tree(head))
-        body = pull.get("body")
-        if breaks:
-            try:
-                body = get(f"/repos/{repository}/pulls/{pull['number']}").get("body")
-            except Exception as error:  # noqa: BLE001 - any failure falls back to the event's body
-                print(f"could not read the current pull request body ({error}); using the event's")
-        return verdict(breaks, body, f"{merge_base[:12]}..{head[:12]}")
+        return verdict(git_tree(merge_base), git_tree(head), f"{merge_base[:12]}..{head[:12]}")
     if event_name == "merge_group":
         group = event["merge_group"]
-
-        def bodies(pull_head: str) -> list[str]:
-            pulls = get(f"/repos/{repository}/commits/{pull_head}/pulls")
-            return [pull.get("body") or "" for pull in pulls if pull.get("head", {}).get("sha") == pull_head]
-
-        return merge_group(group["base_sha"], group["head_sha"], bodies)
+        return merge_group(group["base_sha"], group["head_sha"])
     print(f"contract diff: nothing to check for a {event_name or 'local'} run")
     return True
 
@@ -861,33 +968,29 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base")
     parser.add_argument("--head")
-    parser.add_argument("--body-file", help="the pull request body")
     parser.add_argument("--merge-group", nargs=2, metavar=("BASE", "HEAD"))
-    parser.add_argument("--bodies-file", help="JSON {pull head sha: [bodies]} for a merge group")
     parser.add_argument("--surface", metavar="ROOT", help="print the surface extracted from a checkout")
     parser.add_argument("--ci", action="store_true", help="check the GitHub event this job runs for")
     args = parser.parse_args()
     if args.ci:
         event_path = os.environ.get("GITHUB_EVENT_PATH")
         event = json.loads(Path(event_path).read_text(encoding="utf-8")) if event_path else {}
-        return 0 if ci(os.environ.get("GITHUB_EVENT_NAME", ""), event, os.environ.get("GITHUB_REPOSITORY", "")) else 1
+        return 0 if ci(os.environ.get("GITHUB_EVENT_NAME", ""), event) else 1
     if args.surface:
         tree = disk_tree(Path(args.surface))
         commands, flags = ts_cli(tree)
         print(json.dumps({"refusalCodes": sorted(refusal_codes(tree)), "diagnosticCodes": len(diagnostic_codes(tree)),
+                          "unenrolled": unenrolled_surfaces(tree),
                           "schemas": sorted(schema_files(tree)), "sdkExports": sorted(sdk_exports(tree.read(SDK_INDEX))),
                           "authoringCli": {"commands": sorted(commands), "flags": sorted(flags)},
                           "cli": rust_cli(tree)}, indent=2))
         return 0
     if args.merge_group:
-        bodies = json.loads(Path(args.bodies_file).read_text(encoding="utf-8")) if args.bodies_file else {}
-        return 0 if merge_group(*args.merge_group, bodies) else 1
+        return 0 if merge_group(*args.merge_group) else 1
     if not (args.base and args.head):
         parser.error("--base and --head are required")
     merge_base = git("merge-base", args.base, args.head).strip()
-    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else None
-    breaks = diff(git_tree(merge_base), git_tree(args.head))
-    return 0 if verdict(breaks, body, f"{merge_base[:12]}..{args.head[:12]}") else 1
+    return 0 if verdict(git_tree(merge_base), git_tree(args.head), f"{merge_base[:12]}..{args.head[:12]}") else 1
 
 
 if __name__ == "__main__":

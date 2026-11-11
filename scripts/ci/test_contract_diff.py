@@ -140,7 +140,9 @@ def add_unused_definition(rng, s):
     return True
 
 
-ADDITIVE = (add_optional_property, add_enum_value, add_union_alternative, loosen_bound, add_unused_definition)
+ADDITIVE = (add_optional_property, add_enum_value, add_union_alternative, add_unused_definition)
+# Additive for senders only: a reader of an output gets more than it was promised.
+INPUT_ADDITIVE = (loosen_bound,)
 
 
 # Re-encodings: the same contract written differently.
@@ -275,6 +277,12 @@ class SchemaProperties(unittest.TestCase):
                     continue
                 for directions in (frozenset({cd.IN}), frozenset({cd.OUT}), BOTH):
                     self.assertEqual(diff_schema(schema, after, directions), [], f"{edit.__name__} {sorted(directions)} seed {seed}")
+            for edit in INPUT_ADDITIVE:
+                after = copy.deepcopy(schema)
+                if not edit(rng, after):
+                    continue
+                self.assertEqual(diff_schema(schema, after, frozenset({cd.IN})), [], f"{edit.__name__} seed {seed}")
+                self.assertTrue(any("loosened" in line for line in diff_schema(schema, after, frozenset({cd.OUT}))), seed)
 
     def test_non_additive_edits_fail_and_name_the_change(self):
         applied = {edit.__name__: 0 for edit in BREAKING}
@@ -300,10 +308,8 @@ class SchemaProperties(unittest.TestCase):
             mark = rng.choice(BREAKING)(rng, after)
             if mark is None:
                 continue
-            # Loosening a bound is the one additive edit that can exactly undo a break.
             for edit in (*ADDITIVE, *REENCODINGS):
-                if edit is not loosen_bound:
-                    edit(rng, after)
+                edit(rng, after)
             self.assertNotEqual(diff_schema(schema, after), [], seed)
 
     def test_direction_decides_widening_and_requiredness(self):
@@ -316,6 +322,27 @@ class SchemaProperties(unittest.TestCase):
         self.assertTrue(diff_schema(required, optional, frozenset({cd.OUT})))
         self.assertFalse(diff_schema(optional, nullable, frozenset({cd.IN})))
         self.assertTrue(diff_schema(optional, nullable, frozenset({cd.OUT})))
+
+    def test_an_input_default_is_part_of_the_contract(self):
+        before = {"type": "object", "properties": {"tz": {"type": "string", "default": "iso_utc"}}}
+        changed = copy.deepcopy(before)
+        changed["properties"]["tz"]["default"] = "local"
+        removed = copy.deepcopy(before)
+        del removed["properties"]["tz"]["default"]
+        for after, what in ((changed, '"local"'), (removed, "removed")):
+            self.assertTrue(any("default changed" in line and what in line
+                                for line in diff_schema(before, after, frozenset({cd.IN}))), what)
+            # A default is not something a reader of an output relies on.
+            self.assertEqual(diff_schema(before, after, frozenset({cd.OUT})), [], what)
+        added = {"type": "object", "properties": {"tz": {"type": "string"}}}
+        self.assertEqual(diff_schema(added, before, frozenset({cd.IN})), [])
+
+    def test_an_output_pattern_or_format_removed_widens_it(self):
+        for key, value in (("pattern", "^[a-z]+$"), ("format", "date")):
+            before = {"type": "string", key: value}
+            after = {"type": "string"}
+            self.assertTrue(any(f"output {key}" in line for line in diff_schema(before, after, frozenset({cd.OUT}))), key)
+            self.assertEqual(diff_schema(before, after, frozenset({cd.IN})), [], key)
 
 
 def openapi(paths: dict, schemas: dict) -> dict:
@@ -386,6 +413,67 @@ class OpenApiProperties(unittest.TestCase):
 
 
 class CodeAndCliProperties(unittest.TestCase):
+    def test_constructor_codes_are_declared(self):
+        text = '''
+fn refuse() -> Refusal {
+    Refusal::new(StatusCode::CONFLICT, "defs.stale", format!("lost {}", "x.y"))
+}
+fn other() { Refusal::new(
+    StatusCode::BAD_REQUEST,
+    "request.too_large",
+    "body exceeds the limit",
+); }
+fn setup() -> Failure { Failure::setup("norn.dev.io", "norn.json is unreadable") }
+fn usage() -> Failure { Failure { code: "norn.dev.usage", message: String::new(), exit: 2 } }
+fn compute() { refused("core.compute.stale_input", detail) }
+'''
+        self.assertEqual(cd.rust_codes(text), {"defs.stale", "request.too_large", "norn.dev.io", "norn.dev.usage",
+                                               "core.compute.stale_input"})
+        for code in ("defs.stale", "request.too_large", "norn.dev.io"):
+            renamed = text.replace(f'"{code}"', f'"{code}_renamed"')
+            self.assertNotIn(code, cd.rust_literals(renamed), code)
+
+    def test_tests_and_comments_never_hide_or_declare_a_code(self):
+        text = '''
+const A: &str = "first.code";
+#[cfg(test)]
+mod tests {
+    const T: &str = "test.only";
+}
+const B: &str = "after.tests";
+#[cfg(test)]
+mod more;
+// const OLD: &str = "removed.code"; kept in a comment
+/* "also.removed" */
+const URL: &str = "http://x.y"; // a "comment.code" after a string with //
+'''
+        self.assertEqual(cd.rust_codes(text), {"first.code", "after.tests"})
+        literals = cd.rust_literals(text)
+        for hidden in ("test.only", "removed.code", "also.removed", "comment.code"):
+            self.assertNotIn(hidden, literals, hidden)
+
+    def test_an_unenrolled_contract_file_fails(self):
+        def tree(files):
+            return cd.Tree(lambda d: sorted(files) if d == "." else sorted(p for p in files if p.startswith(d + "/")), files.get)
+        enrolled = {f"{cd.SCHEMA_DIRS[0]}/a.schema.json": "{}", "tools/norn-ts/fixtures/schema/x.json": "{}",
+                    "crates/x/tests/schema/y.json": "{}", f"{cd.INTERNAL[0]}": "{}"}
+        self.assertEqual(cd.unenrolled_surfaces(tree(enrolled)), [])
+        for path in ("crates/norn-new/schema/event.json", "packages/x/wire.schema.json", "tools/dev/dev.contract.json"):
+            self.assertEqual(cd.unenrolled_surfaces(tree({**enrolled, path: "{}"})), [path], path)
+
+    def test_a_single_enrolled_schema_file_is_compared(self):
+        def tree(schema):
+            files = {cd.SCHEMA_FILES[0]: json.dumps(schema)}
+            return cd.Tree(lambda d: sorted(files) if d == "." else [], files.get)
+        record = {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}, "value": {"type": "number"}}}
+        grown = copy.deepcopy(record)
+        grown["properties"]["unit"] = {"type": "string"}
+        shrunk = copy.deepcopy(record)
+        del shrunk["properties"]["value"]
+        self.assertEqual(cd.diff(tree(record), tree(grown)), [])
+        self.assertEqual(cd.diff(tree(record), tree(shrunk)), [f"{cd.SCHEMA_FILES[0]}.value: property removed"])
+        self.assertEqual(cd.unenrolled_surfaces(tree(record)), [])
+
     def test_moving_a_code_is_not_removing_it(self):
         before = 'impl E {\n    pub const fn code(&self) -> &str {\n        match self { Self::A => "decision.guard_false", Self::B => OTHER }\n    }\n}\nconst OTHER: &str = "decision.other";\n'
         moved = 'fn helper() -> &\'static str { "decision.guard_false" }\nconst OTHER: &str = "decision.other";\n'
@@ -431,11 +519,14 @@ class CodeAndCliProperties(unittest.TestCase):
         breaks = cd.diff(tree(generated), tree({cd.TS_CLI_SNAPSHOT: json.dumps(contract)}))
         self.assertIn("authoring cli norn check org: flag or argument removed", breaks)
 
-    def test_the_marker_names_a_ruling(self):
-        self.assertEqual(cd.approval("text\ncontract-break-approved: D85\n"), "D85")
-        self.assertEqual(cd.approval("contract-break-approved: #1234"), "#1234")
-        for body in ("contract-break-approved:", "contract-break-approved: yes", "see contract-break-approved: D85 inline", None):
-            self.assertIsNone(cd.approval(body), body)
+    def test_an_approval_names_a_ruling_and_one_break(self):
+        def tree(document):
+            return cd.Tree(lambda d: [], lambda path: json.dumps(document) if path == cd.APPROVALS else None)
+        self.assertEqual(cd.approvals(tree({"approved": [{"ruling": "D85", "break": "a: removed"},
+                                                         {"ruling": "#12", "break": "b: removed"}]})),
+                         {"a: removed", "b: removed"})
+        for entry in ({"ruling": "yes", "break": "a"}, {"ruling": "D85"}, {"break": "a"}, "D85"):
+            self.assertEqual(cd.approvals(tree({"approved": [entry]})), set(), entry)
 
 
 class Scenarios(unittest.TestCase):
@@ -474,12 +565,15 @@ class Scenarios(unittest.TestCase):
         self.git("commit", "-q", "-m", message)
         return self.git("rev-parse", "HEAD")
 
-    def run_script(self, *args, body=None):
+    def run_script(self, *args):
         command = [sys.executable, str(Path(cd.__file__)), *args]
-        if body is not None:
-            (self.root / ".body").write_text(body)
-            command += ["--body-file", str(self.root / ".body")]
         return subprocess.run(command, cwd=self.root, capture_output=True, text=True)
+
+    def approve(self, ruling, *breaks):
+        path = self.root / cd.APPROVALS
+        document = json.loads(path.read_text()) if path.exists() else {"format": "norn-contract-breaks/1", "approved": []}
+        document["approved"] += [{"ruling": ruling, "break": line} for line in breaks]
+        self.write(cd.APPROVALS, document)
 
     def test_a_pull_request_is_judged_against_its_merge_base(self):
         self.git("switch", "-q", "-c", "feature")
@@ -492,74 +586,63 @@ class Scenarios(unittest.TestCase):
         result = self.run_script("--base", "main", "--head", head)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_a_break_fails_until_a_ruling_approves_it(self):
+    def test_a_break_fails_until_the_change_adds_its_approval(self):
         self.git("switch", "-q", "-c", "feature")
         self.write("crates/norn-api/src/refusal.rs", "\n")
         self.git("rm", "-q", f"{cd.DIAGNOSTIC_CODES}/x.y.json")
         head = self.commit("break")
-        refused = self.run_script("--base", "main", "--head", head, body="no marker")
+        refused = self.run_script("--base", "main", "--head", head)
         self.assertEqual(refused.returncode, 1)
         self.assertIn("refusal code scope.denied: removed", refused.stdout)
         self.assertIn("diagnostic code x.y: removed", refused.stdout)
-        approved = self.run_script("--base", "main", "--head", head, body="Why.\n\ncontract-break-approved: D85\n")
+        # One approved break does not approve the other.
+        self.approve("D85", "refusal code scope.denied: removed")
+        partial = self.commit("approve one")
+        self.assertEqual(self.run_script("--base", "main", "--head", partial).returncode, 1)
+        self.approve("D85", "diagnostic code x.y: removed")
+        approved = self.run_script("--base", "main", "--head", self.commit("approve both"))
         self.assertEqual(approved.returncode, 0, approved.stdout)
-        self.assertIn("approved by D85", approved.stdout)
+        self.assertIn("2 approved", approved.stdout)
 
-    def test_a_merge_group_checks_each_merge_against_its_own_body(self):
+    def test_an_approval_already_on_the_base_approves_nothing_new(self):
+        self.approve("D85", "refusal code scope.denied: removed")
+        self.commit("an old approval")
+        self.git("switch", "-q", "-c", "feature")
+        self.write("crates/norn-api/src/refusal.rs", "\n")
+        head = self.commit("break")
+        self.assertEqual(self.run_script("--base", "main", "--head", head).returncode, 1)
+
+    def test_a_merge_group_checks_each_merge_against_what_it_adds(self):
         base = self.git("rev-parse", "HEAD")
-        self.git("switch", "-q", "-c", "additive")
-        self.write("crates/norn-api/src/refusal.rs", 'pub const SCOPE_DENIED: &str = "scope.denied";\npub const NEW: &str = "scope.new";\n')
-        additive = self.commit("additive")
+        self.git("switch", "-q", "-c", "approving")
+        self.approve("D85", "openapi /v1/x: endpoint removed")
+        approving = self.commit("approval without a break")
         self.git("switch", "-q", "-c", "breaking", base)
         self.write(cd.OPENAPI, openapi({}, {}))
         breaking = self.commit("break")
         self.git("switch", "-q", "--detach", base)
-        self.git("merge", "-q", "--no-ff", "-m", "queue 1", additive)
+        self.git("merge", "-q", "--no-ff", "-m", "queue 1", approving)
         self.git("merge", "-q", "--no-ff", "-m", "queue 2", breaking)
         head = self.git("rev-parse", "HEAD")
-        bodies = self.root / ".bodies.json"
-        bodies.write_text(json.dumps({additive: ["fine"], breaking: ["no marker"]}))
-        refused = self.run_script("--merge-group", base, head, "--bodies-file", str(bodies))
+        # Another queued pull request's approval does not approve this break.
+        refused = self.run_script("--merge-group", base, head)
         self.assertEqual(refused.returncode, 1, refused.stdout)
         self.assertIn("endpoint removed", refused.stdout)
-        # The marker on another queued pull request does not approve this one.
-        bodies.write_text(json.dumps({additive: ["contract-break-approved: D85"], breaking: ["no marker"]}))
-        self.assertEqual(self.run_script("--merge-group", base, head, "--bodies-file", str(bodies)).returncode, 1)
-        bodies.write_text(json.dumps({additive: ["fine"], breaking: ["contract-break-approved: #1234"]}))
-        self.assertEqual(self.run_script("--merge-group", base, head, "--bodies-file", str(bodies)).returncode, 0)
 
-    def test_ci_reads_the_current_body_and_falls_back_to_the_event(self):
+    def test_ci_judges_the_pull_request_and_skips_other_events(self):
         self.git("switch", "-q", "-c", "feature")
         self.write("crates/norn-api/src/refusal.rs", "\n")
         head = self.commit("break")
-        event = {"pull_request": {"number": 7, "body": "stale", "base": {"sha": self.git("rev-parse", "main")}, "head": {"sha": head}}}
-        calls = []
-
-        def api(body):
-            def get(path):
-                calls.append(path)
-                if body is None:
-                    raise OSError("rate limited")
-                return {"body": body}
-            return get
-
+        event = {"pull_request": {"number": 7, "base": {"sha": self.git("rev-parse", "main")}, "head": {"sha": head}}}
         cwd = Path.cwd()
         try:
             import os
             os.chdir(self.root)
-            self.assertFalse(cd.ci("pull_request", event, "o/r", api("still no marker")))
-            self.assertEqual(calls, ["/repos/o/r/pulls/7"])
-            self.assertTrue(cd.ci("pull_request", event, "o/r", api("contract-break-approved: D85")))
-            self.assertFalse(cd.ci("pull_request", event, "o/r", api(None)))
-            event["pull_request"]["body"] = "contract-break-approved: #12"
-            self.assertTrue(cd.ci("pull_request", event, "o/r", api(None)))
-            # A clean change never calls the API; other events check nothing.
-            calls.clear()
-            self.git("switch", "-q", "main")
-            clean = {"pull_request": {**event["pull_request"], "head": {"sha": self.git("rev-parse", "HEAD")}}}
-            self.assertTrue(cd.ci("pull_request", clean, "o/r", api(None)))
-            self.assertTrue(cd.ci("push", {}, "o/r", api(None)))
-            self.assertEqual(calls, [])
+            self.assertFalse(cd.ci("pull_request", event))
+            self.approve("#12", "refusal code scope.denied: removed")
+            event["pull_request"]["head"]["sha"] = self.commit("approve")
+            self.assertTrue(cd.ci("pull_request", event))
+            self.assertTrue(cd.ci("push", {}))
         finally:
             os.chdir(cwd)
 
@@ -572,6 +655,9 @@ class Scenarios(unittest.TestCase):
         self.assertIn("crates/norn-ir/schema/action.schema.json", document["schemas"])
         self.assertIn("init", document["authoringCli"]["commands"])
         self.assertIn("check", document["cli"].get("subcommands", {}))
+        self.assertIn("defs.stale", document["refusalCodes"])
+        self.assertIn(cd.SCHEMA_FILES[0], document["schemas"])
+        self.assertEqual(document["unenrolled"], [])
 
 
 if __name__ == "__main__":

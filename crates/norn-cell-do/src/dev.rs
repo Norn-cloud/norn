@@ -21,6 +21,14 @@
 //!   so the manifest's all-grants developer never leaves the machine.
 //! - HOST-REOPEN-1: a restart reopens the cell at its active revision without
 //!   writing.
+//! - DEV-CONFINED-1: the cell and the session files stay inside the project:
+//!   the manifest's cell is a relative path under the project root, and the
+//!   token and descriptor are owner-only files never written through a symlink.
+//!
+//! Stability: the `--json` events and the `.norn/dev.json` descriptor
+//! (`norn-dev/1`) are experimental, not a frozen contract (D84). The
+//! descriptor and the `ready` event say so with `"stability": "experimental"`.
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead as _, BufReader, Write as _};
@@ -101,6 +109,7 @@ struct ManifestDev {
 
 /// A setup or usage failure: a stable code, an actionable message and the
 /// shared exit status (2 usage, 3 setup).
+#[derive(Debug)]
 struct Failure {
     code: &'static str,
     message: String,
@@ -211,9 +220,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
             ),
         ));
     }
-    let state = root.join(".norn");
-    std::fs::create_dir_all(&state)
-        .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", state.display())))?;
+    let state = private_dir(&root)?;
     let _lock = lock(&state)?;
     let token = token()?;
     write_private(&state.join("dev.token"), &format!("{}\n", token.bearer))?;
@@ -221,7 +228,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         org_id: manifest.scope.org_id.clone(),
         environment_id: manifest.scope.environment_id.clone(),
     };
-    let cell_path = root.join(&manifest.cell);
+    let cell_path = cell_path(&root, &manifest.cell)?;
     let serving: http::Serving = Arc::new(RwLock::new(reopen(
         &cell_path,
         &scope,
@@ -271,8 +278,9 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         session.ready(out, active)?;
     }
     let lines = spawn_worker(&args.worker, &root)?;
+    let mut pending = VecDeque::new();
     let mut ready = active.is_some();
-    while let Some(event) = newest(&lines) {
+    while let Some(event) = newest(&lines, &mut pending) {
         let kind = event.get("event").and_then(Value::as_str);
         if kind == Some("compiled") {
             if let Some(installed) = session.compiled(out, &serving, &cell_path, &event)? {
@@ -299,20 +307,34 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
     ))
 }
 
-/// DEV-SUPERSEDE-1: wait for the next worker event, then skip every older
-/// `compiled` generation already queued behind it.
-fn newest(lines: &Receiver<Value>) -> Option<Value> {
-    let mut event = lines.recv().ok()?;
-    while let Ok(next) = lines.try_recv() {
-        let compiled =
-            |value: &Value| value.get("event").and_then(Value::as_str) == Some("compiled");
-        if compiled(&event) && !compiled(&next) {
-            // A non-compile event is never skipped: handle it first.
-            return Some(next);
-        }
-        event = next;
+fn is_compiled(event: &Value) -> bool {
+    event.get("event").and_then(Value::as_str) == Some("compiled")
+}
+
+/// DEV-SUPERSEDE-1: wait for worker events, keep only the newest queued
+/// `compiled` generation, and hand out every other event first. Nothing but
+/// an older generation is ever dropped: a compiled event behind another kind
+/// of line stays queued in `pending`.
+fn newest(lines: &Receiver<Value>, pending: &mut VecDeque<Value>) -> Option<Value> {
+    if pending.is_empty() {
+        pending.push_back(lines.recv().ok()?);
     }
-    Some(event)
+    while let Ok(next) = lines.try_recv() {
+        pending.push_back(next);
+    }
+    if let Some(last) = pending.iter().rposition(is_compiled) {
+        *pending = std::mem::take(pending)
+            .into_iter()
+            .enumerate()
+            .filter(|(index, event)| *index == last || !is_compiled(event))
+            .map(|(_, event)| event)
+            .collect();
+    }
+    let first = pending
+        .iter()
+        .position(|event| !is_compiled(event))
+        .unwrap_or(0);
+    pending.remove(first)
 }
 
 fn spawn_worker(command: &[String], root: &Path) -> Result<Receiver<Value>, Failure> {
@@ -393,6 +415,7 @@ impl Session<'_> {
     fn descriptor(&self, active: &InstalledDefinitionSet) -> Value {
         json!({
             "format": "norn-dev/1",
+            "stability": "experimental",
             "pid": std::process::id(),
             "url": self.url,
             "tokenFile": ".norn/dev.token",
@@ -708,17 +731,211 @@ fn token() -> Result<Token, Failure> {
     })
 }
 
-/// Write a session file readable by the owner only.
+fn is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
+/// The project's `.norn` state directory, created owner-only. A symlinked
+/// `.norn` refuses: the session token must never land outside the project.
+fn private_dir(root: &Path) -> Result<PathBuf, Failure> {
+    let state = root.join(".norn");
+    if is_symlink(&state) {
+        return Err(Failure::setup(
+            "norn.dev.unsafe_state",
+            format!(
+                "{} is a symlink; norn dev keeps its session token only in a real .norn directory",
+                state.display()
+            ),
+        ));
+    }
+    std::fs::create_dir_all(&state)
+        .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", state.display())))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).map_err(
+            |error| Failure::setup("norn.dev.io", format!("{}: {error}", state.display())),
+        )?;
+    }
+    Ok(state)
+}
+
+/// The manifest's cell, which must be a relative path inside the project:
+/// no absolute path, no `..`, and no symlinked directory leading out of it.
+/// `norn dev` grants everything to the local developer, so it must never be
+/// pointable at another cell on the machine.
+fn cell_path(root: &Path, cell: &str) -> Result<PathBuf, Failure> {
+    use std::path::Component;
+    let outside = || {
+        Failure::setup(
+            "norn.project.cell_outside",
+            format!("norn.json cell {cell:?} must be a relative path inside the project"),
+        )
+    };
+    let relative = Path::new(cell);
+    if relative.as_os_str().is_empty()
+        || !relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(outside());
+    }
+    let path = root.join(relative);
+    let parent = path.parent().ok_or_else(outside)?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", parent.display())))?;
+    let real = parent
+        .canonicalize()
+        .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", parent.display())))?;
+    if !real.starts_with(root) || is_symlink(&path) {
+        return Err(outside());
+    }
+    Ok(path)
+}
+
+/// Write a session file readable by the owner only. The file is never
+/// followed through a symlink, and its mode is 0600 whether it is new or
+/// already existed (for example from a checkout).
 fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
+    let failed = |error: std::io::Error| {
+        Failure::setup("norn.dev.io", format!("{}: {error}", path.display()))
+    };
+    if is_symlink(path) {
+        return Err(Failure::setup(
+            "norn.dev.unsafe_state",
+            format!(
+                "{} is a symlink; norn dev refuses to write a session file through it",
+                path.display()
+            ),
+        ));
+    }
     let mut options = OpenOptions::new();
     options.create(true).truncate(true).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
-    options
-        .open(path)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
-        .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", path.display())))
+    let mut file = options.open(path).map_err(failed)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(failed)?;
+    }
+    file.write_all(text.as_bytes()).map_err(failed)
+}
+
+#[cfg(all(test, unix))]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "dev-host session-file and queue tests"
+)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    fn project() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        (dir, root)
+    }
+
+    #[test]
+    fn the_cell_stays_inside_the_project() {
+        let (_dir, root) = project();
+        assert!(cell_path(&root, ".norn/cell.sqlite").is_ok());
+        for cell in [
+            "/tmp/other.sqlite",
+            "../other.sqlite",
+            ".norn/../../other.sqlite",
+            "",
+        ] {
+            let refused = cell_path(&root, cell).err().unwrap();
+            assert_eq!(refused.code, "norn.project.cell_outside", "{cell}");
+        }
+        // A directory inside the project that links out is outside too.
+        let elsewhere = tempfile::tempdir().unwrap();
+        symlink(elsewhere.path(), root.join("linked")).unwrap();
+        assert_eq!(
+            cell_path(&root, "linked/cell.sqlite").err().unwrap().code,
+            "norn.project.cell_outside"
+        );
+        // So is a cell file that is itself a symlink.
+        std::fs::create_dir_all(root.join("cells")).unwrap();
+        symlink(
+            elsewhere.path().join("x.sqlite"),
+            root.join("cells/cell.sqlite"),
+        )
+        .unwrap();
+        assert_eq!(
+            cell_path(&root, "cells/cell.sqlite").err().unwrap().code,
+            "norn.project.cell_outside"
+        );
+    }
+
+    #[test]
+    fn the_token_file_is_owner_only_and_never_followed() {
+        let (_dir, root) = project();
+        let state = private_dir(&root).unwrap();
+        let token = state.join("dev.token");
+        // A new file is created 0600.
+        write_private(&token, "a\n").unwrap();
+        assert_eq!(
+            std::fs::metadata(&token).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        // An existing world-readable file (say, from a checkout) is narrowed.
+        std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&token, "b\n").unwrap();
+        assert_eq!(
+            std::fs::metadata(&token).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read_to_string(&token).unwrap(), "b\n");
+        // A symlinked token is refused and its target left alone.
+        std::fs::remove_file(&token).unwrap();
+        let target = root.join("victim");
+        std::fs::write(&target, "keep").unwrap();
+        symlink(&target, &token).unwrap();
+        assert_eq!(
+            write_private(&token, "c\n").err().unwrap().code,
+            "norn.dev.unsafe_state"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+    }
+
+    #[test]
+    fn a_symlinked_state_directory_is_refused() {
+        let (_dir, root) = project();
+        let elsewhere = tempfile::tempdir().unwrap();
+        symlink(elsewhere.path(), root.join(".norn")).unwrap();
+        assert_eq!(
+            private_dir(&root).err().unwrap().code,
+            "norn.dev.unsafe_state"
+        );
+    }
+
+    #[test]
+    fn a_compiled_generation_is_never_lost_behind_another_line() {
+        let (send, receive) = mpsc::channel();
+        let mut pending = VecDeque::new();
+        for event in [
+            json!({ "event": "compiled", "gen": 1 }),
+            json!({ "event": "compiled", "gen": 2 }),
+            json!(1),
+            json!(null),
+        ] {
+            send.send(event).unwrap();
+        }
+        // Other lines come out first, then only the newest generation.
+        assert_eq!(newest(&receive, &mut pending), Some(json!(1)));
+        assert_eq!(newest(&receive, &mut pending), Some(json!(null)));
+        assert_eq!(
+            newest(&receive, &mut pending),
+            Some(json!({ "event": "compiled", "gen": 2 }))
+        );
+        assert!(pending.is_empty());
+    }
 }

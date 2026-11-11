@@ -171,12 +171,19 @@ fn lifecycle_goal_cap_is_checked_before_append() {
     );
     assert_eq!(goals.len(), 8_192);
 }
-proptest::proptest! {
-    #[test]
-    fn lifecycle_exact_guard_identity(spaces in 1_usize..16) {
-        let left=challenge(&json!([chart("true")]),&json!([]));
-        let right=challenge(&json!([chart(&format!("true{}", " ".repeat(spaces)))]),&json!([]));
-        proptest::prop_assert_ne!(left.body()["obligations"][0]["statement"]["lifecycleDigest"].clone(),
-            right.body()["obligations"][0]["statement"]["lifecycleDigest"].clone());
+#[test]
+fn lifecycle_exact_guard_identity() {
+    let left = challenge(&json!([chart("true")]), &json!([]));
+    let digest = &left.body()["obligations"][0]["statement"]["lifecycleDigest"];
+    for spaces in 1_usize..16 {
+        let right = challenge(
+            &json!([chart(&format!("true{}", " ".repeat(spaces)))]),
+            &json!([]),
+        );
+        assert_ne!(
+            digest,
+            &right.body()["obligations"][0]["statement"]["lifecycleDigest"],
+            "spaces {spaces}"
+        );
     }
 }
