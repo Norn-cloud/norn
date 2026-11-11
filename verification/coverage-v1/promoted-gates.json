@@ -1228,7 +1228,7 @@
       "role": "claim-evidence",
       "classifications": [
         {
-          "subsystem": "verification-integrity",
+          "subsystem": "assurance-certificates",
           "layer": "proof"
         }
       ],

@@ -53,6 +53,20 @@
     "#1187",
     "#1207"
    ]
+  },
+  {
+   "id": "INV-CERT-NORM-PRECEDENCE-DECISION",
+   "priority": "P0",
+   "statement": "The extracted norm-precedence decision core admits a declared order exactly when it is admissible (acyclic declared priority, no cross-layer clash, no defeat of a protected law), with an exact closure certificate; it accepts a context's resolution exactly when it is the unique stable survivor set; and every admitted order satisfies downstream-can't-defeat-upstream, strict-layer and overlay preservation.",
+   "assumptions": [
+    "The grounding (masks, layers, protection flags) handed to the core is the declared catalog's; it is the trusted shell TRUST-NORM-PRECEDENCE-SHELL.",
+    "Charon/Aeneas translate the production MIR faithfully (TRUST-CHARON-AENEAS-AND-CORE-MODELS)."
+   ],
+   "sourceIssues": [
+    "#718",
+    "#737",
+    "#1235"
+   ]
   }
  ]
 }

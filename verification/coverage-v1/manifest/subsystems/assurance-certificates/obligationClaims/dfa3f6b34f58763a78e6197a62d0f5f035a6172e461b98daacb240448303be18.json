@@ -1,0 +1,21 @@
+{
+  "order": 3,
+  "value": {
+    "id": "INV-CERT-NORM-PRECEDENCE-DECISION",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "reference_proved",
+    "residual": "The Aeneas extraction of norm_precedence/decision.rs (admits, resolution_holds) is proved sound and exact against NornSem.Norm for every input, and the precedence meta-theorems hold for every admitted order (#718 U3/U4); no implementation_proved claim is made (#969). The grounding, the closure and resolution search, the explainer and every other checker family remain outside it (TRUST-NORM-PRECEDENCE-SHELL).",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entrydfa3f6b34f58763a78e6197a62d0f5f035a6172e461b98daacb240448303be18.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entrydfa3f6b34f58763a78e6197a62d0f5f035a6172e461b98daacb240448303be18.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entrydfa3f6b34f58763a78e6197a62d0f5f035a6172e461b98daacb240448303be18.evidence.proof"
+      }
+    }
+  }
+}
