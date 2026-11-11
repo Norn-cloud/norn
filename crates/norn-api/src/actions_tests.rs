@@ -307,17 +307,15 @@ fn denials_are_one_opaque_document_and_commit_nothing() {
         assert_eq!(refused.status, 403);
         assert_eq!(serde_json::to_string(&refused).unwrap(), opaque);
     }
-    // The host operation grant never substitutes for the kernel's decision.
-    let kernel = call(
-        &host,
-        &scoped("org_demo"),
-        Some(HOST_ONLY),
-        MELT_ACTION,
-        &body,
-    )
-    .unwrap_err();
-    assert_eq!(kernel.status, 403);
-    assert_eq!(kernel.code, "action.permission_denied");
+    // The host grants every `CallAction` to HOST_ONLY; the kernel's decision
+    // denies it. That denial is the same document for a known action as for
+    // an unknown one, so it reveals no action's existence.
+    let (query, actor) = (scoped("org_demo"), Some(HOST_ONLY));
+    for action in [MELT_ACTION, "constitution.melt.unknown"] {
+        let refused = call(&host, &query, actor, action, &body).unwrap_err();
+        assert_eq!(refused.status, 403);
+        assert_eq!(serde_json::to_string(&refused).unwrap(), opaque);
+    }
     assert_eq!(dump(&host), before);
 }
 

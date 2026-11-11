@@ -174,6 +174,7 @@ pub fn decode_action_request(body: &str) -> Result<ActionRequest, Refusal> {
 /// # Errors
 /// One opaque 403, decided before any storage read, for a missing or
 /// unverified caller, a denied policy, a foreign scope or an unknown action;
+/// the same opaque 403 when the kernel's policy decision denies the call;
 /// 409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
 /// refusal, its detail disclosed only under an explicit diagnostic grant. A
 /// refusal commits nothing.
@@ -265,6 +266,13 @@ pub fn call_action<E: SqlEngine>(
         &KernelAuthorizer(host.authorizer.as_ref()),
     )
     .map_err(|error| {
+        let refusal = error.refusal();
+        // A kernel PDP denial is the same opaque document as an unknown or
+        // ungranted action, so a denied caller learns nothing of which
+        // actions exist. Typed refusals stay for calls the PDP authorized.
+        if refusal.category == norn_kernel::RefusalCategory::Permission {
+            return action_denied();
+        }
         crate::refusal_disclosure::project_refusal(
             host.authorizer.as_ref(),
             &RefusalDetailRequest {
@@ -272,7 +280,7 @@ pub fn call_action<E: SqlEngine>(
                 actor,
                 action_id,
             },
-            error.refusal(),
+            refusal,
         )
     })?;
     let store = cell.store();

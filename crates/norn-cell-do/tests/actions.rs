@@ -332,20 +332,28 @@ fn the_route_refuses_before_any_effect() {
         Some(OPERATOR),
         &body,
     ));
-    denied(send(
+    let unknown = send(
         &cell,
         "POST",
         "/v1/actions/constitution.melt.unknown",
         SCOPE,
         Some(OPERATOR),
         &body,
-    ));
-    // A verified principal the PDP grants nothing: the kernel refuses the call.
-    let (status, forbidden) = post(&cell, Some(VIEWER), &body);
-    assert_eq!(
-        (status, forbidden["code"].as_str()),
-        (403, Some("action.permission_denied"))
     );
+    denied(unknown.clone());
+    // A verified principal the host admits but the PDP grants nothing: the
+    // kernel's denial is byte for byte the unknown-action document.
+    let forbidden = post(&cell, Some(VIEWER), &body);
+    assert_eq!(forbidden, unknown);
+    let unknown_for_viewer = send(
+        &cell,
+        "POST",
+        "/v1/actions/constitution.melt.unknown",
+        SCOPE,
+        Some(VIEWER),
+        &body,
+    );
+    assert_eq!(forbidden, unknown_for_viewer);
     // A writer that records no loss breaks the fine-mass law: 10 != 8 + 0.
     let law = melt_body("melt-3", "10", "8", "law");
     let (status, violated) = post(&cell_with(OMITS_LOSS), Some(OPERATOR), &law);
