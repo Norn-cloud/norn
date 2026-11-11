@@ -35,6 +35,46 @@ import { type CompilerLimits, SyntaxCompiler, checkClosure, diagnostic, exactNum
 import { SchemaProjection } from "./schema.ts"
 import { CompileError } from "./types.ts"
 
+/** A law subject as an expression input: its record schema and its temporal property paths. */
+interface SubjectSchema {
+  readonly schema: S.ValueSchema
+  readonly temporal: ReadonlyMap<string, "date" | "timestamp">
+}
+
+/**
+ * Ordering on raw date/timestamp properties is parsed explicitly
+ * (dx-spec §4.5): `self.due_date >= self.issue_date` becomes
+ * `date(self.due_date) >= date(self.issue_date)`, and a string literal
+ * compared with one is parsed the same way. norn-zen/6 refuses ordering on
+ * raw temporal values and on mixed raw/parsed operands.
+ */
+function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "timestamp">): X.Expr {
+  const kindOf = (e: X.Expr): "date" | "timestamp" | undefined =>
+    e._tag === "Ref" && e.name === "input" ? temporal.get(e.path.join(".")) : X.temporalKind(e)
+  const walk = (e: X.Expr): X.Expr => {
+    switch (e._tag) {
+      case "Compare": {
+        const left = walk(e.left), right = walk(e.right)
+        if (e.op === "==" || e.op === "!=") return { ...e, left, right }
+        const kind = kindOf(left) ?? kindOf(right)
+        if (!kind) return { ...e, left, right }
+        const parse = (side: X.Expr): X.Expr => (X.temporalKind(side) ? side : (side._tag === "Ref" && kindOf(side)) || (side._tag === "Literal" && typeof side.value === "string") ? X.call(kind, side) : side)
+        return { ...e, left: parse(left), right: parse(right) }
+      }
+      case "Binary": case "Logical": return { ...e, left: walk(e.left), right: walk(e.right) }
+      case "Not": return { ...e, operand: walk(e.operand) }
+      case "Conditional": return { ...e, condition: walk(e.condition), yes: walk(e.yes), no: walk(e.no) }
+      case "Coalesce": return { ...e, value: walk(e.value), fallback: walk(e.fallback) }
+      case "Call": return { ...e, args: e.args.map(walk) }
+      case "Closure": return { ...e, list: walk(e.list), body: walk(e.body) }
+      case "List": return { ...e, items: e.items.map(walk) }
+      case "Record": return { ...e, fields: e.fields.map(([k, v]) => [k, walk(v)] as const) }
+      default: return e
+    }
+  }
+  return walk(expr)
+}
+
 /** One lowered definition: an object type or interface, an action, or an access policy. */
 export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef
 
@@ -1004,10 +1044,170 @@ class DefinitionCompiler {
   }
 
   private law(call: ts.CallExpression): L.LawDef {
+    const first = call.arguments[0] && this.deref(call.arguments[0])
+    if (first && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))) return this.lawV2(call)
     const members = this.meta(call, ["id", "title", "version", "law", "dependencies"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const id = this.string(need("id"))
     return L.law({ id, title: this.string(need("title")), version: this.string(need("version")), law: this.lawBody(need("law"), id) as unknown as L.LawIR, dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+  }
+
+  /**
+   * `Norn.law(name, { on, when, must | never | eventually, within, severity, because, id })`
+   * (A3, #1176; dx-spec §4.5). Everything but the meaning is inferred: the id
+   * `<namespace>.<Type>.<name>`, `scope` rooted at the subject entity,
+   * `lawVersion`, the owner (the subject's namespace), provenance, the
+   * artifact version and the entity dependency (the subject's).
+   */
+  private lawV2(call: ts.CallExpression): L.LawDef {
+    if (call.arguments.length !== 2) throw new CompileError("NORN-FLOW-LITERAL", "a law takes its name and one spec object", call)
+    const name = this.string(call.arguments[0]!)
+    if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new CompileError("NORN-FLOW-LITERAL", `law name ${JSON.stringify(name)} must be snake_case`, call.arguments[0]!)
+    const spec = this.closedRecord(call.arguments[1]!, ["on", "when", "must", "never", "eventually", "within", "severity", "because", "id", "unless"], ["on", "because"])
+    const on = spec.get("on")!
+    const { call: subjectCall, members: subjectMembers } = this.referenced(on, ANY_TYPE, "a Norn.type or Norn.interfaceType definition")
+    const subject = this.string(this.member(subjectMembers, "name", subjectCall))
+    const version = this.string(this.member(subjectMembers, "version", subjectCall))
+    const self = this.subjectSchema(subjectCall, subjectMembers, true, new Set())
+    const id = spec.has("id") ? this.string(spec.get("id")!) : `${subject}.${name}`
+    const artifactId = `${id}.law`
+    if (spec.has("unless")) throw new CompileError("NORN-FLOW-LITERAL", "`unless` exceptions are engine gap §8.1 (defeasible laws) and do not lower yet", spec.get("unless")!)
+    const modalities = (["must", "never", "eventually"] as const).filter((k) => spec.has(k))
+    if (modalities.length !== 1) throw new CompileError("NORN-FLOW-LITERAL", "a law takes exactly one of must, never or eventually", call.arguments[1]!)
+    const modality = modalities[0]!
+    const severityNode = spec.get("severity")
+    const severity = severityNode ? this.string(severityNode) : "error"
+    if (severity !== "error" && severity !== "warning") throw new CompileError("NORN-FLOW-LITERAL", "severity is \"error\" or \"warning\"; override severity is engine gap §8.2", severityNode!)
+    const predicate = (node: ts.Expression, pointer: string): string => {
+      this.sourceMap.push({ artifactId, pointer, at: this.at(node) })
+      return this.lambda(node, self)
+    }
+    const within = spec.get("within")
+    const timing = within ? this.lawTiming(within, self) : undefined
+    const when = spec.get("when")
+    return L.law({
+      id: artifactId,
+      title: this.string(spec.get("because")!),
+      version,
+      inferSourcePath: true,
+      law: {
+        lawVersion: "0.1",
+        id,
+        owner: subject.slice(0, subject.lastIndexOf(".")),
+        severity,
+        rationale: this.string(spec.get("because")!),
+        provenance: { source: "authoring_sdk" },
+        scope: { root: { kind: "entity", id: subject }, objectTypes: [subject] },
+        subject,
+        ...(when ? { condition: predicate(when, "/payload/condition") } : {}),
+        modality: { kind: modality === "must" ? "always" : modality },
+        ...(timing ? { timing } : {}),
+        response: { kind: "predicate", expression: predicate(spec.get(modality)!, "/payload/response/expression") },
+      },
+      dependencies: [{ artifactId: `${subject}.${this.id(subjectCall) === INTERFACE ? "interface" : "entity"}`, kind: "entity", version, required: true }],
+    })
+  }
+
+  private lawTiming(input: ts.Expression, self: SubjectSchema): L.LawTiming {
+    const m = this.closedRecord(input, ["days", "hours", "before"], [])
+    const before = m.get("before")
+    if (before) {
+      if (m.size !== 1) throw new CompileError("NORN-FLOW-LITERAL", "within takes either before or days/hours", input)
+      const fn = this.deref(before)
+      const param = ts.isArrowFunction(fn) ? fn.parameters[0] : undefined
+      const body = ts.isArrowFunction(fn) ? fn.body : undefined
+      if (!param || !ts.isIdentifier(param.name) || !body || !ts.isPropertyAccessExpression(body) || !ts.isIdentifier(body.expression) || body.expression.text !== param.name.text) {
+        throw new CompileError("NORN-FLOW-EXPRESSION", "within.before is a bare read of a timestamp property (self => self.due_at); a computed deadline needs an IR expression form that does not exist yet", before)
+      }
+      const property = body.name.text
+      if (self.temporal.get(property) !== "timestamp") throw new CompileError("NORN-FLOW-SLICE", `within.before reads ${property}, which is not a timestamp property of the subject`, body.name)
+      return { kind: "before_deadline", property }
+    }
+    const number = (key: string): number => {
+      const node = m.get(key)
+      if (!node) return 0
+      const value = this.deref(node)
+      if (!ts.isNumericLiteral(value) || !/^[0-9]+$/.test(value.text)) throw new CompileError("NORN-FLOW-LITERAL", `within.${key} is a whole number literal`, node)
+      return Number(value.text)
+    }
+    const millis = BigInt(number("days")) * 86_400_000n + BigInt(number("hours")) * 3_600_000n
+    if (millis === 0n) throw new CompileError("NORN-FLOW-LITERAL", "within needs a positive days or hours", input)
+    return { kind: "within", millis: millis.toString() }
+  }
+
+  /** Lower a law lambda `self => ...` over the subject to ZEN text. */
+  private lambda(input: ts.Expression, self: SubjectSchema): string {
+    const fn = this.deref(input)
+    if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) throw new CompileError("NORN-FLOW-CAPTURE", "a law predicate is an inline lambda (self => ...)", input)
+    if (fn.parameters.length !== 1) throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", "a law predicate takes one parameter, the subject", fn)
+    const syntax = new SyntaxCompiler(this.profile, this.program, fn.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT)
+    const rows = syntax.decisionRows(fn)
+    this.warnings.push(...syntax.warnings)
+    if (rows.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "use a conditional expression for a law predicate", fn)
+    const value = parsedTemporal(rows[0]!.value, self.temporal)
+    const scope: X.Scope = new Map([["input", { zen: "self", schema: self.schema }]])
+    try {
+      if (X.typeOf(value, scope).type !== "boolean") throw new X.ExprError("NORN-FLOW-EXPRESSION", "a law predicate must be Boolean")
+      return X.render(value, scope)
+    } catch (error) {
+      if (error instanceof X.ExprError) throw new CompileError(error.code, error.message, syntax.expressionSources.get(rows[0]!.value) ?? fn)
+      throw error
+    }
+  }
+
+  /**
+   * What a law lambda reads as `self`: the subject's properties (own, then
+   * inherited through `extends` and `implements`) and, one level deep, the
+   * properties of its linked types. Temporal properties are recorded by path
+   * so ordering lowers through `date(...)` / `timestamp(...)`.
+   */
+  private subjectSchema(call: ts.CallExpression, members: Members, links: boolean, seen: Set<ts.CallExpression>): SubjectSchema {
+    if (seen.has(call)) throw new CompileError("NORN-FLOW-VALUE", "cyclic type inheritance", call)
+    seen.add(call)
+    const properties: Record<string, S.ValueSchema> = {}
+    const temporal = new Map<string, "date" | "timestamp">()
+    const inherit = (node: ts.Expression | undefined, kinds: ReadonlySet<string>, many: boolean): void => {
+      if (!node) return
+      for (const parent of many ? this.list(node) : [node]) {
+        const e = this.deref(parent)
+        if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) continue // installed registry types are opaque here
+        const ref = this.referenced(parent, kinds, "a type definition")
+        const inherited = this.subjectSchema(ref.call, ref.members, false, seen)
+        Object.assign(properties, (inherited.schema as S.ObjectSchema).properties)
+        for (const [k, v] of inherited.temporal) temporal.set(k, v)
+      }
+    }
+    if (this.id(call) === INTERFACE) inherit(members.get("extends"), INTERFACES, true)
+    else {
+      inherit(members.get("implements"), INTERFACES, true)
+      inherit(members.get("extends"), OBJECT_TYPES, false)
+    }
+    for (const p of this.schemas.properties(this.schemas.read(this.member(members, "properties", call)))) {
+      const t = p.projection.type
+      const kind = t.kind === "date" || t.kind === "timestamp" ? t.kind : undefined
+      if (kind) temporal.set(p.id, kind); else temporal.delete(p.id)
+      const base: S.ValueSchema = t.kind === "integer" ? S.integer
+        : t.kind === "decimal" || t.kind === "decimal-binding" ? S.number
+        : t.kind === "boolean" ? S.boolean
+        : t.kind === "enum" ? S.text(t.values.map((v) => v.value))
+        : S.text()
+      properties[p.id] = p.projection.nullable ? S.nullable(base) : base
+    }
+    const linksNode = members.get("links")
+    if (links && linksNode) {
+      for (const node of this.list(linksNode)) {
+        const m = this.record(node)
+        const target = this.deref(this.member(m, "target", node))
+        if (ts.isStringLiteral(target) || ts.isNoSubstitutionTemplateLiteral(target)) continue
+        const ref = this.referenced(target, ANY_TYPE, "a type definition")
+        const linked = this.subjectSchema(ref.call, ref.members, false, new Set())
+        const decl = this.id(call) === INTERFACE ? this.interfaceLink(node) : this.link(node)
+        properties[decl.id] = decl.cardinality.to === "many" ? S.array(linked.schema) : decl.cardinality.required ? linked.schema : S.nullable(linked.schema)
+        for (const [k, v] of linked.temporal) temporal.set(`${decl.id}.${k}`, v)
+      }
+    }
+    seen.delete(call)
+    return { schema: S.record(properties), temporal }
   }
 
   /**

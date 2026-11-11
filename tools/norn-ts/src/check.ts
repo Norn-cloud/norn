@@ -57,10 +57,18 @@ export interface CheckOptions {
 
 /** Array methods that lower to norn-zen/6 closures; `.length` lowers to `len`. */
 const ARRAY_CLOSURES: ReadonlySet<string> = new Set(["some", "every", "filter", "map"])
+/** `Norn.law(name, spec)` members whose values are predicates over the subject. */
+const LAW_PREDICATES: ReadonlySet<string> = new Set(["when", "must", "never", "eventually"])
 /** Element names that would shadow a Norn expression binding or a zen keyword. */
 export const RESERVED_CLOSURE_NAMES: ReadonlySet<string> = new Set(["self", "actor", "input", "slice", "event", "and", "or", "not", "in", "as"])
 
 interface Ctx {
+  /**
+   * Inside a `Norn.law(name, { on })` predicate: the subject's date and
+   * timestamp properties are strings in TypeScript, so ordering two strings is
+   * left to the compiler, which knows the property types and refuses the rest.
+   */
+  readonly lawSubject?: boolean
   /** Inside the body argument of a `Norn.flow` call. */
   readonly flow: boolean
   /** Directly inside an `Effect.gen` generator body (yield* allowed). */
@@ -462,6 +470,10 @@ class FileWalk {
 
   private isBoolean(node: ts.Node): boolean {
     return this.every(this.typeOf(node), (t) => (t.flags & ts.TypeFlags.BooleanLike) !== 0)
+  }
+
+  private isString(node: ts.Node): boolean {
+    return this.every(this.typeOf(node), (t) => (t.flags & ts.TypeFlags.StringLike) !== 0)
   }
 
   private isNumber(node: ts.Node): boolean {
@@ -1032,7 +1044,7 @@ class FileWalk {
       case ts.SyntaxKind.LessThanEqualsToken:
       case ts.SyntaxKind.GreaterThanToken:
       case ts.SyntaxKind.GreaterThanEqualsToken:
-        if (operands() && !(this.isNumber(b.left) && this.isNumber(b.right)) && !this.sameParsedTemporal(b.left, b.right)) {
+        if (operands() && !(this.isNumber(b.left) && this.isNumber(b.right)) && !this.sameParsedTemporal(b.left, b.right) && !(ctx.lawSubject && this.isString(b.left) && this.isString(b.right))) {
           this.report(b, "NORN-FLOW-EXPRESSION", "ordering comparisons are qualified for numbers and for two parsed dates or timestamps (Norn.parseDate, Norn.addDays, Norn.parseTimestamp)")
         }
         return
@@ -1386,6 +1398,26 @@ class FileWalk {
       }
       case "effect/Function#pipe":
         return this.args(call, eff)
+      case "@norn/authoring#Norn.law": {
+        // `law(name, { on, when, must | never | eventually, within, ... })` (A3, #1176):
+        // its predicates are pure expression callbacks over the subject.
+        const spec = a[1] && this.unwrap(a[1])
+        if (!a[0] || !spec || !ts.isObjectLiteralExpression(spec)) return this.args(call, ctx)
+        this.expr(a[0], ctx)
+        for (const p of spec.properties) {
+          if (!ts.isPropertyAssignment(p) || !(ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) { this.report(p, "NORN-FLOW-LITERAL", "a law spec takes plain name: value members"); continue }
+          const value = this.unwrap(p.initializer)
+          if (LAW_PREDICATES.has(p.name.text)) this.callback(p.initializer, call, { ...ctx, lawSubject: true }, true)
+          else if (p.name.text === "within" && ts.isObjectLiteralExpression(value)) {
+            for (const w of value.properties) {
+              if (ts.isPropertyAssignment(w) && ts.isIdentifier(w.name) && w.name.text === "before") this.callback(w.initializer, call, ctx, true)
+              else if (ts.isPropertyAssignment(w)) this.expr(w.initializer, ctx)
+              else this.report(w, "NORN-FLOW-LITERAL", "within takes days, hours or before")
+            }
+          } else this.expr(p.initializer, ctx)
+        }
+        return
+      }
       default:
         return this.args(call, ctx)
     }
