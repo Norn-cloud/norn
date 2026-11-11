@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # #717 (D78): Charon/Aeneas extract the production exact-arithmetic core and
-# Lean proves it against the written VAL-EXACT-1 / FOLD-ARITHMETIC semantics
-# in verification/exact-arith-v1. Every seeded rounding and overflow mutant
+# Lean proves it against the written VAL-EXACT-1 / FOLD-ARITHMETIC /
+# EXACT-RATIONAL-1 semantics in verification/exact-arith-v1. Every seeded rounding and overflow mutant
 # must then extract and fail the same proof.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,12 +12,17 @@ aeneas="$aeneas_root/bin/aeneas"
 proof_root="$repo_root/verification/exact-arith-v1"
 result="${NORN_VERIFICATION_RESULT_ROOT:-$repo_root/target/verification-results}/exact-arith-aeneas"
 decimal_source="crates/norn-checker/src/quantity_ledger/decimal.rs"
+rational_source="crates/norn-checker/src/exact_rational.rs"
 # The exact Lean sources this gate elaborates; nothing else may live there.
 proof_files=(
+  verification/exact-arith-v1/CoreModels.lean
   verification/exact-arith-v1/Decimal/FunsExternal.lean
   verification/exact-arith-v1/DecimalProof.lean
   verification/exact-arith-v1/DecimalReference.lean
+  verification/exact-arith-v1/ExactRational/FunsExternal.lean
   verification/exact-arith-v1/QuotientProof.lean
+  verification/exact-arith-v1/RationalProof.lean
+  verification/exact-arith-v1/RationalReference.lean
   verification/exact-arith-v1/RoundingMath.lean
   verification/exact-arith-v1/RoundingReference.lean
   verification/exact-arith-v1/ScaledQuotient/FunsExternal.lean
@@ -36,17 +41,24 @@ export CARGO_TARGET_DIR="$result/target"
 rm -rf "$result/baseline" "$result/common" "$result/mutants"
 mkdir -p "$result/common"
 
-# extract <workspace> <out>: translate both fragments from <workspace>'s sources.
+# extract <workspace> <out>: translate the fragments from <workspace>'s sources.
 # Each step returns on failure explicitly: callers also run this under `if !`.
 extract() {
   local tree="$1" out="$2"
-  mkdir -p "$out/Decimal" "$out/ScaledQuotient" || return
+  mkdir -p "$out/Decimal" "$out/ScaledQuotient" "$out/ExactRational" || return
   # decimal.rs uses pub(super), so it is compiled as the module it is in production.
   printf '#[path = "%s"]\npub mod decimal;\n' "$tree/$decimal_source" > "$out/decimal_root.rs" || return
   (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
     --start-from crate::decimal::canonical_parts --start-from crate::decimal::checked_pow10 \
     --dest-file "$out/decimal.llbc" -- --crate-name norn_checker_decimal --crate-type lib \
     --edition 2024 "$out/decimal_root.rs") || return
+  printf '#[path = "%s"]\npub mod exact_rational;\n' "$tree/$rational_source" \
+    > "$out/rational_root.rs" || return
+  # The whole module: Charon's --start-from does not take inherent methods.
+  (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
+    --start-from crate::exact_rational \
+    --dest-file "$out/exact_rational.llbc" -- --crate-name norn_checker_rational \
+    --crate-type lib --edition 2024 "$out/rational_root.rs") || return
   (cd "$tree" && "$charon" cargo --preset=aeneas --error-on-warnings \
     --start-from crate::scaled::rounded_quotient \
     --dest-file "$out/scaled_quotient.llbc" -- -p zen-expression --lib) || return
@@ -54,8 +66,11 @@ extract() {
     "$out/decimal.llbc" || return
   "$aeneas" -backend lean -dest "$out/ScaledQuotient" -emit-json -split-files \
     -warnings-as-errors "$out/scaled_quotient.llbc" || return
+  "$aeneas" -backend lean -dest "$out/ExactRational" -emit-json -split-files \
+    -warnings-as-errors "$out/exact_rational.llbc" || return
   cp "$proof_root/Decimal/FunsExternal.lean" "$out/Decimal/FunsExternal.lean" || return
-  cp "$proof_root/ScaledQuotient/FunsExternal.lean" "$out/ScaledQuotient/FunsExternal.lean"
+  cp "$proof_root/ScaledQuotient/FunsExternal.lean" "$out/ScaledQuotient/FunsExternal.lean" || return
+  cp "$proof_root/ExactRational/FunsExternal.lean" "$out/ExactRational/FunsExternal.lean"
 }
 
 # lean_check <out> <root> <module>: elaborate one module into <out>.
@@ -69,7 +84,7 @@ lean_check() {
 # generated <out>: the extracted code and its core models must elaborate.
 generated() {
   local out="$1" prefix module
-  for prefix in Decimal ScaledQuotient; do
+  for prefix in Decimal ScaledQuotient ExactRational; do
     for module in Types FunsExternal Funs; do
       lean_check "$out" "$out" "$prefix/$module" || return
     done
@@ -78,7 +93,7 @@ generated() {
 
 (cd "$lean_root" && lake build Aeneas)
 # The written semantics never import the extraction.
-for module in DecimalReference RoundingReference RoundingMath; do
+for module in CoreModels DecimalReference RoundingReference RoundingMath RationalReference; do
   lean_check "$result/common" "$proof_root" "$module"
 done
 
@@ -109,6 +124,31 @@ expected = {
         "core.num.I128.unsigned_abs",
         "core.option.Option.ok_or",
     }),
+    "ExactRational": ("norn_checker_rational", "crates/norn-checker/src/exact_rational.rs", {
+        f"norn_checker_rational.exact_rational.Rational.{name}" for name in (
+            "Insts.CoreFmtDebug.fmt", "Insts.CoreCloneClone.clone",
+            "Insts.CoreCmpPartialEqRational.eq", "Insts.CoreCmpEq.assert_fields_are_eq",
+            "normalize_loop0.body", "normalize_loop0", "normalize_loop1.body", "normalize_loop1",
+            "normalize", "new", "add", "mul", "checked_add", "checked_sub", "checked_mul",
+            "checked_div", "checked_neg", "cmp",
+        )
+    }, {
+        "I64.Insts.CoreConvertTryFromI128TryFromIntError.try_from",
+        "core.num.I128.checked_neg",
+        "core.num.I128.checked_abs",
+        "core.option.Option.Insts.CoreOpsTry_traitTry.branch",
+        "core.option.Option.Insts.CoreOpsTry_traitFromResidualOptionInfallible.from_residual",
+        "core.result.Result.ok",
+    }),
+}
+# Only the derived impls of the stored type itself may be extracted.
+derived = {
+    "ExactRational": {
+        f"norn_checker_rational.exact_rational.Rational.Insts.{name}" for name in (
+            "CoreFmtDebug", "CoreCloneClone", "CoreMarkerCopy", "CoreMarkerStructuralPartialEq",
+            "CoreCmpPartialEqRational", "CoreCmpEq",
+        )
+    },
 }
 for prefix, (crate, source, local, external) in expected.items():
     manifest = json.loads((out / prefix / "translation.json").read_text(encoding="utf-8"))
@@ -127,15 +167,18 @@ for prefix, (crate, source, local, external) in expected.items():
                 raise SystemExit(f"{prefix}: {function['lean_name']} is not the production body")
         elif not function.get("is_opaque"):
             raise SystemExit(f"{prefix}: {function['lean_name']} should be a modelled external")
-    for collection in ("globals", "trait_decls", "trait_impls"):
+    for collection in ("globals", "trait_decls"):
         if manifest.get(collection) != []:
             raise SystemExit(f"{prefix}: unexpected extracted {collection}")
+    impls = {impl.get("lean_name") for impl in manifest.get("trait_impls", [])}
+    if impls != derived.get(prefix, set()):
+        raise SystemExit(f"{prefix}: unexpected trait impls {sorted(impls)}")
     if "sorry" in "".join(p.read_text(encoding="utf-8") for p in (out / prefix).glob("*.lean")):
         raise SystemExit(f"{prefix}: extraction contains sorry")
 PYMANIFEST
 generated "$baseline"
 proof_output=""
-for module in DecimalProof QuotientProof; do
+for module in DecimalProof QuotientProof RationalProof; do
   if module_output="$(lean_check "$baseline" "$proof_root" "$module" 2>&1)"; then
     proof_output+="$module_output"$'\n'
   else
@@ -149,12 +192,21 @@ expected_axioms="$(printf '%s\n' \
   "'Norn.QuantityLedger.canonical_parts_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.QuantityLedger.canonical_parts_unique' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.QuantityLedger.checked_pow10_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
-  "'Norn.OrderedFold.rounded_quotient_correct' depends on axioms: [propext, Classical.choice, Quot.sound]")"
+  "'Norn.OrderedFold.rounded_quotient_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.ExactRational.normalize_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.ExactRational.new_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.ExactRational.checked_add_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.ExactRational.checked_sub_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.ExactRational.checked_mul_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.ExactRational.checked_div_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.ExactRational.checked_neg_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.ExactRational.cmp_correct' depends on axioms: [propext, Classical.choice, Quot.sound]")"
 test "${proof_output%$'\n'}" = "$expected_axioms"
 # Check the exact propositions, not only the theorem names or an exit code.
 printf '%s\n' \
   'import DecimalProof' \
   'import QuotientProof' \
+  'import RationalProof' \
   'open Aeneas.Std in' \
   'example (u : I128) (s : U8) : ∃ c s'"'"', norn_checker_decimal.decimal.canonical_parts u s = .ok (c, s'"'"') ∧' \
   '    Norn.QuantityLedger.IsCanonicalForm u.val s.val c.val s'"'"'.val :=' \
@@ -169,6 +221,20 @@ printf '%s\n' \
   '      Norn.OrderedFold.project r =' \
   '        Norn.OrderedFold.quantize (Norn.OrderedFold.modeOf rounding) n.val d.val :=' \
   '  Norn.OrderedFold.rounded_quotient_correct rounding n d' \
+  'open Aeneas.Std in' \
+  'example (n d : I128) : ∃ o, norn_checker_rational.exact_rational.Rational.normalize n d = .ok o ∧' \
+  '    o.map Norn.ExactRational.components = Norn.ExactRational.normalizeSpec n.val d.val :=' \
+  '  Norn.ExactRational.normalize_correct n d' \
+  'example (r s : norn_checker_rational.exact_rational.Rational) (hr : 0 < r.denominator.val)' \
+  '    (hs : 0 < s.denominator.val) :' \
+  '    ∃ o, norn_checker_rational.exact_rational.Rational.checked_div r s = .ok o ∧' \
+  '      o.map Norn.ExactRational.components = (if Norn.ExactRational.value s = 0 then none' \
+  '        else Norn.ExactRational.represent (Norn.ExactRational.value r / Norn.ExactRational.value s)) :=' \
+  '  Norn.ExactRational.checked_div_correct r s hr hs' \
+  'example (r s : norn_checker_rational.exact_rational.Rational) (hr : 0 < r.denominator.val)' \
+  '    (hs : 0 < s.denominator.val) : norn_checker_rational.exact_rational.Rational.cmp r s =' \
+  '      .ok (some (compare (Norn.ExactRational.value r) (Norn.ExactRational.value s))) :=' \
+  '  Norn.ExactRational.cmp_correct r s hr hs' \
   | (cd "$lean_root" && LEAN_PATH="$baseline:$result/common" lake env lean -DwarningAsError=true --stdin)
 echo "exact-arith: production fragments proved against the written semantics"
 
@@ -186,6 +252,7 @@ from pathlib import Path
 tree, root = Path(sys.argv[1]), Path(sys.argv[2])
 scaled = "vendor/zen/core/expression/src/scaled.rs"
 decimal = "crates/norn-checker/src/quantity_ledger/decimal.rs"
+rational = "crates/norn-checker/src/exact_rational.rs"
 mutants = [
     ("rounding-half-even-ties-away", scaled, "magnitude > complement", "magnitude >= complement"),
     ("rounding-parity-inverted", scaled, "quotient % 2 != 0", "quotient % 2 == 0"),
@@ -204,6 +271,19 @@ mutants = [
      "value = value.checked_mul(10)?;", "value = value.checked_mul(10).unwrap_or(i128::MAX);"),
     ("overflow-canonical-intermediate-product", decimal,
      "unscaled /= 10;", "unscaled = unscaled * 10 / 100;"),
+    ("rational-not-reduced", rational, "break Some(a);", "break Some(1);"),
+    ("rational-sign-not-normalized", rational, "if denominator < 0 {", "if denominator < -1 {"),
+    ("rational-add-subtracts", rational,
+     ".checked_add(i128::from(rhs.numerator).checked_mul(i128::from(self.denominator))?)?;",
+     ".checked_sub(i128::from(rhs.numerator).checked_mul(i128::from(self.denominator))?)?;"),
+    ("rational-cmp-wrong-cross-product", rational,
+     ".cmp(&i128::from(rhs.numerator).checked_mul(i128::from(self.denominator))?),",
+     ".cmp(&i128::from(rhs.numerator).checked_mul(i128::from(rhs.denominator))?),"),
+    ("overflow-rational-clamped-store", rational,
+     "numerator: i64::try_from(numerator.checked_div(divisor)?).ok()?,",
+     "numerator: i64::try_from(numerator.checked_div(divisor)?).ok().unwrap_or(i64::MAX),"),
+    ("overflow-rational-unchecked-negation", rational,
+     "denominator = denominator.checked_neg()?;", "denominator = -denominator;"),
 ]
 for name, path, old, new in mutants:
     source = (tree / path).read_text(encoding="utf-8")
@@ -229,7 +309,7 @@ while read -r name path; do
     exit 1
   fi
   refuted=false
-  for module in DecimalProof QuotientProof; do
+  for module in DecimalProof QuotientProof RationalProof; do
     if ! lean_check "$out" "$proof_root" "$module" > "$result/mutants/$name/$module.log" 2>&1; then
       refuted=true
     fi

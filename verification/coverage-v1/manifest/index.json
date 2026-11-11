@@ -11,7 +11,11 @@
     "verification/exact-arith-v1/QuotientProof.lean": "scripts/verify-exact-arith-aeneas.sh",
     "verification/exact-arith-v1/RoundingMath.lean": "scripts/verify-exact-arith-aeneas.sh",
     "verification/exact-arith-v1/RoundingReference.lean": "scripts/verify-exact-arith-aeneas.sh",
-    "verification/exact-arith-v1/ScaledQuotient/FunsExternal.lean": "scripts/verify-exact-arith-aeneas.sh"
+    "verification/exact-arith-v1/ScaledQuotient/FunsExternal.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/CoreModels.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/ExactRational/FunsExternal.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/RationalReference.lean": "scripts/verify-exact-arith-aeneas.sh",
+    "verification/exact-arith-v1/RationalProof.lean": "scripts/verify-exact-arith-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [
