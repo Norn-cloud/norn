@@ -149,9 +149,101 @@ theorem commit_pins_bind_ok_iff {D R : Type} [DecidableEq D] [DecidableEq R]
   by_cases h₁ : m = dm <;> by_cases h₂ : r = t <;> by_cases h₃ : kg.val = rg.val <;>
     by_cases h₄ : sg.val = rg.val <;> simp [h₁, h₂, h₃, h₄, toCommitResult]
 
+/-! ## Concrete vectors
+
+Closed checks the kernel evaluates on the production code, so a seeded bug is
+refuted (`decide` finds the proposition false), not merely left unproved. -/
+
+/-- Decided equality on `Nat`, as the derived `PartialEq` of digests, commands
+    and runs. -/
+def natEq : core.cmp.PartialEq Nat Nat := { eq := fun a b => ok (decide (a = b)) }
+
+/-- Whether a production Boolean result is `e`. -/
+def boolIs (r : Result Bool) (e : Bool) : Bool :=
+  match r with
+  | ok b => b == e
+  | _ => false
+
+/-- A receipt that binds: every digest, command, generation and attempt agrees. -/
+def pins₀ : BindingPins Nat Nat where
+  requested := 1
+  receipt_digest := 1
+  receipt_result_identity := 2
+  receipt_command := 3
+  receipt_generation := 4#u64
+  receipt_attempt := 1#u32
+  record_receipt := 1
+  record_result_identity := 2
+  record_command := 3
+  record_generation := 4#u64
+  record_attempt := 1#u32
+  state_generation := 4#u64
+  state_cancelled := false
+  consumed := some ⟨3, 4#u64⟩
+  accepted := some ⟨1, 2, 4#u64⟩
+
+/-- The binding receipt, and each single pin broken. -/
+def receiptVectors : List (BindingPins Nat Nat × Bool) :=
+  [ (pins₀, true),
+    ({ pins₀ with requested := 9 }, false),
+    ({ pins₀ with record_receipt := 9 }, false),
+    ({ pins₀ with record_result_identity := 9 }, false),
+    ({ pins₀ with receipt_command := 9 }, false),
+    ({ pins₀ with receipt_generation := 5#u64 }, false),
+    ({ pins₀ with record_attempt := 2#u32 }, false),
+    ({ pins₀ with state_generation := 5#u64 }, false),
+    ({ pins₀ with state_cancelled := true }, false),
+    ({ pins₀ with consumed := none }, false),
+    ({ pins₀ with consumed := some ⟨9, 4#u64⟩ }, false),
+    ({ pins₀ with consumed := some ⟨3, 5#u64⟩ }, false),
+    ({ pins₀ with accepted := none }, false),
+    ({ pins₀ with accepted := some ⟨9, 2, 4#u64⟩ }, false),
+    ({ pins₀ with accepted := some ⟨1, 9, 4#u64⟩ }, false),
+    ({ pins₀ with accepted := some ⟨1, 2, 5#u64⟩ }, false) ]
+
+theorem receipt_vectors :
+    receiptVectors.all (fun v => boolIs (pins_bind natEq natEq v.1) v.2) = true := by
+  decide
+
+/-- Whether a production commit result is the expected written one. -/
+def commitIs (r : Result (core.result.Result Unit CommitPinRefusal))
+    (e : Except CommitRefusal Unit) : Bool :=
+  match r, e with
+  | ok (.Ok ()), .ok () => true
+  | ok (.Err .ManifestMismatch), .error .manifestMismatch => true
+  | ok (.Err .RunMismatch), .error .runMismatch => true
+  | _, _ => false
+
+/-- A receipt that binds its commit. -/
+def commit₀ : CommitPins Nat Nat where
+  manifest := 1
+  declared_manifest := 1
+  run := 2
+  target := 2
+  run_generation := 4#u64
+  record_generation := 4#u64
+  state_generation := 4#u64
+
+/-- The binding commit, each pin broken, and the manifest refusal winning. -/
+def commitVectors : List (CommitPins Nat Nat × Except CommitRefusal Unit) :=
+  [ (commit₀, .ok ()),
+    ({ commit₀ with declared_manifest := 9 }, .error .manifestMismatch),
+    ({ commit₀ with declared_manifest := 9, target := 9 }, .error .manifestMismatch),
+    ({ commit₀ with declared_manifest := 9, state_generation := 5#u64 },
+      .error .manifestMismatch),
+    ({ commit₀ with target := 9 }, .error .runMismatch),
+    ({ commit₀ with record_generation := 5#u64 }, .error .runMismatch),
+    ({ commit₀ with state_generation := 5#u64 }, .error .runMismatch) ]
+
+theorem commit_vectors :
+    commitVectors.all (fun v => commitIs (commit_pins_bind natEq natEq v.1) v.2) = true := by
+  decide
+
 end Norn.Kernel.Binding
 
 #print axioms Norn.Kernel.Binding.pins_bind_correspondence
 #print axioms Norn.Kernel.Binding.pins_bind_binds
 #print axioms Norn.Kernel.Binding.commit_pins_bind_correct
 #print axioms Norn.Kernel.Binding.commit_pins_bind_ok_iff
+#print axioms Norn.Kernel.Binding.receipt_vectors
+#print axioms Norn.Kernel.Binding.commit_vectors

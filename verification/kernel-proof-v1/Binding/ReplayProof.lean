@@ -113,6 +113,47 @@ theorem replay_same_iff {R A O I B : Type} [DecidableEq A] [DecidableEq O]
   rw [replay_decision_k6 iA iO iI iB hA hO hI hB ident inst hinst]
   by_cases h : callOf (ident recorded) = callOf (ident call) <;> simp [replay, toDecision, h]
 
+/-! ## Concrete vectors
+
+A closed check the kernel evaluates on the production code, so a seeded bug is
+refuted (`decide` finds the proposition false), not merely left unproved. -/
+
+/-- Decided equality on `Nat`, as the derived `PartialEq` of the production
+    identity fields. -/
+def natEq : core.cmp.PartialEq Nat Nat := { eq := fun a b => ok (decide (a = b)) }
+
+/-- The production `RecordedCall` shape: `same_call` over the call identity. -/
+def identityCall : RecordedCall (CallIdentity Nat Nat Nat Nat) :=
+  { same_call := same_call natEq natEq natEq natEq }
+
+/-- Whether a production decision is the expected written one. -/
+def decisionIs (r : Result (ReplayDecision (CallIdentity Nat Nat Nat Nat)))
+    (e : Replay (Call Nat Nat Nat Nat)) : Bool :=
+  match r, e with
+  | ok .Fresh, .fresh => true
+  | ok (.Replay x), .replay y => decide (callOf x = y)
+  | ok .Conflict, .conflict => true
+  | _, _ => false
+
+/-- The call under test. -/
+def call₀ : CallIdentity Nat Nat Nat Nat := ⟨1, 2, 3, 4, 5⟩
+
+/-- What the key holds, and what the written semantics decides. -/
+def replayVectors :
+    List (Option (Option (CallIdentity Nat Nat Nat Nat)) × Replay (Call Nat Nat Nat Nat)) :=
+  [ (none, .fresh),
+    (some none, .conflict),
+    (some (some ⟨1, 2, 3, 4, 5⟩), .replay ⟨1, 2, 3, 4, 5⟩),
+    (some (some ⟨9, 2, 3, 4, 5⟩), .conflict),
+    (some (some ⟨1, 9, 3, 4, 5⟩), .conflict),
+    (some (some ⟨1, 2, 9, 4, 5⟩), .conflict),
+    (some (some ⟨1, 2, 3, 9, 5⟩), .conflict),
+    (some (some ⟨1, 2, 3, 4, 9⟩), .conflict) ]
+
+theorem replay_vectors :
+    replayVectors.all (fun v => decisionIs (decide_replay identityCall v.1 call₀) v.2) = true := by
+  decide
+
 end Norn.Kernel.Binding
 
 #print axioms Norn.Kernel.Binding.decide_replay_correspondence
@@ -121,3 +162,4 @@ end Norn.Kernel.Binding
 #print axioms Norn.Kernel.Binding.replay_fresh_iff
 #print axioms Norn.Kernel.Binding.replay_returns_recorded
 #print axioms Norn.Kernel.Binding.replay_same_iff
+#print axioms Norn.Kernel.Binding.replay_vectors

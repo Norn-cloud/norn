@@ -152,10 +152,13 @@ expected_axioms="$(printf '%s\n' \
   "'Norn.Kernel.Binding.replay_fresh_iff' depends on axioms: [propext]" \
   "'Norn.Kernel.Binding.replay_returns_recorded' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Kernel.Binding.replay_same_iff' depends on axioms: [propext, Quot.sound]" \
+  "'Norn.Kernel.Binding.replay_vectors' depends on axioms: [propext]" \
   "'Norn.Kernel.Binding.pins_bind_correspondence' depends on axioms: [propext, Quot.sound]" \
   "'Norn.Kernel.Binding.pins_bind_binds' depends on axioms: [propext, Quot.sound]" \
   "'Norn.Kernel.Binding.commit_pins_bind_correct' depends on axioms: [propext, Quot.sound]" \
-  "'Norn.Kernel.Binding.commit_pins_bind_ok_iff' depends on axioms: [propext, Quot.sound]")"
+  "'Norn.Kernel.Binding.commit_pins_bind_ok_iff' depends on axioms: [propext, Quot.sound]" \
+  "'Norn.Kernel.Binding.receipt_vectors' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.Kernel.Binding.commit_vectors' depends on axioms: [propext, Classical.choice, Quot.sound]")"
 test "${proof_output%$'\n'}" = "$expected_axioms"
 # Check the exact propositions, not only the theorem names or an exit code.
 cat <<'LEAN' | (cd "$lean_root" && LEAN_PATH="$baseline:$result/common" lake env lean -DwarningAsError=true --stdin)
@@ -308,20 +311,28 @@ while read -r name path; do
     echo "mutant $name: did not extract and elaborate; it cannot test the proof" >&2
     exit 1
   fi
-  refuted=false
-  for module in ReplayProof ReceiptProof; do
-    if ! lean_check "$out" "$proof_root" "$module" > "$result/mutants/$name/$module.log" 2>&1; then
-      refuted=true
-    fi
-  done
   rm "$tree/$path"
   cp "$pristine" "$tree/$path"
-  if $refuted; then
-    echo "mutant $name: proof fails (detected)"
-  else
+  # Detected means refuted, not merely unproved: the kernel must evaluate a
+  # closed vector theorem on the mutant's code and find it false.
+  held=true
+  for module in ReplayProof ReceiptProof; do
+    if ! lean_check "$out" "$proof_root" "$module" > "$result/mutants/$name/$module.log" 2>&1; then
+      held=false
+    fi
+  done
+  if $held; then
     echo "mutant $name: proof still holds (survived)" >&2
+    survivors=$((survivors + 1))
+  elif cat "$result/mutants/$name/ReplayProof.log" "$result/mutants/$name/ReceiptProof.log" |
+    grep -q "Proof.lean:[0-9]*:[0-9]*: error: Tactic \`decide\` proved that the proposition"; then
+    echo "mutant $name: vectors refuted (detected)"
+  else
+    tail -n 20 "$result/mutants/$name/ReplayProof.log" "$result/mutants/$name/ReceiptProof.log" >&2
+    echo "mutant $name: proof fails without a refutation; it does not test the proof" >&2
     survivors=$((survivors + 1))
   fi
 done < "$result/mutants/list"
+test "$(wc -l < "$result/mutants/list")" -eq 16
 test "$survivors" -eq 0
-echo "kernel-binding: every seeded replay, receipt and commit pin mutant fails the proof"
+echo "kernel-binding: every seeded replay, receipt and commit pin mutant is refuted"
