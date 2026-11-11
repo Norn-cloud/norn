@@ -4,13 +4,14 @@ import type { ObjectCell } from "./object-cell.ts"
 
 /**
  * A stand-in for CELL-DO's action routes (`GET /v1/actions`, `POST /v1/actions/{id}`) that
- * implements the proposed contract (apps/studio/src/lib/actions.ts) over the object stand-in's
- * canon.Holding population: closed-schema validation with every violation pointed at, rule
- * refusals without a pointer, idempotent replay, and commits that move the read snapshot.
+ * implements the served contract (apps/studio/src/lib/actions.ts, norn_api::actions) over the
+ * object stand-in's canon.Holding population: closed-schema validation with every violation
+ * pointed at, exact decimals only as their text (VAL-EXACT-1, docs/spec/core/01-values-identity.md),
+ * rule refusals without a pointer, idempotent replay, and commits that move the read snapshot.
  */
 
 interface Problem { code: string; message: string; pointer: string | null }
-type Schema = { type?: unknown; properties?: Record<string, Schema>; items?: Schema; required?: readonly string[]; enum?: readonly string[]; title?: string; additionalProperties?: boolean }
+type Schema = { type?: unknown; nornType?: { kind?: string; scale?: number }; properties?: Record<string, Schema>; items?: Schema; required?: readonly string[]; enum?: readonly string[]; title?: string; additionalProperties?: boolean }
 
 function check(schema: Schema, value: unknown, at: string, problems: Problem[]) {
   const types = Array.isArray(schema.type) ? schema.type.map(String) : [String(schema.type)]
@@ -34,6 +35,12 @@ function check(schema: Schema, value: unknown, at: string, problems: Problem[]) 
     value.forEach((item, i) => check(schema.items ?? {}, item, `${at}/${i}`, problems))
     return
   }
+  if (type === "number" && schema.nornType?.kind === "decimal") {
+    // The cell decodes an exact decimal only from its text, at most its declared scale; a number token refuses.
+    const exact = typeof value === "string" ? DECIMAL.exec(value) : null
+    if (exact === null || (exact[1] ?? "").length > (schema.nornType.scale ?? 18)) problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
+    return
+  }
   if (type === "number" && typeof value !== "number") return void problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
   if (type === "string") {
     if (typeof value !== "string") return void problems.push({ code: "action.input_invalid", message: `${name} must be text.`, pointer: at })
@@ -42,8 +49,8 @@ function check(schema: Schema, value: unknown, at: string, problems: Problem[]) 
   }
 }
 
-/** The exact number token the caller sent for a member, as written (JSON.parse would round it). */
-const rawNumber = (body: string, member: string) => body.match(new RegExp(`"${member}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`))?.[1]
+/** The exact decimal text grammar: optional `-`, no leading zeros, an optional fraction (captured), no exponent. */
+const DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.(\d+))?$/
 
 export interface ActionCell {
   /** Every call body the form sent, for assertions on what it asked. */
@@ -91,9 +98,9 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     const version = (existing?.version ?? 1) + (existing ? 1 : 0)
     const values = { ...(existing?.values ?? {}) }
     if (actionId === "canon.holding.open") {
-      Object.assign(values, { resource_code: String(input["resource_code"]), quantity: rawNumber(body, "quantity") ?? String(input["quantity"]), unit: "g", currency: "USD", valuation_method: String(input["valuation_method"]), location: String((input["location"] as { site: string }).site), quantity_basis: "on_hand", stock_cost: "0.000000", cost_currency: "USD" })
+      Object.assign(values, { resource_code: String(input["resource_code"]), quantity: String(input["quantity"]), unit: "g", currency: "USD", valuation_method: String(input["valuation_method"]), location: String((input["location"] as { site: string }).site), quantity_basis: "on_hand", stock_cost: "0.000000", cost_currency: "USD" })
     } else if (actionId === "canon.holding.restock") values["lots"] = String((input["lots"] as unknown[]).length)
-    else if (actionId === "canon.holding.adjust") values["quantity"] = rawNumber(body, "quantity") ?? String(input["quantity"])
+    else if (actionId === "canon.holding.adjust") values["quantity"] = String(input["quantity"])
     else if (actionId === "canon.holding.retire") values["retired"] = "true"
     const row = { id, withheld: false, withheldProperties: [], values, version }
     if (existing) objects.rows[index] = row

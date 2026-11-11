@@ -195,7 +195,7 @@ test("create: a parent with owned rows takes a list of records, each refused at 
   await form.getByLabel("Quantity").nth(1).fill("2.000")
   await form.getByRole("button", { name: "Restock holding" }).click()
   await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0003 restocked · just now")
-  expect(actions.calls.at(-1)?.body).toContain('"lots":[{"lot":"L-1","quantity":1.250},{"lot":"L-2","quantity":2.000}]')
+  expect(actions.calls.at(-1)?.body).toContain('"lots":[{"lot":"L-1","quantity":"1.250"},{"lot":"L-2","quantity":"2.000"}]')
 })
 
 test("while the cell takes no actions, New and the drawer's actions say why", async ({ page }) => {
