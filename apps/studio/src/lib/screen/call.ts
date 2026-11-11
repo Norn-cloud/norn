@@ -10,6 +10,14 @@ import type { ActionReceipt, ActionSummary, CallResult, Diagnostic } from "../ac
  * the two commands below: call an action the server offered, or read the documents again. A view
  * (React today, possibly Foldkit or Exact later) dispatches messages and runs commands; it never
  * decides what may be called. The cell does.
+ *
+ * Idempotency keys, because the cell refuses a key reused with a different body (409
+ * `action.idempotency_conflict`):
+ * - While a call is out the form is locked: the view holds its fields read-only and shows "Sending…",
+ *   and an edit message then changes nothing. No pending edit is tracked.
+ * - A retry after a failure re-sends the original input under the same key, so a call whose answer
+ *   was lost is never committed twice.
+ * - After a failure the user may edit; that is a new call, under a new key.
  */
 
 /** What the server offered to undo a committed call with: the action's declared compensation and its input. */
@@ -94,7 +102,8 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
       if (phase.kind === "undo-failed") return [{ ...state, phase: { kind: "undoing", receipt: phase.receipt, undo: phase.undo } }, [call(phase.undo.actionId, phase.undo.input, state.key)]]
       return [state, []]
     case "again":
-      if (phase.kind !== "done" && phase.kind !== "undone") return [state, []]
+      // A new draft is a new call; an undo left unconfirmed keeps its own Retry until then.
+      if (phase.kind !== "done" && phase.kind !== "undone" && phase.kind !== "undo-failed") return [state, []]
       return [{ ...state, phase: { kind: "editing" }, key: msg.key, sent: null }, []]
     case "undo":
       if (phase.kind !== "done" || phase.undo === null) return [state, []]
