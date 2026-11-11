@@ -238,7 +238,7 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
         if (args.length !== 2) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects 2 arguments`)
         const dates = expr.fn === "days_between" ? expr.args : expr.args.slice(0, 1)
         if (dates.some((arg) => temporalKind(arg) !== "date")) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects parsed dates; build it with ${expr.fn === "days_between" ? "daysBetween" : "addDays"}`)
-        if (expr.fn === "add_days" && !isNumeric(args[1]!)) throw new ExprError("NORN-FLOW-EXPRESSION", `add_days adds a whole number of days, not ${String(args[1]!.type)}`)
+        if (expr.fn === "add_days" && args[1]!.type !== "integer") throw new ExprError("NORN-FLOW-EXPRESSION", `add_days adds a whole number of days, not ${String(args[1]!.type)}`)
         return expr.fn === "days_between" ? integer : text()
       }
       if (expr.fn === "len") {
