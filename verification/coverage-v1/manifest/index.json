@@ -4,7 +4,16 @@
   "leanCompositeGates": {
     "verification/kernel-l1/Reference.lean": "scripts/verify-kernel-l1-lean.sh",
     "verification/kernel-l1/Audit.lean": "scripts/verify-kernel-l1-lean.sh",
-    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh"
+    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh",
+    "verification/semantics-v1/Checker/Certificates/AlgebraProof.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/Certificates/AlgebraReference.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/Certificates/ConservationProof.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/Certificates/ConservationReference.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/Certificates/LensProof.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/Certificates/LensReference.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/Certificates/Support.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/Obligations/FrameProof.lean": "scripts/verify-checker-certificates-aeneas.sh",
+    "verification/semantics-v1/Checker/Obligations/InductionReference.lean": "scripts/verify-checker-certificates-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [

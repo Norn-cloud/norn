@@ -738,6 +738,9 @@ run_gate full kernel-l1-reference \
 run_gate full kernel-l1-version-correspondence \
   "scripts/verify-kernel-l1-aeneas.sh" command \
   scripts/verify-kernel-l1-aeneas.sh
+run_gate full checker-certificates-correspondence \
+  "scripts/verify-checker-certificates-aeneas.sh" command \
+  scripts/verify-checker-certificates-aeneas.sh
 
 # Validate observed selectors only after every producing gate has run.
 run_gate full verification-executed-test-selectors \
