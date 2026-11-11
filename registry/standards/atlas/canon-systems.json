@@ -168,13 +168,13 @@
           "core.Claim",
           "core.Process",
           "core.Conversion",
-          "core.LedgerEffect"
+          "core.LedgerEffect",
+          "canon.Invoice"
         ],
         "irTargets": [
           "LawIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "Account",
           "FiscalPeriod",
           "PriceRule",

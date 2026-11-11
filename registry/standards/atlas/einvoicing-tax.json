@@ -38,11 +38,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -99,14 +99,14 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "LawIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -161,14 +161,14 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "LawIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -222,14 +222,14 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "LawIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -281,11 +281,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -336,13 +336,13 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [
           "LawIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -393,13 +393,13 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [
           "LawIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -453,11 +453,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -509,11 +509,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -567,11 +567,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -626,11 +626,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -681,11 +681,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -737,14 +737,14 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "MappingIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -757,7 +757,7 @@
         "sapParity": "P0",
         "reason": "UBL is the base of EN 16931, Peppol and several national CTC schemes."
       },
-      "notes": "Peppol's UBL 2.1 use does not mean the latest UBL release is the right syntax for every jurisdiction. Invoice is an entry point, not proof all UBL documents have been acquired. Redistribution: license-conditions.",
+      "notes": "Peppol's UBL 2.1 use does not mean the latest UBL release is the right syntax for every jurisdiction. Invoice is an entry point, not proof all UBL documents have been acquired. Redistribution: license-conditions. The UBL 2.3 Invoice pack (registry/packs/ubl) maps the same Invoice model through the generic XSD reader; this release still needs its own pinned read.",
       "origin": "catalogue-2026-10-21"
     },
     {
@@ -795,14 +795,14 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [
           "SourceSchemaIR",
           "MappingIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -815,7 +815,7 @@
         "sapParity": "P0",
         "reason": "UBL is the base of EN 16931, Peppol and several national CTC schemes."
       },
-      "notes": "Profile-required UBL 2.1 is separately catalogued; current broad UBL coverage uses 2.5. Never transfer a GitHub build-tool licence to the normative standard distribution. Redistribution: license-conditions.",
+      "notes": "Profile-required UBL 2.1 is separately catalogued; current broad UBL coverage uses 2.5. Never transfer a GitHub build-tool licence to the normative standard distribution. Redistribution: license-conditions. The UBL 2.3 Invoice pack (registry/packs/ubl) maps the same Invoice model through the generic XSD reader; this release still needs its own pinned read.",
       "origin": "catalogue-2026-10-21"
     },
     {
@@ -854,11 +854,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -909,11 +909,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -963,11 +963,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1020,13 +1020,13 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [
           "LawIR"
         ],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1078,11 +1078,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1133,11 +1133,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1189,11 +1189,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1248,11 +1248,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1305,11 +1305,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],
@@ -1361,11 +1361,11 @@
           "core.Claim",
           "canon.Party",
           "canon.Item",
-          "canon.OrderLine"
+          "canon.OrderLine",
+          "canon.Invoice"
         ],
         "irTargets": [],
         "proposedConcepts": [
-          "Invoice",
           "TaxRule",
           "TaxCategory"
         ],

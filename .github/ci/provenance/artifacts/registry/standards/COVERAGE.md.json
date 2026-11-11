@@ -1,11 +1,12 @@
 {
-  "sha256": "6e19163485b7dac657fc99fafd3b67c13ba26b9b352245ebef936e57d1cbde39",
+  "sha256": "166c1f49624626827bbb941a2c83790af566e4aa2fbc1d319b7eb077dd20c708",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
+    "registry/packs/canon/artifacts/canon.Invoice.entity.json",
     "registry/standards/atlas/accounting-reporting.json",
     "registry/standards/atlas/agriculture.json",
     "registry/standards/atlas/ai-agents.json",

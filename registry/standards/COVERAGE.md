@@ -67,10 +67,10 @@ customer #1 and SAP-parity priorities, then by combined priority, then planned f
 
 | # | Entry | Domain | Customer #1 | SAP parity | Mapping | Issue | Norn targets |
 | ---: | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `apache-ofbiz` | canon-systems | P1 | P0 | planned | Norn-cloud/norn#1238 | canon.Party, canon.PartyRole, canon.Item, canon.Catalog, canon.Holding, canon.OrderLine, canon.Delivery, canon.Posting, canon.Settlement, core.Order, core.Hold, core.Claim, core.Process, core.Conversion, core.LedgerEffect, LawIR, *Invoice*, *Account*, *FiscalPeriod*, *PriceRule*, *Return* |
-| 2 | `egypt-eta-invoice-v1` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, SourceSchemaIR, LawIR, *Invoice*, *TaxRule*, *TaxCategory* |
-| 3 | `egypt-eta-receipt-v1-2` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, SourceSchemaIR, LawIR, *Invoice*, *TaxRule*, *TaxCategory* |
-| 4 | `egypt-eta-retail-receipt-v1-2` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, SourceSchemaIR, LawIR, *Invoice*, *TaxRule*, *TaxCategory* |
+| 1 | `apache-ofbiz` | canon-systems | P1 | P0 | planned | Norn-cloud/norn#1238 | canon.Party, canon.PartyRole, canon.Item, canon.Catalog, canon.Holding, canon.OrderLine, canon.Delivery, canon.Posting, canon.Settlement, core.Order, core.Hold, core.Claim, core.Process, core.Conversion, core.LedgerEffect, canon.Invoice, LawIR, *Account*, *FiscalPeriod*, *PriceRule*, *Return* |
+| 2 | `egypt-eta-invoice-v1` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, canon.Invoice, SourceSchemaIR, LawIR, *TaxRule*, *TaxCategory* |
+| 3 | `egypt-eta-receipt-v1-2` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, canon.Invoice, SourceSchemaIR, LawIR, *TaxRule*, *TaxCategory* |
+| 4 | `egypt-eta-retail-receipt-v1-2` | einvoicing-tax | P0 | P1 | planned | Norn-cloud/norn-platform#3384 | core.Claim, canon.Party, canon.Item, canon.OrderLine, canon.Invoice, SourceSchemaIR, LawIR, *TaxRule*, *TaxCategory* |
 | 5 | `iso20022-camt-053` | payments | P1 | P0 | planned | Norn-cloud/norn-platform#2739 | canon.Settlement, canon.SettlementObservation, core.EconomicEvent, SourceSchemaIR, MappingIR, *BankStatement*, *Reconciliation* |
 | 6 | `iso20022-external-code-sets` | payments | P1 | P0 | planned | Norn-cloud/norn-platform#3453 | canon.Settlement, canon.SettlementObservation, core.EconomicEvent, ValueType, *BankAccount*, *PaymentInstruction* |
 | 7 | `iso20022-pain-001` | payments | P1 | P0 | planned | Norn-cloud/norn-platform#2739 | canon.Settlement, canon.SettlementObservation, core.EconomicEvent, SourceSchemaIR, MappingIR, *PaymentInstruction*, *BankAccount* |
@@ -90,6 +90,7 @@ customer #1 and SAP-parity priorities, then by combined priority, then planned f
 | `core.Claim` | 29 |
 | `canon.Posting` | 28 |
 | `canon.Delivery` | 27 |
+| `canon.Invoice` | 25 |
 | `core.Agent` | 25 |
 | `canon.SettlementObservation` | 20 |
 | `location.Region` | 20 |
@@ -114,7 +115,6 @@ customer #1 and SAP-parity priorities, then by combined priority, then planned f
 
 | Proposed concept (not yet in the registry) | Entries |
 | --- | ---: |
-| *Invoice* | 25 |
 | *Shipment* | 24 |
 | *TaxCategory* | 24 |
 | *TaxRule* | 24 |
