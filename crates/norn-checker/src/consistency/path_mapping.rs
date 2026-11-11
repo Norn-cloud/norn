@@ -1,12 +1,13 @@
 //! PATH-MAP-1: preservation admission for declared path mappings (#712).
 //!
 //! A [`PathMapping`] `F: target -> source` lowers, with both catalogs' path
-//! equations, to an [`Exchange`]. Preservation is first attempted by chase
-//! certificates (`preservation.rs`, #718 U7), which a trusted check accepts
-//! and `NornSem.Exchange.check_sound` proves sound for every source instance.
-//! Otherwise it is the existing bounded schema-compatibility search, whose
-//! clean result is only bounded evidence. No rule is hand-authored by the
-//! caller.
+//! equations, to an [`Exchange`]. The bounded schema-compatibility search
+//! always runs; a clean result alone is only bounded evidence. Chase
+//! certificates (`preservation.rs`, #718 U7) upgrade it to `certified`: the
+//! Lean check they mirror is proved sound for every source instance by
+//! `NornSem.Exchange.check_sound`. Until the Rust check is proved to match it
+//! (U7b), a certificate the search contradicts refuses loudly. No rule is
+//! hand-authored by the caller.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,10 +25,15 @@ use crate::{Diagnostic, DiagnosticSeverity};
 /// Refusal code for malformed mappings and compositions.
 pub const PATH_MAPPING_INVALID: &str = "consistency.path_mapping.invalid";
 
-/// What an admitted mapping establishes. With `certified`, every lowered
-/// target dependency has a chase certificate the trusted check accepted, so it
-/// holds on every source instance satisfying the source theory. Without it,
-/// only that the exchange search found no counterexample within its bound.
+/// Refusal code for a certificate the bounded search contradicts.
+pub const PATH_MAPPING_CERTIFICATE_DISAGREEMENT: &str =
+    "consistency.path_mapping.certificate_disagreement";
+
+/// What an admitted mapping establishes. The exchange search found no
+/// counterexample within its bound. With `certified`, every lowered target
+/// dependency also has a chase certificate the check accepted, so it holds on
+/// every source instance satisfying the source theory. Until the Rust check
+/// is proved to match the Lean one, both must agree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PreservationEvidence {
@@ -218,7 +224,8 @@ fn lower_mapping(
 /// Check that `mapping` preserves every target path equation and functional
 /// link, given the source catalog's own equations, functional links and
 /// required links. Refuses malformed mappings; returns every verified
-/// counterexample as `consistency.schema.unpreserved_constraint`.
+/// counterexample as `consistency.schema.unpreserved_constraint`, led by
+/// [`PATH_MAPPING_CERTIFICATE_DISAGREEMENT`] when a certificate checked.
 ///
 /// # Errors
 /// Malformed declarations, refused searches, or counterexample witnesses.
@@ -246,6 +253,29 @@ pub(crate) fn admit_with_work(
     registry: &BTreeSet<PropertyTypeName>,
     budget: ChaseBudget,
     work: &AdmissionWork,
+) -> Result<PreservationEvidence, Vec<Diagnostic>> {
+    admit_certified_by(
+        source,
+        target,
+        mapping,
+        registry,
+        budget,
+        work,
+        super::preservation::certified,
+    )
+}
+
+/// Certifier signature: source theory, lowered mapping, target theory.
+type Certifier = fn(&Theory, &Theory, &Theory) -> bool;
+
+fn admit_certified_by(
+    source: &[ArtifactEnvelope],
+    target: &[ArtifactEnvelope],
+    mapping: &PathMapping,
+    registry: &BTreeSet<PropertyTypeName>,
+    budget: ChaseBudget,
+    work: &AdmissionWork,
+    certify: Certifier,
 ) -> Result<PreservationEvidence, Vec<Diagnostic>> {
     // Charge input bytes before lowering; large theories and long paths
     // consume the same admission allowance as search and unfolding work.
@@ -293,31 +323,45 @@ pub(crate) fn admit_with_work(
         .iter()
         .map(|theory| theory.dependencies.len())
         .sum();
-    // A certified mapping preserves every target dependency on every source
-    // instance, so no counterexample exists and the search is skipped.
-    if super::preservation::certified(&source_theory, &lowered, &target_theory) {
-        return Ok(PreservationEvidence {
-            obligations: target_theory.dependencies.len(),
-            dependencies,
-            certified: true,
-        });
-    }
+    let certified = certify(&source_theory, &lowered, &target_theory);
     let exchange = Exchange {
         source_schema: &schema,
         source: &source_theory,
         mapping: &lowered,
         target: &target_theory,
     };
-    let findings = check_schema_compatibility_with_work(&exchange, budget, work);
+    // The search runs even for a certified mapping: until the Rust check is
+    // proved to match `Norn.Sem.Exchange.check`, a certificate rests on a hand
+    // transcription, so a counterexample against it refuses loudly.
+    let mut findings = check_schema_compatibility_with_work(&exchange, budget, work);
     if findings.is_empty() {
-        Ok(PreservationEvidence {
+        return Ok(PreservationEvidence {
             obligations: target_theory.dependencies.len(),
             dependencies,
-            certified: false,
-        })
-    } else {
-        Err(findings)
+            certified,
+        });
     }
+    if certified
+        && findings
+            .iter()
+            .any(|finding| finding.code.as_str() == super::codes::UNPRESERVED)
+    {
+        findings.insert(
+            0,
+            super::finding(
+                PATH_MAPPING_CERTIFICATE_DISAGREEMENT,
+                DiagnosticSeverity::Error,
+                format!(
+                    "path mapping {:?}: the preservation certificate checked, yet the \
+                     bounded search found a counterexample; the certificate check or its \
+                     transcription is wrong",
+                    mapping.id
+                ),
+                Some(&origin(&mapping.id)),
+            ),
+        );
+    }
+    Err(findings)
 }
 
 /// The composite `first ; then` of `first: target -> middle` and
@@ -393,4 +437,81 @@ pub fn compose_path_mappings(
         });
     }
     Ok(PathMapping { id, objects, links })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "fixture construction")]
+
+    use super::{AdmissionWork, ChaseBudget, PATH_MAPPING_CERTIFICATE_DISAGREEMENT, PathMapping};
+    use crate::consistency::codes;
+    use norn_ir::ArtifactEnvelope;
+    use serde_json::json;
+    use std::collections::BTreeSet;
+
+    /// `D` with two required functional links to `P`; the target alone
+    /// equates them, so the identity mapping does not preserve the target.
+    fn catalog(ns: &str) -> Vec<ArtifactEnvelope> {
+        let link = |id: &str| {
+            json!({"id": id, "target": format!("{ns}.P"),
+                "cardinality": {"to": "one", "from": "many", "required": true}})
+        };
+        [("D", json!([link("a"), link("b")])), ("P", json!([]))]
+            .into_iter()
+            .map(|(name, links)| {
+                let mut payload = json!({"entityVersion": "2.0",
+                    "objectType": {"name": format!("{ns}.{name}"), "links": links}});
+                if ns == "t" && name == "D" {
+                    payload["extensions"] = json!({"norn.path-equations/1.0.0":
+                        [{"id": "same", "left": ["a"], "right": ["b"]}]});
+                }
+                serde_json::from_value(json!({
+                    "irVersion": "0.1", "artifactId": format!("{ns}.{name}.entity"),
+                    "kind": "entity", "namespace": ns, "name": name, "version": "0.1.0",
+                    "lifecycle": "draft", "scope": {"orgId": "org_demo", "environmentId": "dev"},
+                    "dependencies": [],
+                    "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
+                    "payload": payload
+                }))
+                .unwrap()
+            })
+            .collect()
+    }
+
+    fn codes_with(certify: super::Certifier) -> Vec<String> {
+        let mapping: PathMapping = serde_json::from_value(json!({
+            "id": "identity", "objects": {"t.D": "s.D", "t.P": "s.P"},
+            "links": [{"concept": "t.D", "link": "a", "path": ["a"]},
+                      {"concept": "t.D", "link": "b", "path": ["b"]}]
+        }))
+        .unwrap();
+        super::admit_certified_by(
+            &catalog("s"),
+            &catalog("t"),
+            &mapping,
+            &BTreeSet::new(),
+            ChaseBudget::default(),
+            &AdmissionWork::new(10_000_000),
+            certify,
+        )
+        .unwrap_err()
+        .into_iter()
+        .map(|finding| finding.code.as_str().to_owned())
+        .collect()
+    }
+
+    /// A mutant check that certifies everything is caught by the bounded
+    /// search, which refuses with the disagreement first; the real check
+    /// does not certify, so only the counterexample is reported.
+    #[test]
+    fn the_bounded_search_catches_a_wrong_certificate_check() {
+        let mutant = codes_with(|_, _, _| true);
+        assert_eq!(
+            mutant.first().map(String::as_str),
+            Some(PATH_MAPPING_CERTIFICATE_DISAGREEMENT)
+        );
+        assert!(mutant.iter().any(|code| code == codes::UNPRESERVED));
+        let real = codes_with(super::super::preservation::certified);
+        assert!(!real.is_empty() && real.iter().all(|code| code == codes::UNPRESERVED));
+    }
 }

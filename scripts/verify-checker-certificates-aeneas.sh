@@ -487,11 +487,12 @@ for name in LensVectors AlgebraVectors ConservationVectors FrameVectors; do
 done
 echo "checker-certificates: production certificate checkers and frame decision proved against the written semantics"
 
-# Mutants are applied to a hard-linked copy of the checker sources; the edited
+# Mutants are applied to a hard-linked copy of the checker sources (a plain
+# copy when the result root is on another filesystem); the edited
 # file is replaced, never written through, so the checkout is untouched.
 tree="$result/mutants/tree"
 mkdir -p "$tree/crates/norn-checker"
-cp -al "$repo_root/crates/norn-checker/src" "$tree/crates/norn-checker/"
+cp -al "$repo_root/crates/norn-checker/src" "$tree/crates/norn-checker/" 2>/dev/null || { rm -rf "$tree/crates/norn-checker/src"; cp -a "$repo_root/crates/norn-checker/src" "$tree/crates/norn-checker/"; }
 python3 - "$tree" "$result/mutants" "$lens_source" "$algebra_source" "$conservation_source" \
   "$frame_source" <<'PYMUTANTS' > "$result/mutants/list"
 import sys

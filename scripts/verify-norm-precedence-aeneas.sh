@@ -280,11 +280,12 @@ LEAN
 witness "$repo_root" "$baseline/witness" --baseline
 echo "norm-precedence: the production decision core is proved sound against the written semantics"
 
-# Mutants are applied to a hard-linked copy of the source; the edited file is
+# Mutants are applied to a hard-linked copy of the source (a plain copy when
+# the result root is on another filesystem); the edited file is
 # replaced, never written through, so the checkout is untouched.
 tree="$result/mutants/tree"
 mkdir -p "$tree/crates/norn-checker/src"
-cp -al "$repo_root/crates/norn-checker/src/norm_precedence" "$tree/crates/norn-checker/src/"
+cp -al "$repo_root/crates/norn-checker/src/norm_precedence" "$tree/crates/norn-checker/src/" 2>/dev/null || { rm -rf "$tree/crates/norn-checker/src/norm_precedence"; cp -a "$repo_root/crates/norn-checker/src/norm_precedence" "$tree/crates/norn-checker/src/"; }
 python3 - "$tree" "$result/mutants" "$decision_source" <<'PYMUTANTS' > "$result/mutants/list"
 import sys
 from pathlib import Path

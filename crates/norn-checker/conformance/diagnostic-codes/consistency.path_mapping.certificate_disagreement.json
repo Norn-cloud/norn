@@ -1,0 +1,7 @@
+{
+  "code": "consistency.path_mapping.certificate_disagreement",
+  "message": "A path mapping's preservation certificate checked, yet the bounded search found a counterexample; the certificate check or its transcription is wrong",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
