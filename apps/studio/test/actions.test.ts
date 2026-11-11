@@ -32,7 +32,7 @@ test("a real upsert's closed schema becomes typed fields, required first", () =>
 test("exact numbers reach the cell digit for digit; what is not a number goes as text for the cell to refuse", () => {
   const fields = fieldsOf(melt?.inputSchema)
   const draft = { ...emptyDraft(fields), id: "melt/1", input_fine_g: "9007199254740993", output_fine_g: "12,5" }
-  expect(encodeObject(fields, draft)).toBe('{"id":"melt/1","input_fine_g":9007199254740993,"output_fine_g":"12,5"}')
+  expect(encodeObject(fields, draft)).toBe('{"id":"melt/1","input_fine_g":"9007199254740993","output_fine_g":"12,5"}')
 })
 
 test("fields left empty are omitted, so the cell names what it requires", () => {
@@ -146,6 +146,20 @@ test("a call sends the encoded input and its key; a refusal keeps every diagnost
   expect(result.kind === "refused" && result.diagnostics.map((d) => d.pointer)).toEqual(["/input/a", "/input/b"])
 })
 
+// The documents the cell's route serves (crates/norn-cell-do/tests/actions.rs asserts it serves exactly these).
+const served = JSON.parse(readFileSync(join(import.meta.dir, "fixtures/action-call.json"), "utf8")) as Record<"committed" | "conflict" | "invalidKey", unknown>
+
+test("the cell's own receipt and refusal documents read as Studio's receipt and placed refusals", async () => {
+  const ok = cell(() => Response.json(served.committed))
+  expect(await callAction("constitution.melt.convert", '{"id":"melt-1","input_fine_g":12,"output_fine_g":10}', "k", ok.fetcher)).toEqual({ kind: "receipt", receipt: served.committed as never })
+  const conflict = await callAction("constitution.melt.convert", "{}", "k", cell(() => Response.json(served.conflict, { status: 409 })).fetcher)
+  expect(conflict).toEqual({ kind: "refused", status: 409, code: "action.idempotency_conflict", message: "the request conflicts with current state", diagnostics: [] })
+  const invalid = await callAction("constitution.melt.convert", "{}", "", cell(() => Response.json(served.invalidKey, { status: 400 })).fetcher)
+  expect(invalid.kind === "refused" && invalid.diagnostics).toEqual([{ code: "request.invalid", message: "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes", pointer: "/idempotencyKey" }])
+  // The key is not an input field: its finding reads at the top of the form.
+  expect(invalid.kind === "refused" && unplaced(invalid.diagnostics, [])).toHaveLength(1)
+})
+
 test("DEFS's dialect: titles label fields, descriptions help, a multi-value enum is a choice", () => {
   const fields = fieldsOf(OPEN_HOLDING.inputSchema)
   const method = fields.find((f) => f.name === "valuation_method")
@@ -184,7 +198,7 @@ test("a draft is read and written by pointer, nested records included", () => {
   const draft = withDraftAt(emptyDraft(fields), "/location/site", "vault-a")
   expect(draftAt(draft, "/location/site")).toBe("vault-a")
   expect(draftAt(draft, "/location/bin")).toBe("")
-  expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":10.500,"location":{"site":"vault-a"}}')
+  expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":"10.500","location":{"site":"vault-a"}}')
 })
 
 test("contract v1 as CELL-DO approved it: any 404 or 503 is not served, whatever its body", async () => {

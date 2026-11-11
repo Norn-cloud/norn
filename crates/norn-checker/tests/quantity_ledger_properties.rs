@@ -607,36 +607,44 @@ fn has_conservation_diagnostic(pack: &LedgerPackIr) -> bool {
         })
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
-
-    #[test]
-    fn ontology_dimension_substitution_never_preserves_pack_or_certificate_identity(
-        replacement in prop::sample::select(vec![
-            "norn.measure.quantity-kind.count",
-            "norn.measure.quantity-kind.duration",
-            "norn.measure.quantity-kind.ratio",
-        ]),
-    ) {
-        let seed = BalancedSeed {
-            parameter_scales: [0, 0],
-            coefficient_scales: [0, 0],
-            precision_gap: 0,
-            values: vec![1, 0, 0, 0, 0, 0, 0, 0, 0],
-        };
-        let original = generated_balanced_pack(&seed);
-        let seal = seal_ledger_pack(&original).expect("generated baseline must seal");
-        let certificate = seal.certificates()[0].clone();
+#[test]
+fn ontology_dimension_substitution_never_preserves_pack_or_certificate_identity() {
+    let seed = BalancedSeed {
+        parameter_scales: [0, 0],
+        coefficient_scales: [0, 0],
+        precision_gap: 0,
+        values: vec![1, 0, 0, 0, 0, 0, 0, 0, 0],
+    };
+    let original = generated_balanced_pack(&seed);
+    let seal = seal_ledger_pack(&original).expect("generated baseline must seal");
+    let certificate = seal.certificates()[0].clone();
+    for replacement in [
+        "norn.measure.quantity-kind.count",
+        "norn.measure.quantity-kind.duration",
+        "norn.measure.quantity-kind.ratio",
+    ] {
         let mut substituted = original.clone();
         substituted.units[0].quantity_kind_term_id = replacement.to_string();
 
-        prop_assert_ne!(ledger_pack_sha256(&original), ledger_pack_sha256(&substituted));
-        prop_assert_ne!(
-            ledger_unit_bindings_sha256(&original),
-            ledger_unit_bindings_sha256(&substituted)
+        assert_ne!(
+            ledger_pack_sha256(&original),
+            ledger_pack_sha256(&substituted),
+            "{replacement}"
         );
-        prop_assert!(verify_conservation_certificate(&substituted, &certificate).is_err());
+        assert_ne!(
+            ledger_unit_bindings_sha256(&original),
+            ledger_unit_bindings_sha256(&substituted),
+            "{replacement}"
+        );
+        assert!(
+            verify_conservation_certificate(&substituted, &certificate).is_err(),
+            "{replacement}"
+        );
     }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
 
     // INV-QL-CONSERVATION and CASE-JOURNAL-BALANCED-PER-UNIT-LAYER:
     // generated exact-linear entries conserve independently in each partition.

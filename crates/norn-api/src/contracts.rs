@@ -42,7 +42,7 @@ impl Modify for ContractSchemas {
             .into_iter()
             .chain(effective_law_schemas)
             .chain(project_schemars_components(
-                schemars::schema_for!(norn_ir::RuntimeObject),
+                action_input_component(),
                 "NornActionInput",
                 "NornAction",
             ))
@@ -474,6 +474,30 @@ fn artifact_envelope_schemas() -> Vec<(String, Schema)> {
         );
     }
     schemas
+}
+
+/// The action input object, with the action boundary's decimal wire rule:
+/// the generic exact value schema alone does not say that decimals are text.
+#[allow(
+    clippy::expect_used,
+    reason = "the runtime object schema is a static schemars schema"
+)]
+fn action_input_component() -> Value {
+    let mut schema = serde_json::to_value(schemars::schema_for!(norn_ir::RuntimeObject))
+        .expect("the runtime object schema is serializable during OpenAPI generation");
+    if let Some(schema) = schema.as_object_mut() {
+        schema.insert(
+            "description".to_owned(),
+            Value::String(
+                "Action business arguments as exact JSON values. A field declared \
+                 `nornType: decimal` travels as its exact decimal text (`\"12.500\"`, \
+                 VAL-EXACT-1); a number token there refuses `action.invalid_input`. \
+                 Other number tokens keep their digits exactly."
+                    .to_owned(),
+            ),
+        );
+    }
+    schema
 }
 
 /// Project a canonical Schemars root and its `$defs` into `OpenAPI` components.
