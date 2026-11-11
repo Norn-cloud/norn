@@ -127,7 +127,7 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
   return (
     <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
       {concept.fields.map((field) => (
-        <TableRow key={field.id} data-fact={field.id}>
+        <TableRow key={field.id}>
           <TableCell className="font-medium">
             <span lang={field.labelLang ?? "en"}>{field.label ?? field.id.replaceAll("_", " ")}</span>
             {field.optional && <span className="text-muted-foreground"> (optional)</span>}

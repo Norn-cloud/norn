@@ -25,11 +25,12 @@ for (const locale of LOCALES) for (const scheme of ["light", "dark"] as const) {
 
     const facts = page.locator('[data-state="locale/facts"]')
     await expect(facts.getByRole("heading", { name: locale.order })).toBeVisible()
-    await expect(facts.locator('[data-fact="status"]')).toContainText(locale.status)
+    const row = (id: string) => facts.getByRole("row").filter({ has: page.locator("bdi", { hasText: new RegExp(`^${id}$`) }) })
+    await expect(row("status")).toContainText(locale.status)
     // An unlabelled fact keeps its id in words and says it is English.
-    await expect(facts.locator('[data-fact="order_date"] span[lang="en"]')).toHaveText("order date")
+    await expect(row("order_date").locator('span[lang="en"]')).toHaveText("order date")
     // Every id is an isolate in its own direction.
-    const id = facts.locator('[data-fact="order_number"] bdi')
+    const id = row("order_number").locator("bdi").first()
     await expect(id).toHaveText("order_number")
     await expect(id).toHaveAttribute("dir", "ltr")
 
