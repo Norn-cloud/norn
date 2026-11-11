@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-363 records across 98 metrics. Each series runs in the order of the
+364 records across 98 metrics. Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -89,7 +89,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
 | `proof.gate.checker_certificates.s` | 210 | s (single) | boat | 2 | 210 / 345 | █▁ | `bf2905c1cd` | [link](https://github.com/Norn-cloud/norn/pull/1234) |
-| `proof.gate.exact-arith-correspondence.s` | 2,721 | s (single) | boat | 1 | 2,721 / 2,721 | ▁ | `b9ea6a8ab6` | [link](https://github.com/Norn-cloud/norn/pull/1221) |
+| `proof.gate.exact-arith-correspondence.s` | 2,721 | s (single) | boat | 2 | 1,596 / 2,721 | ▁█ | `b9ea6a8ab6` | [link](https://github.com/Norn-cloud/norn/pull/1221) |
 | `proof.gate.exact_arith.s` | 1,039 | s (single) | boat | 3 | 647 / 1,058 | ▁██ | `79d8c106b9` | thread |
 | `proof.gate.kernel_binding.s` | 236 | s (single) | boat | 1 | 236 / 236 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
 | `proof.gate.kernel_commit.s` | 301 | s (single) | boat | 1 | 301 / 301 | ▁ | `311735a1d0` | [link](https://github.com/Norn-cloud/norn/pull/1228#issuecomment-6800006111) |
