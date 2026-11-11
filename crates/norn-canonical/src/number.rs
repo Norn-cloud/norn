@@ -31,6 +31,8 @@
 
 use crate::CanonicalJsonError;
 
+mod shape;
+
 /// The default-profile class of a JSON number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsonNumberKind {
@@ -252,26 +254,7 @@ fn integer_as_f64(literal: &str) -> f64 {
 /// literal (no fraction, no exponent), `Some(false)` for any other valid
 /// number, and `None` for invalid input.
 fn json_number_shape(literal: &str) -> Option<bool> {
-    let mut bytes = literal.bytes().peekable();
-    bytes.next_if_eq(&b'-');
-    match bytes.next()? {
-        b'0' => {}
-        b'1'..=b'9' => while bytes.next_if(u8::is_ascii_digit).is_some() {},
-        _ => return None,
-    }
-    let mut is_integer = true;
-    if bytes.next_if_eq(&b'.').is_some() {
-        is_integer = false;
-        bytes.next_if(u8::is_ascii_digit)?;
-        while bytes.next_if(u8::is_ascii_digit).is_some() {}
-    }
-    if bytes.next_if(|byte| matches!(byte, b'e' | b'E')).is_some() {
-        is_integer = false;
-        bytes.next_if(|byte| matches!(byte, b'+' | b'-'));
-        bytes.next_if(u8::is_ascii_digit)?;
-        while bytes.next_if(u8::is_ascii_digit).is_some() {}
-    }
-    bytes.next().is_none().then_some(is_integer)
+    shape::json_number_shape(literal.as_bytes())
 }
 
 /// A caller-owned JSON tree that [`deserialize_json_tree`] can build.

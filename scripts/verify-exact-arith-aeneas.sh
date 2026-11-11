@@ -24,6 +24,9 @@ proof_root="$repo_root/verification/exact-arith-v1"
 result="${NORN_VERIFICATION_RESULT_ROOT:-$repo_root/target/verification-results}/exact-arith-aeneas"
 decimal_source="crates/norn-checker/src/quantity_ledger/decimal.rs"
 rational_source="crates/norn-checker/src/exact_rational.rs"
+# RFC 8259 grammar check behind JsonNumber::parse_literal; the binary64 value
+# that serde_json parses for an accepted literal stays trusted.
+shape_source="crates/norn-canonical/src/number/shape.rs"
 # The exact Lean sources this gate elaborates; nothing else may live there.
 proof_files=(
   verification/exact-arith-v1/CoreModels.lean
@@ -33,6 +36,9 @@ proof_files=(
   verification/exact-arith-v1/ExactRational/FunsExternal.lean
   verification/exact-arith-v1/LedgerProof.lean
   verification/exact-arith-v1/LedgerReference.lean
+  verification/exact-arith-v1/NumberShape/FunsExternal.lean
+  verification/exact-arith-v1/NumberShapeProof.lean
+  verification/exact-arith-v1/NumberShapeReference.lean
   verification/exact-arith-v1/QuotientProof.lean
   verification/exact-arith-v1/RationalProof.lean
   verification/exact-arith-v1/RationalReference.lean
@@ -98,11 +104,20 @@ extract_fragment() {
         -warnings-as-errors "$out/scaled.llbc" || return
       cp "$proof_root/Scaled/TypesExternal.lean" "$out/Scaled/TypesExternal.lean" || return
       cp "$proof_root/Scaled/FunsExternal.lean" "$out/Scaled/FunsExternal.lean" ;;
+    NumberShape)
+      printf '#[path = "%s"]\npub mod shape;\n' "$tree/$shape_source" > "$out/shape_root.rs" || return
+      (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
+        --start-from crate::shape::json_number_shape \
+        --dest-file "$out/number_shape.llbc" -- --crate-name norn_canonical_shape \
+        --crate-type lib --edition 2024 "$out/shape_root.rs") || return
+      "$aeneas" -backend lean -dest "$out/NumberShape" -emit-json -split-files \
+        -warnings-as-errors "$out/number_shape.llbc" || return
+      cp "$proof_root/NumberShape/FunsExternal.lean" "$out/NumberShape/FunsExternal.lean" ;;
     *) return 1 ;;
   esac
 }
 
-fragments=(Decimal Scaled ExactRational)
+fragments=(Decimal Scaled ExactRational NumberShape)
 
 # lean_check <out> <root> <module>: elaborate one module into <out>.
 lean_check() {
@@ -125,7 +140,7 @@ generated() {
 (cd "$lean_root" && lake build Aeneas)
 # The written semantics never import the extraction.
 for module in CoreModels DecimalReference LedgerReference RoundingReference RoundingMath \
-  RationalReference ScaledReference; do
+  RationalReference ScaledReference NumberShapeReference; do
   lean_check "$result/common" "$proof_root" "$module"
 done
 
@@ -193,6 +208,16 @@ expected = {
         "core.option.Option.Insts.CoreOpsTry_traitFromResidualOptionInfallible.from_residual",
         "core.result.Result.ok",
     }),
+    "NumberShape": ("norn_canonical_shape", "crates/norn-canonical/src/number/shape.rs", {
+        f"norn_canonical_shape.shape.{name}" for name in (
+            "json_number_shape", "after_sign", "after_integer", "after_fraction", "after_exponent",
+            "after_exponent_sign", "skip_digits", "skip_digits_loop", "skip_digits_loop.body",
+        )
+    }, {
+        "core.num.U8.is_ascii_digit",
+        "core.option.Option.Insts.CoreOpsTry_traitTry.branch",
+        "core.option.Option.Insts.CoreOpsTry_traitFromResidualOptionInfallible.from_residual",
+    }),
 }
 # Only the derived impls of the stored type itself may be extracted.
 derived = {
@@ -234,7 +259,7 @@ for fragment in "${fragments[@]}"; do
   generated "$baseline" "$fragment"
 done
 proof_output=""
-for module in DecimalProof LedgerProof QuotientProof RationalProof ScaledProof; do
+for module in DecimalProof LedgerProof QuotientProof RationalProof ScaledProof NumberShapeProof; do
   if module_output="$(lean_check "$baseline" "$proof_root" "$module" 2>&1)"; then
     proof_output+="$module_output"$'\n'
   else
@@ -269,7 +294,10 @@ expected_axioms="$(printf '%s\n' \
   "'Norn.OrderedFold.rescale_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.OrderedFold.divide_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.OrderedFold.binary_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
-  "'Norn.OrderedFold.rounding_site_correct' depends on axioms: [propext, Classical.choice, Quot.sound]")"
+  "'Norn.OrderedFold.rounding_site_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.Codec.json_number_shape_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.Codec.json_number_shape_some_iff' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.Codec.json_number_shape_none_iff' depends on axioms: [propext, Classical.choice, Quot.sound]")"
 test "${proof_output%$'\n'}" = "$expected_axioms"
 # Check the exact propositions, not only the theorem names or an exit code.
 printf '%s\n' \
@@ -278,6 +306,7 @@ printf '%s\n' \
   'import QuotientProof' \
   'import RationalProof' \
   'import ScaledProof' \
+  'import NumberShapeProof' \
   'open Aeneas.Std in' \
   'example (u : I128) (s : U8) : ∃ c s'"'"', norn_checker_decimal.decimal.canonical_parts u s = .ok (c, s'"'"') ∧' \
   '    Norn.QuantityLedger.IsCanonicalForm u.val s.val c.val s'"'"'.val :=' \
@@ -334,6 +363,14 @@ printf '%s\n' \
   '      Norn.OrderedFold.divideSpec (Norn.OrderedFold.modeOf profile.rounding) profile.scale.val' \
   '        a.coeff a.places b.coeff b.places :=' \
   '  Norn.OrderedFold.divide_correct profile a b' \
+  'open Aeneas.Std in' \
+  'example (s : Slice U8) (b : Bool) : norn_canonical_shape.shape.json_number_shape s = .ok (some b) ↔' \
+  '    Norn.Codec.JsonNumberShape (Norn.Codec.bytesOf s) b :=' \
+  '  Norn.Codec.json_number_shape_some_iff s b' \
+  'open Aeneas.Std in' \
+  'example (s : Slice U8) : norn_canonical_shape.shape.json_number_shape s = .ok none ↔' \
+  '    ∀ b, ¬ Norn.Codec.JsonNumberShape (Norn.Codec.bytesOf s) b :=' \
+  '  Norn.Codec.json_number_shape_none_iff s' \
   | (cd "$lean_root" && LEAN_PATH="$baseline:$result/common" lake env lean -DwarningAsError=true --stdin)
 # Refutation vectors: concrete runs of the extracted code, decided by compiled
 # evaluation (`native_decide`; the machine-integer library is not
@@ -345,6 +382,7 @@ cat > "$result/vectors/ExactArithVectors.lean" <<'LEANVECTORS'
 import Decimal.Funs
 import Scaled.Funs
 import ExactRational.Funs
+import NumberShape.Funs
 
 open Aeneas Aeneas.Std Result
 
@@ -392,9 +430,18 @@ def amount :
 
 def si (u : Std.I128) (s : Std.U8) : norn_checker_decimal.decimal.ScaledInteger := ⟨u, s⟩
 
+/-- The UTF-8 bytes of a literal as a slice (every literal here is short). -/
+def lit (s : String) : Slice Std.U8 :=
+  let l := s.toUTF8.toList.map (fun b => (⟨b.toBitVec⟩ : Std.U8))
+  if h : l.length ≤ Usize.max then ⟨l, h⟩ else Slice.new _
+
+def shapeOut : Result (Option Bool) → Option (Option Bool)
+  | ok r => some r
+  | _ => none
+
 def rat (n d : Std.I64) : norn_checker_rational.exact_rational.Rational := ⟨n, d⟩
 
-open norn_checker_decimal zen_expression norn_checker_rational
+open norn_checker_decimal zen_expression norn_checker_rational norn_canonical_shape
 
 theorem canonical_strips : pair (decimal.canonical_parts 1200#i128 3#u8) = some (12, 1) := by
   native_decide
@@ -435,6 +482,25 @@ theorem ledger_mul_overflow :
     amount (decimal.checked_mul (si 85070591730234615865843651857942052864#i128 0#u8)
       (si 2#i128 0#u8) 28#u8) = some none := by
   native_decide
+theorem shape_zero : shapeOut (shape.json_number_shape (lit "0")) = some (some true) := by
+  native_decide
+theorem shape_negative : shapeOut (shape.json_number_shape (lit "-12")) = some (some true) := by
+  native_decide
+theorem shape_fraction : shapeOut (shape.json_number_shape (lit "1.5")) = some (some false) := by
+  native_decide
+theorem shape_exponent : shapeOut (shape.json_number_shape (lit "1e5")) = some (some false) := by
+  native_decide
+theorem shape_signed_exponent :
+    shapeOut (shape.json_number_shape (lit "1.5e-3")) = some (some false) := by
+  native_decide
+theorem shape_leading_zero : shapeOut (shape.json_number_shape (lit "01")) = some none := by
+  native_decide
+theorem shape_bare_point : shapeOut (shape.json_number_shape (lit "1.")) = some none := by
+  native_decide
+theorem shape_plus : shapeOut (shape.json_number_shape (lit "+1")) = some none := by native_decide
+theorem shape_trailing : shapeOut (shape.json_number_shape (lit "1x")) = some none := by
+  native_decide
+theorem shape_empty : shapeOut (shape.json_number_shape (lit "")) = some none := by native_decide
 theorem half_even_tie :
     refusable (scaled.rounded_quotient .HalfEven 5#i128 2#i128) = some (some 2) := by native_decide
 theorem half_even_odd_tie :
@@ -502,6 +568,7 @@ source_root, root = Path(sys.argv[1]), Path(sys.argv[2])
 scaled = "vendor/zen/core/expression/src/scaled.rs"
 decimal = "crates/norn-checker/src/quantity_ledger/decimal.rs"
 rational = "crates/norn-checker/src/exact_rational.rs"
+shape = "crates/norn-canonical/src/number/shape.rs"
 mutants = [
     ("rounding-half-even-ties-away", scaled, "magnitude > complement", "magnitude >= complement"),
     ("rounding-parity-inverted", scaled, "quotient % 2 != 0", "quotient % 2 == 0"),
@@ -534,6 +601,22 @@ mutants = [
      "value.unscaled.checked_mul(multiplier)", "Some(value.unscaled.wrapping_mul(multiplier))"),
     ("overflow-ledger-mul-wrapping", decimal,
      "lhs.unscaled.checked_mul(rhs.unscaled)", "Some(lhs.unscaled.wrapping_mul(rhs.unscaled))"),
+    ("shape-leading-zero-accepted", shape,
+     "    } else if bytes[cursor] == b'0' {\n        Some(cursor + 1)",
+     "    } else if bytes[cursor] == b'0' {\n        Some(skip_digits(bytes, cursor + 1))"),
+    ("shape-empty-fraction-accepted", shape, "if digits == cursor + 1 {", "if digits < cursor + 1 {"),
+    ("shape-exponent-minus-refused", shape,
+     "(bytes[cursor] == b'+' || bytes[cursor] == b'-')", "bytes[cursor] == b'+'"),
+    ("shape-exponent-counts-as-integer", shape,
+     "Some(!fraction && !exponent)", "Some(!fraction)"),
+    ("shape-plus-sign-accepted", shape,
+     "if cursor < bytes.len() && bytes[cursor] == b'-' {",
+     "if cursor < bytes.len() && (bytes[cursor] == b'-' || bytes[cursor] == b'+') {"),
+    ("shape-last-digit-dropped", shape,
+     "while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {",
+     "while cursor + 1 < bytes.len() && bytes[cursor].is_ascii_digit() {"),
+    ("shape-trailing-bytes-accepted", shape,
+     "    if cursor == bytes.len() {\n        Some(", "    if cursor <= bytes.len() {\n        Some("),
     ("rational-not-reduced", rational, "break Some(a);", "break Some(1);"),
     ("rational-sign-not-normalized", rational,
      "numerator = numerator.checked_neg()?;", "numerator = numerator.checked_abs()?;"),
@@ -585,8 +668,9 @@ declare -A fragment_of=(
   ["$decimal_source"]=Decimal
   ["vendor/zen/core/expression/src/scaled.rs"]=Scaled
   ["$rational_source"]=ExactRational
+  ["$shape_source"]=NumberShape
 )
-proof_modules=(DecimalProof LedgerProof QuotientProof RationalProof ScaledProof)
+proof_modules=(DecimalProof LedgerProof QuotientProof RationalProof ScaledProof NumberShapeProof)
 declare -A proofs_of
 while read -r fragment module; do
   proofs_of[$fragment]+="$module "
@@ -596,7 +680,7 @@ import sys
 from pathlib import Path
 
 root, modules = Path(sys.argv[1]), sys.argv[2:]
-fragments = ("Decimal", "Scaled", "ExactRational")
+fragments = ("Decimal", "Scaled", "ExactRational", "NumberShape")
 
 def imports(module):
     path = root / (module.replace(".", "/") + ".lean")

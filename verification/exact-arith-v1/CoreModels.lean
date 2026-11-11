@@ -88,3 +88,7 @@ def U32.Insts.CoreConvertTryFromU64TryFromIntError.try_from (x : Std.U64) :
     Result (core.result.Result Std.U32 core.num.error.TryFromIntError) :=
   ok (if x.val < 2 ^ 32 then
     core.result.Result.Ok ⟨BitVec.ofNat 32 x.val⟩ else core.result.Result.Err ())
+
+/-- `u8::is_ascii_digit`: whether the byte is `b'0'..=b'9'`. -/
+def core.num.U8.is_ascii_digit (x : Std.U8) : Result Bool :=
+  ok (48 ≤ x.val && x.val ≤ 57)
