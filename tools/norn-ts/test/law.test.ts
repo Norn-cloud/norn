@@ -220,20 +220,24 @@ describe("law v2", () => {
     expect(checked.diagnostics.diagnostics).toEqual([]); expect(checked.admitted).toBe(true)
   }, 30_000)
 
-  test("refusals name the construct at the author's line", () => {
-    const refuse = (spec: string): { codes: string[]; line: number } => {
-      const dir = mkdtempSync(join(tmpdir(), "norn-law-v2-"))
-      try {
-        const file = join(dir, "law.ts")
-        writeFileSync(file, `import { Schema } from "effect"
+  const compileLaw = (spec: string, typeName = "books.Account") => {
+    const dir = mkdtempSync(join(tmpdir(), "norn-law-v2-"))
+    try {
+      const file = join(dir, "law.ts")
+      writeFileSync(file, `import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-export const Account = Norn.type({ name: "books.Account", title: "Account", version: "0.1.0", properties: Schema.Struct({ account_id: Schema.String, balance: Schema.Int, opened: Norn.date(), closes_at: Norn.timestamp("utc") }), identity: [{ name: "primary", properties: ["account_id"] }] })
+export const Account = Norn.type({ name: "${typeName}", title: "Account", version: "0.1.0", properties: Schema.Struct({ account_id: Schema.String, balance: Schema.Int, opened: Norn.date(), closes_at: Norn.timestamp("utc") }), identity: [{ name: "primary", properties: ["account_id"] }] })
 export const law = Norn.law("solvent", { on: Account, ${spec}, because: "x" })
 `)
-        const result = compileDefinitions(file, { scope: options.scope, sourcePath: "law.ts" })
-        if (result.ok) throw new Error(`accepted: ${spec}`)
-        return { codes: result.diagnostics.map((d) => d.code), line: result.diagnostics[0]!.start.line }
-      } finally { rmSync(dir, { recursive: true, force: true }) }
+      return compileDefinitions(file, { scope: options.scope, sourcePath: "law.ts" })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+
+  test("refusals name the construct at the author's line", () => {
+    const refuse = (spec: string, typeName?: string): { codes: string[]; messages: string[]; line: number } => {
+      const result = compileLaw(spec, typeName)
+      if (result.ok) throw new Error(`accepted: ${spec}`)
+      return { codes: result.diagnostics.map((d) => d.code), messages: result.diagnostics.map((d) => d.message), line: result.diagnostics[0]!.start.line }
     }
     expect(refuse("must: (self) => self.balance >= 0, never: (self) => self.balance < 0")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-TYPE"]), line: 4 })
     expect(refuse("must: (self) => self.missing >= 0")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-TYPE"]), line: 4 })
@@ -241,5 +245,18 @@ export const law = Norn.law("solvent", { on: Account, ${spec}, because: "x" })
     expect(refuse("must: (self) => self.balance >= 0, within: { before: (self) => Norn.addDays(self.opened, 3) }")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-EXPRESSION"]), line: 4 })
     expect(refuse("must: (self) => self.balance >= 0, within: { days: 0 }")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-LITERAL"]), line: 4 })
     expect(refuse("must: (self) => self.account_id > \"a\"")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-EXPRESSION"]), line: 4 })
+    // A date ordered against a timestamp is refused, not parsed to one kind (#1253 review).
+    expect(refuse("must: (self) => self.opened < self.closes_at")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-TYPE"]), line: 4 })
+    // Past 2^53 a Number round trip would round this down; the exact value is past u64 milliseconds.
+    expect(refuse("must: (self) => self.balance >= 0, within: { days: 9007199254740993 }")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-LITERAL"]), line: 4 })
+    // A subject without a namespace has no owner to infer.
+    expect(refuse("must: (self) => self.balance >= 0", "Account").messages).toEqual(expect.arrayContaining([expect.stringContaining("law subject \"Account\" is not a qualified type name")]))
+  })
+
+  test("within keeps the literal's exact value up to u64 milliseconds", () => {
+    const result = compileLaw("must: (self) => self.balance >= 0, within: { days: 213503982334 }")
+    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+    const law = result.artifacts.find((a) => (a as { kind: string }).kind === "law") as unknown as { payload: L.LawIR }
+    expect(law.payload.timing).toEqual({ kind: "within", millis: "18446744073657600000" })
   })
 })

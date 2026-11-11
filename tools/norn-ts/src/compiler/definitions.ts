@@ -46,7 +46,8 @@ interface SubjectSchema {
  * (dx-spec §4.5): `self.due_date >= self.issue_date` becomes
  * `date(self.due_date) >= date(self.issue_date)`, and a string literal
  * compared with one is parsed the same way. norn-zen/6 refuses ordering on
- * raw temporal values and on mixed raw/parsed operands.
+ * raw temporal values and on mixed raw/parsed operands. A date ordered
+ * against a timestamp is refused, never parsed to one kind.
  */
 function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "timestamp">): X.Expr {
   const kindOf = (e: X.Expr): "date" | "timestamp" | undefined =>
@@ -56,7 +57,9 @@ function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "ti
       case "Compare": {
         const left = walk(e.left), right = walk(e.right)
         if (e.op === "==" || e.op === "!=") return { ...e, left, right }
-        const kind = kindOf(left) ?? kindOf(right)
+        const leftKind = kindOf(left), rightKind = kindOf(right)
+        if (leftKind && rightKind && leftKind !== rightKind) throw new X.ExprError("NORN-FLOW-TYPE", `ordering compares a ${leftKind} with a ${rightKind}; convert one side explicitly`)
+        const kind = leftKind ?? rightKind
         if (!kind) return { ...e, left, right }
         const parse = (side: X.Expr): X.Expr => (X.temporalKind(side) ? side : (side._tag === "Ref" && kindOf(side)) || (side._tag === "Literal" && typeof side.value === "string") ? X.call(kind, side) : side)
         return { ...e, left: parse(left), right: parse(right) }
@@ -1067,6 +1070,7 @@ class DefinitionCompiler {
     const on = spec.get("on")!
     const { call: subjectCall, members: subjectMembers } = this.referenced(on, ANY_TYPE, "a Norn.type or Norn.interfaceType definition")
     const subject = this.string(this.member(subjectMembers, "name", subjectCall))
+    if (subject.lastIndexOf(".") <= 0) throw new CompileError("NORN-FLOW-LITERAL", `law subject ${JSON.stringify(subject)} is not a qualified type name (namespace.Type), so the law has no owner`, on)
     const version = this.string(this.member(subjectMembers, "version", subjectCall))
     const self = this.subjectSchema(subjectCall, subjectMembers, true, new Set())
     const id = spec.has("id") ? this.string(spec.get("id")!) : `${subject}.${name}`
@@ -1123,15 +1127,17 @@ class DefinitionCompiler {
       if (self.temporal.get(property) !== "timestamp") throw new CompileError("NORN-FLOW-SLICE", `within.before reads ${property}, which is not a timestamp property of the subject`, body.name)
       return { kind: "before_deadline", property }
     }
-    const number = (key: string): number => {
+    // Exact from the literal's text: a Number round trip loses digits above 2^53.
+    const number = (key: string): bigint => {
       const node = m.get(key)
-      if (!node) return 0
+      if (!node) return 0n
       const value = this.deref(node)
       if (!ts.isNumericLiteral(value) || !/^[0-9]+$/.test(value.text)) throw new CompileError("NORN-FLOW-LITERAL", `within.${key} is a whole number literal`, node)
-      return Number(value.text)
+      return BigInt(value.text)
     }
-    const millis = BigInt(number("days")) * 86_400_000n + BigInt(number("hours")) * 3_600_000n
+    const millis = number("days") * 86_400_000n + number("hours") * 3_600_000n
     if (millis === 0n) throw new CompileError("NORN-FLOW-LITERAL", "within needs a positive days or hours", input)
+    if (millis > 18_446_744_073_709_551_615n) throw new CompileError("NORN-FLOW-LITERAL", "within is longer than LawIR's u64 milliseconds", input)
     return { kind: "within", millis: millis.toString() }
   }
 
@@ -1144,9 +1150,9 @@ class DefinitionCompiler {
     const rows = syntax.decisionRows(fn)
     this.warnings.push(...syntax.warnings)
     if (rows.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "use a conditional expression for a law predicate", fn)
-    const value = parsedTemporal(rows[0]!.value, self.temporal)
     const scope: X.Scope = new Map([["input", { zen: "self", schema: self.schema }]])
     try {
+      const value = parsedTemporal(rows[0]!.value, self.temporal)
       if (X.typeOf(value, scope).type !== "boolean") throw new X.ExprError("NORN-FLOW-EXPRESSION", "a law predicate must be Boolean")
       return X.render(value, scope)
     } catch (error) {

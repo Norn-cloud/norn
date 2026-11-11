@@ -133,7 +133,8 @@ Restore requires the caller's explicit expected cell binding and matches it
 against the verified export before publishing a destination. Internal replay into
 an empty engine retains that same identity. Migration to another CellId is
 unsupported. This cut does not yet qualify individual receipts or local keys for
-portable use.
+portable use. No store or archive written before this cut exists outside tests
+and nothing is deployed, so none needs a migration path or a format bump.
 
 Named scenarios: **CELL-ID-ONCE** generates once and reopens without calling the
 source; **CELL-ID-SCOPE** gives independent same-scope stores distinct identities;

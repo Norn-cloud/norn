@@ -2821,8 +2821,11 @@ fn apply_change<X>(
     let Some(entry) = working.get_mut(&key) else {
         return Err(DecisionRefusal::NotInSlice { key });
     };
-    // A declared type whose effective view is refused cannot prove which
-    // properties are protected, so a write or delete of its rows is refused.
+    // A type with no effective view cannot prove which properties are
+    // protected, so every change to its rows (create, set, transition and
+    // delete) is refused. A type the catalog does not declare was already
+    // refused above as unknown, so here this is a declared type whose
+    // effective view is refused.
     let Some(effective) = catalog.effective_type(&key.object_type) else {
         return Err(DecisionRefusal::InvalidOutput {
             reason: format!(
@@ -3343,6 +3346,12 @@ mod field_authority_tests {
                 key: key.key.clone(),
                 property: norn_ir::PropertyId("total".into()),
                 value: JsonValue::from(3_i64),
+            },
+            FactChange::Transition {
+                object_type: key.object_type.clone(),
+                key: key.key.clone(),
+                lifecycle: norn_ir::PropertyId("total".into()),
+                transition: norn_ir::TransitionId("close".into()),
             },
         ] {
             let mut working = BTreeMap::from([(
