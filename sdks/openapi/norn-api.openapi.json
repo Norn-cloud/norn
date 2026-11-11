@@ -15,7 +15,7 @@
         "tags": [
           "crate::actions"
         ],
-        "summary": "Commit or replay one admitted action for the verified `actor`, under the\nheld definition epoch. `disclosure` is the cell's read runtime: its handle\nkey and collection grants decide which receipt coordinate the actor sees.\n# Errors\nOne opaque 403 before any storage read for a missing actor, denied\npolicy, foreign scope or unknown action; `defs.stale` (409) for a stale\npin; otherwise the kernel's typed refusal, its detail disclosed only\nunder an explicit diagnostic grant. A refusal commits nothing.",
+        "summary": "Call one admitted action as the verified caller: it commits, or an\nidentical earlier call replays with its original receipt.\n# Errors\nOne opaque 403, decided before any storage read, for a missing or\nunverified caller, a denied policy, a foreign scope or an unknown action;\n409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed\nrefusal, its detail disclosed only under an explicit diagnostic grant. A\nrefusal commits nothing.",
         "operationId": "call_action",
         "parameters": [
           {

@@ -14,14 +14,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Commit or replay one admitted action for the verified `actor`, under the
-         *     held definition epoch. `disclosure` is the cell's read runtime: its handle
-         *     key and collection grants decide which receipt coordinate the actor sees.
+         * Call one admitted action as the verified caller: it commits, or an
+         *     identical earlier call replays with its original receipt.
          *     # Errors
-         *     One opaque 403 before any storage read for a missing actor, denied
-         *     policy, foreign scope or unknown action; `defs.stale` (409) for a stale
-         *     pin; otherwise the kernel's typed refusal, its detail disclosed only
-         *     under an explicit diagnostic grant. A refusal commits nothing.
+         *     One opaque 403, decided before any storage read, for a missing or
+         *     unverified caller, a denied policy, a foreign scope or an unknown action;
+         *     409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
+         *     refusal, its detail disclosed only under an explicit diagnostic grant. A
+         *     refusal commits nothing.
          */
         post: operations["call_action"];
         delete?: never;
