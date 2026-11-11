@@ -48,7 +48,7 @@ test("view: an overridden suggestion reads as the strongest signal, with the blo
   await expect(band(page, "What was decided")).toContainText("Customer paid the overdue invoice by phone")
   const rules = band(page, "Rules that applied").getByRole("listitem")
   await expect(rules).toHaveCount(2)
-  await expect(rules.nth(0)).toContainText("Blocked")
+  await expect(rules.nth(0)).toContainText("Blocked · waived")
   await expect(rules.nth(0)).toContainText("Waived by a manager: Payment confirmed by phone")
   await expect(rules.nth(1)).toContainText("Allowed")
   await expect(band(page, "What happened")).toContainText("Recorded")

@@ -41,8 +41,9 @@ export function EpisodePage() {
 
 const AGREEMENT: Readonly<Record<Agreement, { readonly label: string; readonly hint: string; readonly tone: string }>> = {
   accepted: { label: "Accepted the suggestion", hint: "The person chose what was suggested.", tone: "outcome" },
-  edited: { label: "Edited the suggestion", hint: "The person chose the suggestion's edited variant.", tone: "wait" },
-  overridden: { label: "Overrode the suggestion", hint: "The person chose differently from what was suggested. Overrides carry the most to learn from.", tone: "law" },
+  edited: { label: "Edited the suggestion", hint: "The person chose the suggestion's edited variant.", tone: "agent" },
+  // An override is a normal, valuable event, not an error: amber, never the refusal red.
+  overridden: { label: "Overrode the suggestion", hint: "The person chose differently from what was suggested. Overrides carry the most to learn from.", tone: "wait" },
   none: { label: "No suggestion", hint: "Nothing was suggested; the person decided alone.", tone: "state" },
 }
 const RULE: Readonly<Record<RuleOutcome, { readonly label: string; readonly icon: LucideIcon; readonly tone: string }>> = {
@@ -50,6 +51,7 @@ const RULE: Readonly<Record<RuleOutcome, { readonly label: string; readonly icon
   would_block: { label: "Would have blocked", icon: ShieldAlert, tone: "wait" },
   blocked: { label: "Blocked", icon: ShieldX, tone: "law" },
 }
+const WAIVED = { label: "Blocked · waived", icon: ShieldAlert, tone: "wait" } as const
 const OUTCOME: Readonly<Record<OutcomeState, { readonly label: string; readonly icon: LucideIcon; readonly tone: string }>> = {
   recorded: { label: "Recorded", icon: CheckCircle2, tone: "outcome" },
   open: { label: "Not measured yet", icon: Hourglass, tone: "state" },
@@ -133,7 +135,8 @@ function Timeline({ episode: e }: { readonly episode: Episode }) {
             {e.ruleOutcomes.length === 0
               ? <p className="text-sm text-muted-foreground">No rule was checked for this decision.</p>
               : <ul className="grid gap-2" aria-label="Rules">{e.ruleOutcomes.map((r) => {
-                const s = RULE[r.outcome]
+                // A waived block shows what actually happened, in the waiver's tone, not a bare "Blocked".
+                const s = r.waiver !== null && r.outcome === "blocked" ? WAIVED : RULE[r.outcome]
                 return (
                   <li key={r.lawId} className="grid gap-1 rounded-lg border border-node-border bg-background p-2.5 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
@@ -191,7 +194,7 @@ function Band({ icon: Icon, tone, title, aside, emphasis = false, children }: {
       <span className="relative z-10 mt-3 grid size-9 place-items-center rounded-full border border-node-border bg-card shadow-node" style={{ color: `var(--tint-${tone})` }}>
         <Icon className="size-4" aria-hidden />
       </span>
-      <section aria-label={title} className={cn("grid gap-2 rounded-node border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]", emphasis ? "border-[color-mix(in_oklab,var(--tint-law)_40%,var(--node-border))]" : "border-node-border")}>
+      <section aria-label={title} className={cn("grid gap-2 rounded-node border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]", emphasis ? "border-[color-mix(in_oklab,var(--tint-wait)_45%,var(--node-border))]" : "border-node-border")}>
         <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-medium">{title}</h2><span className="flex-1" />{typeof aside === "string" ? <span className="text-meta text-muted-foreground tabular-nums">{aside}</span> : aside}</div>
         {children}
       </section>
