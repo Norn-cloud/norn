@@ -1717,3 +1717,68 @@ fn ordinary_admission_upgrades_flat_legacy_exceptions() {
     partial[0]["exceptions"][0]["overrides"] = json!(low.law.id.clone());
     assert!(run(partial).iter().any(norn_checker::Diagnostic::is_error));
 }
+
+#[test]
+fn installed_flat_legacy_exceptions_admit_through_the_base_decode() {
+    // An installed (base) `norn.normative/1.0.0` rule stored with flat
+    // `{ id, condition, source }` exceptions still decodes during artifact-set
+    // admission, and admits exactly like the same rule in tree form.
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let codes = |base_rule: serde_json::Value| {
+        let (entity, _low, mut high) = admission_fixture();
+        let mut installed = entity.clone();
+        installed["payload"]["extensions"] =
+            json!({norn_checker::deontic::NORMATIVE_SLOT:[base_rule]});
+        let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
+        let mut candidate = entity;
+        candidate["artifactId"] = json!("candidate.entity");
+        candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
+        high.source.artifact_id = "candidate.entity".into();
+        high.source.pointer = "/payload/extensions/norn.normative~11.0.0/0".into();
+        candidate["dependencies"] = json!([{"artifactId":"erpnext.SalesOrder.entity","kind":"entity","version":"0.1.0","required":true}]);
+        candidate["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[high]});
+        let artifact = serde_json::from_value(candidate).expect("candidate");
+        let findings = check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[base],
+                tenant: None,
+            },
+        );
+        let refused = findings
+            .iter()
+            .any(|d| d.message.contains("Normative admission refused"));
+        let mut found: Vec<String> = findings
+            .iter()
+            .map(|d| d.code.as_str().to_owned())
+            .collect();
+        found.sort();
+        (refused, found)
+    };
+    let (_entity, low, _high) = admission_fixture();
+    for condition in ["true", "false"] {
+        let mut flat = serde_json::to_value(&low).expect("rule");
+        flat["exceptions"] =
+            json!([{"id": "exempt", "condition": condition, "source": low.source.clone()}]);
+        let mut tree = flat.clone();
+        tree["exceptions"][0]["overrides"] = json!(low.law.id.clone());
+        tree["exceptions"][0]["rationale"] =
+            json!(norn_checker::deontic::LEGACY_EXCEPTION_RATIONALE);
+        let (refused, legacy) = codes(flat);
+        assert!(!refused, "{condition}: the flat base rule must decode");
+        assert_eq!(
+            legacy,
+            codes(tree).1,
+            "{condition}: same meaning as the tree form"
+        );
+    }
+    // A partly upgraded base exception is not guessed at: decoding refuses.
+    let mut partial = serde_json::to_value(&low).expect("rule");
+    partial["exceptions"] = json!([{
+        "id": "exempt", "condition": "true", "source": low.source,
+        "overrides": low.law.id
+    }]);
+    assert!(codes(partial).0);
+}
