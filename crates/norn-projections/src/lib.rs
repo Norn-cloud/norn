@@ -1,12 +1,10 @@
-//! `norn-projections`: JSON Schema, SQLite DDL, Cedar schema/loss, OWL, types,
-//! Frappe projection bundles.
+//! `norn-projections`: JSON Schema, SQLite DDL, Cedar schema/loss, OWL, types.
 //!
 //! Ring 0 — pure, portable semantic core; see `AGENTS.md` for the allowed and
 //! forbidden dependencies. Projections are one-way: canonical IR is never
 //! reconstructed from a projection.
 
 pub mod cedar;
-pub mod frappe;
 pub mod interop;
 pub mod lifecycle;
 pub mod lineage;
@@ -18,10 +16,6 @@ pub use cedar::{
     project_cedar_schema, project_cedar_schema_with_catalog,
     project_cedar_schema_with_catalog_and_principal_attributes,
     project_cedar_schema_with_principal_attributes, project_host_access_schema,
-};
-pub use frappe::{
-    FRAPPE_BUNDLE_DOMAIN, FRAPPE_BUNDLE_FORMAT, FRAPPE_MODULE, FrappeProjectionError,
-    FrappeProjectionInput, doctype_name, frappe_role, project_frappe_bundle,
 };
 pub use interop::{
     ExportScope, InteropError, dcat_catalog, openlineage_run_events, prov_document,
