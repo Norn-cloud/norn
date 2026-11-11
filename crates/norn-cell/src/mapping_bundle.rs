@@ -106,6 +106,17 @@ fn digest(value: &impl Serialize) -> Result<String, CellError> {
     )?)
 }
 
+/// LABEL-LOCALE-1: the definitions a bundle's evidence identity binds. Label catalogs are
+/// presentation, never semantics, so adding or changing labels never changes a bundle digest;
+/// a set without labels digests exactly as before.
+fn semantic_definitions_digest(artifacts: &[ArtifactEnvelope]) -> Result<String, CellError> {
+    let semantic: Vec<&ArtifactEnvelope> = artifacts
+        .iter()
+        .filter(|artifact| artifact.kind() != norn_ir::ArtifactKind::Labels)
+        .collect();
+    digest(&semantic)
+}
+
 impl<E: SqlEngine> StoreReader<'_, E> {
     /// Captured, rechecked mapping evidence for one source event, including consumed inputs.
     /// Callers enforce source disclosure; these records confer no mutation authority.
@@ -217,7 +228,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             datasets: schema.datasets.into_iter().map(|d| d.id).collect(),
             compiled: compile_mapping_artifact(mapping, &artifacts, &[]),
             artifact_pins,
-            definitions_digest: digest(&artifacts)?,
+            definitions_digest: semantic_definitions_digest(&artifacts)?,
             model_snapshot: installation.model,
         });
         if let Some(cache) = self.mapping_plans {
@@ -346,5 +357,47 @@ impl<E: SqlEngine> CellStore<E> {
             let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
             crate::mapping_conflict::capture(self, raw, &bundle)
         })
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod label_identity {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn envelope(id: &str, kind: &str, payload: serde_json::Value) -> ArtifactEnvelope {
+        serde_json::from_value(serde_json::json!({
+            "irVersion": "0.1", "artifactId": id, "kind": kind, "namespace": "t", "name": id,
+            "version": "1.0.0", "lifecycle": "active", "scope": {}, "dependencies": [],
+            "provenance": { "source": "system" }, "payload": payload,
+        }))
+        .expect("envelope")
+    }
+
+    proptest! {
+        /// LABEL-LOCALE-1: any label catalogs, anywhere in the installed set, leave the
+        /// definitions digest a mapping bundle binds exactly as the label-free set's.
+        #[test]
+        fn labels_never_change_the_bundle_definitions_digest(
+            texts in prop::collection::vec("[a-z\u{0621}-\u{064A}]{1,8}", 0..4),
+            at in 0usize..3,
+        ) {
+            let definitions = vec![
+                envelope("t.a", "rule", serde_json::json!({ "ruleId": "t.a" })),
+                envelope("t.b", "rule", serde_json::json!({ "ruleId": "t.b" })),
+            ];
+            let mut labelled = definitions.clone();
+            for (index, text) in texts.iter().enumerate() {
+                let catalog = envelope(&format!("t.labels{index}"), "labels", serde_json::json!({
+                    "labelsVersion": "0.1",
+                    "entries": [{ "target": { "kind": "rule", "ruleId": "t.a" }, "label": { "ar": text } }],
+                }));
+                labelled.insert(at.min(labelled.len()), catalog);
+            }
+            prop_assert_eq!(
+                semantic_definitions_digest(&labelled).expect("digest"),
+                digest(&definitions.iter().collect::<Vec<_>>()).expect("digest")
+            );
+        }
     }
 }
