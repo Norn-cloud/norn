@@ -60,26 +60,36 @@ pub(crate) struct BindingPins<D, C> {
     pub(crate) accepted: Option<AcceptedPins<D>>,
 }
 
-/// RECEIPT-AUTH-BIND-1: the receipt binds only when the requested, receipt,
-/// record and accepted digests agree, the result identities agree, command,
-/// generation and attempt agree, the command is not cancelled, and the
-/// delivery consumed is this command's result at this generation
-/// (RECEIPT-CONSUME-1).
-pub(crate) fn pins_bind<D: PartialEq, C: PartialEq>(pins: &BindingPins<D, C>) -> bool {
-    let delivery_is_result = match &pins.consumed {
+/// RECEIPT-CONSUME-1: the delivery consumed is this command's result at the
+/// record's generation.
+fn delivery_is_result<D, C: PartialEq>(pins: &BindingPins<D, C>) -> bool {
+    match &pins.consumed {
         Some(consumed) => {
             consumed.command == pins.record_command && consumed.generation == pins.record_generation
         }
         None => false,
-    };
-    let state_accepted = match &pins.accepted {
+    }
+}
+
+/// The command state accepted exactly this receipt and result at the
+/// record's generation.
+fn state_accepted<D: PartialEq, C>(pins: &BindingPins<D, C>) -> bool {
+    match &pins.accepted {
         Some(accepted) => {
             accepted.receipt == pins.receipt_digest
                 && accepted.result_identity == pins.receipt_result_identity
                 && accepted.generation == pins.record_generation
         }
         None => false,
-    };
+    }
+}
+
+/// RECEIPT-AUTH-BIND-1: the receipt binds only when the requested, receipt,
+/// record and accepted digests agree, the result identities agree, command,
+/// generation and attempt agree, the command is not cancelled, and the
+/// delivery consumed is this command's result at this generation
+/// (RECEIPT-CONSUME-1).
+pub(crate) fn pins_bind<D: PartialEq, C: PartialEq>(pins: &BindingPins<D, C>) -> bool {
     pins.receipt_digest == pins.requested
         && pins.receipt_digest == pins.record_receipt
         && pins.receipt_result_identity == pins.record_result_identity
@@ -87,9 +97,9 @@ pub(crate) fn pins_bind<D: PartialEq, C: PartialEq>(pins: &BindingPins<D, C>) ->
         && pins.record_generation == pins.receipt_generation
         && pins.record_attempt == pins.receipt_attempt
         && pins.state_generation == pins.record_generation
-        && delivery_is_result
+        && delivery_is_result(pins)
         && !pins.state_cancelled
-        && state_accepted
+        && state_accepted(pins)
 }
 
 /// The pins an action checks on a bound receipt before consuming it.
