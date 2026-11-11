@@ -63,7 +63,8 @@
 //!    stale-generation, duplicate or late result is refused and changes
 //!    nothing. While a dispatched result is outstanding, `perform` fails
 //!    (the outcome is unknown) rather than execute again. Observations are
-//!    redelivered too (duplicate ids, late after consumption) and ingested
+//!    redelivered too (duplicate ids, and late after consumption:
+//!    [`CellOp::Reinject`] consumes one first when none was) and ingested
 //!    at most once.
 //!
 //! Hosts that inject faults or declare a network also run in swarm mode: each case first draws
@@ -1166,6 +1167,20 @@ pub enum CellOp {
     Deliver(Box<Delivery>),
     /// The network loses the in-flight result at this index (law 7).
     Lose(u8),
+    /// An observation the cell already consumed arrives again (law 7).
+    Reinject(Box<Reinjecting>),
+}
+
+/// A late observation of the law machine ([`CellOp::Reinject`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reinjecting {
+    /// An unfaulted commit run first that consumes the pending observation
+    /// `id`, when no observation was consumed yet.
+    pub consume: Option<LawCommit>,
+    /// Observation number.
+    pub id: u8,
+    /// Its payload this time.
+    pub payload: u8,
 }
 
 /// A dispatch of the law machine ([`CellOp::Dispatch`]).
@@ -2061,7 +2076,51 @@ impl CellModel {
                     .boxed(),
             ));
         }
+        if let Some(late) = self.late_strategy() {
+            options.push((mix.late, late));
+        }
         options
+    }
+
+    /// An observation redelivered after its consumption: one already
+    /// consumed, or else a pending one consumed first by the same transition.
+    fn late_strategy(&self) -> Option<BoxedStrategy<CellOp>> {
+        let pending = |n: &u8| {
+            let id = law_observed(*n, 0).id;
+            self.inbox.iter().any(|observed| observed.id == id)
+        };
+        let consumed: Vec<u8> = (0..=LAW_UNIVERSE)
+            .filter(|n| self.seen.contains(&law_observed(*n, 0).id) && !pending(n))
+            .collect();
+        let reinject = |consume, id, payload| {
+            CellOp::Reinject(Box::new(Reinjecting {
+                consume,
+                id,
+                payload,
+            }))
+        };
+        if !consumed.is_empty() {
+            return Some(
+                (proptest::sample::select(consumed), any::<u8>())
+                    .prop_map(move |(id, payload)| reinject(None, id, payload))
+                    .boxed(),
+            );
+        }
+        let pending: Vec<u8> = (0..=LAW_UNIVERSE).filter(pending).collect();
+        if pending.is_empty() {
+            return None;
+        }
+        Some(
+            (proptest::sample::select(pending), any::<u8>())
+                .prop_map(move |(id, payload)| {
+                    let consume = CellCommit {
+                        consumes: Some(law_observed(id, 0).consumed()),
+                        ..CellCommit::empty()
+                    };
+                    reinject(Some(consume), id, payload)
+                })
+                .boxed(),
+        )
     }
 
     /// The expectation for `target` under the armed `plan`, applying to the
@@ -2448,6 +2507,7 @@ struct NetworkMix {
     lose: u32,
     reissue: u32,
     redeliver: u32,
+    late: u32,
 }
 
 impl NetworkMix {
@@ -2462,17 +2522,21 @@ impl NetworkMix {
             weight(),
             weight(),
             weight(),
+            weight(),
         )
             .prop_map(
-                |(dispatch, twin, deliver, reorder, duplicate, lose, reissue, redeliver)| Self {
-                    dispatch,
-                    twin,
-                    deliver,
-                    reorder,
-                    duplicate,
-                    lose,
-                    reissue,
-                    redeliver,
+                |(dispatch, twin, deliver, reorder, duplicate, lose, reissue, redeliver, late)| {
+                    Self {
+                        dispatch,
+                        twin,
+                        deliver,
+                        reorder,
+                        duplicate,
+                        lose,
+                        reissue,
+                        redeliver,
+                        late,
+                    }
                 },
             )
     }
@@ -2736,6 +2800,12 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 state.chain = model.dispatching(dispatching);
                 Expect::Nothing
             }
+            CellOp::Reinject(reinjecting) => {
+                if let Some(commit) = &reinjecting.consume {
+                    state.chain = vec![Expect::Commit(model.commit(commit))];
+                }
+                model.inject(reinjecting.id, reinjecting.payload)
+            }
             CellOp::Deliver(delivery) => model.deliver(delivery),
             CellOp::Lose(ix) => {
                 if usize::from(*ix) < model.in_flight.len() {
@@ -2947,22 +3017,18 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
             CellOp::Advance(_) => {
                 host.sim_advance_to(LogicalTime::from_millis(reference.model.now));
             }
-            CellOp::Inject { id, payload } => {
-                host.sim_inject(law_observed(id, payload));
-                if let Expect::Inject { duplicate, late } = expected {
-                    match (duplicate, late) {
-                        (true, true) => coverage::hit_prefixed("cell", "observe.late_ignored"),
-                        (true, false) => {
-                            coverage::hit_prefixed("cell", "observe.duplicate_ignored");
-                        }
-                        (false, _) => {}
-                    }
+            CellOp::Inject { id, payload } => apply_inject(&mut host, id, payload, &expected),
+            CellOp::Reinject(reinjecting) => {
+                if let Some(commit) = &reinjecting.consume {
+                    let consumed = reference.chain.first().cloned().unwrap_or(Expect::Nothing);
+                    apply_commit(&mut host, commit, &consumed, None);
                 }
+                apply_inject(&mut host, reinjecting.id, reinjecting.payload, &expected);
             }
             CellOp::Dispatch(dispatching) => {
                 apply_dispatching(&mut host, &dispatching, &reference.chain);
             }
-            CellOp::Deliver(_) | CellOp::Lose(_) => apply_network(&mut host, &op, expected),
+            CellOp::Deliver(_) | CellOp::Lose(_) => apply_network(&mut host, &op, &expected),
             CellOp::Faulted(faulted) => {
                 let Faulted {
                     prepare, target, ..
@@ -2980,6 +3046,24 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
             }
         }
         Self::refines(host, reference)
+    }
+}
+
+/// One observation arrives: ingested once; a seen id, before or after its
+/// consumption, is ignored (law 3; law 7 redelivers them).
+fn apply_inject<H: SimulatedCell>(host: &mut H, id: u8, payload: u8, expected: &Expect) {
+    host.sim_inject(law_observed(id, payload));
+    if let Expect::Inject {
+        duplicate: true,
+        late,
+    } = *expected
+    {
+        let label = if late {
+            "observe.late_ignored"
+        } else {
+            "observe.duplicate_ignored"
+        };
+        coverage::hit_prefixed("cell", label);
     }
 }
 
@@ -3015,11 +3099,11 @@ fn dispatch_once<H: SimulatedCell>(host: &mut H, expected: Expect) {
 
 /// One network transition (law 7): a delivery is recorded exactly when the
 /// model records it, and a loss is the network's alone.
-fn apply_network<H: SimulatedCell>(host: &mut H, op: &CellOp, expected: Expect) {
+fn apply_network<H: SimulatedCell>(host: &mut H, op: &CellOp, expected: &Expect) {
     match op {
         CellOp::Deliver(delivery) => {
             let recorded = host.sim_deliver(&delivery.command, &delivery.input);
-            if let Expect::Deliver { stale, delayed, .. } = expected {
+            if let Expect::Deliver { stale, delayed, .. } = *expected {
                 let outcome = match (&recorded, stale) {
                     (Ok(true), _) => "network.delivered",
                     (_, true) => "result.stale_refused",
@@ -3044,6 +3128,7 @@ fn apply_network<H: SimulatedCell>(host: &mut H, op: &CellOp, expected: Expect) 
         }
         CellOp::Lose(_) => coverage::hit_prefixed("cell", "network.dropped"),
         CellOp::Dispatch(_)
+        | CellOp::Reinject(_)
         | CellOp::Commit(_)
         | CellOp::Perform
         | CellOp::Observe
