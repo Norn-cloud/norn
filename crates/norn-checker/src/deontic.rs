@@ -598,6 +598,46 @@ pub fn exception_home(rule: &DeonticRule) -> Option<&[norn_ir::LawException]> {
     }
 }
 
+/// Rationale given to an exception stored in the flat pre-tree shape.
+pub const LEGACY_EXCEPTION_RATIONALE: &str =
+    "Declared before exception trees; lifts its rule directly.";
+
+/// Upgrade exceptions stored in the flat `norn.normative/1.0.0` shape
+/// (`{ id, condition, source }`) to the tree shape. A flat exception lifted its
+/// rule directly, so it becomes an exception that overrides the rule's law id:
+/// the same meaning. Any other shape is left for the strict decoder.
+fn upgrade_legacy_exceptions(slot: &mut serde_json::Value) {
+    let Some(rules) = slot.as_array_mut() else {
+        return;
+    };
+    for rule in rules {
+        let Some(law_id) = rule
+            .pointer("/law/id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some(exceptions) = rule
+            .get_mut("exceptions")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+        for exception in exceptions {
+            let Some(object) = exception.as_object_mut() else {
+                continue;
+            };
+            let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            if keys == ["condition", "id", "source"] {
+                object.insert("overrides".into(), law_id.clone().into());
+                object.insert("rationale".into(), LEGACY_EXCEPTION_RATIONALE.into());
+            }
+        }
+    }
+}
+
 /// Customer-authored declarations in the existing `EntityIR` extension map.
 pub const NORMATIVE_SLOT: &str = "norn.normative/1.0.0";
 /// One whole-admission query ceiling; unknown always refuses admission.
@@ -695,11 +735,13 @@ fn admission_order(
         if !matches!(*root, norn_ir::EntityRoot::V2(_)) {
             return Err("normative carrier kind is unsupported".into());
         }
-        let value = extensions
+        let mut value = extensions
             .get(NORMATIVE_SLOT)
-            .ok_or("missing normative declaration slot")?;
+            .ok_or("missing normative declaration slot")?
+            .clone();
+        upgrade_legacy_exceptions(&mut value);
         let declared: Vec<DeonticRule> = serde_json::from_slice(
-            &norn_canonical::canonical_json_of(value).map_err(|e| e.to_string())?,
+            &norn_canonical::canonical_json_of(&value).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
         if rules.len().saturating_add(declared.len())

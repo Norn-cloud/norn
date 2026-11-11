@@ -1674,3 +1674,42 @@ fn layer_protection_reads_law_exception_trees_in_both_directions() {
         );
     }
 }
+
+#[test]
+fn ordinary_admission_upgrades_flat_legacy_exceptions() {
+    // A rule stored before exception trees carries `{ id, condition, source }`
+    // exceptions. They still admit, with the same meaning: each lifts its rule.
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (entity, low, high) = admission_fixture();
+    let registry = BTreeSet::new();
+    let run = |rules: serde_json::Value| {
+        let mut candidate = entity.clone();
+        candidate["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
+        let artifact: norn_ir::ArtifactEnvelope =
+            serde_json::from_value(candidate).expect("artifact");
+        check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &[],
+                tenant: None,
+            },
+        )
+    };
+    let legacy = |condition: &str| {
+        let mut rules = json!([low.clone(), high.clone()]);
+        rules[0]["exceptions"] = json!([{
+            "id": "exempt", "condition": condition, "source": low.source.clone()
+        }]);
+        rules
+    };
+    // Lifted everywhere: no clash, exactly as the tree form with the law as parent.
+    assert!(run(legacy("true")).is_empty());
+    // Never lifted: the clash stays.
+    assert!(run(legacy("false")).iter().any(norn_checker::Diagnostic::is_error));
+    // A partial new shape is not upgraded and refuses.
+    let mut partial = legacy("true");
+    partial[0]["exceptions"][0]["overrides"] = json!(low.law.id.clone());
+    assert!(run(partial).iter().any(norn_checker::Diagnostic::is_error));
+}

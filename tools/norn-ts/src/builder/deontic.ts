@@ -45,6 +45,9 @@ export function renderDeontic(rule: DeonticRule): string {
   const grade = { obligation: "must", permission: "may", prohibition: "must not" }[rule.modality]
   const when = rule.law.condition === undefined ? "" : ` WHEN ${quote(rule.law.condition)}`
   const timing = rule.law.timing === undefined ? "" : ` WITH TIMING ${quote(rule.law.timing)}`
+  if (rule.exceptions?.length && rule.law.exceptions?.length) {
+    throw new Error("law.exception.two_homes: declare exceptions on the rule or on law.exceptions, not both")
+  }
   const declared = rule.exceptions?.length ? rule.exceptions : (rule.law.exceptions ?? [])
   const lifts = (e: LawException) => (e.overrides === rule.law.id ? "" : ` OVERRIDING ${quote(e.overrides)}`)
   const exceptions = declared.map(e => ` EXCEPT ${quote(e.id)}${lifts(e)} WHEN ${quote(e.condition)}`).join("")
