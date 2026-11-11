@@ -228,7 +228,7 @@
       ],
       "version": "ISO 9202:2019",
       "versionDate": "2019",
-      "versionBasis": "Edition as listed in #351 research; the ISO page was not re-read this round.",
+      "versionBasis": "Edition as listed in Norn-cloud/norn#351 research; the ISO page was not re-read this round.",
       "licence": {
         "spdx": "LicenseRef-ISO-Copyright",
         "text": "ISO copyright; paid standard",

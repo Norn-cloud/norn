@@ -49,9 +49,9 @@
       },
       "priority": {
         "sapParity": "P2",
-        "reason": "Prioritized default logic matches Norn's exception trees (#1207); tax and labour rules as code."
+        "reason": "Prioritized default logic matches Norn's exception trees (Norn-cloud/norn#1207); tax and labour rules as code."
       },
-      "notes": "Default-logic exceptions map to LawIR exception trees and norm precedence; each Catala scope cites its article, which maps to a LegalSource link. A real tax rule set translated and was proven in prior research (#1128).",
+      "notes": "Default-logic exceptions map to LawIR exception trees and norm precedence; each Catala scope cites its article, which maps to a LegalSource link. A real tax rule set translated and was proven in prior research (Norn-cloud/norn#1128).",
       "origin": "atlas-2026-11-11"
     },
     {
@@ -202,7 +202,7 @@
       },
       "priority": {
         "sapParity": "P2",
-        "reason": "Interchange for defeasible norms; ~9% coverage in research (#1128)."
+        "reason": "Interchange for defeasible norms; ~9% coverage in research (Norn-cloud/norn#1128)."
       },
       "notes": "Redistribution: unverified.",
       "origin": "catalogue-2026-10-21"

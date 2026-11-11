@@ -16,7 +16,9 @@ use std::process::ExitCode;
 
 use norn_formats::SchemaImporter;
 use norn_formats::pack::{ProjectionSpec, check_contract, project, render_review_module};
-use norn_formats::xsd::{MAX_FILE_BYTES, XsdConfig, XsdFile, XsdReader, repeating_fields};
+use norn_formats::xsd::{
+    MAX_BUNDLE_BYTES, MAX_FILE_BYTES, XsdConfig, XsdFile, XsdReader, repeating_fields,
+};
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{DiagnosticSeverity, OntologySource};
 
@@ -60,6 +62,9 @@ fn read(manifest: &Manifest, originals: &Path) -> Result<SourceSchemaIr, String>
     if !manifest.originals_base.ends_with('/') {
         return Err("originalsBase must end with `/`".into());
     }
+    // A running total stops reading at the bundle limit, so N pins never hold
+    // N times the file limit in memory.
+    let mut total = 0_usize;
     let bytes = pins
         .iter()
         .map(|pin| {
@@ -72,7 +77,12 @@ fn read(manifest: &Manifest, originals: &Path) -> Result<SourceSchemaIr, String>
                         && !rest.split('/').any(|step| step.is_empty() || step == "..")
                 })
                 .ok_or_else(|| format!("{} is not a file under originalsBase", pin.path))?;
-            read_bounded(&originals.join(relative))
+            let bytes = read_bounded(&originals.join(relative))?;
+            total = total.saturating_add(bytes.len());
+            if total > MAX_BUNDLE_BYTES {
+                return Err("schema bundle exceeds 64 MiB".to_owned());
+            }
+            Ok(bytes)
         })
         .collect::<Result<Vec<_>, _>>()?;
     match manifest.format.as_str() {

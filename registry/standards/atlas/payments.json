@@ -715,7 +715,7 @@
       ],
       "version": "2026 Nacha Operating Rules & Guidelines",
       "versionDate": "2026",
-      "versionBasis": "Nacha store (nacha.org/store, Operating Rules filter), read live, lists '2026 Nacha Operating Rules & Guidelines' (#406-26) as book and online editions. nacha.org/rules lists amendments effective 2026-09-18 and 2027-09-17.",
+      "versionBasis": "Nacha store (nacha.org/store, Operating Rules filter), read live, lists '2026 Nacha Operating Rules & Guidelines' (product code 406-26) as book and online editions. nacha.org/rules lists amendments effective 2026-09-18 and 2027-09-17.",
       "licence": {
         "spdx": "LicenseRef-Nacha-Copyright",
         "text": "Nacha copyright, all rights reserved; paid publication",

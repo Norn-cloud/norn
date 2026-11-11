@@ -149,7 +149,7 @@
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
-      "notes": "Search returned #1301 historical audit; no suitable CVE corpus task. URL is explicitly a sample, not the whole corpus. Original record/provider licences and notices require per-record review; no assurance that third-party linked advisories share CVE terms. Redistribution: license-conditions.",
+      "notes": "URL is explicitly a sample, not the whole corpus. Original record/provider licences and notices require per-record review; no assurance that third-party linked advisories share CVE terms. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
     },
     {
@@ -200,7 +200,7 @@
         "sapParity": "P2",
         "reason": "IT and security interop, outside the ERP core."
       },
-      "notes": "Search returned #1301 historical pre-launch audit, not a suitable record-schema task. CC0 for schema does not license the separate CVE corpus. Redistribution: license-conditions.",
+      "notes": "CC0 for schema does not license the separate CVE corpus. Redistribution: license-conditions.",
       "origin": "catalogue-2026-10-21"
     },
     {

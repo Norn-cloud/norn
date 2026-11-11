@@ -325,9 +325,45 @@ fn schema_with(body: &str) -> Vec<u8> {
 
 #[test]
 fn xsd_oversized_file_is_refused_before_parsing() {
-    let mut bytes = schema_with("");
-    bytes.resize(norn_formats::xsd::MAX_FILE_BYTES + 1, b' ');
+    // Not XML at all: a parse would fail differently, so the refusal shows the
+    // size check comes first.
+    let bytes = vec![0xff_u8; norn_formats::xsd::MAX_FILE_BYTES + 1];
     assert!(refusal(&bytes).starts_with("schema exceeds 16 MiB"));
+}
+
+#[test]
+fn xsd_oversized_bundle_is_refused_before_parsing() {
+    let chunk = vec![0xff_u8; 13 * 1024 * 1024];
+    let paths: Vec<String> = (0..5)
+        .map(|i| format!("https://example.test/synthetic-document/1.0/part{i}.xsd"))
+        .collect();
+    let files: Vec<XsdFile<'_>> = paths
+        .iter()
+        .map(|path| XsdFile {
+            path,
+            bytes: &chunk,
+        })
+        .collect();
+    let mut config = synthetic(&chunk);
+    config.admission.files = Some(
+        paths
+            .iter()
+            .map(|path| norn_ir::OntologySourceFile {
+                path: path.clone(),
+                sha256: norn_formats::contract::sha256_hex(&chunk),
+            })
+            .collect(),
+    );
+    let result = XsdReader.import(&files, &config);
+    assert!(result.source_schema.is_none());
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "format.xsd.invalid" && d.message == "schema bundle exceeds 64 MiB"),
+        "{:?}",
+        result.diagnostics
+    );
 }
 
 #[test]
@@ -362,9 +398,9 @@ fn xsd_namespace_scopes_per_file_are_capped() {
 
 #[test]
 fn xsd_unpinned_bytes_are_never_parsed() {
-    // Malformed XML with a wrong pin: the refusal is the pin, not a parse error,
-    // and the inventory is the file alone.
-    let bytes = b"<not xml";
+    // A well-formed schema with a wrong pin: a parse would inventory its nodes
+    // and attributes, so an inventory of the file alone shows it never ran.
+    let bytes = DOC;
     let files = [XsdFile {
         path: "https://example.test/synthetic-document/1.0/profile.xsd",
         bytes,
@@ -379,6 +415,7 @@ fn xsd_unpinned_bytes_are_never_parsed() {
             .any(|d| d.message.starts_with("unadmitted bytes"))
     );
     assert_eq!(XsdReader.inventory(&files, &config).len(), 1);
+    assert_eq!(result.loss_report.entries.len(), 1);
 }
 
 #[test]
@@ -444,4 +481,65 @@ fn xsd_nillable_elements_are_never_non_null() {
         .source_schema
         .unwrap();
     assert_eq!(schema.fields[0].required, Some(false));
+}
+
+#[test]
+fn xsd_bindings_in_scope_are_capped() {
+    let declare = |tag: &str, prefix: &str| -> String {
+        (0..64)
+            .map(|i| format!(r#" xmlns:{prefix}{i}="urn:{tag}{i}""#))
+            .collect()
+    };
+    // 1 (xml) + 64 + 64 = 129 bindings in scope, with no element over its own cap.
+    let body = format!("<a{}><b{}/></a>", declare("a", "a"), declare("b", "b"));
+    assert_eq!(refusal(&schema_with(&body)), "namespace binding limit");
+}
+
+#[test]
+fn xsd_namespace_binding_bytes_are_capped() {
+    // The review's case: long URIs on the root, then many small declarations.
+    // Copying the root's bindings per declaring element would need ~48 GiB.
+    let uri = "u".repeat(200 * 1024);
+    let root: String = (0..60)
+        .map(|i| format!(r#" xmlns:p{i}="urn:{uri}{i}""#))
+        .collect();
+    let children = r#"<b xmlns:q="u"/>"#.repeat(4096);
+    let xml = format!(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"{root}>{children}</xs:schema>"#
+    );
+    assert_eq!(refusal(xml.as_bytes()), "namespace binding limit");
+}
+
+#[test]
+fn xsd_output_carries_each_nodes_own_declarations_only() {
+    // Just under the byte cap on the root, then 20,000 elements: writing each
+    // node's in-scope set would emit ~19 GB; own declarations keep it small.
+    let uri = "u".repeat(15 * 1024);
+    let root: String = (0..60)
+        .map(|i| format!(r#" xmlns:p{i}="urn:{uri}{i}""#))
+        .collect();
+    let xml = format!(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"{root}>{}<xs:complexType name="R"/></xs:schema>"#,
+        "<a/>".repeat(20_000)
+    );
+    let bytes = xml.as_bytes();
+    let files = [XsdFile {
+        path: "https://example.test/synthetic-document/1.0/profile.xsd",
+        bytes,
+    }];
+    let result = XsdReader.import(&files, &synthetic(bytes));
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let output = result.canonical_json().unwrap();
+    assert!(
+        output.len() < 16 * bytes.len(),
+        "output {} bytes for {} input bytes",
+        output.len(),
+        bytes.len()
+    );
+}
+
+#[test]
+fn xsd_duplicate_global_simple_types_are_refused() {
+    let body = r#"<xs:simpleType name="T"><xs:restriction base="xs:string"/></xs:simpleType><xs:simpleType name="T"><xs:restriction base="xs:token"/></xs:simpleType>"#;
+    assert!(refusal(&schema_with(body)).starts_with("duplicate global type"));
 }

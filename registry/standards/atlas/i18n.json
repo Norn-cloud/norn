@@ -615,7 +615,7 @@
     },
     {
       "id": "unicode-uax9-bidi",
-      "name": "Unicode Bidirectional Algorithm (UAX #9)",
+      "name": "Unicode Bidirectional Algorithm (Unicode Standard Annex 9)",
       "publisher": "Unicode Consortium",
       "kind": "standard",
       "domains": [

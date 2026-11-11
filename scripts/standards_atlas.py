@@ -179,8 +179,33 @@ def load(root: Path = ROOT) -> dict[str, list[dict]]:
     return atlas
 
 
+# A bare `#123` is ambiguous in a public atlas (it could name a private
+# issue); references must be explicit, `Norn-cloud/norn#123`. URL fragments
+# (`time#2016`) are not references: they follow a word or path character.
+BARE_REFERENCE = re.compile(r"(?<![\w/.:#-])#[0-9]+")
+PRIVATE_REFERENCE = re.compile(r"norn-platform", re.IGNORECASE)
+
+
+def _strings(value, path: str):
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _strings(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _strings(item, f"{path}[{index}]")
+
+
 def entry_rules(entry: dict, where: str, concepts: set[str], root: Path) -> list[str]:
     errors = []
+    for path, text in _strings(entry, ""):
+        if PRIVATE_REFERENCE.search(text):
+            errors.append(f"{where}{path}: names a private repository")
+        for match in BARE_REFERENCE.finditer(text):
+            errors.append(
+                f"{where}{path}: bare issue reference {match.group(0)}; write Norn-cloud/norn{match.group(0)}"
+            )
     norn = entry["norn"]
     for concept in norn["concepts"]:
         if concept not in concepts:

@@ -48,7 +48,7 @@
       },
       "priority": {
         "sapParity": "P2",
-        "reason": "Capability and routing design (#1217)."
+        "reason": "Capability and routing design (Norn-cloud/norn#1217)."
       },
       "notes": "The 1.1 JSON Schema URL could not be found (spec.openapis.org/arazzo/1.1/schema/ returned 404). Arazzo 1.1 adds async step coordination guidance.",
       "origin": "atlas-2026-11-11"
@@ -102,7 +102,7 @@
       },
       "priority": {
         "sapParity": "P2",
-        "reason": "Capability and routing design (#1217)."
+        "reason": "Capability and routing design (Norn-cloud/norn#1217)."
       },
       "notes": "The JSON Schemas ship as a separate package (spec-json-schemas v6.11.1, 2026-01-30).",
       "origin": "atlas-2026-11-11"

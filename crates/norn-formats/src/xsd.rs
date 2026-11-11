@@ -10,7 +10,7 @@ use norn_ir::source_schema::{
 };
 use norn_ir::{ArtifactEnvelope, Diagnostic, DiagnosticSeverity, OntologySource};
 use quick_xml::{Reader, events::Event};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -31,33 +31,47 @@ pub const MAX_DECLARATIONS_PER_ELEMENT: usize = 64;
 pub const MAX_IN_SCOPE: usize = 128;
 /// Most elements in one file that declare namespaces (each opens a scope).
 pub const MAX_SCOPES: usize = 4096;
+/// Most bytes of namespace prefixes and URIs declared in one file.
+pub const MAX_BINDING_BYTES: usize = 1024 * 1024;
 
-/// In-scope namespace bindings, shared by an element and every descendant
-/// that declares none of its own, so memory grows with declarations, not
-/// with nodes.
+/// The namespace bindings in scope at an element: the element's own
+/// declarations, linked to the scope it inherits. Nothing is copied: an
+/// element that declares nothing shares its parent's scope, and one that does
+/// stores only its own declarations. Memory is bounded by the declared bytes
+/// (`MAX_BINDING_BYTES`), not by nodes times bindings.
 #[derive(Debug, Default)]
-pub struct Scope(Rc<BTreeMap<String, String>>);
-impl Clone for Scope {
-    fn clone(&self) -> Self {
-        Self(Rc::clone(&self.0))
+pub struct Scope {
+    own: Vec<(Rc<str>, Rc<str>)>,
+    parent: Option<Rc<Scope>>,
+    /// How many bindings are in scope here, inherited ones included.
+    bound: usize,
+}
+
+impl Scope {
+    /// The URI bound to `prefix` (`""` is the default namespace), searching
+    /// this element's declarations, then each enclosing scope.
+    #[must_use]
+    pub fn lookup(&self, prefix: &str) -> Option<&str> {
+        let mut scope = Some(self);
+        while let Some(current) = scope {
+            if let Some((_, uri)) = current.own.iter().rev().find(|(p, _)| &**p == prefix) {
+                return Some(uri);
+            }
+            scope = current.parent.as_deref();
+        }
+        None
     }
 }
-impl std::ops::Deref for Scope {
-    type Target = BTreeMap<String, String>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+
+/// The scope every document starts with: only the reserved `xml` prefix.
+fn root_scope() -> Rc<Scope> {
+    Rc::new(Scope {
+        own: vec![(Rc::from("xml"), Rc::from(XML_NS))],
+        parent: None,
+        bound: 1,
+    })
 }
-impl Serialize for Scope {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
-}
-impl<'de> Deserialize<'de> for Scope {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        BTreeMap::deserialize(deserializer).map(|map| Self(Rc::new(map)))
-    }
-}
+
 /// One caller-supplied schema; imports are never fetched implicitly.
 #[derive(Clone, Copy)]
 pub struct XsdFile<'a> {
@@ -79,7 +93,7 @@ pub struct XsdConfig {
 pub struct XsdReader;
 
 /// A syntax node. Attribute values retain their original lexical precision.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct XsdNode {
     /// Globally unique identity within the supplied file set.
@@ -88,11 +102,12 @@ pub struct XsdNode {
     pub name: String,
     /// Expanded attribute names and decoded lexical values.
     pub attributes: BTreeMap<String, String>,
-    /// In-scope namespace bindings, including the default namespace.
-    pub namespaces: Scope,
-    /// Prefixes this element itself declares (`""` for the default).
+    /// The namespace bindings this element itself declares (`""` is the
+    /// default namespace). The in-scope set is the chain through `parent`.
+    pub namespaces: BTreeMap<String, String>,
+    /// The bindings in scope here, shared with the enclosing elements.
     #[serde(skip)]
-    pub declared: Vec<String>,
+    pub scope: Rc<Scope>,
     /// Parent node identity; absence denotes the document element.
     pub parent: Option<String>,
     /// Original text content, including documentation.
@@ -114,97 +129,108 @@ impl XsdNode {
         if local.is_empty() || local.contains(':') {
             return Err(format!("invalid QName {value}"));
         }
-        let ns = self.namespaces.get(prefix);
-        if !prefix.is_empty() && ns.is_none_or(String::is_empty) {
+        let ns = self.scope.lookup(prefix);
+        if !prefix.is_empty() && ns.is_none_or(str::is_empty) {
             return Err(format!("unbound QName {value}"));
         }
-        Ok(format!("{{{}}}{local}", ns.map_or("", String::as_str)))
+        Ok(format!("{{{}}}{local}", ns.unwrap_or("")))
     }
 }
-fn expanded(name: &[u8], ns: &BTreeMap<String, String>, attribute: bool) -> Result<String, String> {
+fn expanded(name: &[u8], scope: &Scope, attribute: bool) -> Result<String, String> {
     let name = std::str::from_utf8(name).map_err(|e| e.to_string())?;
     let (prefix, local) = name.split_once(':').unwrap_or(("", name));
     if attribute && prefix.is_empty() {
         return Ok(name.to_owned());
     }
-    let uri = ns.get(prefix);
-    if !prefix.is_empty() && uri.is_none_or(String::is_empty) {
+    let uri = scope.lookup(prefix);
+    if !prefix.is_empty() && uri.is_none_or(str::is_empty) {
         return Err(format!("unbound prefix {prefix}"));
     }
-    Ok(format!("{{{}}}{local}", uri.map_or("", String::as_str)))
+    Ok(format!("{{{}}}{local}", uri.unwrap_or("")))
 }
+/// Running totals that bound one file's namespace declarations.
+#[derive(Default)]
+struct Bindings {
+    scopes: usize,
+    bytes: usize,
+}
+
 fn parse_node(
     start: &quick_xml::events::BytesStart<'_>,
     decoder: quick_xml::encoding::Decoder,
     nodes: &[XsdNode],
     stack: &[usize],
     path: &str,
-    scopes: &mut usize,
+    bindings: &mut Bindings,
 ) -> Result<XsdNode, String> {
-    let parent_scope = stack
-        .last()
-        .and_then(|i| nodes.get(*i))
-        .map(|n| n.namespaces.clone());
-    let attrs = start
-        .attributes()
-        .map(|a| {
-            a.map_err(|e| e.to_string()).and_then(|a| {
-                let name = std::str::from_utf8(a.key.as_ref())
-                    .map_err(|e| e.to_string())?
-                    .to_owned();
-                let value = a
-                    .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)
-                    .map_err(|e| e.to_string())?
-                    .into_owned();
-                Ok((name, value))
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let parent = stack.last().and_then(|i| nodes.get(*i));
+    let mut attrs = Vec::new();
     let mut declarations = Vec::new();
-    for (key, value) in &attrs {
-        let declaration = key == "xmlns" || key.starts_with("xmlns:");
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|e| e.to_string())?;
+        let key = std::str::from_utf8(attribute.key.as_ref())
+            .map_err(|e| e.to_string())?
+            .to_owned();
+        let value = attribute
+            .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)
+            .map_err(|e| e.to_string())?
+            .into_owned();
+        let prefix = if key == "xmlns" {
+            Some(String::new())
+        } else {
+            key.strip_prefix("xmlns:").map(str::to_owned)
+        };
+        let Some(prefix) = prefix else {
+            attrs.push((key, value));
+            continue;
+        };
         // Reserved-namespace rules govern namespace declarations only; an
         // ordinary attribute such as `xs:import/@namespace` may name them.
-        if declaration
-            && ((key == "xmlns:xml" && value != XML_NS)
-                || key == "xmlns:xmlns"
-                || (key != "xmlns:xml" && value == XML_NS)
-                || value == "http://www.w3.org/2000/xmlns/")
+        if (prefix == "xml" && value != XML_NS)
+            || prefix == "xmlns"
+            || (prefix != "xml" && value == XML_NS)
+            || value == "http://www.w3.org/2000/xmlns/"
         {
             return Err("invalid reserved namespace binding".into());
         }
-        if key == "xmlns" {
-            declarations.push((String::new(), value.clone()));
-        } else if let Some(prefix) = key.strip_prefix("xmlns:") {
-            declarations.push((prefix.to_owned(), value.clone()));
+        bindings.bytes = bindings
+            .bytes
+            .saturating_add(prefix.len())
+            .saturating_add(value.len());
+        declarations.push((prefix, value));
+        if declarations.len() > MAX_DECLARATIONS_PER_ELEMENT || bindings.bytes > MAX_BINDING_BYTES {
+            return Err("namespace binding limit".into());
         }
     }
-    let ns = if declarations.is_empty() {
-        parent_scope.unwrap_or_else(root_scope)
+    let inherited = parent.map_or_else(root_scope, |n| Rc::clone(&n.scope));
+    let scope = if declarations.is_empty() {
+        inherited
     } else {
-        *scopes = scopes.saturating_add(1);
-        if declarations.len() > MAX_DECLARATIONS_PER_ELEMENT || *scopes > MAX_SCOPES {
+        bindings.scopes = bindings.scopes.saturating_add(1);
+        if bindings.scopes > MAX_SCOPES {
             return Err("namespace binding limit".into());
         }
-        let mut map = parent_scope
-            .as_deref()
-            .cloned()
-            .unwrap_or_else(|| (*root_scope()).clone());
-        for (prefix, value) in &declarations {
-            map.insert(prefix.clone(), value.clone());
-        }
-        if map.len() > MAX_IN_SCOPE {
+        let added = declarations
+            .iter()
+            .filter(|(prefix, _)| inherited.lookup(prefix).is_none())
+            .count();
+        let bound = inherited.bound.saturating_add(added);
+        if bound > MAX_IN_SCOPE {
             return Err("namespace binding limit".into());
         }
-        Scope(Rc::new(map))
+        Rc::new(Scope {
+            own: declarations
+                .iter()
+                .map(|(prefix, uri)| (Rc::from(prefix.as_str()), Rc::from(uri.as_str())))
+                .collect(),
+            parent: Some(inherited),
+            bound,
+        })
     };
-    let name = expanded(start.name().as_ref(), &ns, false)?;
+    let name = expanded(start.name().as_ref(), &scope, false)?;
     let mut attributes = BTreeMap::new();
     for (key, value) in attrs {
-        if key == "xmlns" || key.starts_with("xmlns:") {
-            continue;
-        }
-        let key = expanded(key.as_bytes(), &ns, true)?;
+        let key = expanded(key.as_bytes(), &scope, true)?;
         if attributes.insert(key, value).is_some() {
             return Err("duplicate expanded attribute".into());
         }
@@ -214,22 +240,11 @@ fn parse_node(
         id: format!("{path}#{index}"),
         name,
         attributes,
-        namespaces: ns,
-        declared: declarations.into_iter().map(|(prefix, _)| prefix).collect(),
-        parent: stack
-            .last()
-            .and_then(|i| nodes.get(*i))
-            .map(|n| n.id.clone()),
+        namespaces: declarations.into_iter().collect(),
+        scope,
+        parent: parent.map(|n| n.id.clone()),
         text: String::new(),
     })
-}
-
-/// The scope every document starts with: only the reserved `xml` prefix.
-fn root_scope() -> Scope {
-    Scope(Rc::new(BTreeMap::from([(
-        "xml".to_owned(),
-        XML_NS.to_owned(),
-    )])))
 }
 
 fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
@@ -241,7 +256,7 @@ fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
     let mut nodes: Vec<XsdNode> = Vec::new();
     let mut stack: Vec<usize> = Vec::new();
     let mut root_seen = false;
-    let mut scopes = 0_usize;
+    let mut bindings = Bindings::default();
     loop {
         let event = reader.read_event().map_err(|e| e.to_string())?;
         let empty = matches!(&event, Event::Empty(_));
@@ -266,7 +281,7 @@ fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
                     &nodes,
                     &stack,
                     file.path,
-                    &mut scopes,
+                    &mut bindings,
                 )?;
                 nodes.push(node);
                 if !empty {
@@ -353,7 +368,7 @@ fn inventory_of(files: &[XsdFile<'_>], parsed: Option<&Parsed>) -> Vec<SourceEle
             if !node.text.is_empty() {
                 elements.push(SourceElement::definition("xsd.text", &node.id));
             }
-            for prefix in &node.declared {
+            for prefix in node.namespaces.keys() {
                 elements.push(SourceElement::definition(
                     "xsd.namespace",
                     &format!("{}@{prefix}", node.id),
@@ -768,7 +783,7 @@ fn required(node: &XsdNode, index: &BTreeMap<&str, &XsdNode>) -> Result<bool, St
         return Ok(node.attr("use") == "required");
     }
     // `required` means non-null: a nillable element may carry a nil value.
-    if matches!(node.attr("nillable"), "true" | "1") {
+    if matches!(node.attr("nillable").trim(), "true" | "1") {
         return Ok(false);
     }
     let mut current = Some(node);
