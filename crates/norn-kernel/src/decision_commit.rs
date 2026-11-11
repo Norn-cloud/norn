@@ -2801,7 +2801,9 @@ fn apply_change<X>(
     // properties are protected, so a write or delete of its rows is refused.
     let Some(effective) = catalog.effective_type(&key.object_type) else {
         return Err(DecisionRefusal::InvalidOutput {
-            reason: format!("{key} has no effective type view, so its protected properties cannot be checked"),
+            reason: format!(
+                "{key} has no effective type view, so its protected properties cannot be checked"
+            ),
         });
     };
     let protected = |property: &str| {
@@ -3343,10 +3345,7 @@ mod field_authority_tests {
     }
 
     #[test]
-    #[allow(
-        clippy::unwrap_used,
-        reason = "test fixtures require successful setup"
-    )]
+    #[allow(clippy::unwrap_used, reason = "test fixtures require successful setup")]
     fn refused_effective_view_keeps_the_implicit_checks() {
         let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
             "name": "test.Counter", "properties": [{ "id": "total",
