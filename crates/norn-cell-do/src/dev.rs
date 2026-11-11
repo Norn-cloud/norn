@@ -679,10 +679,15 @@ fn reopen(
 /// for the life of the process.
 fn lock(state: &Path) -> Result<File, Failure> {
     let path = state.join("dev.lock");
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Never create or open the lock through a symlink.
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options
         .open(&path)
         .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", path.display())))?;
     match file.try_lock() {
@@ -782,20 +787,36 @@ fn cell_path(root: &Path, cell: &str) -> Result<PathBuf, Failure> {
     }
     let path = root.join(relative);
     let parent = path.parent().ok_or_else(outside)?;
+    // Nothing is created until the deepest directory that already exists is
+    // known to be inside the project: a symlinked ancestor leads out of it.
+    let existing = parent
+        .ancestors()
+        .find(|ancestor| ancestor.exists())
+        .ok_or_else(outside)?;
+    let within = |directory: &Path| -> Result<bool, Failure> {
+        directory
+            .canonicalize()
+            .map(|real| real.starts_with(root))
+            .map_err(|error| {
+                Failure::setup("norn.dev.io", format!("{}: {error}", directory.display()))
+            })
+    };
+    if !within(existing)? {
+        return Err(outside());
+    }
     std::fs::create_dir_all(parent)
         .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", parent.display())))?;
-    let real = parent
-        .canonicalize()
-        .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", parent.display())))?;
-    if !real.starts_with(root) || is_symlink(&path) {
+    if !within(parent)? || is_symlink(&path) {
         return Err(outside());
     }
     Ok(path)
 }
 
-/// Write a session file readable by the owner only. The file is never
-/// followed through a symlink, and its mode is 0600 whether it is new or
-/// already existed (for example from a checkout).
+/// Write a session file readable by the owner only. The file is always a
+/// new one: an existing file is unlinked first, so a descriptor someone opened
+/// on an older, wider file never sees the new contents, and the file is
+/// created exclusively (`O_EXCL`, `O_NOFOLLOW`, mode 0600), never through a
+/// symlink.
 fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
     let failed = |error: std::io::Error| {
         Failure::setup("norn.dev.io", format!("{}: {error}", path.display()))
@@ -809,21 +830,22 @@ fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
             ),
         ));
     }
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(failed(error)),
+    }
     let mut options = OpenOptions::new();
-    options.create(true).truncate(true).write(true);
+    options.create_new(true).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
-    let mut file = options.open(path).map_err(failed)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(failed)?;
-    }
-    file.write_all(text.as_bytes()).map_err(failed)
+    options
+        .open(path)
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .map_err(failed)
 }
 
 #[cfg(all(test, unix))]
@@ -858,6 +880,15 @@ mod tests {
         // A directory inside the project that links out is outside too.
         let elsewhere = tempfile::tempdir().unwrap();
         symlink(elsewhere.path(), root.join("linked")).unwrap();
+        // Nothing is created outside the project before the refusal.
+        assert_eq!(
+            cell_path(&root, "linked/sub/cell.sqlite")
+                .err()
+                .unwrap()
+                .code,
+            "norn.project.cell_outside"
+        );
+        assert!(!elsewhere.path().join("sub").exists());
         assert_eq!(
             cell_path(&root, "linked/cell.sqlite").err().unwrap().code,
             "norn.project.cell_outside"
@@ -894,6 +925,15 @@ mod tests {
             0o600
         );
         assert_eq!(std::fs::read_to_string(&token).unwrap(), "b\n");
+        // The file is replaced, never reused: a descriptor opened on the old
+        // world-readable file does not see the new token.
+        std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let mut stale = File::open(&token).unwrap();
+        write_private(&token, "secret\n").unwrap();
+        let mut seen = String::new();
+        std::io::Read::read_to_string(&mut stale, &mut seen).unwrap();
+        assert_eq!(seen, "b\n");
+        assert_eq!(std::fs::read_to_string(&token).unwrap(), "secret\n");
         // A symlinked token is refused and its target left alone.
         std::fs::remove_file(&token).unwrap();
         let target = root.join("victim");
@@ -915,6 +955,16 @@ mod tests {
             private_dir(&root).err().unwrap().code,
             "norn.dev.unsafe_state"
         );
+    }
+
+    #[test]
+    fn the_lock_is_never_opened_through_a_symlink() {
+        let (_dir, root) = project();
+        let state = private_dir(&root).unwrap();
+        let target = root.join("elsewhere.lock");
+        symlink(&target, state.join("dev.lock")).unwrap();
+        assert_eq!(lock(&state).err().unwrap().code, "norn.dev.io");
+        assert!(!target.exists());
     }
 
     #[test]

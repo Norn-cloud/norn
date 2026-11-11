@@ -11,7 +11,7 @@
  */
 import { expect, test } from "bun:test"
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -196,3 +196,51 @@ test("the compile worker survives a symlink cycle in its sources", () => {
     rmSync(root, { recursive: true, force: true })
   }
 }, 90_000)
+
+/** One `worker.ts --once` run: its exit status and its last event. */
+function compileOnce(dir: string): { status: number | null; event: Event } {
+  const once = spawnSync(process.execPath, [join(TOOL_ROOT, "src/worker.ts"), "--project", dir, "--once"], { env, encoding: "utf8", timeout: 60_000 })
+  return { status: once.status, event: JSON.parse(once.stdout.trim().split("\n").at(-1)!) }
+}
+
+test("the compile worker reads sources only inside the project, and its digest covers every compiled module", () => {
+  const root = mkdtempSync(join(tmpdir(), "norn-dev-sources-"))
+  try {
+    const dir = join(root, "p")
+    expect(spawnSync(process.execPath, [CLI, "init", dir, "--no-install"], { env }).status).toBe(0)
+    const manifest = JSON.parse(readFileSync(join(dir, "norn.json"), "utf8"))
+
+    // A top-level module that is a symlink inside the project is compiled and digested.
+    mkdirSync(join(dir, "shared"))
+    writeFileSync(join(dir, "shared/customer.ts"), customer("email"))
+    symlinkSync(join(dir, "shared/customer.ts"), join(dir, "src/customer.ts"))
+    const linked = compileOnce(dir)
+    expect(linked).toMatchObject({ status: 0, event: { ok: true } })
+    expect(JSON.stringify(linked.event.artifacts)).toContain("shop.Customer")
+    writeFileSync(join(dir, "shared/customer.ts"), `// edited\n${customer("email")}`)
+    const edited = compileOnce(dir)
+    expect(edited.event.ok).toBe(true)
+    expect(edited.event.sourceDigest).not.toBe(linked.event.sourceDigest)
+
+    // A module that links out of the project is refused. The digest fails for
+    // the same reason, and the worker survives it: one event, exit 0.
+    mkdirSync(join(root, "elsewhere/sub"), { recursive: true })
+    writeFileSync(join(root, "elsewhere/sub/secret.ts"), customer("email"))
+    rmSync(join(dir, "src/customer.ts"))
+    symlinkSync(join(root, "elsewhere/sub/secret.ts"), join(dir, "src/secret.ts"))
+    const escaped = compileOnce(dir)
+    expect(escaped).toMatchObject({ status: 0, event: { event: "compiled", gen: 1, ok: false, sourceDigest: "" } })
+    expect(escaped.event.diagnostics[0]).toMatchObject({ code: "cli.project.invalid_manifest", message: expect.stringContaining("src/secret.ts") })
+    expect(JSON.stringify(escaped.event)).not.toContain("shop.Customer")
+    rmSync(join(dir, "src/secret.ts"))
+
+    // A source directory reached through a symlinked ancestor is refused the same way.
+    symlinkSync(join(root, "elsewhere"), join(dir, "linked"))
+    writeFileSync(join(dir, "norn.json"), JSON.stringify({ ...manifest, sources: ["src", "linked/sub"] }))
+    const through = compileOnce(dir)
+    expect(through).toMatchObject({ status: 0, event: { ok: false, sourceDigest: "" } })
+    expect(through.event.diagnostics[0]).toMatchObject({ code: "cli.project.invalid_manifest", message: expect.stringContaining("linked/sub") })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 240_000)
