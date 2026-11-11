@@ -4,7 +4,7 @@
 //! obligations have been fulfilled. Only declared priority edges resolve conflicts.
 //!
 //! U3 (#718): admission is one whole-set decision made by the proved core in
-//! [`decision`]. The closure, the topological order and each context's
+//! `decision.rs`. The closure, the topological order and each context's
 //! resolution are untrusted search the core re-checks; conflict cores and
 //! corrections come from the untrusted explainer in
 //! [`crate::consistency::diagnosis`] only after the core refuses.
