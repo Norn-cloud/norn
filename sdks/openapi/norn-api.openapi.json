@@ -31,7 +31,7 @@
             "name": "orgId",
             "in": "query",
             "description": "Required organization.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -40,7 +40,7 @@
             "name": "environmentId",
             "in": "query",
             "description": "Required environment.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -455,7 +455,7 @@
             "name": "orgId",
             "in": "query",
             "description": "Required organization.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -464,7 +464,7 @@
             "name": "environmentId",
             "in": "query",
             "description": "Required environment.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }

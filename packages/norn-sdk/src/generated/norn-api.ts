@@ -8522,11 +8522,11 @@ export type $defs = Record<string, never>;
 export interface operations {
     get_definition: {
         parameters: {
-            query?: {
+            query: {
                 /** @description Required organization. */
-                orgId?: string;
+                orgId: string;
                 /** @description Required environment. */
-                environmentId?: string;
+                environmentId: string;
                 /** @description A past version; absent selects the current one. */
                 version?: number;
             };
@@ -8831,11 +8831,11 @@ export interface operations {
     };
     list_definitions: {
         parameters: {
-            query?: {
+            query: {
                 /** @description Required organization. */
-                orgId?: string;
+                orgId: string;
                 /** @description Required environment. */
-                environmentId?: string;
+                environmentId: string;
                 /** @description The kind to list. */
                 kind?: string;
                 /** @description `retired` also lists retired definitions. */
