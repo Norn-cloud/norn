@@ -11,16 +11,27 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *        `effect` and `objectIdField` from its effect program, `title` (falls back to `actionId`)
  *        and `uiEffects`, the kernel's effective effects (always present).
  *
- *   POST /v1/actions/{actionId}?orgId&environmentId
+ *   POST /v1/actions/{actionId}?orgId&environmentId[&version]   (served: norn_api::actions)
  *        body { input: <object>, idempotencyKey: string }   (1..128 chars and at most 256 UTF-8
  *        bytes; Studio sends one random UUID per draft)
  *        200 { outcome: "committed" | "replayed", objectType, objectId, version,
- *              receipt: { receiptHash, commitSeq, recordedAtMs } }
- *        4xx Refusal { code, category, message, diagnostics: [{ code, message, pointer }] }:
- *            every input violation listed, each pointer into the request body (`/input/qty`,
- *            `/input/lines/0/sku`); a rule or precondition refusal has `pointer: null`.
+ *              receipt: { receiptHash, commitSeq, recordedAtMs } }: a replay reports the
+ *              original commit; `receiptHash` is a keyed handle unless the reader holds Values
+ *              over the whole cell.
+ *        4xx Refusal@2 { code, category, message, explanation, diagnostics?: [{ code, message,
+ *            span: { pointer } | null }] }: each pointer into the request body. Only a malformed
+ *            envelope carries one today (`/input` not an object, `/idempotencyKey`). Input the
+ *            action's schema refuses is one 400 `action.invalid_input` with no field pointers, so
+ *            Studio shows it on the form, not on a field; a rule, law or precondition refusal
+ *            carries none either.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
+ *        Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
  *
+ *   A visibility or permission refusal is the one opaque 403 `authz.denied`, whatever the target or
+ *   action, so that refusal never tells a known action from an unknown one. The guarantee is not
+ *   universal: a caller the host lets call any action and that pins a stale `version` gets 409
+ *   `defs.stale` for a known action but 403 `authz.denied` for an unknown one, until action-level
+ *   host authorization closes that gap.
  *   Any 404 or 503, whatever its body (the cell's carries `route.not_found`), means the cell does
  *   not serve the route: Studio says so and offers no action.
  *
@@ -87,8 +98,10 @@ function refusalOf(text: string): Refusal | null {
   try { body = JSON.parse(text) } catch { return null }
   const { code, message, diagnostics } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown }
   if (typeof code !== "string") return null
-  const list = Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown }) => ({
-    code: String(d.code ?? ""), message: String(d.message ?? ""), pointer: typeof d.pointer === "string" ? d.pointer : null,
+  // The cell's refusal@2 places a finding at `span.pointer`; a bare `pointer` is read too.
+  const list = Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: { pointer?: unknown } | null }) => ({
+    code: String(d.code ?? ""), message: String(d.message ?? ""),
+    pointer: typeof d.span?.pointer === "string" ? d.span.pointer : typeof d.pointer === "string" ? d.pointer : null,
   })) : []
   return { code, message: typeof message === "string" ? message : code, diagnostics: list }
 }
@@ -127,9 +140,9 @@ export async function callAction(actionId: string, input: string, idempotencyKey
     body: `{"input":${input},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`,
   })
   const text = await response.text()
-  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   if (response.ok) return { kind: "receipt", receipt: JSON.parse(text) as ActionReceipt }
   const refusal = refusalOf(text)
+  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   if (refusal !== null) return { kind: "refused", status: response.status, ...refusal }
   throw new CellUnavailable(response.status)
 }
@@ -263,9 +276,11 @@ function encodeLeaf(spec: Spec, value: string): string {
   switch (spec.kind) {
     case "integer":
     case "number":
-    case "decimal":
       // A number token goes as typed, digit for digit; anything else goes as text for the cell to refuse at its pointer.
       return NUMBER_TOKEN.test(value.trim()) ? value.trim() : JSON.stringify(value)
+    case "decimal":
+      // VAL-EXACT-1: the cell decodes an exact decimal only from its text, digit for digit ("12.500").
+      return JSON.stringify(value.trim())
     case "boolean": return value === "true" ? "true" : value === "false" ? "false" : JSON.stringify(value)
     case "json": try { JSON.parse(value); return value.trim() } catch { return JSON.stringify(value) }
     default: return JSON.stringify(value)
