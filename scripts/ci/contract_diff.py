@@ -47,6 +47,7 @@ OPENAPI = "sdks/openapi/norn-api.openapi.json"
 SDK_INDEX = "packages/norn-sdk/src/index.ts"
 CLI_SNAPSHOT = "crates/norn-cli/cli.contract.json"
 TS_CLI_DIR = "tools/norn-ts/src"
+TS_CLI_SNAPSHOT = "tools/norn-ts/cli.contract.json"
 DIAGNOSTIC_CODES = "crates/norn-checker/conformance/diagnostic-codes"
 SCHEMA_DIRS = ("crates/norn-ir/schema", "crates/norn-kernel/schema", "tools/norn-ts/schema")
 
@@ -654,8 +655,23 @@ def diagnostic_codes(tree: Tree) -> dict[str, dict]:
     return codes
 
 
+def _command_surface(command: dict) -> tuple[set[str], set[str]]:
+    """A command tree's top-level command names and every long flag in it."""
+    flags: set[str] = set()
+    stack = [command]
+    while stack:
+        node = stack.pop()
+        flags |= {f"--{arg['long']}" for arg in (node.get("args") or {}).values() if arg.get("long")}
+        stack.extend((node.get("subcommands") or {}).values())
+    return set(command.get("subcommands") or {}), flags
+
+
 def ts_cli(tree: Tree) -> tuple[set[str], set[str]]:
-    """The TypeScript authoring CLI's commands and flags, read from its sources."""
+    """The TypeScript authoring CLI's commands and flags: from its generated
+    contract when it has one, else read from its sources."""
+    snapshot = tree.read(TS_CLI_SNAPSHOT)
+    if snapshot:
+        return _command_surface(json.loads(snapshot))
     commands: set[str] = set()
     flags: set[str] = set()
     for path in tree.list(TS_CLI_DIR):
@@ -665,7 +681,7 @@ def ts_cli(tree: Tree) -> tuple[set[str], set[str]]:
         if path.endswith("/cli.ts"):
             commands |= set(re.findall(r'argv\[2\]\s*===\s*"([a-z][a-z-]*)"', text))
             commands |= set(re.findall(r'command\s*[!=]==\s*"([a-z][a-z-]*)"', text))
-        flags |= {f"{Path(path).name} {flag}" for flag in re.findall(r'"(--[a-z][a-z0-9-]*)"', text)}
+        flags |= set(re.findall(r'"(--[a-z][a-z0-9-]*)"', text))
     return commands, flags
 
 
@@ -738,6 +754,9 @@ def diff(old: Tree, new: Tree) -> list[str]:
         out.append(f"{CLI_SNAPSHOT}: removed")
     elif old_cli:
         compare_command(old_cli, new_cli, "cli norn", out)
+    old_ts, new_ts = old.read(TS_CLI_SNAPSHOT), new.read(TS_CLI_SNAPSHOT)
+    if old_ts and new_ts:
+        compare_command(json.loads(old_ts), json.loads(new_ts), "authoring cli norn", out)
     (old_commands, old_flags), (new_commands, new_flags) = ts_cli(old), ts_cli(new)
     for command in sorted(old_commands - new_commands):
         out.append(f"authoring cli {command}: command removed")

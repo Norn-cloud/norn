@@ -415,6 +415,22 @@ class CodeAndCliProperties(unittest.TestCase):
         self.assertTrue(diff(lambda c: c["subcommands"]["check"]["args"]["org"].update(long="organization")))
         self.assertTrue(diff(lambda c: c["subcommands"]["check"]["args"].__setitem__("out", {**flag, "long": "out"})))
 
+    def test_the_authoring_cli_may_move_from_sources_to_a_generated_contract(self):
+        def tree(files):
+            return cd.Tree(lambda d: sorted(p for p in files if p.startswith(d + "/")), files.get)
+        source = {f"{cd.TS_CLI_DIR}/cli.ts": 'if (process.argv[2] === "init") {}\nif (command !== "check") {}\noption("--org")\n'}
+        flag = lambda long: {"long": long, "short": None, "aliases": [], "positional": False, "takes_value": True,
+                             "multiple": False, "required": False, "default": [], "values": []}
+        contract = {"args": {}, "subcommands": {"init": {"args": {}, "subcommands": {}},
+                                                "check": {"args": {"org": flag("org")}, "subcommands": {}}}}
+        generated = {cd.TS_CLI_SNAPSHOT: json.dumps(contract)}
+        self.assertEqual(cd.diff(tree(source), tree(generated)), [])
+        del contract["subcommands"]["check"]["args"]["org"]
+        self.assertEqual(cd.diff(tree(source), tree({cd.TS_CLI_SNAPSHOT: json.dumps(contract)})),
+                         ["authoring cli --org: flag removed"])
+        breaks = cd.diff(tree(generated), tree({cd.TS_CLI_SNAPSHOT: json.dumps(contract)}))
+        self.assertIn("authoring cli norn check org: flag or argument removed", breaks)
+
     def test_the_marker_names_a_ruling(self):
         self.assertEqual(cd.approval("text\ncontract-break-approved: D85\n"), "D85")
         self.assertEqual(cd.approval("contract-break-approved: #1234"), "#1234")
