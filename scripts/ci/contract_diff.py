@@ -26,7 +26,12 @@ request body, where `<ruling>` names the decision that approved the break
 (`D85`, `#1234` or a URL). In a merge group every merge step is checked against
 the body of the pull request it merges.
 
+In CI it runs inside the required `core` job (`core.sh cheap`). Adding the
+marker to a pull request body does not start a run: re-run `core`, and the
+check reads the body as it is now.
+
 Usage:
+  contract_diff.py --ci   # the GitHub event of this job (GITHUB_EVENT_NAME/PATH)
   contract_diff.py --base REV --head REV [--body-file FILE]
   contract_diff.py --merge-group BASE HEAD --bodies-file FILE
   contract_diff.py --surface ROOT   # print the extracted surface of a checkout
@@ -36,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -786,8 +792,10 @@ def verdict(breaks: list[str], body: str | None, label: str) -> bool:
     return False
 
 
-def merge_group(base: str, head: str, bodies: dict[str, list[str]]) -> bool:
-    """Check each merge step of a queue group against its pull request's body."""
+def merge_group(base: str, head: str, bodies: dict[str, list[str]] | Callable[[str], list[str]]) -> bool:
+    """Check each merge step of a queue group against its pull request's body.
+    `bodies` maps a pull request head to its bodies, or looks them up."""
+    bodies_of = bodies if callable(bodies) else (lambda sha: bodies.get(sha, []))
     ok, commit = True, git("rev-parse", head).strip()
     base = git("rev-parse", base).strip()
     for _ in range(64):
@@ -799,11 +807,54 @@ def merge_group(base: str, head: str, bodies: dict[str, list[str]]) -> bool:
             return False
         previous, pull_head = parents
         breaks = diff(git_tree(previous), git_tree(commit))
-        body = "\n".join(bodies.get(pull_head, []))
+        body = "\n".join(bodies_of(pull_head)) if breaks else None
         ok = verdict(breaks, body, f"merge of {pull_head[:12]}") and ok
         commit = previous
     print("merge group is longer than 64 merges or misses its base")
     return False
+
+
+def github_get(path: str) -> object:
+    """A public GitHub API read. CI's gate step gets no token, so it is
+    unauthenticated: it runs only when a break needs its ruling."""
+    import urllib.request
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    request = urllib.request.Request(f"{api}{path}", headers={"Accept": "application/vnd.github+json",
+                                                                 "User-Agent": "norn-contract-diff"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.load(response)
+
+
+def ci(event_name: str, event: dict, repository: str, get: Callable[[str], object] = github_get) -> bool:
+    """The check for one GitHub event, as `core.sh cheap` runs it.
+
+    A pull request is judged against its merge-base, with its body read live
+    so that re-running the job after adding the marker sees it (a re-run
+    replays the original event payload, whose body is only the fallback). A
+    merge group checks each merge against the body of the pull request it
+    merges. Other events check nothing."""
+    if event_name == "pull_request":
+        pull = event["pull_request"]
+        base, head = pull["base"]["sha"], pull["head"]["sha"]
+        merge_base = git("merge-base", base, head).strip()
+        breaks = diff(git_tree(merge_base), git_tree(head))
+        body = pull.get("body")
+        if breaks:
+            try:
+                body = get(f"/repos/{repository}/pulls/{pull['number']}").get("body")
+            except Exception as error:  # noqa: BLE001 - any failure falls back to the event's body
+                print(f"could not read the current pull request body ({error}); using the event's")
+        return verdict(breaks, body, f"{merge_base[:12]}..{head[:12]}")
+    if event_name == "merge_group":
+        group = event["merge_group"]
+
+        def bodies(pull_head: str) -> list[str]:
+            pulls = get(f"/repos/{repository}/commits/{pull_head}/pulls")
+            return [pull.get("body") or "" for pull in pulls if pull.get("head", {}).get("sha") == pull_head]
+
+        return merge_group(group["base_sha"], group["head_sha"], bodies)
+    print(f"contract diff: nothing to check for a {event_name or 'local'} run")
+    return True
 
 
 def main() -> int:
@@ -814,7 +865,12 @@ def main() -> int:
     parser.add_argument("--merge-group", nargs=2, metavar=("BASE", "HEAD"))
     parser.add_argument("--bodies-file", help="JSON {pull head sha: [bodies]} for a merge group")
     parser.add_argument("--surface", metavar="ROOT", help="print the surface extracted from a checkout")
+    parser.add_argument("--ci", action="store_true", help="check the GitHub event this job runs for")
     args = parser.parse_args()
+    if args.ci:
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        event = json.loads(Path(event_path).read_text(encoding="utf-8")) if event_path else {}
+        return 0 if ci(os.environ.get("GITHUB_EVENT_NAME", ""), event, os.environ.get("GITHUB_REPOSITORY", "")) else 1
     if args.surface:
         tree = disk_tree(Path(args.surface))
         commands, flags = ts_cli(tree)

@@ -528,6 +528,41 @@ class Scenarios(unittest.TestCase):
         bodies.write_text(json.dumps({additive: ["fine"], breaking: ["contract-break-approved: #1234"]}))
         self.assertEqual(self.run_script("--merge-group", base, head, "--bodies-file", str(bodies)).returncode, 0)
 
+    def test_ci_reads_the_current_body_and_falls_back_to_the_event(self):
+        self.git("switch", "-q", "-c", "feature")
+        self.write("crates/norn-api/src/refusal.rs", "\n")
+        head = self.commit("break")
+        event = {"pull_request": {"number": 7, "body": "stale", "base": {"sha": self.git("rev-parse", "main")}, "head": {"sha": head}}}
+        calls = []
+
+        def api(body):
+            def get(path):
+                calls.append(path)
+                if body is None:
+                    raise OSError("rate limited")
+                return {"body": body}
+            return get
+
+        cwd = Path.cwd()
+        try:
+            import os
+            os.chdir(self.root)
+            self.assertFalse(cd.ci("pull_request", event, "o/r", api("still no marker")))
+            self.assertEqual(calls, ["/repos/o/r/pulls/7"])
+            self.assertTrue(cd.ci("pull_request", event, "o/r", api("contract-break-approved: D85")))
+            self.assertFalse(cd.ci("pull_request", event, "o/r", api(None)))
+            event["pull_request"]["body"] = "contract-break-approved: #12"
+            self.assertTrue(cd.ci("pull_request", event, "o/r", api(None)))
+            # A clean change never calls the API; other events check nothing.
+            calls.clear()
+            self.git("switch", "-q", "main")
+            clean = {"pull_request": {**event["pull_request"], "head": {"sha": self.git("rev-parse", "HEAD")}}}
+            self.assertTrue(cd.ci("pull_request", clean, "o/r", api(None)))
+            self.assertTrue(cd.ci("push", {}, "o/r", api(None)))
+            self.assertEqual(calls, [])
+        finally:
+            os.chdir(cwd)
+
     def test_the_repository_contracts_extract(self):
         surface = subprocess.run([sys.executable, str(Path(cd.__file__)), "--surface", str(Path(cd.__file__).resolve().parents[2])],
                                  capture_output=True, text=True, check=True)
