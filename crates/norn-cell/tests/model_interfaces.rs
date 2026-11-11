@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use norn_cell::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
+use norn_cell::{BindingIndexSpec, CellError, Model, ModelDefinitionSnapshot};
 use norn_ir::{InterfaceDef, ObjectTypeDef, PropertyTypeDef};
 use serde::Serialize;
 use serde_json::json;
@@ -241,4 +241,46 @@ fn invariant_free_child_ancestry_changes_hash_and_survives_snapshot_reconstructi
         Model::from_snapshot(&inherited.definitions_snapshot()).expect("snapshot rebuilds");
     assert_eq!(restored.model_hash(), inherited.model_hash());
     assert!(restored.is_a("model.Item", "model.Parent"));
+}
+
+// A catalog beyond the inheritance classification budget is refused by
+// `Model::new`; no model exists whose queries could report a registered type
+// as unknown.
+
+fn budget_types(count: usize) -> Vec<ObjectTypeDef> {
+    (0..count)
+        .map(|index| {
+            serde_json::from_value(serde_json::json!({ "name": format!("budget.T{index:04}") }))
+                .expect("object type")
+        })
+        .collect()
+}
+
+#[test]
+fn more_than_4096_types_make_model_new_refuse() {
+    let objects = budget_types(4_097);
+    let refusal = Model::new(&norn_projections::SqliteDdlInput {
+        object_types: &objects,
+        property_types: &[],
+    })
+    .expect_err("an unclassifiable catalog must not become a model");
+    let CellError::EffectiveViewRefused(refused) = refusal else {
+        panic!("expected the effective-view refusal, got {refusal:?}");
+    };
+    assert_eq!(
+        (refused.dimension, refused.limit),
+        ("registered types", 4_096)
+    );
+}
+
+#[test]
+fn exactly_4096_types_still_build_a_model_that_knows_every_type() {
+    let objects = budget_types(4_096);
+    let model = Model::new(&norn_projections::SqliteDdlInput {
+        object_types: &objects,
+        property_types: &[],
+    })
+    .expect("4,096 types classify within budget");
+    assert!(model.has_type("budget.T0000"));
+    assert!(model.has_type("budget.T4095"));
 }
