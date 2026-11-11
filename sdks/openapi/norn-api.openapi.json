@@ -1105,11 +1105,11 @@
           "flow": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/FlowSummary",
                 "description": "For a flow: its id, version, rule and Run type."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1304,6 +1304,13 @@
             "type": "string",
             "description": "The Run object type."
           },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its display title (the canvas flow title), when it has one."
+          },
           "version": {
             "type": "string",
             "description": "The flow's authored version."
@@ -1367,11 +1374,11 @@
           "flow": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/FlowSummary",
                 "description": "For a flow: its id, version, rule and Run type."
+              },
+              {
+                "type": "null"
               }
             ]
           },

@@ -247,7 +247,7 @@ export interface components {
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
-            flow?: null | components["schemas"]["FlowSummary"];
+            flow?: components["schemas"]["FlowSummary"] | null;
             /** @description The definition id. */
             id: string;
             /** @description Its kind. */
@@ -341,6 +341,8 @@ export interface components {
             ruleArtifactId: string;
             /** @description The Run object type. */
             runType: string;
+            /** @description Its display title (the canvas flow title), when it has one. */
+            title?: string | null;
             /** @description The flow's authored version. */
             version: string;
         };
@@ -361,7 +363,7 @@ export interface components {
         };
         /** @description An installed (or retired) version. */
         InstallDefinitionResponse: {
-            flow?: null | components["schemas"]["FlowSummary"];
+            flow?: components["schemas"]["FlowSummary"] | null;
             /** @description The definition id. */
             id: string;
             /** @description Always true. */
