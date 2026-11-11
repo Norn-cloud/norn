@@ -993,6 +993,56 @@ fn agents_see_installed_active_bindings_only() {
     );
 }
 
+thread_local! {
+    /// The cell a racing checker retires the binding on, taken once.
+    static RACING: std::cell::RefCell<Option<std::rc::Rc<Cell>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// [`binding_agent`], after another writer retires the binding it saw.
+fn racing_agent(payload: &str, context: &AgentAdmissionContext) -> Vec<Diagnostic> {
+    let findings = binding_agent(payload, context);
+    if let Some(cell) = RACING.with(|racing| racing.borrow_mut().take()) {
+        let retire = json!({ "expectedVersion": 1 });
+        let (status, retired) = post(
+            &cell,
+            "/v1/definitions/studio.binding.issues:retire",
+            ADMIN,
+            &retire,
+        );
+        assert_eq!(status, 200, "{retired}");
+    }
+    findings
+}
+
+/// An agent admitted against a binding retired before it commits is not
+/// installed: the install refuses as a version conflict.
+#[test]
+fn an_agent_is_not_installed_over_a_binding_retired_during_admission() {
+    let context = AgentAdmissionContext {
+        models: BTreeSet::new(),
+        bindings: vec![],
+        laws: BTreeSet::new(),
+        limits: ResourceLimitProfile::norn_limits_v1(),
+    };
+    let cell = std::rc::Rc::new(cell(
+        DefinitionKinds::default()
+            .with_roles(ROLES)
+            .with_agent(racing_agent, context),
+    ));
+    let issues = binding("Issues", "member", &json!({}));
+    let (status, installed) = install_binding(&cell, "studio.binding.issues", &issues, None);
+    assert_eq!(status, 200, "{installed}");
+    RACING.with(|racing| *racing.borrow_mut() = Some(cell.clone()));
+    let agent = json!({ "kind": "agent", "id": "studio.agent.triage",
+        "payload": { "title": "Triage", "tools": ["studio.binding.issues"] } });
+    let (status, refused) = post(&cell, "/v1/definitions:install", ADMIN, &agent);
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(refused["code"], json!("definition.version_conflict"));
+    let (status, _) = get(&cell, "/v1/definitions/studio.agent.triage", "", VIEWER);
+    assert_eq!(status, 404);
+}
+
 fn reworded(kind: &str, payload: &str, _metrics: &[MetricDefinition]) -> Result<String, String> {
     let payload: Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
     Ok(format!("The {kind} called {}", payload["title"]))

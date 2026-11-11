@@ -947,14 +947,31 @@ fn receipt<E: SqlEngine>(
     })
 }
 
-/// Append `definition` (compare-and-set on `expected`) through the governed
-/// definitions install, at host time `now_ms`.
+/// The cell's active definitions version.
+fn definitions_version<E: SqlEngine>(host: &DevHost<E>) -> Result<u64, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    reader
+        .installed_definitions(None)
+        .map_err(Refusal::host)?
+        .map(|active| active.version)
+        .ok_or_else(|| Refusal::host("the cell has no installed definitions"))
+}
+
+/// Append `definition` (compare-and-set on `expected`, and on the active
+/// definitions version when `pinned`) through the governed definitions
+/// install, at host time `now_ms`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one governed append's fixed inputs"
+)]
 fn append<E: SqlEngine>(
     host: &DevHost<E>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: &str,
     mut definition: RetainedDefinition,
     expected: Option<u64>,
+    pinned: Option<u64>,
     signed: Option<(&str, String)>,
     now_ms: u64,
 ) -> Result<InstallDefinitionResponse, Refusal> {
@@ -972,7 +989,9 @@ fn append<E: SqlEngine>(
                 .map_err(Refusal::host)?;
             (active, current)
         };
-        if current.as_ref().map(|current| current.definition.revision) != expected {
+        if current.as_ref().map(|current| current.definition.revision) != expected
+            || pinned.is_some_and(|pinned| pinned != active.version)
+        {
             return Err(version_conflict());
         }
         if let Some(current) = &current
@@ -1062,6 +1081,13 @@ pub fn install_definition<E: SqlEngine>(
     authorize(host, scope, actor, Operation::WriteDefinitions)?;
     let actor = actor.ok_or_else(read_denied)?;
     check_id(&request.id)?;
+    // An agent is admitted against the bindings of this definitions version;
+    // it commits only if no definition was written since.
+    let pinned = if request.kind == "agent" {
+        Some(definitions_version(host)?)
+    } else {
+        None
+    };
     let (payload, diagnostics) = validate(
         host,
         scope,
@@ -1104,6 +1130,7 @@ pub fn install_definition<E: SqlEngine>(
             signoff: None,
         },
         request.expected_version,
+        pinned,
         signed,
         now_ms,
     )
@@ -1200,6 +1227,7 @@ pub fn retire_definition<E: SqlEngine>(
         actor,
         definition,
         Some(request.expected_version),
+        None,
         None,
         now_ms,
     )
