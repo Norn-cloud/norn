@@ -756,6 +756,35 @@ def workflow_expression_cap_canaries() -> None:
             raise AssertionError(f"a {target}-character collector expression passed the cap")
 
 
+def workflow_concurrency_canaries() -> None:
+    """A pull_request workflow cancels its own superseded PR runs and nothing else."""
+    validator = load_module("norn_workflow_concurrency_canaries", VALIDATOR)
+    workflows = ROOT / ".github/workflows"
+    sources = {f".github/workflows/{path.name}": path.read_text(encoding="utf-8")
+               for path in sorted(workflows.glob("*.yml"))}
+    # Every checked-in workflow passes, including the out-of-scope pull_request_target
+    # (cla.yml) and workflow_run (trusted-merge-group.yml) lanes.
+    validator.validate_pull_request_concurrency(sources)
+    path = ".github/workflows/codeql.yml"
+    codeql = sources[path]
+    group = ("  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && "
+             "format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n")
+    cancel = "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n"
+    for label, before, after in (
+            ("no concurrency", "concurrency:\n" + group + cancel, ""),
+            ("no PR number in the group", "format('pr-{0}', github.event.pull_request.number)", "'pr'"),
+            # Unconditional: a main push, the weekly schedule or a manual run would cancel too.
+            ("unconditional cancel", cancel, "  cancel-in-progress: true\n"),
+            ("no cancel-in-progress", cancel, "")):
+        if codeql.count(before) != 1:
+            raise AssertionError(f"concurrency canary target drifted: {label}")
+        try:
+            validator.validate_pull_request_concurrency({path: codeql.replace(before, after)})
+        except validator.InvalidCoverage:
+            continue
+        raise AssertionError(f"concurrency mutation passed: codeql.yml {label}")
+
+
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -1040,6 +1069,21 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["jobs"]["test"]["steps"][0]["run"] = workflow["jobs"]["core"]["steps"][0]["run"]
         rejected("threshold-only hosted bundle cleanup", document)
+        for name in ("core", "test"):
+            # Boat's base image needs libclang made loadable before any bindgen build.
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["steps"] = [step for step in document["jobs"][name]["steps"]
+                                               if step.get("name") != "Make libclang loadable on Boat runners"]
+            if len(document["jobs"][name]["steps"]) != len(workflow["jobs"][name]["steps"]) - 1:
+                raise AssertionError(f"{name}: libclang canary target drifted")
+            rejected(f"{name} without the Boat libclang step", document)
+        # A same-repository PR that fell back to hosted runners must say so on its checks.
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["steps"] = [step for step in document["jobs"]["core"]["steps"]
+                                             if step.get("name") != "Warn that pull request CI fell back to hosted runners"]
+        if len(document["jobs"]["core"]["steps"]) != len(workflow["jobs"]["core"]["steps"]) - 1:
+            raise AssertionError("core: hosted-fallback warning canary target drifted")
+        rejected("core without the hosted-fallback warning", document)
 
         def action_step(document: dict[str, Any], job: str, action: str) -> dict[str, Any]:
             return next(step for step in document["jobs"][job]["steps"]
@@ -1179,6 +1223,7 @@ def workflow_canaries() -> None:
     workflow_verdict_canaries(source)
     workflow_context_canaries(source)
     workflow_cleanup_canaries(source)
+    workflow_concurrency_canaries()
     workflow_trusted_policy_canaries(source)
     workflow_merge_group_policy_canaries(source)
     workflow_cache_canaries()
@@ -1866,13 +1911,14 @@ def main() -> int:
         workflow_verdict_canaries(source)
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
+        workflow_concurrency_canaries()
         studio_browser_phase_canaries()
         studio_browser_pin_canaries()
         workflow_trusted_policy_canaries(source)
         workflow_expression_cap_canaries()
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
-        print("workflow contract: admission, verdict, context and merge-group publisher canaries passed")
+        print("workflow contract: admission, verdict, context, concurrency and merge-group publisher canaries passed")
         return 0
     if len(sys.argv) != 1:
         raise SystemExit("usage: negative_canaries.py [--workflow-contract]")

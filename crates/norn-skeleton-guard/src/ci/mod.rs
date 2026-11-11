@@ -40,6 +40,165 @@ fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
             && runner == Some(BOAT_RUNNER))
 }
 
+/// The pull-request arm every admitted concurrency group starts with: one group per
+/// workflow and pull request, so a newer push supersedes only that PR's older run.
+const PR_GROUP: &str = "${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || ";
+
+/// The admitted workflow-level concurrency shapes of a `pull_request` workflow, as
+/// (group tail after [`PR_GROUP`], `cancel-in-progress`). Every other event gets a
+/// group of its own run, so nothing but a superseded PR run is cancelled or held
+/// back; the second shape also supersedes older main pushes (each main commit was
+/// already gated by its merge group), which needs `push` limited to `main`.
+const PR_CONCURRENCY: [(&str, &str, bool); 2] = [
+    (
+        "format('run-{0}', github.run_id) }}",
+        "${{ github.event_name == 'pull_request' }}",
+        false,
+    ),
+    (
+        "github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
+        "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
+        true,
+    ),
+];
+
+/// True when the workflow's `on` names `pull_request` (string, list or mapping form).
+fn triggers_pull_request(document: &yaml::Value) -> bool {
+    match document.get("on") {
+        Some(yaml::Value::Str(event)) => event == "pull_request",
+        Some(yaml::Value::Seq(events)) => events
+            .iter()
+            .any(|event| event.as_str() == Some("pull_request")),
+        Some(on @ yaml::Value::Map(_)) => on.get("pull_request").is_some(),
+        None => false,
+    }
+}
+
+/// A `pull_request` workflow must cancel its own superseded PR runs and nothing else:
+/// workflow-level `concurrency` is exactly one of [`PR_CONCURRENCY`] (whitespace
+/// aside). Workflows without a `pull_request` trigger are out of scope.
+fn concurrency_error(path: &str, document: &yaml::Value) -> Option<String> {
+    if !triggers_pull_request(document) {
+        return None;
+    }
+    let squash = |value: &yaml::Value| {
+        value
+            .as_str()
+            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let Some(concurrency @ yaml::Value::Map(_)) = document.get("concurrency") else {
+        return Some(format!(
+            "{path}: a pull_request workflow needs a workflow-level concurrency mapping that cancels its superseded PR runs"
+        ));
+    };
+    if concurrency
+        .keys()
+        .any(|key| key != "group" && key != "cancel-in-progress")
+    {
+        return Some(format!(
+            "{path}: workflow concurrency may set only group and cancel-in-progress"
+        ));
+    }
+    let group = concurrency.get("group").and_then(squash);
+    let cancel = concurrency.get("cancel-in-progress").and_then(squash);
+    let Some((_, expected_cancel, main_push)) = PR_CONCURRENCY.iter().find(|(tail, _, _)| {
+        group
+            .as_deref()
+            .and_then(|group| group.strip_prefix(PR_GROUP))
+            == Some(*tail)
+    }) else {
+        return Some(format!(
+            "{path}: concurrency group must be per workflow and pull request (github.event.pull_request.number) and give every other event its own run group"
+        ));
+    };
+    if cancel.as_deref() != Some(*expected_cancel) {
+        return Some(format!(
+            "{path}: cancel-in-progress must be `{expected_cancel}`: superseded pull_request runs are cancelled and no other event is"
+        ));
+    }
+    let push = document.get("on").and_then(|on| on.get("push"));
+    let main_only = yaml::Value::Map(vec![(
+        "branches".to_owned(),
+        yaml::Value::Seq(vec![yaml::Value::Str("main".to_owned())]),
+    )]);
+    if *main_push && push != Some(&main_only) {
+        return Some(format!(
+            "{path}: superseding main pushes needs the push trigger limited to branches [main]"
+        ));
+    }
+    None
+}
+
+/// A same-repository pull request that fell back to hosted runners says so on its
+/// checks; fork pull requests run hosted by design and stay quiet.
+const HOSTED_PR_WARNING: &str = r##"name: Warn that pull request CI fell back to hosted runners
+if: ${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}
+run: |
+  echo "::warning title=PR CI on hosted runners::PR CI is running on hosted runners: the repository variable NORN_PR_RUNNER is not 'boat', so this same-repository pull request fell back from Boat."
+"##;
+
+/// Boat's base image has only `libclang-18.so.18`; clang-sys loads `libclang.so`.
+const BOAT_LIBCLANG: &str = r##"name: Make libclang loadable on Boat runners
+if: ${{ runner.environment == 'self-hosted' }}
+run: |
+  set -euo pipefail
+  libclang_dev_version='1:18.1.3-1ubuntu1'
+  library=/usr/lib/llvm-18/lib/libclang.so
+  if [ -e "$library" ]; then
+    echo "$library is already present"
+  elif ! { timeout 120 sudo apt-get update -qq && timeout 300 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libclang-18-dev=$libclang_dev_version"; }; then
+    echo "::warning::could not install libclang-18-dev=$libclang_dev_version; linking the image's libclang-18.so.18"
+    sudo ln -sfn libclang-18.so.18 "$library"
+  fi
+  ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
+"##;
+
+/// Steps `ci-policy.yml` carries exactly once per job: the Boat-capable jobs make
+/// libclang loadable on Boat, and `core` warns when pull request CI fell back to
+/// hosted runners.
+const PINNED_STEPS: [(&str, &str); 3] = [
+    ("core", HOSTED_PR_WARNING),
+    ("core", BOAT_LIBCLANG),
+    ("test", BOAT_LIBCLANG),
+];
+
+fn pinned_step_errors(path: &str, document: &yaml::Value) -> Vec<String> {
+    if path != ".github/workflows/ci-policy.yml" {
+        return Vec::new();
+    }
+    let mut errors = Vec::new();
+    for (job, pinned) in PINNED_STEPS {
+        let expected = match yaml::parse(pinned) {
+            Ok(step) => step,
+            Err(error) => {
+                errors.push(format!("{path}::{job}: pinned step: {error}"));
+                continue;
+            }
+        };
+        let count = document
+            .get("jobs")
+            .and_then(|jobs| jobs.get(job))
+            .and_then(|job| job.get("steps"))
+            .map_or(0, |steps| {
+                steps
+                    .items()
+                    .iter()
+                    .filter(|step| **step == expected)
+                    .count()
+            });
+        if count != 1 {
+            let name = expected
+                .get("name")
+                .and_then(yaml::Value::as_str)
+                .unwrap_or_default();
+            errors.push(format!(
+                "{path}::{job}: needs exactly one unchanged `{name}` step"
+            ));
+        }
+    }
+    errors
+}
+
 /// The longest merge-queue group the trusted lane walks; longer groups fail closed.
 const MAX_MERGE_GROUP: usize = 64;
 
@@ -121,6 +280,8 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
             .and_then(|text| yaml::parse(&text));
         match result {
             Ok(doc) => {
+                errors.extend(concurrency_error(path, &doc));
+                errors.extend(pinned_step_errors(path, &doc));
                 if let Some(yaml::Value::Map(jobs)) = doc.get("jobs") {
                     for (name, job) in jobs {
                         if !runner_is_admitted(
@@ -619,6 +780,214 @@ mod tests {
             "core",
             Some(super::BOAT_RUNNER)
         ));
+    }
+
+    fn concurrency(path: &str, source: &str) -> Option<String> {
+        let parsed = super::yaml::parse(source);
+        assert_eq!(parsed.as_ref().err(), None, "{path}: fixture did not parse");
+        let document = parsed.unwrap_or(super::yaml::Value::Map(Vec::new()));
+        assert!(
+            document.get("jobs").is_some(),
+            "{path}: fixture has no jobs"
+        );
+        super::concurrency_error(path, &document)
+    }
+
+    fn workflow(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.github/workflows")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    #[test]
+    fn every_checked_in_workflow_meets_the_pull_request_concurrency_rule() {
+        for name in [
+            "ci-policy.yml",
+            "codeql.yml",
+            "cla.yml",
+            "trusted-merge-group.yml",
+        ] {
+            let source = workflow(name);
+            assert!(!source.is_empty(), "{name} is missing");
+            assert_eq!(concurrency(name, &source), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn pull_request_concurrency_rejects_codeql_mutations() {
+        let source = workflow("codeql.yml");
+        let group = "  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n";
+        let cancel = "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n";
+        assert!(
+            source.contains(group) && source.contains(cancel),
+            "codeql.yml drifted"
+        );
+        for (label, before, after) in [
+            (
+                "no concurrency",
+                format!("concurrency:\n{group}{cancel}"),
+                String::new(),
+            ),
+            (
+                "no PR number in the group",
+                "github.event.pull_request.number".to_owned(),
+                "github.ref".to_owned(),
+            ),
+            (
+                "one shared group",
+                group.to_owned(),
+                "  group: ${{ github.workflow }}\n".to_owned(),
+            ),
+            (
+                "other events share a group",
+                "format('run-{0}', github.run_id)".to_owned(),
+                "github.event_name".to_owned(),
+            ),
+            (
+                "unconditional cancel",
+                cancel.to_owned(),
+                "  cancel-in-progress: true\n".to_owned(),
+            ),
+            (
+                "main pushes cancelled without the main-push group",
+                "${{ github.event_name == 'pull_request' }}".to_owned(),
+                "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}"
+                    .to_owned(),
+            ),
+            ("no cancel-in-progress", cancel.to_owned(), String::new()),
+            (
+                "cancel disabled",
+                cancel.to_owned(),
+                "  cancel-in-progress: false\n".to_owned(),
+            ),
+            (
+                "group only",
+                format!("concurrency:\n{group}{cancel}"),
+                "concurrency: codeql\n".to_owned(),
+            ),
+        ] {
+            let mutated = source.replacen(&before, &after, 1);
+            assert_ne!(mutated, source, "{label}: no-op mutation");
+            assert!(
+                concurrency("codeql.yml", &mutated).is_some(),
+                "{label} was admitted"
+            );
+        }
+    }
+
+    #[test]
+    fn pull_request_concurrency_bounds_the_main_push_supersede() {
+        let source = workflow("ci-policy.yml");
+        for (label, before, after) in [
+            (
+                "every push branch superseded",
+                "  push:\n    branches: [main]\n",
+                "  push:\n",
+            ),
+            (
+                "release pushes superseded",
+                "branches: [main]",
+                "branches: [main, release]",
+            ),
+            (
+                "main-push cancel without its own group",
+                " || github.event_name == 'push' && 'main-push'",
+                "",
+            ),
+            (
+                "merge groups cancelled",
+                "github.event_name == 'pull_request' || github.event_name == 'push' }}",
+                "github.event_name != 'workflow_dispatch' }}",
+            ),
+        ] {
+            let mutated = source.replacen(before, after, 1);
+            assert_ne!(mutated, source, "{label}: no-op mutation");
+            assert!(
+                concurrency("ci-policy.yml", &mutated).is_some(),
+                "{label} was admitted"
+            );
+        }
+    }
+
+    #[test]
+    fn pull_request_concurrency_scopes_to_pull_request_triggers() {
+        let jobs = "jobs:\n  a:\n    runs-on: ubuntu-24.04\n";
+        for on in [
+            "on: pull_request\n",
+            "on: [push, pull_request]\n",
+            "on:\n  pull_request:\n",
+        ] {
+            assert!(
+                concurrency("x.yml", &format!("{on}{jobs}")).is_some(),
+                "{on}"
+            );
+        }
+        for on in [
+            "on: pull_request_target\n",
+            "on: [push, workflow_run]\n",
+            "on:\n  workflow_run:\n    workflows: [Public core]\n",
+        ] {
+            assert_eq!(concurrency("x.yml", &format!("{on}{jobs}")), None, "{on}");
+        }
+        let squashed = "on: pull_request\nconcurrency:\n  group: >-\n    ${{ github.workflow }}-${{ github.event_name == 'pull_request' &&\n    format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n";
+        assert_eq!(concurrency("x.yml", &format!("{squashed}{jobs}")), None);
+        let extra = squashed.replace("concurrency:\n", "concurrency:\n  queue: max\n");
+        assert!(concurrency("x.yml", &format!("{extra}{jobs}")).is_some());
+    }
+
+    fn pinned_steps(source: &str) -> Vec<String> {
+        let parsed = super::yaml::parse(source);
+        assert_eq!(parsed.as_ref().err(), None, "ci-policy.yml did not parse");
+        let document = parsed.unwrap_or(super::yaml::Value::Map(Vec::new()));
+        super::pinned_step_errors(".github/workflows/ci-policy.yml", &document)
+    }
+
+    #[test]
+    fn pinned_steps_reject_a_missing_libclang_step_or_hosted_warning() {
+        let source = workflow("ci-policy.yml");
+        assert_eq!(pinned_steps(&source), Vec::<String>::new());
+        let warning = "      - name: Warn that pull request CI fell back to hosted runners\n";
+        let libclang = "      - name: Make libclang loadable on Boat runners\n";
+        assert_eq!(source.matches(warning).count(), 1);
+        assert_eq!(source.matches(libclang).count(), 2);
+        for (label, before, after) in [
+            ("no hosted warning", warning, "      - name: Renamed\n"),
+            (
+                "fork pull requests warn",
+                " && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat'",
+                " && vars.NORN_PR_RUNNER != 'boat'",
+            ),
+            (
+                "warning on Boat",
+                "${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request'",
+                "${{ github.event_name == 'pull_request'",
+            ),
+            ("no libclang step", libclang, "      - name: Renamed\n"),
+            (
+                "libclang never verified",
+                "ls -l \"$library\" && [ -e \"$library\" ] || { echo \"::error::$library is missing: clang-sys cannot load libclang\"; exit 1; }",
+                "true",
+            ),
+            (
+                "libclang on hosted runners",
+                "if: ${{ runner.environment == 'self-hosted' }}\n        run: |\n          set -euo pipefail\n          libclang_dev_version",
+                "if: ${{ always() }}\n        run: |\n          set -euo pipefail\n          libclang_dev_version",
+            ),
+        ] {
+            let mutated = source.replacen(before, after, 1);
+            assert_ne!(mutated, source, "{label}: no-op mutation");
+            assert!(!pinned_steps(&mutated).is_empty(), "{label} was admitted");
+        }
+        let test_only = source.replacen(libclang, "      - name: Renamed\n", 2);
+        assert_eq!(pinned_steps(&test_only).len(), 2);
+        assert!(
+            super::pinned_step_errors(
+                ".github/workflows/codeql.yml",
+                &super::yaml::Value::Map(Vec::new())
+            )
+            .is_empty()
+        );
     }
 
     use super::{compare_artifact_variants, contract_errors, maintainer_approval};

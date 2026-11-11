@@ -428,7 +428,46 @@ def validate_expression_lengths(sources: dict[str, str]) -> None:
                             f"{length}-character expression, over the {EXPRESSION_CAP} cap (GitHub rejects 21,000)")
 
 
-def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW) -> None:
+# A pull_request workflow cancels its own superseded PR runs and nothing else. Mirrors the
+# skeleton guard's rule (crates/norn-skeleton-guard/src/ci/mod.rs, `concurrency_error`):
+# the group starts with one arm per workflow and pull request, every other event gets a
+# group of its own run, and only the main-push supersede (push limited to main) may add
+# another cancelled event.
+PR_CONCURRENCY_GROUP = ("${{ github.workflow }}-${{ github.event_name == 'pull_request' && "
+                        "format('pr-{0}', github.event.pull_request.number) || ")
+PR_CONCURRENCY = (
+    ("format('run-{0}', github.run_id) }}", "${{ github.event_name == 'pull_request' }}", False),
+    ("github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
+     "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}", True),
+)
+
+
+def validate_pull_request_concurrency(sources: dict[str, str]) -> None:
+    for path, text in sources.items():
+        workflow = yaml.load(text, Loader=WorkflowLoader)
+        trigger = workflow.get("on", workflow.get(True))
+        if not (trigger == "pull_request" or (isinstance(trigger, (list, dict)) and "pull_request" in trigger)):
+            continue
+        concurrency = workflow.get("concurrency")
+        require(isinstance(concurrency, dict) and set(concurrency) <= {"group", "cancel-in-progress"},
+                f"{path}: a pull_request workflow needs a workflow-level concurrency mapping that cancels its superseded PR runs")
+
+        def squash(value: object) -> str | None:
+            return " ".join(value.split()) if isinstance(value, str) else None
+        shapes = [shape for shape in PR_CONCURRENCY
+                  if squash(concurrency.get("group")) == PR_CONCURRENCY_GROUP + shape[0]]
+        require(len(shapes) == 1,
+                f"{path}: concurrency group must be per workflow and pull request "
+                "(github.event.pull_request.number) and give every other event its own run group")
+        _, cancel, main_push = shapes[0]
+        require(squash(concurrency.get("cancel-in-progress")) == cancel,
+                f"{path}: cancel-in-progress must be `{cancel}`: superseded pull_request runs are cancelled and no other event is")
+        require(not main_push or (isinstance(trigger, dict) and trigger.get("push") == {"branches": ["main"]}),
+                f"{path}: superseding main pushes needs the push trigger limited to branches [main]")
+
+
+def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW,
+                                workflows: Path = ROOT / ".github/workflows") -> None:
     source = formal_path.read_text(encoding="utf-8")
     validate_rust_toolchain_steps(formal_path, source)
     for action in re.findall(r"^\s*- uses: (\S+)", source, re.MULTILINE):
@@ -438,6 +477,9 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
+    validate_pull_request_concurrency({**{f".github/workflows/{path.name}": path.read_text(encoding="utf-8")
+                                          for path in sorted(workflows.glob("*.yml"))},
+                                       ".github/workflows/ci-policy.yml": source})
     validate_expression_lengths({formal_path.name: source,
                                  "trusted-merge-group.yml": (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")})
     require(workflow.get("on", workflow.get(True)) == {
@@ -540,6 +582,27 @@ echo "$plan"''',
          "with": {"path": "~/.cache/norn-interop",
                   "key": "norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}"}},
     ]
+    # Same-repository pull requests that fell back to hosted runners say so on their checks;
+    # forks run hosted by design and stay quiet.
+    hosted_warning = {
+        "name": "Warn that pull request CI fell back to hosted runners",
+        "if": "${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}",
+        "run": """echo "::warning title=PR CI on hosted runners::PR CI is running on hosted runners: the repository variable NORN_PR_RUNNER is not 'boat', so this same-repository pull request fell back from Boat."
+"""}
+    # Boat's base image has only libclang-18.so.18; clang-sys needs the unversioned libclang.so.
+    libclang = {"name": "Make libclang loadable on Boat runners",
+                "if": "${{ runner.environment == 'self-hosted' }}",
+                "run": """set -euo pipefail
+libclang_dev_version='1:18.1.3-1ubuntu1'
+library=/usr/lib/llvm-18/lib/libclang.so
+if [ -e "$library" ]; then
+  echo "$library is already present"
+elif ! { timeout 120 sudo apt-get update -qq && timeout 300 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libclang-18-dev=$libclang_dev_version"; }; then
+  echo "::warning::could not install libclang-18-dev=$libclang_dev_version; linking the image's libclang-18.so.18"
+  sudo ln -sfn libclang-18.so.18 "$library"
+fi
+ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
+"""}
     cleanup = {"name": "Reclaim runner disk space",
                "if": "${{ runner.environment == 'github-hosted' }}",
                "run": """set -euo pipefail
@@ -576,6 +639,8 @@ df -h /
             if name == "test":
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
             preparation.insert(0, reclaim)
+            after_checkout = preparation.index(checkout) + 1
+            preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -585,7 +650,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 2),
+        require(len([step for step in job_steps if "run" in step]) == {"plan": 1, "core": 4, "test": 3}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
