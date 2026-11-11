@@ -11,7 +11,10 @@ boat_nightly.py runs this inside a Boat VM at a checkout of main. It prints, on 
 
 A probe's `run` is timed (wall clock) when it names a `timed` metric; lines its command
 prints as `METRIC {json}` are passed through; `parse` turns other output lines into
-metrics with a regex. Exit 1 if any probe failed, after running the rest.
+metrics with a regex (a `value` group, and an optional `name` group for `{name}` in the id).
+`expect` is a regex the output must match, or the probe fails and records nothing (it pins a
+test count, so a renamed test cannot shrink a timed set). Exit 1 if any probe failed, after
+running the rest.
 """
 
 from __future__ import annotations
@@ -66,13 +69,17 @@ def run_probe(probe: dict, root: Path) -> bool:
     if ran.returncode != 0:
         emit("FAIL", f"{name} run exited {ran.returncode}")
         return False
+    output = ran.stdout + "\n" + ran.stderr
+    if probe.get("expect") and not re.search(probe["expect"], output, re.M):
+        emit("FAIL", f"{name} output does not match its expect pattern {probe['expect']!r}")
+        return False
     now = record.now_utc()
     base = {"probe": name, "measured_at": now, "workload": probe.get("workload", {}), "caveats": probe["caveats"]}
     if probe.get("timed"):
         emit("METRIC", {**base, **probe["timed"], "value": round(seconds, 2)})
     parse = probe.get("parse")
     pattern = re.compile(parse["regex"]) if parse else None
-    for line in (ran.stdout + "\n" + ran.stderr).splitlines():
+    for line in output.splitlines():
         if line.startswith("METRIC "):
             try:
                 measured = json.loads(line[len("METRIC "):])
@@ -81,11 +88,14 @@ def run_probe(probe: dict, root: Path) -> bool:
                 return False
             workload = {**base["workload"], **measured.pop("workload", {})}
             emit("METRIC", {**base, **measured, "workload": workload})
-        elif pattern and (match := pattern.match(line.strip())):
-            emit("METRIC", {**base, "metric": parse["metric"].format(name=segment(match.group("name"))),
-                            "value": float(match.group("value")), "unit": parse["unit"],
-                            "statistic": parse["statistic"],
-                            "workload": {**base["workload"], "gate_id": match.group("name")}})
+        elif pattern and (match := pattern.search(line.strip())):
+            found = match.groupdict()
+            workload = dict(base["workload"])
+            if found.get("name"):
+                workload["gate_id"] = found["name"]
+            emit("METRIC", {**base, "metric": parse["metric"].format(name=segment(found.get("name") or "")),
+                            "value": float(found["value"]), "unit": parse["unit"],
+                            "statistic": parse["statistic"], "workload": workload})
     return True
 
 

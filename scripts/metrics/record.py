@@ -17,7 +17,10 @@ Record one measurement (run inside any clone whose `origin` is Norn-cloud/norn):
 `python3 scripts/metrics/record.py env > env.json` on the measuring machine (the Boat VM)
 captures vCPU, RAM, CPU model, OS and the Rust toolchain. `--file records.jsonl` appends
 many records at once (each line a record; `schema`, `id` and `recorded_at` are filled in).
-`--dry-run` builds the commit without pushing it.
+`--dry-run` builds the commit without pushing it. A wrong value is never edited: record the
+right one with `--supersedes <id of the wrong record>`, and the view and the ratchet skip the
+wrong one while the history keeps both. A value more than 2x off its series' latest value
+prints a warning. `record.py ids` lists the ids already in use.
 
 Concurrent appends are safe: the commit is built with plumbing on top of the fetched tip,
 outside any work tree, and a push that loses the race is rebuilt on the new tip and
@@ -153,6 +156,8 @@ def record_errors(record, schema: dict) -> list[str]:
     spread = record.get("range")
     if spread and not spread["min"] <= record["value"] <= spread["max"]:
         errors.append(f"$.value: {record['value']} lies outside range {spread}")
+    if record.get("supersedes") == record["id"]:
+        errors.append("$.supersedes: a record cannot supersede itself")
     if (record["commit"]["sha"] is None) != (record["commit"]["date"] is None):
         errors.append("$.commit: sha and date are both known or both null")
     measured, recorded = parse_time(record["measured_at"]), parse_time(record["recorded_at"])
@@ -171,6 +176,34 @@ def series_key(record: dict) -> tuple:
     measured = parse_time(record["measured_at"])
     committed = parse_time(record["commit"]["date"]) if record["commit"]["date"] else measured
     return (committed, measured, record["recorded_at"], record["id"])
+
+
+def load_aliases() -> dict[str, str]:
+    path = HERE / "aliases.json"
+    return json.loads(path.read_text(encoding="utf-8"))["aliases"] if path.exists() else {}
+
+
+def fold(records: list[dict], aliases: dict[str, str] | None = None) -> list[dict]:
+    """Records as series: a record another one supersedes is dropped, each alias id is folded into
+    its canonical id, and a value re-reported for the same commit (same metric, commit sha and
+    value) is kept once, as first recorded."""
+    aliases = load_aliases() if aliases is None else aliases
+    superseded = {r["supersedes"] for r in records if r.get("supersedes")}
+    seen, out = set(), []
+    for record in sorted(records, key=lambda r: (r["recorded_at"], r["id"])):
+        if record["id"] in superseded:
+            continue
+        metric = aliases.get(record["metric"], record["metric"])
+        if metric != record["metric"]:
+            record = {**record, "metric": metric}
+        sha = record["commit"]["sha"]
+        if sha is not None:
+            key = (metric, sha, record["value"])
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(record)
+    return out
 
 
 def now_utc() -> str:
@@ -307,8 +340,14 @@ def append(repo: Path, records: list[dict], *, remote: str = "origin", branch: s
     for attempt in range(PUSH_ATTEMPTS):
         tip = fetch_tip(repo, remote, branch)
         store = read_store(repo, tip)
-        check_series(all_records(store) + records)
+        stored = all_records(store)
+        check_series(stored + records)
+        known = {x["id"] for x in stored}
+        check_supersedes(stored + [r for r in records if r["id"] not in known])
         commit, fresh = build_commit(repo, tip, store, records, message, views)
+        if attempt == 0:
+            for warning in jump_warnings(stored, fresh):
+                print(warning, file=sys.stderr)
         if commit is None or not push:
             return commit, fresh
         result = git(repo, "-c", "http.version=HTTP/1.1", *_auth_config(), "push", "--quiet", remote,
@@ -325,6 +364,45 @@ def append(repo: Path, records: list[dict], *, remote: str = "origin", branch: s
 
 
 # --- store checks --------------------------------------------------------------------
+
+def check_supersedes(records: list[dict]) -> None:
+    """A correction names an earlier record of the same metric (aliases folded)."""
+    aliases = load_aliases()
+    by_id, order = {}, {}
+    for index, record in enumerate(records):
+        by_id[record["id"]] = record
+        order[record["id"]] = index
+    for record in records:
+        target = record.get("supersedes")
+        if not target:
+            continue
+        old = by_id.get(target)
+        if old is None or order[target] > order[record["id"]]:
+            raise Invalid(f"{record['id']}: supersedes {target}, which is not an earlier record")
+        if aliases.get(old["metric"], old["metric"]) != aliases.get(record["metric"], record["metric"]):
+            raise Invalid(f"{record['id']}: supersedes {target}, a record of another metric ({old['metric']})")
+
+
+def jump_warnings(stored: list[dict], fresh: list[dict], factor: float = 2.0) -> list[str]:
+    """New values more than `factor` times off their series' latest value, unless they correct one."""
+    latest: dict[str, dict] = {}
+    for record in sorted(fold(stored), key=series_key):
+        latest[record["metric"]] = record
+    aliases = load_aliases()
+    warnings = []
+    for record in fresh:
+        last = latest.get(aliases.get(record["metric"], record["metric"]))
+        if record.get("supersedes") or last is None or last["value"] == 0 or record["value"] == 0 \
+                or (last["value"] > 0) != (record["value"] > 0):
+            continue
+        ratio = record["value"] / last["value"]
+        if ratio > factor or ratio < 1 / factor:
+            warnings.append(
+                f"warning: {record['metric']} = {record['value']} {record['unit']} is {ratio:.2g}x its latest value "
+                f"{last['value']} (record {last['id']}). If that one was wrong, record this with --supersedes "
+                f"{last['id']}; otherwise make sure --caveats explains the jump.")
+    return warnings
+
 
 def check_series(records: list[dict]) -> None:
     """Each metric id keeps one unit and one statistic forever."""
@@ -355,6 +433,8 @@ def verify_store(repo: Path, rev: str) -> int:
             ids.add(record["id"])
             records.append(record)
     check_series(records)
+    check_supersedes(records)
+    check_series(fold(records))
     log = git(repo, "log", "--format=commit %H", "--numstat", "--no-renames", rev, "--", f"{SHARD_DIR}/").stdout
     commit = None
     for line in log.decode().splitlines():
@@ -478,6 +558,8 @@ def record_from_args(args, repo: Path) -> dict:
         record["noise_pct"] = args.noise_pct
     if args.id:
         record["id"] = args.id
+    if args.supersedes:
+        record["supersedes"] = args.supersedes
     return record
 
 
@@ -533,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("--source", help="PR, comment, run or thread URL")
     add.add_argument("--quote")
     add.add_argument("--id", help="deterministic id, so a retry is a no-op")
+    add.add_argument("--supersedes", metavar="ID", help="an earlier record of this metric that this one corrects")
     validate = sub.add_parser("validate", help="check JSONL files of complete records")
     validate.add_argument("files", nargs="+")
     verify = sub.add_parser("verify", help="check the whole store and its history")
@@ -540,12 +623,27 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--remote", default="origin")
     verify.add_argument("--branch", default=BRANCH)
     verify.add_argument("--rev", help="check this rev instead of fetching <remote>/<branch>")
+    ids = sub.add_parser("ids", help="list the metric ids already recorded, to reuse rather than reinvent")
+    ids.add_argument("--repo", default=".")
+    ids.add_argument("--remote", default="origin")
+    ids.add_argument("--branch", default=BRANCH)
     sub.add_parser("env", help="print this machine's env as JSON")
     sub.add_parser("schema", help="print the record schema path")
     args = parser.parse_args(argv)
 
     if args.command == "env":
         print(json.dumps(detect_env(), indent=2))
+        return 0
+    if args.command == "ids":
+        tip = fetch_tip(Path(args.repo), args.remote, args.branch)
+        rows = fold(all_records(read_store(Path(args.repo), tip)))
+        shapes: dict[str, list] = {}
+        for row in rows:
+            shapes.setdefault(row["metric"], [row["unit"], row["statistic"], 0])[2] += 1
+        aliases = load_aliases()
+        for metric, (unit, statistic, count) in sorted(shapes.items()):
+            also = [a for a, c in aliases.items() if c == metric]
+            print(f"{metric}\t{unit}\t{statistic}\t{count}" + (f"\talias: {', '.join(also)}" if also else ""))
         return 0
     if args.command == "schema":
         print(SCHEMA_PATH)

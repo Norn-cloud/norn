@@ -38,8 +38,10 @@ def _source_html(url: str) -> str:
 
 
 def series(records: list[dict]) -> dict[str, list[dict]]:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import record as store  # noqa: PLC0415
     out: dict[str, list[dict]] = defaultdict(list)
-    for record in records:
+    for record in store.fold(records):
         out[record["metric"]].append(record)
     return {metric: sorted(rows, key=_key) for metric, rows in sorted(out.items())}
 
@@ -76,7 +78,7 @@ def markdown(records: list[dict]) -> str:
         "`scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated",
         "on every append.",
         "",
-        f"{len(records):,} records across {len(groups):,} metrics. Each series runs in the order of the",
+        f"{len(records):,} records across {len(groups):,} metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the",
         "measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an",
         "estimate; runner `boat` series are the only ones the nightly ratchet gates.",
         "",

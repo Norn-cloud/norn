@@ -55,7 +55,7 @@ def evaluate(records: list[dict], config: dict) -> list[dict]:
     import record as store  # noqa: PLC0415
     runner = config.get("runner", "boat")
     by_metric: dict[str, list[dict]] = {}
-    for record in records:
+    for record in store.fold(records):
         if record["env"]["runner"] == runner and not record["estimate"]:
             by_metric.setdefault(record["metric"], []).append(record)
     verdicts = []

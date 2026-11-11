@@ -215,6 +215,29 @@ class Store(unittest.TestCase):
         self.assertTrue(stored["id"].startswith("tests.rust.count/"))
 
 
+class Fold(unittest.TestCase):
+    def test_supersedes_aliases_and_rereports(self):
+        bad = sample(id="g/bad", metric="proof.gate.alias.s", value=2721, recorded_at="2026-11-11T15:00:00Z")
+        fix = sample(id="g/fix", metric="proof.gate.alias.s", value=1596, recorded_at="2026-11-11T15:01:00Z",
+                     supersedes="g/bad")
+        again = sample(id="g/again", metric="proof.gate.alias.s", value=1596, recorded_at="2026-11-11T15:02:00Z")
+        rows = record.fold([bad, fix, again], {"proof.gate.alias.s": "proof.gate.main.s"})
+        self.assertEqual([(r["id"], r["metric"]) for r in rows], [("g/fix", "proof.gate.main.s")])
+        record.check_supersedes([bad, fix])
+        with self.assertRaises(record.Invalid):
+            record.check_supersedes([fix, bad])
+        with self.assertRaises(record.Invalid):
+            record.check_supersedes([sample(id="x/1", metric="other.metric.s"), sample(id="x/2", supersedes="x/1")])
+
+    def test_jump_warning(self):
+        old = sample(id="j/1", value=10)
+        self.assertEqual(record.jump_warnings([old], [sample(id="j/2", value=19)]), [])
+        [warning] = record.jump_warnings([old], [sample(id="j/3", value=25)])
+        self.assertIn("--supersedes j/1", warning)
+        self.assertEqual(record.jump_warnings([old], [sample(id="j/4", value=25, supersedes="j/1")]), [])
+        self.assertEqual(len(record.jump_warnings([old], [sample(id="j/5", value=4)])), 1)
+
+
 class Ratchet(unittest.TestCase):
     def test_judge(self):
         self.assertEqual(ratchet.judge([10, 10], "lower", 10)["status"], "insufficient")
@@ -229,6 +252,7 @@ class Ratchet(unittest.TestCase):
 
     def test_only_boat_non_estimates_count(self):
         rows = [sample(id=f"s/{i}", value=v, measured_at=f"2026-11-0{i}T00:00:00Z",
+                       commit={"sha": f"{i:040x}", "date": f"2026-11-0{i}T00:00:00Z"},
                        recorded_at="2026-11-11T00:00:00Z") for i, v in enumerate([10, 10, 10, 20], 1)]
         rows.append(sample(id="s/9", value=99, measured_at="2026-11-09T00:00:00Z",
                            env={"runner": "github-hosted"}))

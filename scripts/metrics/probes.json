@@ -2,23 +2,65 @@
   "comment": "Nightly Boat measurements of main, run by run_probes.py on one default VM. A probe whose `requires` paths are absent at the commit is skipped, so a lane registers its probe here in the PR that adds the benchmark. `prepare` is untimed (builds); `run` is timed when `timed` names a metric, and any line it prints as `METRIC {json}` is recorded too (metric, value, unit, statistic, optional workload, samples, caveats).",
   "probes": [
     {
+      "name": "sim-dst-serial",
+      "requires": [
+        "crates/norn-cell-do/tests/faults.rs"
+      ],
+      "prepare": "cargo nextest run --locked -p norn-cell -p norn-cell-do --profile ci --no-run",
+      "run": "cargo nextest run --locked -p norn-cell -p norn-cell-do --profile ci --test-threads 1 -E 'test(/injected|mutant_do|mutant_comm|do_transaction_glue|do_request/)'",
+      "expect": "Summary \\[\\s*[0-9.]+s\\] 11 tests run: 11 passed",
+      "parse": {
+        "regex": "Summary \\[\\s*(?P<value>[0-9.]+)s\\] 11 tests run",
+        "metric": "sim.dst.serial_total_s",
+        "unit": "s",
+        "statistic": "total"
+      },
+      "timeout_s": 1800,
+      "workload": {
+        "tests": 11,
+        "threads": 1,
+        "profile": "debug",
+        "filter": "test(/injected|mutant_do|mutant_comm|do_transaction_glue|do_request/)"
+      },
+      "caveats": "The 11-test D79 simulator set (DST steps 1 and 1b), serial, nextest Summary wall time; one default Boat VM, single run. Simulator stores are unsynced on /dev/shm by design; before that change file-store reopen cost varied about 5x between VMs. Step 2 responder tests are excluded so this id stays comparable."
+    },
+    {
       "name": "bench-forks",
-      "requires": ["crates/norn-pages/tests/bench_forks.rs"],
+      "requires": [
+        "crates/norn-pages/tests/bench_forks.rs"
+      ],
       "prepare": "cargo test --release --locked -p norn-pages --test bench_forks --no-run",
       "run": "cargo test --release --locked -p norn-pages --test bench_forks -- --ignored --nocapture --test-threads 1",
       "timeout_s": 1800,
-      "workload": {"bench": "BENCH-FORK-1", "profile": "release"},
+      "workload": {
+        "bench": "BENCH-FORK-1",
+        "profile": "release"
+      },
       "caveats": "BENCH-FORK-1, one run per night. In-memory page tier only: no durability (U4), cold object-storage reads (U7), multi-node or contention. Fork p99 is a CPU tail on 4 vCPUs."
     },
     {
       "name": "promoted-proof-gates",
-      "requires": ["scripts/verify-promoted-subsystems.sh"],
+      "requires": [
+        "scripts/verify-promoted-subsystems.sh"
+      ],
       "prepare": "export CI=true && python3 -m venv /tmp/probe-venv && /tmp/probe-venv/bin/pip install --quiet --disable-pip-version-check jsonschema==4.25.1 PyYAML==6.0.3 && export PATH=/tmp/probe-venv/bin:$PATH && scripts/bootstrap-verification-tools.sh && scripts/bootstrap-ontology-tools.sh && scripts/bootstrap-rust-extraction-tools.sh",
       "run": "export CI=true PATH=/tmp/probe-venv/bin:$PATH && scripts/verify-promoted-subsystems.sh full",
-      "timed": {"metric": "proof.gate.promoted_subsystems.s", "unit": "s", "statistic": "single"},
-      "parse": {"regex": "^\\[pass\\] (?P<name>\\S+) \\((?P<value>\\d+)s\\)$", "metric": "proof.gate.{name}.s", "unit": "s", "statistic": "single"},
+      "timed": {
+        "metric": "proof.gate.promoted_subsystems.s",
+        "unit": "s",
+        "statistic": "single"
+      },
+      "parse": {
+        "regex": "^\\[pass\\] (?P<name>\\S+) \\((?P<value>\\d+)s\\)$",
+        "metric": "proof.gate.{name}.s",
+        "unit": "s",
+        "statistic": "single"
+      },
       "timeout_s": 3600,
-      "workload": {"gate": "scripts/verify-promoted-subsystems.sh full", "phase": "core.sh formal"},
+      "workload": {
+        "gate": "scripts/verify-promoted-subsystems.sh full",
+        "phase": "core.sh formal"
+      },
       "caveats": "Wall time of the formal phase's proof run (core.sh formal) after its tool bootstraps, which are untimed; per-gate values are the script's own [pass] seconds (1 s resolution). One run on a default Boat VM; Rust builds inside the gate start cold."
     }
   ]

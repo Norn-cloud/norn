@@ -5,9 +5,27 @@
   "description": "One measurement, appended once to metrics/<YYYY-MM>.jsonl on the metrics branch and never edited. Every value says what limits it (caveats), where it ran (env) and on what work (workload).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "id", "metric", "value", "unit", "statistic", "commit", "measured_at", "recorded_at", "measured_by", "env", "workload", "caveats", "estimate", "source"],
+  "required": [
+    "schema",
+    "id",
+    "metric",
+    "value",
+    "unit",
+    "statistic",
+    "commit",
+    "measured_at",
+    "recorded_at",
+    "measured_by",
+    "env",
+    "workload",
+    "caveats",
+    "estimate",
+    "source"
+  ],
   "properties": {
-    "schema": {"const": 1},
+    "schema": {
+      "const": 1
+    },
     "id": {
       "description": "Unique across the store. A producer that can re-send the same measurement (a CI sweep) picks a deterministic id so the second append is a no-op; otherwise record.py derives one from the content.",
       "type": "string",
@@ -19,76 +37,218 @@
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_-]*)+$",
       "maxLength": 160
     },
-    "value": {"type": "number"},
-    "unit": {"enum": ["ns", "us", "ms", "s", "bytes", "KiB", "MiB", "GiB", "percent", "ratio", "count", "per_s"]},
+    "value": {
+      "type": "number"
+    },
+    "unit": {
+      "enum": [
+        "ns",
+        "us",
+        "ms",
+        "s",
+        "bytes",
+        "KiB",
+        "MiB",
+        "GiB",
+        "percent",
+        "ratio",
+        "count",
+        "per_s"
+      ]
+    },
     "statistic": {
       "description": "single: one observation. Percentiles and mean/median/min/max/stddev summarize `samples` observations. total: a sum (e.g. a whole serial suite).",
-      "enum": ["single", "total", "mean", "median", "min", "max", "stddev", "p50", "p90", "p95", "p99", "p999"]
+      "enum": [
+        "single",
+        "total",
+        "mean",
+        "median",
+        "min",
+        "max",
+        "stddev",
+        "p50",
+        "p90",
+        "p95",
+        "p99",
+        "p999"
+      ]
     },
-    "samples": {"description": "Observations behind a summary statistic.", "type": "integer", "minimum": 1},
+    "samples": {
+      "description": "Observations behind a summary statistic.",
+      "type": "integer",
+      "minimum": 1
+    },
     "range": {
       "description": "The spread the source reported for this value across repeated runs (value lies inside it).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["min", "max"],
-      "properties": {"min": {"type": "number"}, "max": {"type": "number"}}
+      "required": [
+        "min",
+        "max"
+      ],
+      "properties": {
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        }
+      }
     },
     "commit": {
       "description": "The commit measured. sha is null only for a backfill whose source names no commit; caveats then say so.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["sha", "date"],
+      "required": [
+        "sha",
+        "date"
+      ],
       "properties": {
-        "sha": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
-        "date": {"type": ["string", "null"], "format": "date-time"},
-        "ref": {"description": "What the sha is, e.g. main, PR #1223 head.", "type": "string", "maxLength": 200}
+        "sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "ref": {
+          "description": "What the sha is, e.g. main, PR #1223 head.",
+          "type": "string",
+          "maxLength": 200
+        }
       }
     },
-    "measured_at": {"type": "string", "format": "date-time"},
-    "recorded_at": {"description": "When record.py appended it; also picks the month shard.", "type": "string", "format": "date-time"},
+    "measured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "recorded_at": {
+      "description": "When record.py appended it; also picks the month shard.",
+      "type": "string",
+      "format": "date-time"
+    },
     "measured_by": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": {"description": "Lane, job or person, e.g. L-dst, ci.core, metrics-nightly.", "type": "string", "minLength": 1, "maxLength": 120},
-        "url": {"description": "CI run or thread that did the measuring.", "type": "string", "format": "uri"}
+        "name": {
+          "description": "Lane, job or person, e.g. L-dst, ci.core, metrics-nightly.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "url": {
+          "description": "CI run or thread that did the measuring.",
+          "type": "string",
+          "format": "uri"
+        }
       }
     },
     "env": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runner"],
+      "required": [
+        "runner"
+      ],
       "properties": {
-        "runner": {"description": "Only boat series are ratcheted; hosted runners are recorded but too noisy to gate on.", "enum": ["boat", "github-hosted", "local", "unknown"]},
-        "vm_type": {"type": "string", "maxLength": 80},
-        "vcpu": {"type": "integer", "minimum": 1},
-        "ram_gib": {"type": "number", "exclusiveMinimum": 0},
-        "cpu_model": {"type": "string", "maxLength": 120},
-        "os": {"type": "string", "maxLength": 120},
+        "runner": {
+          "description": "Only boat series are ratcheted; hosted runners are recorded but too noisy to gate on.",
+          "enum": [
+            "boat",
+            "github-hosted",
+            "local",
+            "unknown"
+          ]
+        },
+        "vm_type": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "vcpu": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ram_gib": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "cpu_model": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "os": {
+          "type": "string",
+          "maxLength": 120
+        },
         "toolchain": {
           "description": "Tool name to version, e.g. {\"rust\": \"1.98.0\"}.",
           "type": "object",
-          "additionalProperties": {"type": "string", "maxLength": 80}
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 80
+          }
         }
       }
     },
     "workload": {
       "description": "What was run: fork counts, test filter, thread count, cases.",
       "type": "object",
-      "additionalProperties": {"type": ["string", "number", "boolean"]}
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
     },
-    "caveats": {"description": "What limits the number: noise, method, what it does not cover.", "type": "string", "minLength": 1, "maxLength": 2000},
-    "estimate": {"description": "True when the source gives an approximate value.", "type": "boolean"},
-    "noise_pct": {"description": "Run-to-run spread the producer measured, in percent of value.", "type": "number", "minimum": 0},
+    "caveats": {
+      "description": "What limits the number: noise, method, what it does not cover.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "estimate": {
+      "description": "True when the source gives an approximate value.",
+      "type": "boolean"
+    },
+    "noise_pct": {
+      "description": "Run-to-run spread the producer measured, in percent of value.",
+      "type": "number",
+      "minimum": 0
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["url"],
+      "required": [
+        "url"
+      ],
       "properties": {
-        "url": {"description": "PR, comment, run or thread holding the measurement.", "type": "string", "format": "uri"},
-        "quote": {"description": "The source's words, for backfilled values.", "type": "string", "maxLength": 600}
+        "url": {
+          "description": "PR, comment, run or thread holding the measurement.",
+          "type": "string",
+          "format": "uri"
+        },
+        "quote": {
+          "description": "The source's words, for backfilled values.",
+          "type": "string",
+          "maxLength": 600
+        }
       }
+    },
+    "supersedes": {
+      "description": "Id of an earlier record of the same metric that this one corrects. The earlier record stays in the history; the view and the ratchet skip it.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{3,199}$"
     }
   }
 }
