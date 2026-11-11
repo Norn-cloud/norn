@@ -13,9 +13,10 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import { loadChecker, sourceMappedDiagnostics, type CheckerDiagnostic } from "./checker-abi.ts"
-import { compilePack, packModules } from "./pack.ts"
+import { compilePack } from "./pack.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject } from "./project.ts"
+import { projectModules } from "./worker.ts"
 import type { SourceLocation } from "./builder/diagnostics.ts"
 
 const USAGE = "Usage: norn explain <action|law|concept> <id> [--json] [--wording FILE --locale TAG]"
@@ -89,11 +90,8 @@ export async function explain(args: readonly string[]): Promise<number> {
     try { requirements = JSON.parse(readFileSync(resolve(wording), "utf8")) }
     catch (error) { throw new ProjectError("cli.project.usage", `Cannot read --wording ${wording} as JSON: ${String(error)}`, 2) }
   }
-  const modules = manifest.sources.flatMap((source) => {
-    const dir = resolve(root, source)
-    return existsSync(dir) && statSync(dir).isDirectory() ? packModules(dir) : []
-  })
-  const pack = compilePack(root, { modules, scope: manifest.scope, root })
+  // The same confined module set `norn dev` compiles: nothing outside the project.
+  const pack = compilePack(root, { modules: projectModules(root, manifest), scope: manifest.scope, root })
   const print = (value: unknown, text: string) => process.stdout.write(`${json ? JSON.stringify(value) : text}\n`)
   if (!pack.ok) {
     const findings: Finding[] = pack.failures.flatMap((failure) => failure.diagnostics.map((diagnostic) => ({

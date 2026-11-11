@@ -58,7 +58,7 @@ function sourceDirs(root: string, manifest: Project): string[] {
  * The modules compiled as one set: each source directory's top-level `*.ts`.
  * A module that is a symlink is compiled only if it resolves inside the project.
  */
-function projectModules(root: string, manifest: Project): string[] {
+export function projectModules(root: string, manifest: Project): string[] {
   const realRoot = realpathSync(root)
   return sourceDirs(root, manifest).flatMap((dir) => packModules(dir)).map((module) => {
     if (!insideProject(realRoot, module)) throw outside(`module ${posix(relative(root, module))}`)
