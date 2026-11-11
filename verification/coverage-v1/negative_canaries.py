@@ -822,6 +822,9 @@ def workflow_sccache_canaries(source: str) -> None:
                        "  echo 'sccache: error: Server startup failed: ServerBusy: Egress is over the account limit' >&2; exit 2\n")
                     + "fi\n"
                     "if [ \"$FAKE_SCCACHE\" = dead ]; then echo 'sccache: error: failed to start server: Address in use' >&2; exit 2; fi\n"
+                    # SCCACHE_IGNORE_SERVER_IO_ERROR: sccache warns, then compiles locally and
+                    # returns the compiler's own status.
+                    "if [ \"$FAKE_SCCACHE\" = warn ]; then echo 'sccache: warning: The server looks like it shut down unexpectedly, compiling locally instead' >&2; fi\n"
                     "exec \"$@\"\n")
                 # Fake rustc: records each run; fails like a type error when asked to.
                 rustc = root / "bin" / "rustc"
@@ -859,52 +862,96 @@ def workflow_sccache_canaries(source: str) -> None:
                         raise AssertionError(f"{name}: sccache wrapper without a temporary file drift {compiler}: "
                                              f"{compiled.returncode} runs={calls} {compiled.stderr!r}")
                 for server, compiler, status, runs in (("alive", "ok", 0, 1), ("dead", "ok", 0, 1),
-                                                       ("alive", "broken", 1, 1), ("dead", "broken", 1, 1)):
+                                                       ("alive", "broken", 1, 1), ("dead", "broken", 1, 1),
+                                                       ("warn", "ok", 0, 1), ("warn", "broken", 1, 1)):
                     log = root / f"rustc-{server}-{compiler}.log"
                     compiled = subprocess.run([wrapper, str(rustc), "--crate-name", "probe"], capture_output=True, text=True,
                                               timeout=30, env={**base, "FAKE_SCCACHE": server, "FAKE_RUSTC": compiler,
                                                                "RUSTC_LOG": str(log)})
                     calls = len(log.read_text().splitlines()) if log.exists() else 0
                     fell_back = "compiling with plain rustc" in compiled.stderr
+                    # A warned local compile is never rerun: its diagnostics and the warning survive.
                     if compiled.returncode != status or calls != runs or fell_back != (server == "dead") \
-                            or (compiler == "broken" and "E0308" not in compiled.stderr):
+                            or (compiler == "broken" and "E0308" not in compiled.stderr) \
+                            or (server == "warn" and "sccache: warning:" not in compiled.stderr):
                         raise AssertionError(f"{name}: sccache wrapper drift {server}/{compiler}: "
                                              f"{compiled.returncode} runs={calls} {compiled.stderr!r}")
 
 
-def bundle_prune_containment_canaries() -> None:
-    """The bundle prune deletes only the workspace's own target dir, never anything else."""
-    core = (ROOT / "scripts/ci/core.sh").read_text(encoding="utf-8")
-    start = core.index("prune_target() {\n")
-    function = core[start:core.index("\n}\n", start) + 3]
+def bundle_prune_drift(function: str) -> str | None:
+    """Run a `prune_target` definition against every CARGO_TARGET_DIR case; describe any drift.
+
+    Only the workspace's own target dir is touched, and inside it only Cargo build outputs
+    (profile and target-triple trees, `doc`); target/verification-* evidence and tools,
+    other content and symlinks survive.
+    """
     with tempfile.TemporaryDirectory() as directory:
         top = Path(directory).resolve()
         home, workspace = top / "home", top / "home" / "work" / "norn"
         outside = top / "outside"
-        for path in (workspace / "target" / "debug", workspace / "src", outside, home / ".cargo"):
+        target = workspace / "target"
+        cargo = [target / "debug", target / "wasm32-unknown-unknown", target / "doc"]
+        kept = [workspace, workspace / "src", home, home / ".cargo", outside, target,
+                target / "verification-results", target / "verification-tools", target / "norn-checker-wasm",
+                outside / ".fingerprint"]
+        for path in (workspace / "src", home / ".cargo", outside / ".fingerprint"):
             path.mkdir(parents=True, exist_ok=True)
         (workspace / "escape").symlink_to(outside)
         (workspace / "target-link").symlink_to(outside)
         cases = {
-            None: True, "": True, "target": True, "target/": True, str(workspace / "target"): True,
+            None: True, "": True, "target": True, "target/": True, str(target): True,
             "target/../target": True,
             "/": False, str(home): False, str(workspace): False, str(workspace.parent): False, ".": False, "..": False,
             "../sibling": False, str(outside): False, "escape": False, "target-link": False, "target/debug": False,
             "src/../../norn": False,
         }
         for value, deletes in cases.items():
-            (workspace / "target" / "debug").mkdir(parents=True, exist_ok=True)
-            marker = [workspace, workspace / "src", home, home / ".cargo", outside, workspace / "target"]
+            for path in (target / "debug" / ".fingerprint", target / "wasm32-unknown-unknown" / "debug" / ".fingerprint",
+                         # Verification tools may be Cargo-built in place: still never pruned.
+                         target / "doc", target / "verification-results", target / "verification-tools" / "release" / ".fingerprint",
+                         target / "norn-checker-wasm" / "pkg"):
+                path.mkdir(parents=True, exist_ok=True)
+            # A symlinked profile-looking tree out of target must never be followed.
+            link = target / "linked"
+            if not link.is_symlink():
+                link.symlink_to(outside)
             env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home)}
             if value is not None:
                 env["CARGO_TARGET_DIR"] = value
             result = subprocess.run(["bash", "-c", function + "prune_target"], cwd=workspace, env=env,
                                     capture_output=True, text=True, timeout=30)
-            survivors = [path.exists() for path in marker]
-            if result.returncode or survivors[:5] != [True] * 5 or survivors[5] == deletes:
-                raise AssertionError(f"bundle prune containment drift for {value!r}: {survivors} {result.stdout}")
+            if result.returncode:
+                return f"{value!r}: exit {result.returncode} {result.stderr!r}"
+            lost = [str(path) for path in kept + [link] if not (path.exists() or path.is_symlink())]
+            if lost:
+                return f"{value!r}: removed {lost}"
+            remaining = [path.exists() for path in cargo]
+            if remaining != [not deletes] * len(cargo):
+                return f"{value!r}: Cargo outputs {remaining}, expected {'pruned' if deletes else 'kept'}"
             if not deletes and "refusing to prune" not in result.stdout:
-                raise AssertionError(f"bundle prune refused {value!r} silently")
+                return f"{value!r}: refused silently"
+    return None
+
+
+def bundle_prune_containment_canaries() -> None:
+    """The bundle prune deletes only Cargo build outputs in the workspace's own target dir."""
+    core = (ROOT / "scripts/ci/core.sh").read_text(encoding="utf-8")
+    start = core.index("prune_target() {\n")
+    function = core[start:core.index("\n}\n", start) + 3]
+    drift = bundle_prune_drift(function)
+    if drift is not None:
+        raise AssertionError(f"bundle prune containment drift: {drift}")
+    # Pruning all of target, or every directory in it, takes verification evidence and tools.
+    for label, before, after in (
+            ("whole target", 'rm -rf -- "$entry"', 'rm -rf -- "$target"'),
+            ("verification evidence", ' && $name != verification-*', ''),
+            ("any directory", 'if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then',
+             "if true; then"),
+            ("followed symlinks", ' && ! -L $entry', '')):
+        if function.count(before) != 1:
+            raise AssertionError(f"bundle prune containment canary target drifted: {label}")
+        if bundle_prune_drift(function.replace(before, after)) is None:
+            raise AssertionError(f"bundle prune mutation passed: {label}")
 
 
 def workflow_trusted_policy_canaries(source: str) -> None:
@@ -1221,6 +1268,17 @@ def workflow_context_canaries(source: str) -> None:
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
                         .replace('log=$(mktemp) || exec "$@"', "log=$(mktemp)"))),
+                    # Any `sccache:` line (a warning before a local compile) would rerun a failing compiler.
+                    ("warnings as cache failures", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace("grep -q '^sccache: error: '", "grep -q '^sccache: '"))),
+                    # The action's post-job stats call setFailed when the stats request fails.
+                    ("fatal post-job stats", lambda job: next(step for step in job["steps"]
+                        if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].pop("disable_annotations")),
+                    ("post-job stats re-enabled", lambda job: next(step for step in job["steps"]
+                        if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].__setitem__(
+                        "disable_annotations", False)),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
@@ -1232,7 +1290,9 @@ def workflow_context_canaries(source: str) -> None:
         core = source_runner.read_text(encoding="utf-8")
         try:
             for label, before, after in (
-                    ("broad", 'rm -rf -- "$target"', 'rm -rf -- "$root"'),
+                    ("broad", 'rm -rf -- "$entry"', 'rm -rf -- "$root"'),
+                    ("whole target", 'rm -rf -- "$entry"', 'rm -rf -- "$target"'),
+                    ("verification evidence", ' && $name != verification-*', ''),
                     ("uncontained", 'if [[ $target != "$root/target" ]]; then', "if false; then"),
                     ("uncanonical", 'target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}")', 'target=${CARGO_TARGET_DIR:-$PWD/target}'),
                     ("unconditional", "if [[ -n $pruned ]] && ((", "if true || [[ -n $pruned ]] && (("),

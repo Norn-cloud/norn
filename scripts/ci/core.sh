@@ -252,18 +252,27 @@ PY
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
-# Drops the cargo target dir between bundle tasks (#1059). Only the workspace's own
-# target dir may go: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
+# Drops Cargo build outputs between bundle tasks (#1059). Only the workspace's own
+# target dir is touched: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
 # and anything else (empty, /, $HOME, the workspace or an ancestor, a sibling, a
-# symlink out of the workspace) is refused and left in place.
+# symlink out of the workspace) is refused and left in place. Inside it only Cargo's
+# profile and target-triple trees (each holds a `.fingerprint`) and `doc` go;
+# verification evidence and tools (target/verification-*), symlinks and any other
+# content stay.
 prune_target() {
-  local root target
+  local root target entry name
   root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0
   if [[ $target != "$root/target" ]]; then
     printf '::warning::refusing to prune %s: only %s/target may be pruned\n' "$target" "$root"
     return 0
   fi
-  rm -rf -- "$target"
+  for entry in "$target"/*; do
+    name=${entry##*/}
+    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue
+    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then
+      rm -rf -- "$entry"
+    fi
+  done
 }
 bundle_plan() {
   python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'

@@ -100,9 +100,12 @@ jobs:
       # their own ref, its base and main, and write only their own), the Cargo
       # home with registry and installed tools (saved only by main) and Bun's
       # package store.
+      # The action's post-job `--show-stats` fails the job when the stats request fails,
+      # even after a build that succeeded through the plain-rustc fallback; skip it.
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.19.0
+          disable_annotations: true
       - name: Start sccache or compile without it
         run: |
           set -uo pipefail
@@ -113,16 +116,17 @@ jobs:
           export SCCACHE_GHA_ENABLED=$gha
           echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
           # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
-          # sccache itself fails (it reports `sccache: ...`, e.g. a dead server that cannot
-          # restart), compile again with plain rustc; a compiler failure keeps its exit status.
+          # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
+          # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
+          # status and diagnostics, also after a `sccache: warning:` (a local compile).
           wrapper="$RUNNER_TEMP/sccache-rustc"
           cat > "$wrapper" <<'WRAPPER'
           #!/usr/bin/env bash
           log=$(mktemp) || exec "$@"
           sccache "$@" 2> "$log"
           status=$?
-          if [ "$status" -ne 0 ] && grep -q '^sccache: ' "$log"; then
-            echo "::warning::sccache failed ($(grep -m1 '^sccache: ' "$log")); compiling with plain rustc" >&2
+          if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
+            echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
             rm -f "$log"
             exec "$@"
           fi
@@ -247,9 +251,12 @@ jobs:
       # their own ref, its base and main, and write only their own), the Cargo
       # home with registry and installed tools (saved only by main) and Bun's
       # package store.
+      # The action's post-job `--show-stats` fails the job when the stats request fails,
+      # even after a build that succeeded through the plain-rustc fallback; skip it.
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.19.0
+          disable_annotations: true
       - name: Start sccache or compile without it
         run: |
           set -uo pipefail
@@ -260,16 +267,17 @@ jobs:
           export SCCACHE_GHA_ENABLED=$gha
           echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
           # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
-          # sccache itself fails (it reports `sccache: ...`, e.g. a dead server that cannot
-          # restart), compile again with plain rustc; a compiler failure keeps its exit status.
+          # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
+          # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
+          # status and diagnostics, also after a `sccache: warning:` (a local compile).
           wrapper="$RUNNER_TEMP/sccache-rustc"
           cat > "$wrapper" <<'WRAPPER'
           #!/usr/bin/env bash
           log=$(mktemp) || exec "$@"
           sccache "$@" 2> "$log"
           status=$?
-          if [ "$status" -ne 0 ] && grep -q '^sccache: ' "$log"; then
-            echo "::warning::sccache failed ($(grep -m1 '^sccache: ' "$log")); compiling with plain rustc" >&2
+          if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
+            echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
             rm -f "$log"
             exec "$@"
           fi

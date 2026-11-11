@@ -153,13 +153,24 @@ run: |
   ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
 "#;
 
+/// The sccache action without its post-job stats, whose failure would fail a build
+/// that succeeded through the plain-rustc fallback.
+const SCCACHE_ACTION: &str =
+    "uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+with:
+  version: v0.19.0
+  disable_annotations: true
+";
+
 /// Steps `ci-policy.yml` carries exactly once per job: the Boat-capable jobs make
-/// libclang loadable on Boat, and `core` warns when pull request CI fell back to
-/// hosted runners.
-const PINNED_STEPS: [(&str, &str); 3] = [
+/// libclang loadable on Boat and set up sccache without fatal post-job stats, and
+/// `core` warns when pull request CI fell back to hosted runners.
+const PINNED_STEPS: [(&str, &str); 5] = [
     ("core", HOSTED_PR_WARNING),
     ("core", BOAT_LIBCLANG),
+    ("core", SCCACHE_ACTION),
     ("test", BOAT_LIBCLANG),
+    ("test", SCCACHE_ACTION),
 ];
 
 fn pinned_step_errors(path: &str, document: &yaml::Value) -> Vec<String> {
@@ -189,6 +200,7 @@ fn pinned_step_errors(path: &str, document: &yaml::Value) -> Vec<String> {
         if count != 1 {
             let name = expected
                 .get("name")
+                .or_else(|| expected.get("uses"))
                 .and_then(yaml::Value::as_str)
                 .unwrap_or_default();
             errors.push(format!(
@@ -908,6 +920,16 @@ mod tests {
                 "if: ${{ runner.environment == 'self-hosted' }}\n        run: |\n          set -euo pipefail\n          libclang_dev_version",
                 "if: ${{ always() }}\n        run: |\n          set -euo pipefail\n          libclang_dev_version",
             ),
+            (
+                "fatal sccache stats",
+                "          disable_annotations: true\n",
+                "",
+            ),
+            (
+                "sccache stats re-enabled",
+                "disable_annotations: true",
+                "disable_annotations: false",
+            ),
         ] {
             let mutated = source.replacen(before, after, 1);
             assert_ne!(mutated, source, "{label}: no-op mutation");
@@ -915,6 +937,9 @@ mod tests {
         }
         let test_only = source.replacen(libclang, "      - name: Renamed\n", 2);
         assert_eq!(pinned_steps(&test_only).len(), 2);
+        let stats = "          disable_annotations: true\n";
+        assert_eq!(source.matches(stats).count(), 2);
+        assert_eq!(pinned_steps(&source.replace(stats, "")).len(), 2);
         assert!(
             super::pinned_step_errors(
                 ".github/workflows/codeql.yml",
