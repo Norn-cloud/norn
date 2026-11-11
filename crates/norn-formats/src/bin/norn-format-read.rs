@@ -65,9 +65,14 @@ fn read(manifest: &Manifest, originals: &Path) -> Result<SourceSchemaIr, String>
     // A running total stops reading at the bundle limit, so N pins never hold
     // N times the file limit in memory.
     let mut total = 0_usize;
+    let mut seen = std::collections::BTreeSet::new();
     let bytes = pins
         .iter()
         .map(|pin| {
+            // A repeated pin is refused before its file is read again.
+            if !seen.insert(pin.path.as_str()) {
+                return Err(format!("duplicate pinned path {}", pin.path));
+            }
             let relative = pin
                 .path
                 .strip_prefix(&manifest.originals_base)
@@ -145,7 +150,11 @@ fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<()
         let parent = parent.unwrap_or_else(|| Path::new("."));
         let resolved =
             std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-        if repository_of(manifest_path).is_some_and(|repo| resolved.starts_with(&repo)) {
+        // The target's own location decides too: a manifest outside any
+        // repository must not disable the restriction.
+        if repository_of(&resolved).is_some()
+            || repository_of(manifest_path).is_some_and(|repo| resolved.starts_with(&repo))
+        {
             return Err(format!(
                 "{}: --emit never writes upstream-derived schema into the repository",
                 target.display()

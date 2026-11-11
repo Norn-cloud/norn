@@ -131,10 +131,26 @@ class AtlasTests(unittest.TestCase):
         )
 
     def test_free_text_cannot_cite_private_or_bare_issues(self):
-        self.refuses("bare issue reference #1301", entry(notes="Search returned #1301 historical."))
+        self.refuses("issue reference #1301", entry(notes="Search returned #1301 historical."))
         self.refuses("names a private repository", entry(notes="see Norn-cloud/norn-platform#7"))
-        self.refuses("bare issue reference #12", entry(priority={"reason": "Per (#12)."}))
-        self.write(entry(notes="Tracked in Norn-cloud/norn#12; see https://w3.org/time#2016."))
+        self.refuses("issue reference #12", entry(priority={"reason": "Per (#12)."}))
+        for text in ("norn#1301", "GH#1301", "platform#7", "secret-repo#7", "Other-org/norn#7"):
+            self.refuses("issue reference", entry(notes=f"see {text} for details"))
+        self.refuses(
+            "issue URL outside Norn-cloud/norn",
+            entry(notes="see https://github.com/Norn-cloud/secret-repo/issues/1301"),
+        )
+        self.refuses(
+            "issue URL outside Norn-cloud/norn",
+            entry(evidenceUrls=["https://github.com/other/repo/pull/3"]),
+        )
+        self.write(
+            entry(
+                notes="Tracked in Norn-cloud/norn#12 (and Norn-cloud/norn#13); see "
+                "https://w3.org/time#2016, https://example.org/spec_(2026)#123 and "
+                "https://github.com/Norn-cloud/norn/issues/12."
+            )
+        )
         atlas.load(self.tmp)
 
     def test_machine_readable_needs_an_artifact(self):

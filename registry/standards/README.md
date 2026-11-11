@@ -57,7 +57,7 @@ python3 scripts/test_standards_atlas.py
 - Research is not admission. An atlas entry admits no payload, mapping or
   Core change; importers pin, hash and admit sources under their own issues.
 - External schemas never become Core authority. A concept enters Core only by
-  the admission rule in norn#1128 (three standard families, two domains or
+  the admission rule in Norn-cloud/norn#1128 (three standard families, two domains or
   money/identity, one real system).
 - No business, customer or deployment data, and no links to private repositories; the schema accepts only issues in this repository.
 - When a licence or version is re-read, update `licence.checked`; when it

@@ -377,6 +377,13 @@ pub fn check_contract(contract: &Value, projection: &Value) -> Vec<String> {
     if text(contract, "/rawMetadata/sha256") != text(projection, "/rawMetadata/sha256") {
         problems.push("contract rawMetadata does not pin the originals' bundle".to_owned());
     }
+    // An omitted section is empty; a present one must be an array, so a
+    // malformed contract cannot skip its checks.
+    for key in ["datasets", "fields", "constraints"] {
+        if contract.get(key).is_some_and(|section| !section.is_array()) {
+            problems.push(format!("contract {key} is not an array"));
+        }
+    }
     let rows = |value: &'_ Value, key: &str| -> Vec<Value> {
         value
             .get(key)

@@ -88,6 +88,7 @@ run_phase() {
       python3 scripts/test_demo_scenarios.py
       python3 scripts/standards_atlas.py --check
       python3 scripts/test_standards_atlas.py
+      python3 scripts/metrics/test_metrics.py
       cargo xtask ci policy
       cargo xtask ci provenance
       ;;
@@ -157,6 +158,7 @@ PY
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
+      cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
       ;;
     clippy) cargo clippy --locked --workspace --all-targets -- -D warnings ;;
     doc) RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps ;;
@@ -251,6 +253,28 @@ PY
       ;;
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
+}
+# Drops Cargo build outputs between bundle tasks (#1059). Only the workspace's own
+# target dir is touched: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
+# and anything else (empty, /, $HOME, the workspace or an ancestor, a sibling, a
+# symlink out of the workspace) is refused and left in place. Inside it only Cargo's
+# profile and target-triple trees (each holds a `.fingerprint`) and `doc` go;
+# verification evidence and tools (target/verification-*), symlinks and any other
+# content stay.
+prune_target() {
+  local root target entry name
+  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0
+  if [[ $target != "$root/target" ]]; then
+    printf '::warning::refusing to prune %s: only %s/target may be pruned\n' "$target" "$root"
+    return 0
+  fi
+  for entry in "$target"/*; do
+    name=${entry##*/}
+    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue
+    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then
+      rm -rf -- "$entry"
+    fi
+  done
 }
 bundle_plan() {
   python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'
@@ -432,8 +456,16 @@ PY
     [[ $# -eq 3 ]] || run_phase usage
     task_lines=$(bundle_plan tasks "$2" "$3")
     [[ $task_lines == phase/test-shards ]] || prepare_inputs
+    pruned=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
+      # Bundle tasks never share build outputs (the planner packs them freely), so
+      # a task may drop the previous task's target dir when disk runs low (#1059).
+      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+        prune_target
+        printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
+      fi
+      pruned=1
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS

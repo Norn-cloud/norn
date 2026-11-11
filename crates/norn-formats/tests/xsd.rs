@@ -497,24 +497,58 @@ fn xsd_bindings_in_scope_are_capped() {
 
 #[test]
 fn xsd_namespace_binding_bytes_are_capped() {
-    // The review's case: long URIs on the root, then many small declarations.
-    // Copying the root's bindings per declaring element would need ~48 GiB.
-    let uri = "u".repeat(200 * 1024);
-    let root: String = (0..60)
-        .map(|i| format!(r#" xmlns:p{i}="urn:{uri}{i}""#))
+    // 2,200 declaring elements, each with one 500-byte URI: every count cap
+    // and the URI length cap pass, and the 1 MiB byte cap refuses.
+    let uri = "u".repeat(500);
+    let children: String = (0..2200)
+        .map(|i| format!(r#"<b xmlns:q="urn:{uri}{i}"/>"#))
         .collect();
-    let children = r#"<b xmlns:q="u"/>"#.repeat(4096);
-    let xml = format!(
-        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"{root}>{children}</xs:schema>"#
+    assert_eq!(refusal(&schema_with(&children)), "namespace binding limit");
+}
+
+#[test]
+fn xsd_namespace_uri_length_is_capped() {
+    let uri = "u".repeat(norn_formats::xsd::MAX_URI_BYTES + 1);
+    let body = format!(r#"<a xmlns:p="{uri}"/>"#);
+    assert_eq!(refusal(&schema_with(&body)), "namespace binding limit");
+    let target = format!(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="{uri}"><xs:complexType name="R"/></xs:schema>"#
     );
-    assert_eq!(refusal(xml.as_bytes()), "namespace binding limit");
+    assert_eq!(refusal(target.as_bytes()), "namespace binding limit");
+}
+
+#[test]
+fn xsd_expanded_name_bytes_are_capped() {
+    // 200,000 elements in one 500-byte namespace: ~1.6 MiB of input would
+    // expand to ~100 MiB of names. Refused before the names are built.
+    let uri = "u".repeat(500);
+    let xml = format!(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:p="{uri}"><xs:annotation><xs:appinfo>{}</xs:appinfo></xs:annotation></xs:schema>"#,
+        "<p:a/>".repeat(200_000)
+    );
+    assert_eq!(refusal(xml.as_bytes()), "XML expanded-name limit");
+}
+
+#[test]
+fn xsd_shadowed_redeclarations_count_against_the_in_scope_cap() {
+    // 255 nested elements each redeclaring p0..p63: no new prefix after the
+    // first, so only counting redeclarations keeps a lookup's walk short.
+    let declarations: String = (0..64)
+        .map(|i| format!(r#" xmlns:p{i}="urn:p{i}""#))
+        .collect();
+    let body = format!(
+        "{}{}",
+        format!("<a{declarations}>").repeat(255),
+        "</a>".repeat(255)
+    );
+    assert_eq!(refusal(&schema_with(&body)), "namespace binding limit");
 }
 
 #[test]
 fn xsd_output_carries_each_nodes_own_declarations_only() {
-    // Just under the byte cap on the root, then 20,000 elements: writing each
-    // node's in-scope set would emit ~19 GB; own declarations keep it small.
-    let uri = "u".repeat(15 * 1024);
+    // 60 root prefixes with 500-byte URIs, then 20,000 elements: writing each
+    // node's in-scope set would emit ~600 MB; own declarations keep it small.
+    let uri = "u".repeat(480);
     let root: String = (0..60)
         .map(|i| format!(r#" xmlns:p{i}="urn:{uri}{i}""#))
         .collect();
@@ -531,10 +565,9 @@ fn xsd_output_carries_each_nodes_own_declarations_only() {
     assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
     let output = result.canonical_json().unwrap();
     assert!(
-        output.len() < 16 * bytes.len(),
-        "output {} bytes for {} input bytes",
-        output.len(),
-        bytes.len()
+        output.len() < 32 * 1024 * 1024,
+        "output {} bytes",
+        output.len()
     );
 }
 

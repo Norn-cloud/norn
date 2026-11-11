@@ -227,3 +227,14 @@ fn flattening_through_a_repeating_step_is_refused() {
             .contains("step Line can occur more than once")
     );
 }
+
+#[test]
+fn a_section_that_is_not_an_array_is_refused() {
+    let problems = mutated(|c| c["fields"] = json!({"ID": {}}));
+    assert!(
+        problems
+            .iter()
+            .any(|p| p == "contract fields is not an array"),
+        "{problems:?}"
+    );
+}

@@ -33,6 +33,11 @@ pub const MAX_IN_SCOPE: usize = 128;
 pub const MAX_SCOPES: usize = 4096;
 /// Most bytes of namespace prefixes and URIs declared in one file.
 pub const MAX_BINDING_BYTES: usize = 1024 * 1024;
+/// Longest admitted namespace URI (a declaration or a `targetNamespace`).
+/// Every expanded name copies its URI, so this bounds each copy.
+pub const MAX_URI_BYTES: usize = 512;
+/// Most bytes of expanded element and attribute names built for one file.
+pub const MAX_EXPANDED_BYTES: usize = 64 * 1024 * 1024;
 
 /// The namespace bindings in scope at an element: the element's own
 /// declarations, linked to the scope it inherits. Nothing is copied: an
@@ -43,7 +48,7 @@ pub const MAX_BINDING_BYTES: usize = 1024 * 1024;
 pub struct Scope {
     own: Vec<(Rc<str>, Rc<str>)>,
     parent: Option<Rc<Scope>>,
-    /// How many bindings are in scope here, inherited ones included.
+    /// How many declarations the chain holds here, shadowed ones included.
     bound: usize,
 }
 
@@ -136,23 +141,39 @@ impl XsdNode {
         Ok(format!("{{{}}}{local}", ns.unwrap_or("")))
     }
 }
-fn expanded(name: &[u8], scope: &Scope, attribute: bool) -> Result<String, String> {
+/// The Clark name of an element or attribute. `budget` is the file's
+/// running total of expanded bytes, charged before the string is built.
+fn expanded(
+    name: &[u8],
+    scope: &Scope,
+    attribute: bool,
+    budget: &mut usize,
+) -> Result<String, String> {
     let name = std::str::from_utf8(name).map_err(|e| e.to_string())?;
     let (prefix, local) = name.split_once(':').unwrap_or(("", name));
-    if attribute && prefix.is_empty() {
-        return Ok(name.to_owned());
+    let uri = if attribute && prefix.is_empty() {
+        None
+    } else {
+        let uri = scope.lookup(prefix);
+        if !prefix.is_empty() && uri.is_none_or(str::is_empty) {
+            return Err(format!("unbound prefix {prefix}"));
+        }
+        Some(uri.unwrap_or(""))
+    };
+    *budget = budget
+        .saturating_add(name.len())
+        .saturating_add(uri.map_or(0, str::len));
+    if *budget > MAX_EXPANDED_BYTES {
+        return Err("XML expanded-name limit".into());
     }
-    let uri = scope.lookup(prefix);
-    if !prefix.is_empty() && uri.is_none_or(str::is_empty) {
-        return Err(format!("unbound prefix {prefix}"));
-    }
-    Ok(format!("{{{}}}{local}", uri.unwrap_or("")))
+    Ok(uri.map_or_else(|| name.to_owned(), |uri| format!("{{{uri}}}{local}")))
 }
 /// Running totals that bound one file's namespace declarations.
 #[derive(Default)]
 struct Bindings {
     scopes: usize,
     bytes: usize,
+    expanded: usize,
 }
 
 fn parse_node(
@@ -197,8 +218,12 @@ fn parse_node(
             .bytes
             .saturating_add(prefix.len())
             .saturating_add(value.len());
+        let too_long = value.len() > MAX_URI_BYTES;
         declarations.push((prefix, value));
-        if declarations.len() > MAX_DECLARATIONS_PER_ELEMENT || bindings.bytes > MAX_BINDING_BYTES {
+        if too_long
+            || declarations.len() > MAX_DECLARATIONS_PER_ELEMENT
+            || bindings.bytes > MAX_BINDING_BYTES
+        {
             return Err("namespace binding limit".into());
         }
     }
@@ -210,11 +235,9 @@ fn parse_node(
         if bindings.scopes > MAX_SCOPES {
             return Err("namespace binding limit".into());
         }
-        let added = declarations
-            .iter()
-            .filter(|(prefix, _)| inherited.lookup(prefix).is_none())
-            .count();
-        let bound = inherited.bound.saturating_add(added);
+        // Redeclarations count too: the chain a lookup walks then holds at
+        // most `MAX_IN_SCOPE` entries, however deeply prefixes are shadowed.
+        let bound = inherited.bound.saturating_add(declarations.len());
         if bound > MAX_IN_SCOPE {
             return Err("namespace binding limit".into());
         }
@@ -227,10 +250,10 @@ fn parse_node(
             bound,
         })
     };
-    let name = expanded(start.name().as_ref(), &scope, false)?;
+    let name = expanded(start.name().as_ref(), &scope, false, &mut bindings.expanded)?;
     let mut attributes = BTreeMap::new();
     for (key, value) in attrs {
-        let key = expanded(key.as_bytes(), &scope, true)?;
+        let key = expanded(key.as_bytes(), &scope, true, &mut bindings.expanded)?;
         if attributes.insert(key, value).is_some() {
             return Err("duplicate expanded attribute".into());
         }
@@ -643,6 +666,9 @@ fn discover_file(
     let node_index: BTreeMap<&str, &XsdNode> = nodes.iter().map(|n| (n.id.as_str(), n)).collect();
     let root = nodes.first().ok_or("empty schema")?;
     let ns = root.attr("targetNamespace");
+    if ns.len() > MAX_URI_BYTES {
+        return Err("namespace binding limit".into());
+    }
     let mut owners: BTreeMap<&str, Option<usize>> = BTreeMap::new();
     for node in semantic_nodes(nodes) {
         for key in ["ref", "type", "base", "itemType", "substitutionGroup"] {

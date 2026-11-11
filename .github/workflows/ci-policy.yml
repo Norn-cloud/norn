@@ -32,8 +32,8 @@ jobs:
     # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
+      SCCACHE_CACHE_SIZE: 10G
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
     runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
@@ -50,10 +50,44 @@ jobs:
           fi
           df -h /
           [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
+      - name: Reclaim Boat runner disk space
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          set -euo pipefail
+          minimum=$((40 * 1024 * 1024))
+          available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+          df -h /
+          docker system prune --all --force
+          rustup toolchain uninstall stable nightly-2025-03-01
+          df -h /
+          [ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+      # A same-repository pull request runs on Boat only while NORN_PR_RUNNER is
+      # 'boat'; otherwise it falls back to hosted runners, which must never go
+      # unnoticed. Fork pull requests run hosted by design and stay quiet.
+      - name: Warn that pull request CI fell back to hosted runners
+        if: ${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}
+        run: |
+          echo "::warning title=PR CI on hosted runners::PR CI is running on hosted runners: the repository variable NORN_PR_RUNNER is not 'boat', so this same-repository pull request fell back from Boat."
+      # Boat's managed base image ships only the versioned libclang-18.so.18, which
+      # clang-sys (bindgen) rejects; it loads the unversioned libclang.so that hosted
+      # ubuntu-24.04 already has. Install it once per VM, or link it, then require it.
+      - name: Make libclang loadable on Boat runners
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          set -euo pipefail
+          libclang_dev_version='1:18.1.3-1ubuntu1'
+          library=/usr/lib/llvm-18/lib/libclang.so
+          if [ -e "$library" ]; then
+            echo "$library is already present"
+          elif ! { timeout 120 sudo apt-get update -qq && timeout 300 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libclang-18-dev=$libclang_dev_version"; }; then
+            echo "::warning::could not install libclang-18-dev=$libclang_dev_version; linking the image's libclang-18.so.18"
+            sudo ln -sfn libclang-18.so.18 "$library"
+          fi
+          ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.98.0
@@ -66,9 +100,46 @@ jobs:
       # their own ref, its base and main, and write only their own), the Cargo
       # home with registry and installed tools (saved only by main) and Bun's
       # package store.
+      # The action's post-job `--show-stats` fails the job when the stats request fails,
+      # even after a build that succeeded through the plain-rustc fallback; skip it.
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.19.0
+          disable_annotations: true
+      - name: Start sccache or compile without it
+        run: |
+          set -uo pipefail
+          # Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
+          # cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+          gha=false
+          [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
+          export SCCACHE_GHA_ENABLED=$gha
+          echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+          # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+          # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
+          # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
+          # status and diagnostics, also after a `sccache: warning:` (a local compile).
+          wrapper="$RUNNER_TEMP/sccache-rustc"
+          cat > "$wrapper" <<'WRAPPER'
+          #!/usr/bin/env bash
+          log=$(mktemp) || exec "$@"
+          sccache "$@" 2> "$log"
+          status=$?
+          if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
+            echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
+            rm -f "$log"
+            exec "$@"
+          fi
+          cat "$log" >&2
+          rm -f "$log"
+          exit "$status"
+          WRAPPER
+          chmod +x "$wrapper"
+          if sccache --start-server; then
+            echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache server unavailable; compiling with plain rustc"
+          fi
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-targets: false
@@ -89,7 +160,7 @@ jobs:
   # Pull requests and merge groups use affected plans; main runs the full set.
   plan:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
@@ -112,8 +183,8 @@ jobs:
     needs: [core, plan]
     if: fromJSON(needs.plan.outputs.plan).bundle[0] != null
     env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
+      SCCACHE_CACHE_SIZE: 10G
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
       NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}
       NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}
@@ -137,10 +208,37 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
           df -h /
           [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
+      - name: Reclaim Boat runner disk space
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          set -euo pipefail
+          minimum=$((40 * 1024 * 1024))
+          available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+          df -h /
+          docker system prune --all --force
+          rustup toolchain uninstall stable nightly-2025-03-01
+          df -h /
+          [ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+      # Boat's managed base image ships only the versioned libclang-18.so.18, which
+      # clang-sys (bindgen) rejects; it loads the unversioned libclang.so that hosted
+      # ubuntu-24.04 already has. Install it once per VM, or link it, then require it.
+      - name: Make libclang loadable on Boat runners
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          set -euo pipefail
+          libclang_dev_version='1:18.1.3-1ubuntu1'
+          library=/usr/lib/llvm-18/lib/libclang.so
+          if [ -e "$library" ]; then
+            echo "$library is already present"
+          elif ! { timeout 120 sudo apt-get update -qq && timeout 300 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libclang-18-dev=$libclang_dev_version"; }; then
+            echo "::warning::could not install libclang-18-dev=$libclang_dev_version; linking the image's libclang-18.so.18"
+            sudo ln -sfn libclang-18.so.18 "$library"
+          fi
+          ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.98.0
@@ -153,9 +251,46 @@ jobs:
       # their own ref, its base and main, and write only their own), the Cargo
       # home with registry and installed tools (saved only by main) and Bun's
       # package store.
+      # The action's post-job `--show-stats` fails the job when the stats request fails,
+      # even after a build that succeeded through the plain-rustc fallback; skip it.
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.19.0
+          disable_annotations: true
+      - name: Start sccache or compile without it
+        run: |
+          set -uo pipefail
+          # Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
+          # cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+          gha=false
+          [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
+          export SCCACHE_GHA_ENABLED=$gha
+          echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+          # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+          # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
+          # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
+          # status and diagnostics, also after a `sccache: warning:` (a local compile).
+          wrapper="$RUNNER_TEMP/sccache-rustc"
+          cat > "$wrapper" <<'WRAPPER'
+          #!/usr/bin/env bash
+          log=$(mktemp) || exec "$@"
+          sccache "$@" 2> "$log"
+          status=$?
+          if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
+            echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
+            rm -f "$log"
+            exec "$@"
+          fi
+          cat "$log" >&2
+          rm -f "$log"
+          exit "$status"
+          WRAPPER
+          chmod +x "$wrapper"
+          if sccache --start-server; then
+            echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache server unavailable; compiling with plain rustc"
+          fi
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-targets: false
@@ -179,6 +314,7 @@ jobs:
     if: >-
       always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
       !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
+    # The required verdict stays hosted: it must report even when Boat cannot start a VM.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

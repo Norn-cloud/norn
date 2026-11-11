@@ -69,11 +69,13 @@ fn retained_versions_and_ambiguous_identities_never_select_a_cycle_target() {
     assert!(cycles(&[a, b.clone(), b], &[]).is_empty());
 }
 proptest::proptest! {
+    // Sparse edges and no self-loops: with uniform bits nearly every non-DAG
+    // case held a self-loop, so "back edges but still acyclic" never ran.
     #[test]
-    fn classification_cycle_matches_transitive_closure(bits in proptest::collection::vec(proptest::bool::ANY, 144), dag in proptest::bool::ANY) {
+    fn classification_cycle_matches_transitive_closure(bits in proptest::collection::vec(proptest::bool::weighted(0.1), 144), dag in proptest::bool::ANY) {
         let names: Vec<_> = (0..12).map(|i| format!("test.c{i}")).collect();
         let mut reach: Vec<Vec<bool>> = bits.chunks(12).enumerate().map(|(i, row)|
-            row.iter().enumerate().map(|(j, edge)| *edge && (!dag || j < i)).collect()).collect();
+            row.iter().enumerate().map(|(j, edge)| *edge && j != i && (!dag || j < i)).collect()).collect();
         let declarations: Vec<_> = reach.iter().enumerate().map(|(i, row)| declaration(&names[i], "1.0.0",
             &row.iter().enumerate().filter(|(_, edge)| **edge)
                 .map(|(j, _)| (names[j].as_str(), "1.0.0")).collect::<Vec<_>>())).collect();

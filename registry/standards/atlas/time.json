@@ -317,7 +317,7 @@
         "time",
         "upper-ontology"
       ],
-      "version": "time#2016",
+      "version": "versionIRI http://www.w3.org/2006/time#2016",
       "versionDate": "2017-04-06",
       "versionBasis": "Fetched artifact has versionIRI http://www.w3.org/2006/time#2016 and dct:modified 2017-04-06; metadata date, not an invented release date.",
       "licence": {

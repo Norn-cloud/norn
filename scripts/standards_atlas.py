@@ -179,11 +179,34 @@ def load(root: Path = ROOT) -> dict[str, list[dict]]:
     return atlas
 
 
-# A bare `#123` is ambiguous in a public atlas (it could name a private
-# issue); references must be explicit, `Norn-cloud/norn#123`. URL fragments
-# (`time#2016`) are not references: they follow a word or path character.
-BARE_REFERENCE = re.compile(r"(?<![\w/.:#-])#[0-9]+")
+# The public atlas cites issues only as `Norn-cloud/norn#123`. Any other
+# `<name>#<number>` (bare, `norn#1`, `GH#1`, another repository) could name a
+# private issue and is refused. Inside a URL, `#<number>` is a fragment, but
+# a GitHub issue or pull-request URL must point at Norn-cloud/norn.
+ISSUE_REFERENCE = re.compile(r"([\w./-]*)#[0-9]+")
+PUBLIC_REPOSITORY = "Norn-cloud/norn"
+GITHUB_ISSUE_URL = re.compile(r"github\.com/([^/\s]+/[^/\s]+)/(?:issues|pull)/", re.IGNORECASE)
 PRIVATE_REFERENCE = re.compile(r"norn-platform", re.IGNORECASE)
+
+
+def reference_errors(text: str) -> list[str]:
+    """Every reference in `text` that is not explicitly public."""
+    errors = []
+    if PRIVATE_REFERENCE.search(text):
+        errors.append("names a private repository")
+    for token in text.split():
+        for match in GITHUB_ISSUE_URL.finditer(token):
+            if match.group(1) != PUBLIC_REPOSITORY:
+                errors.append(f"issue URL outside {PUBLIC_REPOSITORY}: {match.group(1)}")
+        if "://" in token:
+            continue
+        for match in ISSUE_REFERENCE.finditer(token):
+            if match.group(1) != PUBLIC_REPOSITORY:
+                number = match.group(0).rsplit("#", 1)[1]
+                errors.append(
+                    f"issue reference {match.group(0)}; write {PUBLIC_REPOSITORY}#{number}"
+                )
+    return errors
 
 
 def _strings(value, path: str):
@@ -200,12 +223,7 @@ def _strings(value, path: str):
 def entry_rules(entry: dict, where: str, concepts: set[str], root: Path) -> list[str]:
     errors = []
     for path, text in _strings(entry, ""):
-        if PRIVATE_REFERENCE.search(text):
-            errors.append(f"{where}{path}: names a private repository")
-        for match in BARE_REFERENCE.finditer(text):
-            errors.append(
-                f"{where}{path}: bare issue reference {match.group(0)}; write Norn-cloud/norn{match.group(0)}"
-            )
+        errors.extend(f"{where}{path}: {problem}" for problem in reference_errors(text))
     norn = entry["norn"]
     for concept in norn["concepts"]:
         if concept not in concepts:
