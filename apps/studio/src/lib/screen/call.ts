@@ -47,7 +47,7 @@ export type Phase =
 export interface State {
   readonly target: Target
   readonly phase: Phase
-  /** The draft's idempotency key: replaced by any edit, even one made while a call is on its way. */
+  /** The draft's idempotency key: replaced by an edit to the draft. While a call is out the form is locked and an edit changes nothing. */
   readonly key: string
   /** The call last sent, input and key, so a retry sends exactly that call again: never its body under a new key, or a new body under its key. */
   readonly sent: { readonly input: string; readonly key: string } | null
