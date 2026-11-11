@@ -1302,7 +1302,7 @@ fn cell_host_mutant_executing_a_redelivered_result_again_is_caught() {
         failure
             .transitions
             .iter()
-            .any(|op| matches!(op, CellOp::Deliver(_))),
+            .any(|op| matches!(op, CellOp::Deliver(_) | CellOp::Exchange(_))),
         "{failure}"
     );
 }

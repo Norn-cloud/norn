@@ -63,9 +63,10 @@
 //!    stale-generation, duplicate or late result is refused and changes
 //!    nothing. While a dispatched result is outstanding, `perform` fails
 //!    (the outcome is unknown) rather than execute again. Observations are
-//!    redelivered too (duplicate ids, and late after consumption:
-//!    [`CellOp::Reinject`] consumes one first when none was) and ingested
-//!    at most once.
+//!    redelivered too (duplicate ids, and late after consumption) and
+//!    ingested at most once. Every network host first runs a construction
+//!    case ([`CellOp::Exchange`], [`CellOp::Reinject`]) that reaches each of
+//!    these outcomes whatever the generator's weights.
 //!
 //! Hosts that inject faults or declare a network also run in swarm mode: each case first draws
 //! which operation kinds it uses and how often, and a failure report prints
@@ -1167,20 +1168,64 @@ pub enum CellOp {
     Deliver(Box<Delivery>),
     /// The network loses the in-flight result at this index (law 7).
     Lose(u8),
-    /// An observation the cell already consumed arrives again (law 7).
+    /// An observation arrives again while pending and after its consumption
+    /// (law 7).
     Reinject(Box<Reinjecting>),
+    /// A result exchange that reaches every network outcome (law 7).
+    Exchange(Box<Exchange>),
 }
 
-/// A late observation of the law machine ([`CellOp::Reinject`]).
+/// Observation redelivery of the law machine ([`CellOp::Reinject`]), a
+/// fixed script that reaches both redelivery outcomes whatever the state:
+/// observation `id` (the first not consumed yet) arrives (or arrives
+/// again), arrives again while pending (a duplicate, ignored), is consumed
+/// by `consume`, and arrives once more (late, ignored).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reinjecting {
-    /// An unfaulted commit run first that consumes the pending observation
-    /// `id`, when no observation was consumed yet.
-    pub consume: Option<LawCommit>,
     /// Observation number.
     pub id: u8,
-    /// Its payload this time.
+    /// Its payload each time.
     pub payload: u8,
+    /// The commit consuming it.
+    pub consume: LawCommit,
+}
+
+/// A result exchange of the law machine ([`CellOp::Exchange`]), a fixed
+/// script that reaches every network outcome whatever the state: a
+/// preparing commit (as [`Dispatching::prepare`]); dispatch `first`;
+/// re-issue it as `second` and dispatch that; deliver `second` out of order
+/// (recorded), duplicate it (ignored), lose `first` in flight, and deliver
+/// a duplicate of `first` (stale, late, refused).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Exchange {
+    /// The commit leaving a fresh command at the head, if needed.
+    pub prepare: Option<LawCommit>,
+    /// The commit re-issuing `first` as `second`.
+    pub reissue: LawCommit,
+    /// The command dispatched first.
+    pub first: Command<LawCommand>,
+    /// Its re-issue at the next generation, dispatched second.
+    pub second: Command<LawCommand>,
+}
+
+impl Exchange {
+    /// The network's steps after the two dispatches: a delivery, or `None`
+    /// to lose `first` in flight.
+    fn tail(&self) -> [Option<Delivery>; 4] {
+        let delivery = |command: &Command<LawCommand>, route| {
+            Some(Delivery {
+                command: command.clone(),
+                input: law_responder(command),
+                route,
+            })
+        };
+        [
+            delivery(&self.second, Route::OutOfOrder),
+            delivery(&self.second, Route::Duplicate),
+            None,
+            delivery(&self.first, Route::Duplicate),
+        ]
+    }
 }
 
 /// A dispatch of the law machine ([`CellOp::Dispatch`]).
@@ -1332,7 +1377,7 @@ pub struct CellModel {
     /// the operation count when each was sent (law 7).
     in_flight: Vec<(Command<LawCommand>, LawInput, u64)>,
     /// Every result ever dispatched, for duplicates.
-    sent: Vec<(Command<LawCommand>, LawInput)>,
+    sent: Vec<(Command<LawCommand>, LawInput, u64)>,
     /// Operations applied so far: the network's clock.
     steps: u64,
 }
@@ -1930,7 +1975,7 @@ impl CellModel {
         let input = law_responder(&head);
         self.in_flight
             .push((head.clone(), input.clone(), self.steps));
-        self.sent.push((head.clone(), input));
+        self.sent.push((head.clone(), input, self.steps));
         Expect::Dispatch(Some(head))
     }
 
@@ -1974,15 +2019,21 @@ impl CellModel {
     /// A delivery (law 7): recorded exactly when it is the current head's
     /// first result at that generation.
     fn deliver(&mut self, delivery: &Delivery) -> Expect {
-        let mut delayed = false;
+        let mut sent_at = self
+            .sent
+            .iter()
+            .find(|(command, input, _)| *command == delivery.command && *input == delivery.input)
+            .map(|(_, _, at)| *at);
         if delivery.route != Route::Duplicate
             && let Some(ix) = self.in_flight.iter().position(|(command, input, _)| {
                 *command == delivery.command && *input == delivery.input
             })
         {
-            let (_, _, sent_at) = self.in_flight.remove(ix);
-            delayed = self.steps.saturating_sub(sent_at) > 1;
+            sent_at = Some(self.in_flight.remove(ix).2);
         }
+        // Delayed: other operations or network steps came between the
+        // result's sending and this delivery (a retransmission included).
+        let delayed = sent_at.is_some_and(|at| self.steps.saturating_sub(at) > 1);
         let current = self.outbox.first().is_some_and(|head| {
             head.id == delivery.command.id && head.generation == delivery.command.generation
         });
@@ -2055,9 +2106,14 @@ impl CellModel {
             ));
         }
         if !self.sent.is_empty() {
+            let sent: Vec<(Command<LawCommand>, LawInput)> = self
+                .sent
+                .iter()
+                .map(|(command, input, _)| (command.clone(), input.clone()))
+                .collect();
             options.push((
                 mix.duplicate,
-                proptest::sample::select(self.sent.clone())
+                proptest::sample::select(sent)
                     .prop_map(move |message| deliver(message, Route::Duplicate))
                     .boxed(),
             ));
@@ -2076,51 +2132,28 @@ impl CellModel {
                     .boxed(),
             ));
         }
-        if let Some(late) = self.late_strategy() {
-            options.push((mix.late, late));
-        }
-        options
-    }
-
-    /// An observation redelivered after its consumption: one already
-    /// consumed, or else a pending one consumed first by the same transition.
-    fn late_strategy(&self) -> Option<BoxedStrategy<CellOp>> {
-        let pending = |n: &u8| {
-            let id = law_observed(*n, 0).id;
-            self.inbox.iter().any(|observed| observed.id == id)
-        };
-        let consumed: Vec<u8> = (0..=LAW_UNIVERSE)
-            .filter(|n| self.seen.contains(&law_observed(*n, 0).id) && !pending(n))
-            .collect();
-        let reinject = |consume, id, payload| {
-            CellOp::Reinject(Box::new(Reinjecting {
-                consume,
-                id,
-                payload,
-            }))
-        };
-        if !consumed.is_empty() {
-            return Some(
-                (proptest::sample::select(consumed), any::<u8>())
-                    .prop_map(move |(id, payload)| reinject(None, id, payload))
-                    .boxed(),
-            );
-        }
-        let pending: Vec<u8> = (0..=LAW_UNIVERSE).filter(pending).collect();
-        if pending.is_empty() {
-            return None;
-        }
-        Some(
-            (proptest::sample::select(pending), any::<u8>())
-                .prop_map(move |(id, payload)| {
-                    let consume = CellCommit {
-                        consumes: Some(law_observed(id, 0).consumed()),
-                        ..CellCommit::empty()
-                    };
-                    reinject(Some(consume), id, payload)
-                })
+        let model = self.clone();
+        options.push((
+            mix.late,
+            any::<u8>()
+                .prop_map(move |payload| CellOp::Reinject(Box::new(model.reinjecting(payload))))
                 .boxed(),
-        )
+        ));
+        let model = self.clone();
+        options.push((
+            mix.exchange,
+            (0..LAW_UNIVERSE, any::<u8>())
+                .prop_filter_map(
+                    "the exchange's commits are accepted",
+                    move |(n, payload)| {
+                        model
+                            .exchange(n, payload)
+                            .map(|exchange| CellOp::Exchange(Box::new(exchange)))
+                    },
+                )
+                .boxed(),
+        ));
+        options
     }
 
     /// The expectation for `target` under the armed `plan`, applying to the
@@ -2185,6 +2218,116 @@ impl CellModel {
                 })
             })
             .boxed()
+    }
+
+    /// [`Self::prepare_perform`]'s commit for command `n` and `payload`,
+    /// chosen rather than drawn.
+    fn prepare_perform_with(&self, n: u8, payload: u8) -> Option<LawCommit> {
+        if self.fresh_head() {
+            return None;
+        }
+        if let Some(reissue) = self.reissue_head() {
+            return Some(reissue);
+        }
+        let id = CommandId(format!("c{n}"));
+        let generation = self
+            .generations
+            .get(&id)
+            .map_or(0, |known| known.0.saturating_add(1));
+        Some(CellCommit {
+            consumes: self.outbox.first().map(|head| Consumed::Result {
+                command: head.id.clone(),
+                generation: head.generation,
+            }),
+            effects: vec![Effect::Perform(law_command(n, generation, payload))],
+            ..CellCommit::empty()
+        })
+    }
+
+    /// An [`Exchange`] for command `n` and `payload` from this state, or
+    /// `None` if its commits would not be accepted (only in shrunk
+    /// sequences).
+    fn exchange(&self, n: u8, payload: u8) -> Option<Exchange> {
+        let prepare = self.prepare_perform_with(n, payload);
+        let mut after = self.clone();
+        if let Some(commit) = &prepare {
+            after.commit(commit).ok()?;
+        }
+        let first = after
+            .outbox
+            .first()
+            .filter(|_| after.fresh_head())
+            .cloned()?;
+        after.dispatch();
+        let reissue = after.reissue_head()?;
+        after.commit(&reissue).ok()?;
+        let second = after.outbox.first().cloned()?;
+        Some(Exchange {
+            prepare,
+            reissue,
+            first,
+            second,
+        })
+    }
+
+    /// An [`Exchange`] (law 7): the expectations of each of its steps, in
+    /// order. Each network step advances the network's clock.
+    fn exchanging(&mut self, exchange: &Exchange) -> Vec<Expect> {
+        let mut chain = Vec::new();
+        if let Some(commit) = &exchange.prepare {
+            chain.push(Expect::Commit(self.commit(commit)));
+        }
+        chain.push(self.dispatch());
+        chain.push(Expect::Commit(self.commit(&exchange.reissue)));
+        self.steps = self.steps.saturating_add(1);
+        chain.push(self.dispatch());
+        for step in exchange.tail() {
+            self.steps = self.steps.saturating_add(1);
+            chain.push(match step {
+                Some(delivery) => self.deliver(&delivery),
+                None => {
+                    if let Some(ix) = self
+                        .in_flight
+                        .iter()
+                        .position(|(command, _, _)| *command == exchange.first)
+                    {
+                        self.in_flight.remove(ix);
+                    }
+                    Expect::Nothing
+                }
+            });
+        }
+        chain
+    }
+
+    /// A [`Reinjecting`] with `payload` from this state: its observation is
+    /// the first one not consumed yet.
+    fn reinjecting(&self, payload: u8) -> Reinjecting {
+        let consumed = |n: &u8| {
+            let id = law_observed(*n, 0).id;
+            self.seen.contains(&id) && !self.inbox.iter().any(|observed| observed.id == id)
+        };
+        let id = (0..=u8::MAX).find(|n| !consumed(n)).unwrap_or_default();
+        Reinjecting {
+            id,
+            payload,
+            consume: CellCommit {
+                consumes: Some(law_observed(id, 0).consumed()),
+                ..CellCommit::empty()
+            },
+        }
+    }
+
+    /// A [`Reinjecting`] (law 7): arrives (or arrives again), arrives again
+    /// while pending, is consumed, and arrives once more after that.
+    fn reinjected(&mut self, reinjecting: &Reinjecting) -> Vec<Expect> {
+        let (id, payload) = (reinjecting.id, reinjecting.payload);
+        vec![
+            self.inject(id, payload),
+            self.inject(id, payload),
+            Expect::Commit(self.commit(&reinjecting.consume)),
+            self.inject(id, payload),
+        ]
     }
 
     fn next_timer(&self) -> Option<DueTimer<LawInput>> {
@@ -2508,6 +2651,7 @@ struct NetworkMix {
     reissue: u32,
     redeliver: u32,
     late: u32,
+    exchange: u32,
 }
 
 impl NetworkMix {
@@ -2523,9 +2667,21 @@ impl NetworkMix {
             weight(),
             weight(),
             weight(),
+            weight(),
         )
             .prop_map(
-                |(dispatch, twin, deliver, reorder, duplicate, lose, reissue, redeliver, late)| {
+                |(
+                    dispatch,
+                    twin,
+                    deliver,
+                    reorder,
+                    duplicate,
+                    lose,
+                    reissue,
+                    redeliver,
+                    late,
+                    exchange,
+                )| {
                     Self {
                         dispatch,
                         twin,
@@ -2536,6 +2692,7 @@ impl NetworkMix {
                         reissue,
                         redeliver,
                         late,
+                        exchange,
                     }
                 },
             )
@@ -2801,10 +2958,12 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 Expect::Nothing
             }
             CellOp::Reinject(reinjecting) => {
-                if let Some(commit) = &reinjecting.consume {
-                    state.chain = vec![Expect::Commit(model.commit(commit))];
-                }
-                model.inject(reinjecting.id, reinjecting.payload)
+                state.chain = model.reinjected(reinjecting);
+                Expect::Nothing
+            }
+            CellOp::Exchange(exchange) => {
+                state.chain = model.exchanging(exchange);
+                Expect::Nothing
             }
             CellOp::Deliver(delivery) => model.deliver(delivery),
             CellOp::Lose(ix) => {
@@ -3019,12 +3178,9 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
             }
             CellOp::Inject { id, payload } => apply_inject(&mut host, id, payload, &expected),
             CellOp::Reinject(reinjecting) => {
-                if let Some(commit) = &reinjecting.consume {
-                    let consumed = reference.chain.first().cloned().unwrap_or(Expect::Nothing);
-                    apply_commit(&mut host, commit, &consumed, None);
-                }
-                apply_inject(&mut host, reinjecting.id, reinjecting.payload, &expected);
+                apply_reinjecting(&mut host, &reinjecting, &reference.chain);
             }
+            CellOp::Exchange(exchange) => apply_exchange(&mut host, &exchange, &reference.chain),
             CellOp::Dispatch(dispatching) => {
                 apply_dispatching(&mut host, &dispatching, &reference.chain);
             }
@@ -3064,6 +3220,37 @@ fn apply_inject<H: SimulatedCell>(host: &mut H, id: u8, payload: u8, expected: &
             "observe.duplicate_ignored"
         };
         coverage::hit_prefixed("cell", label);
+    }
+}
+
+/// A [`Reinjecting`] (law 7): each arrival ingested at most once, the
+/// consumption as a commit.
+fn apply_reinjecting<H: SimulatedCell>(host: &mut H, reinjecting: &Reinjecting, chain: &[Expect]) {
+    let mut expected = chain.iter().cloned();
+    let mut next = || expected.next().unwrap_or(Expect::Nothing);
+    let (id, payload) = (reinjecting.id, reinjecting.payload);
+    apply_inject(host, id, payload, &next());
+    apply_inject(host, id, payload, &next());
+    apply_commit(host, &reinjecting.consume, &next(), None);
+    apply_inject(host, id, payload, &next());
+}
+
+/// An [`Exchange`] (law 7): its commits as commits, each dispatch and
+/// delivery as the model predicts.
+fn apply_exchange<H: SimulatedCell>(host: &mut H, exchange: &Exchange, chain: &[Expect]) {
+    let mut expected = chain.iter().cloned();
+    let mut next = || expected.next().unwrap_or(Expect::Nothing);
+    if let Some(commit) = &exchange.prepare {
+        apply_commit(host, commit, &next(), None);
+    }
+    dispatch_once(host, next());
+    apply_commit(host, &exchange.reissue, &next(), None);
+    dispatch_once(host, next());
+    for step in exchange.tail() {
+        let op = step.map_or(CellOp::Lose(0), |delivery| {
+            CellOp::Deliver(Box::new(delivery))
+        });
+        apply_network(host, &op, &next());
     }
 }
 
@@ -3129,6 +3316,7 @@ fn apply_network<H: SimulatedCell>(host: &mut H, op: &CellOp, expected: &Expect)
         CellOp::Lose(_) => coverage::hit_prefixed("cell", "network.dropped"),
         CellOp::Dispatch(_)
         | CellOp::Reinject(_)
+        | CellOp::Exchange(_)
         | CellOp::Commit(_)
         | CellOp::Perform
         | CellOp::Observe
@@ -3179,6 +3367,56 @@ fn apply_perform<H: SimulatedCell>(host: &mut H, expected: Expect, fault: Option
 }
 
 impl<H: SimulatedCell> CellHostMachine<H> {
+    /// The reference state of a fresh host, outside swarm mode.
+    fn fresh_reference() -> CellReference {
+        CellReference {
+            model: CellModel {
+                commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
+                ..CellModel::default()
+            },
+            ..CellReference::default()
+        }
+    }
+
+    /// The construction case of a host behind a network (law 7), run before
+    /// the generated cases into the same coverage: per listed fault kind, a
+    /// perform faulted at its claim (which fires by construction); then an
+    /// [`Exchange`] and a [`Reinjecting`]. It reaches every label of
+    /// [`CELL_NETWORK_LABELS`] and each listed kind's fault label whatever
+    /// the generator's weights, so adding or reweighting a transition cannot
+    /// drop one. The generated cases then check the laws over free
+    /// interleavings.
+    fn construction_case() -> Vec<CellOp> {
+        let mut reference = Self::fresh_reference();
+        let mut ops = Vec::new();
+        for (n, kind) in (0_u8..).zip(H::FAULT_KINDS) {
+            ops.push(CellOp::Faulted(Box::new(Faulted {
+                plan: FaultPlan {
+                    kind: *kind,
+                    transaction: 0,
+                    at_statement: 0,
+                },
+                prepare: reference.model.prepare_perform_with(n % LAW_UNIVERSE, n),
+                target: FaultTarget::Perform,
+            })));
+            reference = Self::advance(reference, &ops);
+        }
+        if let Some(exchange) = reference.model.exchange(0, 1) {
+            ops.push(CellOp::Exchange(Box::new(exchange)));
+            reference = Self::advance(reference, &ops);
+        }
+        ops.push(CellOp::Reinject(Box::new(reference.model.reinjecting(2))));
+        ops
+    }
+
+    /// `reference` after the last of `ops`.
+    fn advance(reference: CellReference, ops: &[CellOp]) -> CellReference {
+        match ops.last() {
+            Some(op) => <Self as ReferenceStateMachine>::apply(reference, op),
+            None => reference,
+        }
+    }
+
     /// Law 5: the host's state equals the model's.
     fn refines(mut host: H, reference: &CellReference) -> H {
         assert_eq!(
@@ -3355,6 +3593,19 @@ pub const CELL_FAULT_LABELS: &[&str] = &[
 /// duplicated delivery, loss), a stale-generation result refused, a
 /// duplicate result ignored, and observations redelivered before and after
 /// their consumption.
+///
+/// Each is reached by construction, in the construction case every network
+/// host runs first (independent of the generator's weights):
+///
+/// | label | constructing transition and step |
+/// |---|---|
+/// | `network.dispatched` | [`Exchange`]: its first dispatch (after `prepare`) |
+/// | `network.delivered`, `network.out_of_order` | [`Exchange`]: `second` delivered ahead of `first` |
+/// | `network.duplicate`, `network.duplicate_ignored` | [`Exchange`]: `second` duplicated after it was recorded |
+/// | `network.dropped` | [`Exchange`]: `first` lost in flight |
+/// | `result.stale_refused`, `network.delayed` | [`Exchange`]: `first` duplicated after its re-issue, four network steps late |
+/// | `observe.duplicate_ignored` | [`Reinjecting`]: its second arrival, while pending |
+/// | `observe.late_ignored` | [`Reinjecting`]: its arrival after the consumption |
 pub const CELL_NETWORK_LABELS: &[&str] = &[
     "cell:network.dispatched",
     "cell:network.delivered",
@@ -3390,6 +3641,15 @@ pub fn run_cell_host<H: SimulatedCell>(settings: &Settings) -> Result<Coverage, 
     let mut runner = TestRunner::new(config.clone());
     let strategy = CellHostMachine::<H>::sequential_strategy(settings.transition_range());
     coverage::reset();
+    if H::NETWORK {
+        let transitions = CellHostMachine::<H>::construction_case();
+        if let Err(reason) = run_sequence::<H>(transitions.clone()) {
+            return Err(Failure {
+                reason: format!("construction case: {reason}"),
+                transitions,
+            });
+        }
+    }
     let result = runner.run(&strategy, |(initial, transitions, seen)| {
         CellHostMachine::<H>::test_sequential(config.clone(), initial, transitions, seen);
         Ok(())
@@ -3424,13 +3684,12 @@ pub fn run_cell_host<H: SimulatedCell>(settings: &Settings) -> Result<Coverage, 
 ///
 /// The violation, as the law machine's panic message.
 pub fn run_cell_host_sequence<H: SimulatedCell>(transitions: Vec<CellOp>) -> Result<(), String> {
-    let initial = CellReference {
-        model: CellModel {
-            commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
-            ..CellModel::default()
-        },
-        ..CellReference::default()
-    };
+    run_sequence::<H>(transitions)
+}
+
+/// [`run_cell_host_sequence`], counting coverage into the current run.
+fn run_sequence<H: SimulatedCell>(transitions: Vec<CellOp>) -> Result<(), String> {
+    let initial = CellHostMachine::<H>::fresh_reference();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         CellHostMachine::<H>::test_sequential(
             proptest::test_runner::Config::default(),
