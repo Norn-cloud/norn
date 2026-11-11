@@ -3,9 +3,17 @@
 # checkers (finite lens laws, DBSP algebra, linear conservation) and the
 # induction frame decision, and Lean proves them against the written semantics
 # in verification/semantics-v1/Checker/{Certificates,Obligations}. Every seeded
-# mutant must then extract and elaborate, and fail its proof: by a kernel
-# `decide` refutation where the mutated code is loop-free, otherwise by an
-# error inside the correspondence proof itself (never a timeout).
+# mutant must then extract and elaborate, fail its proof, and be refuted.
+#
+# Refutation convention (#718): a mutant counts as detected only when a closed
+# proposition about a concrete run evaluates false. Where the mutated code is
+# loop-free the proof files carry kernel `decide` witnesses (#1228). Loops are
+# Aeneas `partial_fixpoint` definitions, which the kernel cannot reduce, so this
+# gate also generates concrete vectors per family and decides them with
+# `native_decide`, then greps for "Tactic `native_decide` evaluated that the
+# proposition ... is false". Every vector must hold on production. The vectors
+# live outside the proof tree and are never part of a claim; the compiler is
+# trusted only for "this mutant is wrong".
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
@@ -288,6 +296,195 @@ printf '%s\n' \
   'example {bs : List (Int × Int)} {P : List Int → Prop} (h : ∀ xs ∈ enumerate bs, P xs) :' \
   '    ∀ xs, InBounds bs xs → P xs := exhaustive_finite h' \
   | check_props
+# Refutation vectors: concrete runs of the extracted code, decided by compiled
+# evaluation. They hold on production and refute every seeded loop mutant.
+# One file per family: the extractions share generated instance names.
+vectors="$result/vectors"
+mkdir -p "$vectors"
+cat > "$vectors/LensVectors.lean" <<'LEANVECTORS'
+import LensCore.Funs
+
+open Aeneas Aeneas.Std Result
+
+namespace LensVectors
+
+/-- Structural equality on row labels. -/
+def natEq : core.cmp.PartialEq Nat Nat where
+  eq a b := ok (decide (a = b))
+
+def src (l : List Nat) (h : l.length ≤ Usize.max := by scalar_tac) : Slice Nat := ⟨l, h⟩
+def gets (l : List Bool) (h : l.length ≤ Usize.max := by scalar_tac) : Slice Bool := ⟨l, h⟩
+def row (a b : Usize) : Std.Array Usize 2#usize := ⟨[a, b], by simp⟩
+def puts (l : List (Std.Array Usize 2#usize)) (h : l.length ≤ Usize.max := by scalar_tac) :
+    Slice (Std.Array Usize 2#usize) := ⟨l, h⟩
+
+/-- 0 admitted; 10 + row GetPut; 20 + 2 row + view PutGet; 40 + 4 row + 2 view + last
+    PutPut; 1 unknown source; 2 unknown put-back; 99 failure. -/
+def code : Result (core.result.Result Unit norn_checker_lens.Refusal) → Nat
+  | ok (.Ok ()) => 0
+  | ok (.Err (.GetPut r)) => 10 + r.val
+  | ok (.Err (.PutGet r v)) => 20 + 2 * r.val + v.toNat
+  | ok (.Err (.PutPut r v w)) => 40 + 4 * r.val + 2 * v.toNat + w.toNat
+  | ok (.Err .UnknownSource) => 1
+  | ok (.Err .UnknownPutBack) => 2
+  | _ => 99
+
+def laws (s : Slice Nat) (g : Slice Bool) (p : Slice (Std.Array Usize 2#usize)) : Nat :=
+  code (norn_checker_lens.check_laws natEq s g p)
+
+def getV (s : Slice Nat) (g : Slice Bool) (x : Nat) : Option Bool :=
+  match norn_checker_lens.get natEq s g x with
+  | ok (.Ok b) => some b
+  | _ => none
+
+def putV (s : Slice Nat) (p : Slice (Std.Array Usize 2#usize)) (x : Nat) (v : Bool) : Option Nat :=
+  match norn_checker_lens.put natEq s p x v with
+  | ok (.Ok y) => some y
+  | _ => none
+
+/-- The identity lens over two states is admitted. -/
+theorem identity_admitted :
+    laws (src [0, 1]) (gets [false, true]) (puts [row 0#usize 1#usize, row 0#usize 1#usize]) = 0 := by native_decide
+/-- Constant put-back: PutGet and PutPut hold, GetPut fails at row 2. -/
+theorem getput_refused :
+    laws (src [0, 1, 2]) (gets [false, true, false]) (puts [row 0#usize 1#usize, row 0#usize 1#usize, row 0#usize 1#usize]) = 12 := by
+  native_decide
+/-- Only the PutPut law after view false, then true, fails (row 2). -/
+theorem putput_true_refused :
+    laws (src [0, 1, 2]) (gets [false, true, true]) (puts [row 0#usize 1#usize, row 0#usize 1#usize, row 0#usize 2#usize]) = 49 := by
+  native_decide
+/-- A single state whose true put-back keeps a false view: PutGet fails at row 0, view true. -/
+theorem putget_true_refused : laws (src [0]) (gets [false]) (puts [row 0#usize 0#usize]) = 21 := by
+  native_decide
+/-- Lookups read the first row holding the state. -/
+theorem get_first_row : getV (src [0, 1]) (gets [false, true]) 1 = some true := by native_decide
+theorem put_view_true : putV (src [0, 1]) (puts [row 0#usize 1#usize, row 0#usize 1#usize]) 0 true = some 1 := by
+  native_decide
+
+end LensVectors
+LEANVECTORS
+cat > "$vectors/AlgebraVectors.lean" <<'LEANVECTORS'
+import AlgebraCore.Funs
+
+open Aeneas Aeneas.Std Result
+
+namespace AlgebraVectors
+open norn_checker_algebra
+
+def ops (l : List Operator) (h : l.length ≤ Usize.max := by scalar_tac) : Slice Operator := ⟨l, h⟩
+
+/-- 0 proved; 1 + term refuted; 10 over budget; 11 undeclared; 12 monoid; 13 unsupported;
+    14 invalid dependency. -/
+def code : Verdict → Nat
+  | .Proved => 0
+  | .Refuted t => 1 + t.val
+  | .OverBudget => 10
+  | .UndeclaredFold => 11
+  | .MonoidUnderDeletions => 12
+  | .Unsupported => 13
+  | .InvalidDependency => 14
+
+def verdicts (o : Slice Operator) (signed : Bool) : Option (List Nat) :=
+  match check o signed with
+  | ok v => some (v.val.map code)
+  | _ => none
+
+/-- A homomorphism over an unsupported node is not proved. -/
+theorem dependency_must_be_proved :
+    verdicts (ops [.Unknown, .Homomorphism 0#usize (some .Select)]) false = some [13, 14] := by
+  native_decide
+/-- 256 operators are within the budget. -/
+theorem budget_inclusive :
+    verdicts (ops (List.replicate 256 .Input)) false = some (List.replicate 256 0) := by
+  native_decide
+/-- 257 operators are all over budget. -/
+theorem budget_exceeded :
+    verdicts (ops (List.replicate 257 .Input)) false = some (List.replicate 257 10) := by
+  native_decide
+
+end AlgebraVectors
+LEANVECTORS
+cat > "$vectors/ConservationVectors.lean" <<'LEANVECTORS'
+import ConservationCore.Funs
+
+open Aeneas Aeneas.Std Result
+
+namespace ConservationVectors
+open norn_checker_conservation
+
+/-- Exact integer arithmetic. -/
+def intArith : ExactArithmetic Int where
+  coremarkerCopyInst := { cloneInst := { clone := fun x => ok x, clone_from := fun _ x => ok x } }
+  exact_zero := ok 0
+  exact_is_zero a := ok (decide (a = 0))
+  exact_add a b := ok (some (a + b))
+  exact_mul a b := ok (some (a * b))
+
+def labels (l : List Usize) (h : l.length ≤ Usize.max := by scalar_tac) : Slice Usize := ⟨l, h⟩
+def ws (l : List Int) (h : l.length ≤ Usize.max := by scalar_tac) : Slice Int := ⟨l, h⟩
+def vec (l : List Int) (h : l.length ≤ Usize.max := by scalar_tac) : alloc.vec.Vec Int := ⟨l, h⟩
+def rows (l : List (alloc.vec.Vec Int)) (h : l.length ≤ Usize.max := by scalar_tac) :
+    Slice (alloc.vec.Vec Int) := ⟨l, h⟩
+
+/-- 0 accepted, 1 malformed, 2 overflow, 3 unbalanced, 99 failure. -/
+def code : Result (core.result.Result Unit (Refusal Int)) → Nat
+  | ok (.Ok ()) => 0
+  | ok (.Err .Malformed) => 1
+  | ok (.Err .Overflow) => 2
+  | ok (.Err (.Unbalanced _)) => 3
+  | _ => 99
+
+def run (p : Slice Usize) (w : Slice Int) (r : Slice (alloc.vec.Vec Int)) (c : Usize) : Nat :=
+  code (check_writer intArith p w r c)
+
+/-- Weighted coefficients 1·2 + 2·(-1) balance. -/
+theorem weighted_balance : run (labels [0#usize, 0#usize]) (ws [1, 2]) (rows [vec [2], vec [-1]]) 1#usize = 0 := by
+  native_decide
+/-- A lone nonzero coefficient is unbalanced. -/
+theorem single_unbalanced : run (labels [0#usize]) (ws [1]) (rows [vec [1]]) 1#usize = 3 := by native_decide
+/-- The first coordinate of a class counts. -/
+theorem first_coordinate_counts :
+    run (labels [0#usize, 0#usize]) (ws [1, 1]) (rows [vec [1], vec [0]]) 1#usize = 3 := by native_decide
+/-- The last coordinate of a class counts. -/
+theorem last_coordinate_counts :
+    run (labels [0#usize, 0#usize]) (ws [1, 1]) (rows [vec [0], vec [1]]) 1#usize = 3 := by native_decide
+/-- Every column counts, not only the constant. -/
+theorem every_column_counts : run (labels [0#usize]) (ws [1]) (rows [vec [1, 0]]) 2#usize = 3 := by
+  native_decide
+
+end ConservationVectors
+LEANVECTORS
+cat > "$vectors/FrameVectors.lean" <<'LEANVECTORS'
+import FrameCore.Funs
+
+open Aeneas Aeneas.Std Result
+
+namespace FrameVectors
+
+/-- Structural equality on field names. -/
+def natEq : core.cmp.PartialEq Nat Nat where
+  eq a b := ok (decide (a = b))
+
+def reads (l : List Nat) (h : l.length ≤ Usize.max := by scalar_tac) : Slice Nat := ⟨l, h⟩
+
+def run (subject object written : Nat) (r : Option (Slice Nat)) : Option Bool :=
+  match norn_checker_frame.discharges natEq subject object written r with
+  | ok b => some b
+  | _ => none
+
+/-- An unread field on the law's own type is discharged. -/
+theorem unread_discharged : run 0 0 3 (some (reads [1, 2])) = some true := by native_decide
+/-- A writer of another type never discharges the goal. -/
+theorem other_type_kept : run 0 1 3 (some (reads [1, 2])) = some false := by native_decide
+/-- A field the law reads, even the last one, is never discharged. -/
+theorem last_read_kept : run 0 0 2 (some (reads [1, 2])) = some false := by native_decide
+
+end FrameVectors
+LEANVECTORS
+vector_pattern='Vectors.lean:[0-9]*:[0-9]*: error: Tactic `native_decide` evaluated that the proposition'
+for name in LensVectors AlgebraVectors ConservationVectors FrameVectors; do
+  lean_check "$baseline" "$vectors" "$name" "$vectors/$name.olean"
+done
 echo "checker-certificates: production certificate checkers and frame decision proved against the written semantics"
 
 # Mutants are applied to a hard-linked copy of the checker sources; the edited
@@ -302,26 +499,27 @@ from pathlib import Path
 
 tree, root = Path(sys.argv[1]), Path(sys.argv[2])
 lens, algebra, conservation, frame = sys.argv[3:7]
-# (name, file, fragment, proof module, detection, old, new). `decide`: the
-# kernel refutes a concrete witness; `proof`: the correspondence proof fails.
+# (name, file, fragment, proof module, detection, old, new). `decide`: a kernel
+# witness in the proof file is refuted; `vector`: the correspondence proof fails
+# and a native_decide vector of the family is refuted.
 mutants = [
-    ("lens-skip-getput", lens, "LensCore", "LensProof", "proof",
+    ("lens-skip-getput", lens, "LensCore", "LensProof", "vector",
      "if !same(put(sources, put_table, source, current)?, source) {",
      "if !same(put(sources, put_table, source, current)?, put(sources, put_table, source, current)?) {"),
-    ("lens-putget-inverted", lens, "LensCore", "LensProof", "proof",
+    ("lens-putget-inverted", lens, "LensCore", "LensProof", "vector",
      "if get(sources, get_table, updated)? != view {",
      "if get(sources, get_table, updated)? == view {"),
-    ("lens-skip-putput-true", lens, "LensCore", "LensProof", "proof",
+    ("lens-skip-putput-true", lens, "LensCore", "LensProof", "vector",
      "    if !same(\n        put(sources, put_table, updated, true)?,\n"
      "        put(sources, put_table, source, true)?,\n    ) {\n"
      "        return Err(Refusal::PutPut(row, view, true));\n    }\n", ""),
-    ("lens-skip-view-true", lens, "LensCore", "LensProof", "proof",
+    ("lens-skip-view-true", lens, "LensCore", "LensProof", "vector",
      "        check_view(sources, get_table, put_table, row, true)?;\n", ""),
-    ("lens-position-mismatch", lens, "LensCore", "LensProof", "proof",
+    ("lens-position-mismatch", lens, "LensCore", "LensProof", "vector",
      "if same(&sources[row], source) {", "if !same(&sources[row], source) {"),
-    ("lens-put-views-swapped", lens, "LensCore", "LensProof", "proof",
+    ("lens-put-views-swapped", lens, "LensCore", "LensProof", "vector",
      "if view { put[row][1] } else { put[row][0] }", "if view { put[row][0] } else { put[row][1] }"),
-    ("lens-skip-first-row", lens, "LensCore", "LensProof", "proof",
+    ("lens-skip-first-row", lens, "LensCore", "LensProof", "vector",
      "    let mut row = 0;\n    while row < sources.len() {\n        let source = &sources[row];",
      "    let mut row = 1;\n    while row < sources.len() {\n        let source = &sources[row];"),
     ("algebra-join-drops-cross-term", algebra, "AlgebraCore", "AlgebraProof", "decide",
@@ -334,32 +532,28 @@ mutants = [
     ("algebra-forward-dependency", algebra, "AlgebraCore", "AlgebraProof", "decide",
      "dependency < results.len() && results[dependency] == Verdict::Proved",
      "dependency <= results.len() && results[dependency] == Verdict::Proved"),
-    ("algebra-dependency-unproved", algebra, "AlgebraCore", "AlgebraProof", "proof",
+    ("algebra-dependency-unproved", algebra, "AlgebraCore", "AlgebraProof", "vector",
      "dependency < results.len() && results[dependency] == Verdict::Proved",
      "dependency < results.len()"),
-    ("algebra-budget-off-by-one", algebra, "AlgebraCore", "AlgebraProof", "proof",
+    ("algebra-budget-off-by-one", algebra, "AlgebraCore", "AlgebraProof", "vector",
      "if operators.len() > OPERATOR_BUDGET {", "if operators.len() >= OPERATOR_BUDGET {"),
-    ("conservation-accept-unbalanced", conservation, "ConservationCore", "ConservationProof",
-     "proof", "if all_zero(&totals) {", "if true || all_zero(&totals) {"),
-    ("conservation-ignore-weight", conservation, "ConservationCore", "ConservationProof", "proof",
+    ("conservation-accept-unbalanced", conservation, "ConservationCore", "ConservationProof", "vector", "if all_zero(&totals) {", "if true || all_zero(&totals) {"),
+    ("conservation-ignore-weight", conservation, "ConservationCore", "ConservationProof", "vector",
      "row[c].exact_mul(weight)", "row[c].exact_mul(N::exact_zero())"),
-    ("conservation-overwrite-total", conservation, "ConservationCore", "ConservationProof",
-     "proof", "total[c].exact_add(product)", "product.exact_add(N::exact_zero())"),
+    ("conservation-overwrite-total", conservation, "ConservationCore", "ConservationProof", "vector", "total[c].exact_add(product)", "product.exact_add(N::exact_zero())"),
     ("conservation-zero-check-last-column", conservation, "ConservationCore",
-     "ConservationProof", "proof", "if !row[c].exact_is_zero() {",
+     "ConservationProof", "vector", "if !row[c].exact_is_zero() {",
      "if c + 1 == row.len() && !row[c].exact_is_zero() {"),
-    ("conservation-skip-last-coordinate", conservation, "ConservationCore", "ConservationProof",
-     "proof", "    while i < partition.len() {\n        add_weighted_row",
+    ("conservation-skip-last-coordinate", conservation, "ConservationCore", "ConservationProof", "vector", "    while i < partition.len() {\n        add_weighted_row",
      "    while i + 1 < partition.len() {\n        add_weighted_row"),
-    ("conservation-skip-first-class", conservation, "ConservationCore", "ConservationProof",
-     "proof", "    let mut r = 0;\n    while r < totals.len() {",
+    ("conservation-skip-first-class", conservation, "ConservationCore", "ConservationProof", "vector", "    let mut r = 0;\n    while r < totals.len() {",
      "    let mut r = 1;\n    while r < totals.len() {"),
-    ("frame-ignores-writer-type", frame, "FrameCore", "FrameProof", "proof",
+    ("frame-ignores-writer-type", frame, "FrameCore", "FrameProof", "vector",
      "Some(fields) => same(writer_object, law_subject) && !reads_field(fields, written),",
      "Some(fields) => !reads_field(fields, written),"),
     ("frame-unknown-reads-discharge", frame, "FrameCore", "FrameProof", "decide",
      "None => false,", "None => true,"),
-    ("frame-misses-last-read", frame, "FrameCore", "FrameProof", "proof",
+    ("frame-misses-last-read", frame, "FrameCore", "FrameProof", "vector",
      "while i < reads.len() {", "while i + 1 < reads.len() {"),
 ]
 for name, path, fragment, proof, detection, old, new in mutants:
@@ -400,8 +594,19 @@ while read -r name path name_fragment proof detection; do
   elif [[ $detection == decide ]] &&
     grep -q "$proof.lean:[0-9]*:[0-9]*: error: Tactic \`decide\` proved that the proposition" "$log"; then
     echo "mutant $name: a concrete witness is refuted by decide (detected)"
-  elif [[ $detection == proof ]] && grep -q "$proof.lean:[0-9]*:[0-9]*: error" "$log"; then
-    echo "mutant $name: the correspondence proof fails (detected)"
+  elif [[ $detection == vector ]] && grep -q "$proof.lean:[0-9]*:[0-9]*: error" "$log"; then
+    family_vectors="${proof%Proof}Vectors"
+    vlog="$result/mutants/$name/vectors.log"
+    if lean_check "$out" "$vectors" "$family_vectors" "$out/$family_vectors.olean" > "$vlog" 2>&1; then
+      echo "mutant $name: proof fails but no vector refutes it" >&2
+      survivors=$((survivors + 1))
+    elif grep -q "$vector_pattern" "$vlog"; then
+      echo "mutant $name: proof fails and a concrete vector is refuted (detected)"
+    else
+      tail -n 20 "$vlog" >&2
+      echo "mutant $name: vectors fail without a native_decide refutation" >&2
+      survivors=$((survivors + 1))
+    fi
   else
     tail -n 20 "$log" >&2
     echo "mutant $name: proof fails without the expected $detection detection" >&2
@@ -409,4 +614,4 @@ while read -r name path name_fragment proof detection; do
   fi
 done < "$result/mutants/list"
 test "$survivors" -eq 0
-echo "checker-certificates: every seeded mutant is refuted or fails its correspondence proof"
+echo "checker-certificates: every seeded mutant fails its proof and is refuted by a concrete witness"
