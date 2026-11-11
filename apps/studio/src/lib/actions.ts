@@ -11,15 +11,18 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *        `effect` and `objectIdField` from its effect program, `title` (falls back to `actionId`)
  *        and `uiEffects`, the kernel's effective effects (always present).
  *
- *   POST /v1/actions/{actionId}?orgId&environmentId
+ *   POST /v1/actions/{actionId}?orgId&environmentId[&version]   (served: norn_api::actions)
  *        body { input: <object>, idempotencyKey: string }   (1..128 chars and at most 256 UTF-8
  *        bytes; Studio sends one random UUID per draft)
  *        200 { outcome: "committed" | "replayed", objectType, objectId, version,
- *              receipt: { receiptHash, commitSeq, recordedAtMs } }
- *        4xx Refusal { code, category, message, diagnostics: [{ code, message, pointer }] }:
- *            every input violation listed, each pointer into the request body (`/input/qty`,
- *            `/input/lines/0/sku`); a rule or precondition refusal has `pointer: null`.
+ *              receipt: { receiptHash, commitSeq, recordedAtMs } }: a replay reports the
+ *              original commit; `receiptHash` is a keyed handle unless the reader holds Values
+ *              over the whole cell.
+ *        4xx Refusal@2 { code, category, message, explanation, diagnostics?: [{ code, message,
+ *            span: { pointer } | null }] }: each pointer into the request body (`/input/qty`,
+ *            `/idempotencyKey`); a rule, law or precondition refusal carries none.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
+ *        Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
  *
  *   Any 404 or 503, whatever its body (the cell's carries `route.not_found`), means the cell does
  *   not serve the route: Studio says so and offers no action.
@@ -87,8 +90,10 @@ function refusalOf(text: string): Refusal | null {
   try { body = JSON.parse(text) } catch { return null }
   const { code, message, diagnostics } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown }
   if (typeof code !== "string") return null
-  const list = Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown }) => ({
-    code: String(d.code ?? ""), message: String(d.message ?? ""), pointer: typeof d.pointer === "string" ? d.pointer : null,
+  // The cell's refusal@2 places a finding at `span.pointer`; a bare `pointer` is read too.
+  const list = Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: { pointer?: unknown } | null }) => ({
+    code: String(d.code ?? ""), message: String(d.message ?? ""),
+    pointer: typeof d.span?.pointer === "string" ? d.span.pointer : typeof d.pointer === "string" ? d.pointer : null,
   })) : []
   return { code, message: typeof message === "string" ? message : code, diagnostics: list }
 }

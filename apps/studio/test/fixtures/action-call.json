@@ -1,0 +1,35 @@
+{
+  "committed": {
+    "outcome": "committed",
+    "objectType": "constitution.Melt",
+    "objectId": "melt-1",
+    "version": 1,
+    "receipt": { "receiptHash": "<keyed receipt handle>", "commitSeq": 1, "recordedAtMs": 1700000000000 }
+  },
+  "conflict": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "action.idempotency_conflict",
+    "category": "conflict",
+    "message": "the request conflicts with current state",
+    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority"
+  },
+  "invalidKey": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "request.invalid",
+    "category": "invalid",
+    "message": "the request is malformed",
+    "explanation": "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes",
+    "diagnostics": [
+      {
+        "code": "request.invalid",
+        "severity": "error",
+        "message": "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes",
+        "span": { "pointer": "/idempotencyKey" }
+      }
+    ]
+  }
+}

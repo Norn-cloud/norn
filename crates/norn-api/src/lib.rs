@@ -1,4 +1,8 @@
 //! Core IR and checker wire schemas, projected by the existing `OpenAPI` generator.
+/// Retained action admission and the kernel's action model types.
+pub mod action_admission;
+/// HOST-ACTION-1: the one governed action service shared by transports.
+pub mod actions;
 /// Typed-question answer documents.
 pub mod answers;
 /// Default-deny server authorization for host operations and kernel action requests.

@@ -92,7 +92,7 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
 /// The declared default minimum disclosed bucket size (D53).
 pub const DEFAULT_MIN_DISCLOSED_BUCKET: usize = 3;
 
-fn handle_key<E: SqlEngine>(runtime: &dyn QuestionRuntime<E>) -> Result<&[u8], Refusal> {
+pub(crate) fn handle_key<E: SqlEngine>(runtime: &dyn QuestionRuntime<E>) -> Result<&[u8], Refusal> {
     let key = runtime.handle_key();
     if key.len() < 32 {
         return Err(Refusal::host(
@@ -208,7 +208,7 @@ fn answer_plan<E: SqlEngine>(
 /// host policy without reading cell data. Raw ledger and receipt hashes chain
 /// every event's values, so only such a reader sees them. An unmappable or
 /// mismatched mapping is no grant.
-fn world_values<E: SqlEngine>(
+pub(crate) fn world_values<E: SqlEngine>(
     host: &DevHost<E>,
     runtime: &dyn QuestionRuntime<E>,
     store: &CellStore<E>,
