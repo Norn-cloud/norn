@@ -33,6 +33,7 @@ Statistical analysis is a recorded Function result over point-in-time inputs. Pu
 | WORLD-ISOLATE-1: forks never perform; history never mutates; dispatch/commit | `core.world.perform_forbidden` |
 | FORK-PIN-1: a fork is created only at its parent's verified head and keeps that pin and the cell identity; create/open | `core.world.fork_stale_base`, `core.world.fork_invalid_world` |
 | FORK-SIMULATE-1: only a fork records simulated results; main records performed results only; dispatch | `core.world.simulation_forbidden` |
+| FORK-EVIDENCE-1: what a fork minted is never presented as main evidence; export/evidence | `core.world.fork_evidence_forbidden` |
 | FORK-LIFE-1: a discarded, expired or promoted fork accepts no commit or open; host | `core.world.fork_closed` |
 | FORK-MERGE-1: promotion replays commands under main's current laws; commit | `core.world.merge_refused` |
 | ASOF-KNOWLEDGE-1: no future knowledge leaks into old cutoff; evaluation | `core.world.temporal_leakage` |
@@ -91,7 +92,9 @@ RESTATE-HISTORY-1 native private-cache maintenance consumes the next authenticat
 
 **FORK-PIN-1.** A fork is a separate store instance, never rows in its parent's database: rows in the parent's file would queue every fork write behind the parent's single writer. A fork is created only at the parent's current verified head; a caller pin naming any other position refuses `core.world.fork_stale_base` and creates nothing. Forking from an older position needs retained roots and is added with the copy-on-write store. `main`, an empty id or the parent's own world refuses `core.world.fork_invalid_world`. The fork inherits the parent's cell identity and bindings (#502) byte for byte: the identity never forks, and a fork is served only under the scope its parent was bound to. The fork's world is the pin, not a new identity. The pin is durable in the fork instance and survives reopen; nothing can turn a fork back into main. A fork of a fork records the fork as its parent.
 
-Inside a fork instance, the row `world` label and `ReceiptBody.world` name the instance's local timeline, which keeps the label it inherited. Relabelling inherited rows would copy them, so the pin carries the fork's world. Fork receipts are meaningful only together with that pin, and promotion replays commands, never receipts or rows.
+Inside a fork instance, inherited rows keep the `world` label they were committed under; relabelling them would copy history. The pin carries the fork's world, and **every world-boundary decision reads the instance's pin, never a row label**: perform, claim and result recording, external-receipt consumption, kernel turn worlds, export and evidence treat a fork as non-main even though its inherited rows say `main`. Promotion replays commands, never receipts or rows.
+
+**FORK-EVIDENCE-1.** Anything newly minted in a fork (rows, receipts, ledger entries, export records) must be distinguishable from main's and never presentable as main-world evidence. The target binds the fork pin into what a fork newly writes: its world label on new rows, or the pin in the receipt digest domain, under a versioned store format; existing stores keep their format. Until that format lands, the copying-reference store writes new fork rows and receipts under the inherited label, so a fork refuses with `core.world.fork_evidence_forbidden` to export a record it minted after its base or any proof from its receipt log; inherited records, at or below the base, still export as the parent's own. Fact-version evidence a fork's reader returns is evidence about that fork only and is not exported until the pin is bound.
 
 ### Lifecycle
 
@@ -127,14 +130,17 @@ Storage lemmas for every fork engine:
 - **L1** a write never changes a stored page under its address;
 - **L2** a fork's root is a snapshot: later parent writes do not change it, and fork writes change no root they did not open;
 - **L3** garbage collection never frees a page reachable from a live root;
-- **L4** a fork read returns exactly what reading a full copy would (property tests against the copying oracle).
+- **L4** a fork read returns exactly what reading a full copy would (property tests against the copying oracle);
+- **L5** every world-boundary decision is a function of the instance's pin, not of any row label, so a fork with inherited `main` rows still cannot perform, record a real result, consume a main-world receipt or run a main-world turn;
+- **L6** anything a fork minted is distinguishable from main's and never accepted as main-world evidence (FORK-EVIDENCE-1).
 
 Evidence target: L1–L4 as properties against the copying reference engine and model checks of the page store; non-interference and no-escape as generated trace properties and deterministic simulation on forks; a Lean world-indexed non-interference meta-theorem and a Quint model of create, commit, merge, discard and garbage collection replayed through ITF. Until those exist, FORK-ISOLATE is a target, and each passing property is sampled evidence only.
 
 ### Unit order
 
 1. This contract.
-2. The `CellStore` fork contract with the copying reference engine, FORK-PIN-1, WORLD-ISOLATE-1 refusals, WORLD-FORK and FORK-NONINTERFERE properties.
+2. The `CellStore` fork contract with the copying reference engine, FORK-PIN-1, WORLD-ISOLATE-1 refusals decided by the pin, the FORK-EVIDENCE-1 export fence, WORLD-FORK and FORK-NONINTERFERE properties.
+   - 2b. A versioned store format that binds the fork pin into what a fork newly writes, lifting the FORK-EVIDENCE-1 fence for fork-local evidence.
 3. A copy-on-write page store behind `SqlEngine`: keyed addresses, a Merkle page map, O(1) fork, reachability garbage collection, L1–L4 against the oracle.
 4. A durable local tier with group commit and crash recovery.
 5. Definition namespace roots and three-way namespace merge with re-admission.
