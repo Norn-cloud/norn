@@ -3637,9 +3637,19 @@ impl ForkTrace {
     fn new() -> Self {
         let executed = std::sync::Arc::default();
         let alone_executed = std::sync::Arc::default();
+        // Main and main-alone are one logical cell (CELL-ID-1), so their
+        // images compare byte for byte.
+        let identity = norn_cell::cell_identity::CellId::try_from(
+            "00112233445566778899aabbccddeeff".to_owned(),
+        )
+        .expect("a cell id");
         let store = || {
-            CellStore::from_engine(NativeEngine::open_in_memory().expect("opens"), law_model())
-                .expect("opens store")
+            CellStore::from_engine_bound(
+                NativeEngine::open_in_memory().expect("opens"),
+                law_model(),
+                &identity,
+            )
+            .expect("opens store")
         };
         Self {
             main: counting_cell(store(), &executed),
