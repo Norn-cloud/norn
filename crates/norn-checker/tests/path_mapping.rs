@@ -538,7 +538,13 @@ fn runtime_admission_enforces_required_paths_and_budget() {
         .iter()
         .find(|d| d.code == "consistency.path_mapping.preserved")
         .unwrap();
-    assert!(evidence.message.contains("bounded-no-counterexample"));
+    // The identity mapping is certified by chase certificates (#718 U7), so
+    // its evidence is a proof, not a bounded search.
+    assert!(
+        evidence.message.starts_with("certified;"),
+        "{}",
+        evidence.message
+    );
     assert!(
         evidence.message.contains(
             &norn_checker::receipt::ArtifactRef::of(good.last().unwrap())

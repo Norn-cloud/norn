@@ -1,8 +1,12 @@
 //! PATH-MAP-1: preservation admission for declared path mappings (#712).
 //!
 //! A [`PathMapping`] `F: target -> source` lowers, with both catalogs' path
-//! equations, to an [`Exchange`]; preservation is the existing bounded
-//! schema-compatibility search. No rule is hand-authored by the caller.
+//! equations, to an [`Exchange`]. Preservation is first attempted by chase
+//! certificates (`preservation.rs`, #718 U7), which a trusted check accepts
+//! and `NornSem.Exchange.check_sound` proves sound for every source instance.
+//! Otherwise it is the existing bounded schema-compatibility search, whose
+//! clean result is only bounded evidence. No rule is hand-authored by the
+//! caller.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,8 +24,10 @@ use crate::{Diagnostic, DiagnosticSeverity};
 /// Refusal code for malformed mappings and compositions.
 pub const PATH_MAPPING_INVALID: &str = "consistency.path_mapping.invalid";
 
-/// What an admitted mapping establishes: no counterexample to any lowered
-/// target dependency within the exchange search bound. Never exhaustive.
+/// What an admitted mapping establishes. With `certified`, every lowered
+/// target dependency has a chase certificate the trusted check accepted, so it
+/// holds on every source instance satisfying the source theory. Without it,
+/// only that the exchange search found no counterexample within its bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PreservationEvidence {
@@ -29,6 +35,8 @@ pub struct PreservationEvidence {
     pub obligations: usize,
     /// Dependencies in the lowered exchange.
     pub dependencies: usize,
+    /// Every target dependency is certified (proved), not only searched.
+    pub certified: bool,
 }
 
 fn var(name: &str) -> Term {
@@ -281,6 +289,19 @@ pub(crate) fn admit_with_work(
             }
         }
     }
+    let dependencies = [&source_theory, &lowered, &target_theory]
+        .iter()
+        .map(|theory| theory.dependencies.len())
+        .sum();
+    // A certified mapping preserves every target dependency on every source
+    // instance, so no counterexample exists and the search is skipped.
+    if super::preservation::certified(&source_theory, &lowered, &target_theory) {
+        return Ok(PreservationEvidence {
+            obligations: target_theory.dependencies.len(),
+            dependencies,
+            certified: true,
+        });
+    }
     let exchange = Exchange {
         source_schema: &schema,
         source: &source_theory,
@@ -291,10 +312,8 @@ pub(crate) fn admit_with_work(
     if findings.is_empty() {
         Ok(PreservationEvidence {
             obligations: target_theory.dependencies.len(),
-            dependencies: [&source_theory, &lowered, &target_theory]
-                .iter()
-                .map(|theory| theory.dependencies.len())
-                .sum(),
+            dependencies,
+            certified: false,
         })
     } else {
         Err(findings)

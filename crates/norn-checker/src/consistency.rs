@@ -26,6 +26,7 @@ mod divergence;
 mod exchange;
 pub mod finite;
 pub(crate) mod path_mapping;
+mod preservation;
 pub mod report;
 mod theory;
 

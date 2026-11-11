@@ -19,3 +19,4 @@
 'Norn.Sem.Obligation.admitAll_sound' depends on axioms: [propext, Quot.sound]
 'Norn.Sem.Law.Tree.WellFormed.unambiguous' depends on axioms: [propext, Classical.choice, Quot.sound]
 'Norn.Sem.Obligation.exceptionTrees_sound' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Norn.Sem.Exchange.check_sound' depends on axioms: [propext, Classical.choice, Quot.sound]

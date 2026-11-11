@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/semantics-v1/NornSem/Exchange.lean",
+    "command": "scripts/verify-semantics-lean.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entry946da42b88ce602efade62b42090f7009a4072c8991a3c7ae0f8c41e2a5ab0b5.evidence.proof.entrye18fa44f9af70c39ecff943668d96a5fd701dce91a60ee5c15128db51ef7707f.selectors"
+    }
+  }
+}

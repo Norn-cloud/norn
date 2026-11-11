@@ -1,0 +1,21 @@
+{
+  "order": 4,
+  "value": {
+    "id": "INV-CERT-PATH-MAPPING-PRESERVATION",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "reference_proved",
+    "residual": "The certificate semantics and its soundness are proved (NornSem.Exchange.check_sound, #718 U7a). Admission certifies path mappings with the Rust transcription of that check (TRUST-PRESERVATION-CHECK-MIRROR) until its Aeneas correspondence lands (#718 U7b); uncertified mappings keep bounded-no-counterexample evidence.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry946da42b88ce602efade62b42090f7009a4072c8991a3c7ae0f8c41e2a5ab0b5.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry946da42b88ce602efade62b42090f7009a4072c8991a3c7ae0f8c41e2a5ab0b5.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry946da42b88ce602efade62b42090f7009a4072c8991a3c7ae0f8c41e2a5ab0b5.evidence.proof"
+      }
+    }
+  }
+}

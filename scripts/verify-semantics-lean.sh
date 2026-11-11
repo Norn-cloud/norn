@@ -11,10 +11,11 @@ lean_root="$aeneas_root/backends/lean"
 semantics="$repo_root/verification/semantics-v1"
 result="${NORN_VERIFICATION_RESULT_ROOT:-$repo_root/target/verification-results}/semantics-v1"
 # Elaboration order, and the exact Lean sources of the semantics.
-modules=(NornSem/Exact NornSem/Value NornSem/Law NornSem/Obligation)
+modules=(NornSem/Exact NornSem/Value NornSem/Law NornSem/Obligation NornSem/Exchange)
 proof_files=(
   verification/semantics-v1/Audit.lean
   verification/semantics-v1/NornSem/Exact.lean
+  verification/semantics-v1/NornSem/Exchange.lean
   verification/semantics-v1/NornSem/Law.lean
   verification/semantics-v1/NornSem/Obligation.lean
   verification/semantics-v1/NornSem/Value.lean
@@ -150,6 +151,86 @@ open Norn.Sem in
 theorem mutantRefuted : ¬ ∀ (L : Law ℕ Unit) (x : Unit), L.binds x = true → L.bare.binds x = true := by
   intro h
   exact absurd (h mutantLaw () (by decide)) (by decide)
+"""),
+    # An EGD step no longer needs its body: an unrelated EGD merges anything.
+    ("egd-step-skips-body", "NornSem/Exchange.lean",
+     "      if bodyMatches s body st.asg && decide (at' st.asg l < s.next) &&",
+     "      if true && decide (at' st.asg l < s.next) &&",
+     """open Norn.Sem.Exchange in
+def mutantRules : List Rule := [⟨[⟨0, [0]⟩], ⟨1, [0]⟩⟩]
+open Norn.Sem.Exchange in
+def mutantTheory : List Dep := [.egd [⟨5, [0, 1]⟩] 0 1]
+open Norn.Sem.Exchange in
+theorem mutantRefuted : ¬ ∀ (theory : List Dep) (rules : List Rule) (body : List Atom) (l r : ℕ)
+    (traces : List (List Step)), check theory rules body l r traces = true →
+      Preserves theory rules body l r := by
+  intro h
+  have hc : check mutantTheory mutantRules [⟨1, [0]⟩, ⟨1, [1]⟩] 0 1 [[⟨0, [0, 1]⟩]] = true := by
+    decide
+  have hp : Preserves mutantTheory mutantRules [⟨1, [0]⟩, ⟨1, [1]⟩] 0 1 := h _ _ _ _ _ _ hc
+  have hmodel : Model (D := Bool) (fun r _ => r = 0) mutantTheory := by
+    intro d hd
+    simp only [mutantTheory, List.mem_singleton] at hd
+    subst hd
+    intro g hb
+    have := hb _ (List.mem_singleton_self _)
+    simp [Atom.Holds] at this
+  have hsat := hp (fun r _ => r = 0) hmodel
+  have hr0 : ∀ v : ℕ, pull mutantRules (fun r (_ : List Bool) => r = 0) 1 [decide (v = 0)] := by
+    intro v
+    unfold pull
+    refine ⟨_, List.mem_singleton_self _, rfl, fun _ => decide (v = 0), ?_, rfl⟩
+    intro a ha
+    rw [List.mem_singleton] at ha
+    subst ha
+    rfl
+  have := hsat (fun v => decide (v = 0)) (by
+    intro a ha
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at ha
+    rcases ha with rfl | rfl
+    · exact hr0 0
+    · exact hr0 1)
+  simp at this
+"""),
+    # Cases consider only the first rule: another producing rule goes unchecked.
+    ("cases-drop-rules", "NornSem/Exchange.lean",
+     "        | some r => decide (r.head.rel = b.rel ∧ r.head.args.length = b.args.length)",
+     "        | some r => decide (r.head.rel = b.rel ∧ r.head.args.length = b.args.length ∧ m = 0)",
+     """open Norn.Sem.Exchange in
+def mutantRules : List Rule := [⟨[⟨5, [0]⟩], ⟨1, [0]⟩⟩, ⟨[⟨0, [0]⟩], ⟨1, [0]⟩⟩]
+open Norn.Sem.Exchange in
+def mutantTheory : List Dep := [.egd [⟨5, [0]⟩, ⟨5, [1]⟩] 0 1]
+open Norn.Sem.Exchange in
+theorem mutantRefuted : ¬ ∀ (theory : List Dep) (rules : List Rule) (body : List Atom) (l r : ℕ)
+    (traces : List (List Step)), check theory rules body l r traces = true →
+      Preserves theory rules body l r := by
+  intro h
+  have hc : check mutantTheory mutantRules [⟨1, [0]⟩, ⟨1, [1]⟩] 0 1 [[⟨0, [2, 3]⟩]] = true := by
+    decide
+  have hp : Preserves mutantTheory mutantRules [⟨1, [0]⟩, ⟨1, [1]⟩] 0 1 := h _ _ _ _ _ _ hc
+  have hmodel : Model (D := Bool) (fun r _ => r = 0) mutantTheory := by
+    intro d hd
+    simp only [mutantTheory, List.mem_singleton] at hd
+    subst hd
+    intro g hb
+    have := hb _ (List.mem_cons_self ..)
+    simp [Atom.Holds] at this
+  have hsat := hp (fun r _ => r = 0) hmodel
+  have hr0 : ∀ v : ℕ, pull mutantRules (fun r (_ : List Bool) => r = 0) 1 [decide (v = 0)] := by
+    intro v
+    unfold pull
+    refine ⟨_, List.mem_cons_of_mem _ (List.mem_singleton_self _), rfl, fun _ => decide (v = 0), ?_, rfl⟩
+    intro a ha
+    rw [List.mem_singleton] at ha
+    subst ha
+    rfl
+  have := hsat (fun v => decide (v = 0)) (by
+    intro a ha
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at ha
+    rcases ha with rfl | rfl
+    · exact hr0 0
+    · exact hr0 1)
+  simp at this
 """),
     # Bounded search would admit.
     ("bounded-search-admits", "NornSem/Obligation.lean",

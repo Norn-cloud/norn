@@ -72,6 +72,14 @@
       "justification": "scripts/verify-law-exceptions-aeneas.sh proves, for every identity type with lawful equality and every input of one length, that check_shape returns Ok exactly on a WellFormed tree and refuses with the first failing check, that lifted returns the semantic fold at fuel |ids| + 1 (on an admitted tree, the unique stable labelling) and that applied_exceptions marks exactly the Reported exceptions. The wrappers only collect values and map them back.",
       "blastRadius": "A wrongly collected id, target or validity flag would make the core decide about a different tree than the declared one while every theorem still holds.",
       "falsificationTest": "Run the norn-checker law_exceptions property test (level_fold_matches_the_recursive_fold, against the former recursive fold) and the law_ir and deontic tests; run the eleven seeded mutants in scripts/verify-law-exceptions-aeneas.sh and require each to fail the proof and be refuted by its witness."
+    },
+    {
+      "id": "TRUST-PRESERVATION-CHECK-MIRROR",
+      "owner": "Norn checker maintainers",
+      "boundary": "crates/norn-checker/src/consistency/preservation.rs: the Rust check that accepts path-mapping chase certificates, which mirrors NornSem.Exchange.check line by line, and the lowering of the string-keyed theories (relations interned, each dependency's variables numbered body first) into its integer form; the untrusted certify search is outside the boundary because its output only counts when the check accepts it.",
+      "justification": "scripts/verify-semantics-lean.sh proves NornSem.Exchange.check_sound: a certificate the Lean check accepts implies preservation for every source instance over every domain. The Rust check is a direct transcription of that function; machine-checked correspondence (Aeneas extraction) is #718 U7b. Anything the lowering does not model (constants, target TGDs, non-full mapping rules) is not certified and keeps the bounded evidence.",
+      "blastRadius": "A transcription or lowering defect could make admission report a path mapping as certified when the Lean check would refuse its certificate, so a non-preserving mapping could be admitted with proof-level evidence.",
+      "falsificationTest": "The path_mapping integration tests require every mapping with a verified counterexample to stay refused (certification never applies to it) and the identity mapping to be certified; U7b replaces the transcription with an Aeneas correspondence proof."
     }
   ]
 }

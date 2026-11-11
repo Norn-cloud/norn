@@ -1,4 +1,5 @@
 import NornSem.Obligation
+import NornSem.Exchange
 
 /-! The exact axiom inventory of the semantics' theorems; the gate diffs it. -/
 
@@ -23,3 +24,4 @@ import NornSem.Obligation
 #print axioms Norn.Sem.Obligation.admitAll_sound
 #print axioms Norn.Sem.Law.Tree.WellFormed.unambiguous
 #print axioms Norn.Sem.Obligation.exceptionTrees_sound
+#print axioms Norn.Sem.Exchange.check_sound
