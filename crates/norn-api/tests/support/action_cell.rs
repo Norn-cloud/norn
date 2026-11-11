@@ -111,10 +111,10 @@ where
     .unwrap()
 }
 
-/// A request body for one melt, with the exact tokens given.
+/// A request body for one melt. Exact decimals travel as their text (VAL-EXACT-1).
 #[must_use]
 pub fn melt_body(id: &str, input: &str, output: &str, key: &str) -> String {
     format!(
-        r#"{{"input":{{"id":"{id}","input_fine_g":{input},"output_fine_g":{output}}},"idempotencyKey":"{key}"}}"#
+        r#"{{"input":{{"id":"{id}","input_fine_g":"{input}","output_fine_g":"{output}"}},"idempotencyKey":"{key}"}}"#
     )
 }

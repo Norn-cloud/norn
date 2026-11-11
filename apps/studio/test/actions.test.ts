@@ -32,7 +32,7 @@ test("a real upsert's closed schema becomes typed fields, required first", () =>
 test("exact numbers reach the cell digit for digit; what is not a number goes as text for the cell to refuse", () => {
   const fields = fieldsOf(melt?.inputSchema)
   const draft = { ...emptyDraft(fields), id: "melt/1", input_fine_g: "9007199254740993", output_fine_g: "12,5" }
-  expect(encodeObject(fields, draft)).toBe('{"id":"melt/1","input_fine_g":9007199254740993,"output_fine_g":"12,5"}')
+  expect(encodeObject(fields, draft)).toBe('{"id":"melt/1","input_fine_g":"9007199254740993","output_fine_g":"12,5"}')
 })
 
 test("fields left empty are omitted, so the cell names what it requires", () => {
@@ -198,7 +198,7 @@ test("a draft is read and written by pointer, nested records included", () => {
   const draft = withDraftAt(emptyDraft(fields), "/location/site", "vault-a")
   expect(draftAt(draft, "/location/site")).toBe("vault-a")
   expect(draftAt(draft, "/location/bin")).toBe("")
-  expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":10.500,"location":{"site":"vault-a"}}')
+  expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":"10.500","location":{"site":"vault-a"}}')
 })
 
 test("contract v1 as CELL-DO approved it: any 404 or 503 is not served, whatever its body", async () => {

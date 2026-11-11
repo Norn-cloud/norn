@@ -268,9 +268,11 @@ function encodeLeaf(spec: Spec, value: string): string {
   switch (spec.kind) {
     case "integer":
     case "number":
-    case "decimal":
       // A number token goes as typed, digit for digit; anything else goes as text for the cell to refuse at its pointer.
       return NUMBER_TOKEN.test(value.trim()) ? value.trim() : JSON.stringify(value)
+    case "decimal":
+      // VAL-EXACT-1: the cell decodes an exact decimal only from its text, digit for digit ("12.500").
+      return JSON.stringify(value.trim())
     case "boolean": return value === "true" ? "true" : value === "false" ? "false" : JSON.stringify(value)
     case "json": try { JSON.parse(value); return value.trim() } catch { return JSON.stringify(value) }
     default: return JSON.stringify(value)

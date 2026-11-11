@@ -80,7 +80,7 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   await sheet(page).getByText("Details").click()
   await expect(sheet(page).getByText("Commit")).toBeVisible()
   // The exact decimal went as typed, digit for digit.
-  expect(actions.calls.at(-1)?.body).toContain('"quantity":10.500')
+  expect(actions.calls.at(-1)?.body).toContain('"quantity":"10.500"')
   await shoot(page, "receipt")
   // View record: the sheet closes, the grid reads again, and the new record's drawer opens.
   await sheet(page).getByRole("button", { name: "View record" }).click()

@@ -135,13 +135,13 @@ fn invalid_at(pointer: &str, message: &str) -> Refusal {
 /// Bound and decode one request body exactly. Duplicate or unknown members,
 /// a non-object input and a malformed key refuse; numbers keep their tokens.
 /// # Errors
-/// `request.body_too_large` (413) above [`MAX_ACTION_BODY_BYTES`], else
+/// `request.too_large` (413) above [`MAX_ACTION_BODY_BYTES`], else
 /// `request.invalid` (400) with a pointer into the body.
 pub fn decode_action_request(body: &str) -> Result<ActionRequest, Refusal> {
     if body.len() > MAX_ACTION_BODY_BYTES {
         return Err(Refusal::new(
             StatusCode::PAYLOAD_TOO_LARGE,
-            "request.body_too_large",
+            "request.too_large",
             "the request body exceeds the host bound",
             "an action call body is at most 260 KiB",
         ));

@@ -323,7 +323,7 @@ fn law_precondition_and_stale_pin_refuse_without_effects() {
     let before = dump(&host);
     let operator = Some(OPERATOR);
     // The caller's own loss breaks the fine-mass law: 10 != 8 + 5.
-    let law = r#"{"input":{"id":"melt-l","input_fine_g":10,"output_fine_g":8,"loss_fine_g":5},"idempotencyKey":"law"}"#;
+    let law = r#"{"input":{"id":"melt-l","input_fine_g":"10","output_fine_g":"8","loss_fine_g":"5"},"idempotencyKey":"law"}"#;
     let refused = call(&host, &scoped("org_demo"), operator, MELT_ACTION, law).unwrap_err();
     assert_eq!(
         (refused.status, refused.code.as_str()),
@@ -398,7 +398,7 @@ fn bodies_are_bounded_and_decoded_exactly_before_any_decision() {
     let refused = decode_action_request(&oversized).unwrap_err();
     assert_eq!(
         (refused.status, refused.code.as_str()),
-        (413, "request.body_too_large")
+        (413, "request.too_large")
     );
     for (body, pointer) in [
         (r#"{"input":[],"idempotencyKey":"k"}"#, Some("/input")),
@@ -435,7 +435,7 @@ fn bodies_are_bounded_and_decoded_exactly_before_any_decision() {
     let long_key = format!(r#"{{"input":{{}},"idempotencyKey":"{}"}}"#, "k".repeat(129));
     assert_eq!(decode_action_request(&long_key).unwrap_err().status, 400);
     let exact = decode_action_request(
-        r#"{"input":{"q":12.500,"big":123456789012345678901234567890},"idempotencyKey":"k"}"#,
+        r#"{"input":{"q":12.500,"big":7922816251426433759354395033},"idempotencyKey":"k"}"#,
     )
     .unwrap();
     let RuntimeValue::Object(input) = exact.input else {
@@ -444,8 +444,11 @@ fn bodies_are_bounded_and_decoded_exactly_before_any_decision() {
     assert_eq!(input["q"], RuntimeValue::from_json_text("12.5").unwrap());
     assert_eq!(
         input["big"],
-        RuntimeValue::from_json_text("123456789012345678901234567890").unwrap()
+        RuntimeValue::from_json_text("7922816251426433759354395033").unwrap()
     );
+    // A number no exact decimal holds is refused, never rounded.
+    let inexact = r#"{"input":{"big":123456789012345678901234567890},"idempotencyKey":"k"}"#;
+    assert_eq!(decode_action_request(inexact).unwrap_err().status, 400);
 }
 
 #[test]

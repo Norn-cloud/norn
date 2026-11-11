@@ -8,4 +8,5 @@ authorized read services and `norn-cell`'s portable store on
 - `principal`: `PrincipalResolver` is the one seam from transport credential
   to Norn principal (fixture principals until #817), plus the fixture policy.
 - `seed`: provisions the public three-systems demo cell idempotently.
-- `server`: read-only fetch dispatch; native tests run the identical code.
+- `server`: fetch dispatch over the shared read routes and the governed action
+  route (`POST /v1/actions/{actionId}`); native tests run the identical code.

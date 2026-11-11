@@ -19,11 +19,11 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, ObjectRecord};
-use norn_checker::EffectiveCatalog;
-use norn_checker::metric::compute::QuestionPlan;
 use norn_cell_do::policy::CallerSlot;
 use norn_cell_do::principal::FixturePrincipals;
 use norn_cell_do::server::{self, Response};
+use norn_checker::EffectiveCatalog;
+use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::MetricDefinition;
 use norn_kernel::authz::{
     self, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PdpActionAuthorizer,
@@ -41,10 +41,7 @@ use action_cell::{MELT, MELT_ACTION, melt_body, melt_store};
 
 const OPERATOR: &str = "Bearer fixture:operator@demo";
 const VIEWER: &str = "Bearer fixture:viewer@demo";
-const NAMES: &[(&str, &[&str])] = &[
-    ("operator@demo", &["member"]),
-    ("viewer@demo", &["viewer"]),
-];
+const NAMES: &[(&str, &[&str])] = &[("operator@demo", &["member"]), ("viewer@demo", &["viewer"])];
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 const ROUTE: &str = "/v1/actions/constitution.melt.convert";
 const FIXTURE: &str = include_str!("../../../apps/studio/test/fixtures/action-call.json");
@@ -277,7 +274,12 @@ fn post(cell: &Cell, authorization: Option<&str>, body: &str) -> (u16, Value) {
 /// carries a stand-in, every other member is compared exactly.
 fn normalized(mut receipt: Value) -> Value {
     let handle = receipt["receipt"]["receiptHash"].as_str().unwrap();
-    assert!(!handle.is_empty() && handle.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    assert!(
+        !handle.is_empty()
+            && handle
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    );
     receipt["receipt"]["receiptHash"] = Value::String("<keyed receipt handle>".into());
     receipt
 }
@@ -333,10 +335,16 @@ fn the_route_refuses_before_any_effect() {
     ));
     // A verified principal the PDP grants nothing: the kernel refuses the call.
     let (status, forbidden) = post(&cell, Some(VIEWER), &body);
-    assert_eq!((status, forbidden["code"].as_str()), (403, Some("action.permission_denied")));
-    let law = r#"{"input":{"id":"melt-3","input_fine_g":10,"output_fine_g":8,"loss_fine_g":5},"idempotencyKey":"law"}"#;
+    assert_eq!(
+        (status, forbidden["code"].as_str()),
+        (403, Some("action.permission_denied"))
+    );
+    let law = r#"{"input":{"id":"melt-3","input_fine_g":"10","output_fine_g":"8","loss_fine_g":"5"},"idempotencyKey":"law"}"#;
     let (status, violated) = post(&cell, Some(OPERATOR), law);
-    assert_eq!((status, violated["code"].as_str()), (422, Some("core.laws.violated")));
+    assert_eq!(
+        (status, violated["code"].as_str()),
+        (422, Some("core.laws.violated"))
+    );
     let (status, stale) = send(
         &cell,
         "POST",
@@ -351,11 +359,27 @@ fn the_route_refuses_before_any_effect() {
         "x".repeat(norn_api::actions::MAX_ACTION_BODY_BYTES)
     );
     let (status, large) = post(&cell, Some(OPERATOR), &oversized);
-    assert_eq!((status, large["code"].as_str()), (413, Some("request.body_too_large")));
+    assert_eq!(
+        (status, large["code"].as_str()),
+        (413, Some("request.too_large"))
+    );
     let (status, method) = send(&cell, "GET", ROUTE, SCOPE, Some(OPERATOR), "");
-    assert_eq!((status, method["code"].as_str()), (405, Some("route.method_not_allowed")));
-    let (status, unknown) = send(&cell, "POST", "/v1/actions/a/b", SCOPE, Some(OPERATOR), &body);
-    assert_eq!((status, unknown["code"].as_str()), (404, Some("route.not_found")));
+    assert_eq!(
+        (status, method["code"].as_str()),
+        (405, Some("route.method_not_allowed"))
+    );
+    let (status, unknown) = send(
+        &cell,
+        "POST",
+        "/v1/actions/a/b",
+        SCOPE,
+        Some(OPERATOR),
+        &body,
+    );
+    assert_eq!(
+        (status, unknown["code"].as_str()),
+        (404, Some("route.not_found"))
+    );
     // Nothing above committed: the first real call is the cell's first melt.
     let (status, first) = post(&cell, Some(OPERATOR), &body);
     assert_eq!(status, 200, "{first}");
