@@ -2283,19 +2283,19 @@ impl CellModel {
         chain.push(self.dispatch());
         for step in exchange.tail() {
             self.steps = self.steps.saturating_add(1);
-            chain.push(match step {
-                Some(delivery) => self.deliver(&delivery),
-                None => {
-                    if let Some(ix) = self
-                        .in_flight
-                        .iter()
-                        .position(|(command, _, _)| *command == exchange.first)
-                    {
-                        self.in_flight.remove(ix);
-                    }
-                    Expect::Nothing
+            let expect = if let Some(delivery) = step {
+                self.deliver(&delivery)
+            } else {
+                if let Some(ix) = self
+                    .in_flight
+                    .iter()
+                    .position(|(command, _, _)| *command == exchange.first)
+                {
+                    self.in_flight.remove(ix);
                 }
-            });
+                Expect::Nothing
+            };
+            chain.push(expect);
         }
         chain
     }
