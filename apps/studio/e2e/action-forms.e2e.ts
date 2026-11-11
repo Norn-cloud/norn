@@ -80,7 +80,7 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   await sheet(page).getByText("Details").click()
   await expect(sheet(page).getByText("Commit")).toBeVisible()
   // The exact decimal went as typed, digit for digit.
-  expect(actions.calls.at(-1)?.body).toContain('"quantity":10.500')
+  expect(actions.calls.at(-1)?.body).toContain('"quantity":"10.500"')
   await shoot(page, "receipt")
   // View record: the sheet closes, the grid reads again, and the new record's drawer opens.
   await sheet(page).getByRole("button", { name: "View record" }).click()
@@ -90,20 +90,19 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   await expect(page.getByText("41 records")).toBeVisible()
 })
 
-test("validate: the cell's refusal lands on each field it names; fixing them commits", async ({ page }) => {
+test("validate: the cell's input refusal shows on the form, which stays on the review; fixing it commits", async ({ page }) => {
   await open(page)
   await newRecord(page, "Open a holding")
   const form = sheet(page)
   await form.getByLabel("Quantity").fill("12,5")
   for (let i = 0; i < 3; i += 1) await form.locator('button[type="submit"]').click() // Next, Next, Review
   await form.getByRole("button", { name: "Open a holding" }).click()
-  // The wizard opens the first step the cell refused something on.
-  await expect(form.getByRole("alert").first()).toContainText("The cell refused this input.")
-  await expect(form.getByLabel("Quantity")).toHaveAttribute("aria-invalid", "true")
-  await expect(form.locator('[data-pointer="/quantity"]')).toContainText("must be an exact number")
-  await expect(form.locator('[data-pointer="/resource_code"]')).toContainText("Resource code is required.")
-  await expect(form.getByRole("button", { name: /Where it is\s*, 1 problem/ })).toBeVisible()
+  // The served route names no field in an input refusal yet, so the refusal shows on the review.
+  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  await expect(form.getByRole("region", { name: "Review" })).toBeVisible()
+  await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
   await shoot(page, "refused")
+  await form.getByRole("navigation", { name: "Steps" }).getByRole("button").first().click()
   await fillHolding(page, "demo/holding/9002", "12.500")
   await form.getByRole("button", { name: "Open a holding" }).click()
   await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/\d+ opened · just now$/)
@@ -176,7 +175,7 @@ test("reopen: a dirty draft asks before it is discarded; keep editing keeps it; 
   await expect(page.getByText("41 records")).toBeVisible()
 })
 
-test("create: a parent with owned rows takes a list of records, each refused at its own pointer", async ({ page }) => {
+test("create: a parent with owned rows takes a list of records; the cell's input refusal keeps them for fixing", async ({ page }) => {
   const { actions } = await open(page)
   await newRecord(page, "Restock holding")
   const form = sheet(page)
@@ -187,15 +186,15 @@ test("create: a parent with owned rows takes a list of records, each refused at 
   await form.getByLabel("Quantity").nth(0).fill("1.250")
   await form.getByLabel("Quantity").nth(1).fill("2,0")
   await form.getByRole("button", { name: "Restock holding" }).click()
-  await expect(form.locator('[data-pointer="/lots/1/lot"]')).toContainText("Lot is required.")
-  await expect(form.locator('[data-pointer="/lots/1/quantity"]')).toContainText("must be an exact number")
+  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
   await expect(form.getByRole("button", { name: "Remove lot 2" })).toBeVisible()
   await shoot(page, "rows")
   await form.getByRole("textbox", { name: "Lot", exact: true }).nth(1).fill("L-2")
   await form.getByLabel("Quantity").nth(1).fill("2.000")
   await form.getByRole("button", { name: "Restock holding" }).click()
   await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0003 restocked · just now")
-  expect(actions.calls.at(-1)?.body).toContain('"lots":[{"lot":"L-1","quantity":1.250},{"lot":"L-2","quantity":2.000}]')
+  expect(actions.calls.at(-1)?.body).toContain('"lots":[{"lot":"L-1","quantity":"1.250"},{"lot":"L-2","quantity":"2.000"}]')
 })
 
 test("while the cell takes no actions, New and the drawer's actions say why", async ({ page }) => {

@@ -4,13 +4,16 @@ import type { ObjectCell } from "./object-cell.ts"
 
 /**
  * A stand-in for CELL-DO's action routes (`GET /v1/actions`, `POST /v1/actions/{id}`) that
- * implements the proposed contract (apps/studio/src/lib/actions.ts) over the object stand-in's
- * canon.Holding population: closed-schema validation with every violation pointed at, rule
- * refusals without a pointer, idempotent replay, and commits that move the read snapshot.
+ * implements the served contract (apps/studio/src/lib/actions.ts, norn_api::actions) over the
+ * object stand-in's canon.Holding population: closed-schema validation, exact decimals only as
+ * their text (VAL-EXACT-1, docs/spec/core/01-values-identity.md), idempotent replay, and commits that
+ * move the read snapshot. It refuses exactly as the served route does: input the schema refuses is
+ * one 400 `action.invalid_input` with no field pointers, rule refusals carry no pointer, and an
+ * unknown action, absent target or hidden target is the one opaque 403.
  */
 
 interface Problem { code: string; message: string; pointer: string | null }
-type Schema = { type?: unknown; properties?: Record<string, Schema>; items?: Schema; required?: readonly string[]; enum?: readonly string[]; title?: string; additionalProperties?: boolean }
+type Schema = { type?: unknown; nornType?: { kind?: string; scale?: number }; properties?: Record<string, Schema>; items?: Schema; required?: readonly string[]; enum?: readonly string[]; title?: string; additionalProperties?: boolean }
 
 function check(schema: Schema, value: unknown, at: string, problems: Problem[]) {
   const types = Array.isArray(schema.type) ? schema.type.map(String) : [String(schema.type)]
@@ -34,6 +37,11 @@ function check(schema: Schema, value: unknown, at: string, problems: Problem[]) 
     value.forEach((item, i) => check(schema.items ?? {}, item, `${at}/${i}`, problems))
     return
   }
+  if (type === "number" && schema.nornType?.kind === "decimal") {
+    // The cell decodes an exact decimal only from its text; a number token refuses.
+    if (typeof value !== "string" || !servedDecimal(value, schema.nornType.scale ?? 18)) problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
+    return
+  }
   if (type === "number" && typeof value !== "number") return void problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
   if (type === "string") {
     if (typeof value !== "string") return void problems.push({ code: "action.input_invalid", message: `${name} must be text.`, pointer: at })
@@ -42,8 +50,38 @@ function check(schema: Schema, value: unknown, at: string, problems: Problem[]) 
   }
 }
 
-/** The exact number token the caller sent for a member, as written (JSON.parse would round it). */
-const rawNumber = (body: string, member: string) => body.match(new RegExp(`"${member}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`))?.[1]
+/** The served route's one opaque denial (norn_api::actions::action_denied). */
+const DENIED = { code: "authz.denied", category: "permission", message: "the action request is not authorized", explanation: "access to the requested action is denied" }
+
+/** The served route's input refusal to a caller without the refusal-detail grant: no field pointers. */
+const INVALID_INPUT = { format: "norn/refusal@2", retryable: false, reason: null, code: "action.invalid_input", category: "invalid", message: "the request is invalid", explanation: "diagnostic detail is unavailable under the caller's disclosure authority" }
+
+/** One JSON number token (RFC 8259): sign, integer digits, fraction and exponent captured. */
+const JSON_NUMBER = /^-?(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/
+/** rust_decimal's largest mantissa, 2^96 - 1. */
+const MAX_MANTISSA = 2n ** 96n - 1n
+
+/**
+ * Whether the served route decodes `text` as a declared decimal of `scale`, by its own rule:
+ * `norn_ir::Decimal::parse` (crates/norn-ir/src/runtime.rs) takes one JSON number token, exponent
+ * included, and refuses as inexact any value outside a 96-bit mantissa with at most 28 fractional
+ * digits once normalized; then `Schema::decode_action_input` (crates/norn-expr/src/schema.rs) checks it
+ * through `ScaledArithmetic::rescale` (vendor/zen/core/expression/src/scaled.rs), which refuses more
+ * fractional digits than `scale` and a coefficient at `scale` beyond that mantissa.
+ */
+function servedDecimal(text: string, scale: number): boolean {
+  const token = JSON_NUMBER.exec(text)
+  if (token === null) return false
+  const fraction = token[2] ?? ""
+  let digits = BigInt(`${token[1]}${fraction}`)
+  if (digits === 0n) return true
+  let exponent = Number(token[3] ?? "0") - fraction.length
+  while (digits % 10n === 0n) { digits /= 10n; exponent += 1 }
+  const fractional = Math.max(0, -exponent)
+  // Past 29 digits of scaling no coefficient fits the mantissa, so the bound also stops a huge exponent.
+  if (fractional > 28 || fractional > scale || exponent + scale > 29) return false
+  return digits * 10n ** BigInt(exponent + scale) <= MAX_MANTISSA
+}
 
 export interface ActionCell {
   /** Every call body the form sent, for assertions on what it asked. */
@@ -83,7 +121,8 @@ export async function actionCell(page: Page, objects: ObjectCell, options: Actio
     if (hold !== null) { const held = hold; hold = null; await held }
     if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
     const action = ACTIONS.find((a) => a.actionId === actionId)
-    if (action === undefined) return route.fulfill({ status: 404, json: { code: "route.not_found", message: "No such route." } })
+    // An unknown action is the same opaque denial as an absent or hidden target.
+    if (action === undefined) return route.fulfill({ status: 403, json: DENIED })
     const { input, idempotencyKey } = JSON.parse(body) as { input: Record<string, unknown>; idempotencyKey: string }
     const inputText = JSON.stringify(input)
     const known = keys.get(idempotencyKey)
@@ -93,20 +132,21 @@ export async function actionCell(page: Page, objects: ObjectCell, options: Actio
     }
     const problems: Problem[] = []
     check(action.inputSchema as unknown as Schema, input, "/input", problems)
-    if (problems.length > 0) return route.fulfill({ status: 422, json: { code: "action.input_invalid", category: "input", message: "The cell refused this input.", diagnostics: problems } })
+    if (problems.length > 0) return route.fulfill({ status: 400, json: INVALID_INPUT })
     const id = String(input["id"])
     const index = objects.rows.findIndex((row) => row.id === id)
     const existing = objects.rows[index]
     if (action.effect === "fire_transition") {
-      if (existing === undefined || existing.withheld) return route.fulfill({ status: 404, json: { code: "action.target_not_found", category: "not_found", message: "There is no such holding you can see.", diagnostics: [{ code: "action.target_not_found", message: "No such holding.", pointer: "/input/id" }] } })
+      // An absent or hidden target is the one opaque denial, like an unknown or ungranted action.
+      if (existing === undefined || existing.withheld) return route.fulfill({ status: 403, json: DENIED })
       if (existing.values["retired"] === "true") return route.fulfill({ status: 422, json: { code: "action.precondition_failed", category: "rule", message: "This holding is retired; it can't change any more.", diagnostics: [{ code: "action.precondition_failed", message: "The holding is retired.", pointer: null }] } })
     }
     const version = (existing?.version ?? 1) + (existing ? 1 : 0)
     const values = { ...(existing?.values ?? {}) }
     if (actionId === "canon.holding.open") {
-      Object.assign(values, { resource_code: String(input["resource_code"]), quantity: rawNumber(body, "quantity") ?? String(input["quantity"]), unit: "g", currency: "USD", valuation_method: String(input["valuation_method"]), location: String((input["location"] as { site: string }).site), quantity_basis: "on_hand", stock_cost: "0.000000", cost_currency: "USD" })
+      Object.assign(values, { resource_code: String(input["resource_code"]), quantity: String(input["quantity"]), unit: "g", currency: "USD", valuation_method: String(input["valuation_method"]), location: String((input["location"] as { site: string }).site), quantity_basis: "on_hand", stock_cost: "0.000000", cost_currency: "USD" })
     } else if (actionId === "canon.holding.restock") values["lots"] = String((input["lots"] as unknown[]).length)
-    else if (actionId === "canon.holding.adjust") values["quantity"] = rawNumber(body, "quantity") ?? String(input["quantity"])
+    else if (actionId === "canon.holding.adjust") values["quantity"] = String(input["quantity"])
     else if (actionId === "canon.holding.retire") values["retired"] = "true"
     const row = { id, withheld: false, withheldProperties: [], values, version }
     if (existing) objects.rows[index] = row
