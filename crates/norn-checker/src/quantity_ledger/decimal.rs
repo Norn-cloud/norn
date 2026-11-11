@@ -18,8 +18,10 @@ pub(super) fn canonical_parts(mut unscaled: i128, mut scale: u8) -> (i128, u8) {
 /// VAL-EXACT-1: exact decimal alignment multiplier, or overflow refusal.
 pub(super) fn checked_pow10(exponent: u8) -> Option<i128> {
     let mut value = 1_i128;
-    for _ in 0..exponent {
+    let mut remaining = exponent;
+    while let Some(next_remaining) = remaining.checked_sub(1) {
         value = value.checked_mul(10)?;
+        remaining = next_remaining;
     }
     Some(value)
 }

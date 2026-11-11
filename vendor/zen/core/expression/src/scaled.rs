@@ -15,6 +15,27 @@ pub struct ScaledArithmetic {
     pub rounding: Rounding,
 }
 
+/// FOLD-ARITHMETIC: why an exact signed quotient refuses. Typed so the rounding
+/// core extracts to Lean (#717); callers still receive the same messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuotientRefusal {
+    DivisorOrOverflow,
+    RemainderOverflow,
+    Inexact,
+    RoundingOverflow,
+}
+
+impl From<QuotientRefusal> for &'static str {
+    fn from(refusal: QuotientRefusal) -> Self {
+        match refusal {
+            QuotientRefusal::DivisorOrOverflow => "zero divisor or quotient overflow",
+            QuotientRefusal::RemainderOverflow => "remainder overflow",
+            QuotientRefusal::Inexact => "inexact result refused",
+            QuotientRefusal::RoundingOverflow => "rounding overflow",
+        }
+    }
+}
+
 impl ScaledArithmetic {
     /// VAL-ROUND: explicit modes override inherited sites; absent modes never round.
     pub fn rounding_site(
@@ -156,38 +177,49 @@ impl ScaledArithmetic {
             .map_err(|_| "number exceeds the exact decimal range")
     }
 
-    /// FOLD-ARITHMETIC: exact signed remainders select the declared rounding rule.
-    fn quotient(self, numerator: i128, denominator: i128) -> Result<i128, &'static str> {
-        let quotient = numerator
-            .checked_div(denominator)
-            .ok_or("zero divisor or quotient overflow")?;
-        let remainder = numerator
-            .checked_rem(denominator)
-            .ok_or("remainder overflow")?;
-        if remainder == 0 {
-            return Ok(quotient);
+    /// FOLD-ARITHMETIC: the declared rounding of an exact signed quotient.
+    fn quotient(self, numerator: i128, denominator: i128) -> Result<i128, QuotientRefusal> {
+        rounded_quotient(self.rounding, numerator, denominator)
+    }
+}
+
+/// FOLD-ARITHMETIC: exact signed remainders select the declared rounding rule.
+fn rounded_quotient(
+    rounding: Rounding,
+    numerator: i128,
+    denominator: i128,
+) -> Result<i128, QuotientRefusal> {
+    let quotient = numerator
+        .checked_div(denominator)
+        .ok_or(QuotientRefusal::DivisorOrOverflow)?;
+    let remainder = numerator
+        .checked_rem(denominator)
+        .ok_or(QuotientRefusal::RemainderOverflow)?;
+    if remainder == 0 {
+        return Ok(quotient);
+    }
+    let round = match rounding {
+        Rounding::Refuse => return Err(QuotientRefusal::Inexact),
+        Rounding::TowardZero => false,
+        Rounding::HalfEven | Rounding::HalfAwayFromZero => {
+            let magnitude = remainder.unsigned_abs();
+            let complement = denominator.unsigned_abs() - magnitude;
+            magnitude > complement
+                || (magnitude == complement
+                    && (rounding == Rounding::HalfAwayFromZero || quotient % 2 != 0))
         }
-        let round = match self.rounding {
-            Rounding::Refuse => return Err("inexact result refused"),
-            Rounding::TowardZero => false,
-            Rounding::HalfEven | Rounding::HalfAwayFromZero => {
-                let magnitude = remainder.unsigned_abs();
-                let complement = denominator.unsigned_abs() - magnitude;
-                magnitude > complement
-                    || (magnitude == complement
-                        && (self.rounding == Rounding::HalfAwayFromZero || quotient % 2 != 0))
-            }
-        };
-        if round {
-            let direction = if (numerator < 0) == (denominator < 0) {
-                1
-            } else {
-                -1
-            };
-            quotient.checked_add(direction).ok_or("rounding overflow")
+    };
+    if round {
+        let direction = if (numerator < 0) == (denominator < 0) {
+            1
         } else {
-            Ok(quotient)
-        }
+            -1
+        };
+        quotient
+            .checked_add(direction)
+            .ok_or(QuotientRefusal::RoundingOverflow)
+    } else {
+        Ok(quotient)
     }
 }
 
