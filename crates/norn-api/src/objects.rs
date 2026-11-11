@@ -220,6 +220,7 @@ pub struct NornObjectLinkPage {
     /// Visible links, in the cell's stable order.
     pub items: Vec<NornLinkEdge>,
     /// The cursor for the next page, when one exists.
+    #[schema(required = true, nullable = true)]
     pub next: Option<String>,
 }
 

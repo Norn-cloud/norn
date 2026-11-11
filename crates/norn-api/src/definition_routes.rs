@@ -31,7 +31,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::authz::{AccessRequest, Operation, read_denied};
 use crate::host::DevHost;
-use crate::question_routes::{AdHocQuestions, check_ad_hoc};
+use crate::question_routes::{AdHocQuestions, check_ad_hoc, disclosed_receipt};
 use crate::refusal::{Refusal, RefusalDiagnostic, RefusalRestatement};
 use crate::scope::ScopeQuery;
 
@@ -203,20 +203,32 @@ pub struct DefinitionKinds {
 /// UTF-8 bytes.
 pub type Restater = fn(&str, &str, &[MetricDefinition]) -> Result<String, String>;
 
-/// The flow restatement as a [`Restater`]: flows restate from their IR
-/// ([`crate::flow_definitions::restate`]); other kinds have none here.
+/// The checker's restatement (`norn_checker::metric::restate`), the words
+/// Studio shows a signer: a saved question's `QuestionIR`, or a dashboard
+/// with one line per tile. A flow restates from its IR
+/// ([`crate::flow_definitions::restate`]). Other kinds have none.
 ///
 /// # Errors
-/// A non-flow kind, or a payload that does not restate.
-pub fn flow_restater(
+/// Another kind, or a payload the checker cannot restate.
+pub fn checker_restatement(
     kind: &str,
-    payload: &str,
-    _metrics: &[MetricDefinition],
+    canonical: &str,
+    metrics: &[MetricDefinition],
 ) -> Result<String, String> {
-    if kind == "flow" {
-        crate::flow_definitions::restate(payload)
-    } else {
-        Err(format!("a {kind} has no plain-words restatement here"))
+    use norn_checker::metric::restate::{restate_dashboard, restate_question};
+    match kind {
+        "question" => {
+            let question: QuestionIR =
+                serde_json::from_str(canonical).map_err(|error| error.to_string())?;
+            restate_question(&question, metrics).map_err(|error| error.to_string())
+        }
+        "dashboard" => {
+            let payload: Value =
+                serde_json::from_str(canonical).map_err(|error| error.to_string())?;
+            restate_dashboard(&payload, metrics).map_err(|error| error.to_string())
+        }
+        "flow" => crate::flow_definitions::restate(canonical),
+        other => Err(format!("{other} has no restatement")),
     }
 }
 
@@ -332,8 +344,13 @@ pub struct AdmitDefinitionResponse {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DefinitionReceipt {
-    /// The commit receipt's hash.
-    pub receipt_hash: String,
+    /// The commit receipt's hash, for a reader granted Values on every object
+    /// type of the cell; every other reader gets its keyed handle
+    /// (`norn.receipt/1`, D53), since the receipt commits to the ledger head
+    /// and so to every earlier event's values. Null when the cell holds no
+    /// handle key.
+    #[schema(required = true, nullable = true)]
+    pub receipt_hash: Option<String>,
     /// The commit sequence.
     pub commit_seq: u64,
     /// Host time of the commit, in Unix milliseconds.
@@ -363,8 +380,10 @@ pub struct InstallDefinitionResponse {
 #[into_params(parameter_in = Query)]
 pub struct ListDefinitionsQuery {
     /// Required organization.
+    #[param(required = true, nullable = false)]
     pub org_id: Option<String>,
     /// Required environment.
+    #[param(required = true, nullable = false)]
     pub environment_id: Option<String>,
     /// The kind to list.
     pub kind: Option<String>,
@@ -415,8 +434,10 @@ pub struct DefinitionPage {
 #[into_params(parameter_in = Query)]
 pub struct GetDefinitionQuery {
     /// Required organization.
+    #[param(required = true, nullable = false)]
     pub org_id: Option<String>,
     /// Required environment.
+    #[param(required = true, nullable = false)]
     pub environment_id: Option<String>,
     /// A past version; absent selects the current one.
     pub version: Option<u64>,
@@ -966,7 +987,7 @@ fn layout(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>
 /// # Errors
 /// A denied caller (403), a malformed request or id (400), an unknown kind
 /// (422 `definition.kind_unknown`), or a host failure.
-#[utoipa::path(post, path = "/v1/definitions:admit", params(ScopeQuery), request_body = AdmitDefinitionRequest, responses((status = 200, body = AdmitDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/definitions:admit", params(ScopeQuery), request_body = AdmitDefinitionRequest, responses((status = 200, description = "The admission decision.", body = AdmitDefinitionResponse), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused: the definition is not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn admit_definition<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -1020,17 +1041,22 @@ fn restate<E: SqlEngine>(
         })
 }
 
+/// The receipt of `record`'s commit as `actor` may see it (#1164, D53): the
+/// raw hash only for a reader with whole-world Values, else its keyed handle.
 fn receipt<E: SqlEngine>(
     host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: &str,
     record: &RetainedDefinitionRecord,
 ) -> Result<DefinitionReceipt, Refusal> {
     let cell = host.cell()?;
-    let receipt_hash = cell
+    let raw = cell
         .store()
         .read()
         .receipt_hash_at(record.commit_seq)
         .map_err(Refusal::host)?
         .ok_or_else(|| Refusal::host("retained definition commit has no receipt"))?;
+    let receipt_hash = disclosed_receipt(host, questions, cell.store(), actor, &raw)?;
     Ok(DefinitionReceipt {
         receipt_hash,
         commit_seq: record.commit_seq,
@@ -1038,16 +1064,32 @@ fn receipt<E: SqlEngine>(
     })
 }
 
-/// Append `definition` (compare-and-set on `expected`) through the governed
-/// definitions install, at host time `now_ms`.
+/// The cell's active definitions version.
+fn definitions_version<E: SqlEngine>(host: &DevHost<E>) -> Result<u64, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    reader
+        .installed_definitions(None)
+        .map_err(Refusal::host)?
+        .map(|active| active.version)
+        .ok_or_else(|| Refusal::host("the cell has no installed definitions"))
+}
+
+/// Append `definition` (compare-and-set on `expected`, and on the active
+/// definitions version when `pinned`) through the governed definitions
+/// install, at host time `now_ms`.
 #[allow(
+    clippy::too_many_arguments,
     clippy::too_many_lines,
-    reason = "the version check, kernel admission and the one governed commit run under one lock"
+    reason = "one governed append's fixed inputs; the version check, kernel admission and the one governed commit run under one lock"
 )]
 fn append<E: SqlEngine>(
     host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: &str,
     mut definition: RetainedDefinition,
     expected: Option<u64>,
+    pinned: Option<u64>,
     signed: Option<(&str, String)>,
     flow: Option<&crate::flow_definitions::Flow>,
     now_ms: u64,
@@ -1070,7 +1112,9 @@ fn append<E: SqlEngine>(
             };
             (active, current, bindings)
         };
-        if current.as_ref().map(|current| current.definition.revision) != expected {
+        if current.as_ref().map(|current| current.definition.revision) != expected
+            || pinned.is_some_and(|pinned| pinned != active.version)
+        {
             return Err(version_conflict());
         }
         if let Some(current) = &current
@@ -1173,7 +1217,7 @@ fn append<E: SqlEngine>(
         installed: true,
         id: record.definition.id.clone(),
         version: record.definition.revision,
-        receipt: receipt(host, &record)?,
+        receipt: receipt(host, questions, actor, &record)?,
         flow: flow_summary(&record.definition),
     })
 }
@@ -1184,7 +1228,7 @@ fn append<E: SqlEngine>(
 /// As [`admit_definition`]; an inadmissible payload (422 `definition.refused`
 /// with diagnostics); a stale `expectedVersion` (409
 /// `definition.version_conflict`).
-#[utoipa::path(post, path = "/v1/definitions:install", params(ScopeQuery), request_body = InstallDefinitionRequest, responses((status = 200, body = InstallDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 409, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/definitions:install", params(ScopeQuery), request_body = InstallDefinitionRequest, responses((status = 200, description = "The installed version.", body = InstallDefinitionResponse), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 409, description = "The request was refused: the definition changed since it was read.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused: the definition is not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn install_definition<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -1197,6 +1241,13 @@ pub fn install_definition<E: SqlEngine>(
     authorize(host, scope, actor, Operation::WriteDefinitions)?;
     let actor = actor.ok_or_else(read_denied)?;
     check_id(&request.id)?;
+    // An agent is admitted against the bindings of this definitions version;
+    // it commits only if no definition was written since.
+    let pinned = if request.kind == "agent" {
+        Some(definitions_version(host)?)
+    } else {
+        None
+    };
     let (payload, diagnostics) = validate(
         host,
         scope,
@@ -1227,6 +1278,8 @@ pub fn install_definition<E: SqlEngine>(
         .ok_or_else(version_conflict)?;
     append(
         host,
+        questions,
+        actor,
         RetainedDefinition {
             kind: request.kind.clone(),
             id: request.id.clone(),
@@ -1238,6 +1291,7 @@ pub fn install_definition<E: SqlEngine>(
             signoff: None,
         },
         request.expected_version,
+        pinned,
         signed,
         payload.flow.as_ref(),
         now_ms,
@@ -1289,16 +1343,18 @@ fn verify_signoff(
 /// # Errors
 /// A denied caller (403), an unknown id (404 `definition.not_found`), a stale
 /// `expectedVersion` (409), an already retired definition (422).
-#[utoipa::path(post, path = "/v1/definitions/{id}:retire", params(("id" = String, Path, description = "The definition id."), ScopeQuery), request_body = RetireDefinitionRequest, responses((status = 200, body = InstallDefinitionResponse), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 409, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/definitions/{id}:retire", params(("id" = String, Path, description = "The definition id."), ScopeQuery), request_body = RetireDefinitionRequest, responses((status = 200, description = "The retired version.", body = InstallDefinitionResponse), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 409, description = "The request was refused: the definition changed since it was read.", body = Refusal), (status = 422, description = "The request was refused: the definition is not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn retire_definition<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
     actor: Option<&str>,
+    questions: Option<&dyn AdHocQuestions<E>>,
     id: &str,
     request: &RetireDefinitionRequest,
     now_ms: u64,
 ) -> Result<InstallDefinitionResponse, Refusal> {
     authorize(host, scope, actor, Operation::WriteDefinitions)?;
+    let actor = actor.ok_or_else(read_denied)?;
     check_id(id)?;
     let current = {
         let cell = host.cell()?;
@@ -1340,8 +1396,11 @@ pub fn retire_definition<E: SqlEngine>(
     definition.signoff = None;
     append(
         host,
+        questions,
+        actor,
         definition,
         Some(request.expected_version),
+        None,
         None,
         None,
         now_ms,
@@ -1370,7 +1429,7 @@ fn cursor_invalid() -> Refusal {
 /// kind, ordered by id, retired ones only with `include=retired`.
 /// # Errors
 /// A denied caller (403), a missing kind, a bad limit or cursor (400).
-#[utoipa::path(get, path = "/v1/definitions:list", params(ListDefinitionsQuery), responses((status = 200, body = DefinitionPage), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/definitions:list", params(ListDefinitionsQuery), responses((status = 200, description = "One page of definitions.", body = DefinitionPage), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 #[allow(
     clippy::too_many_lines,
     reason = "the query's checks, the filtered page walk and the bound cursor stay together"
@@ -1495,7 +1554,7 @@ pub fn list_definitions<E: SqlEngine>(
 /// # Errors
 /// A denied caller (403), an invalid id (400), an unknown id or version (404
 /// `definition.not_found`).
-#[utoipa::path(get, path = "/v1/definitions/{id}", params(("id" = String, Path, description = "The definition id."), GetDefinitionQuery), responses((status = 200, body = DefinitionDocument), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/definitions/{id}", params(("id" = String, Path, description = "The definition id."), GetDefinitionQuery), responses((status = 200, description = "The definition version.", body = DefinitionDocument), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_definition<E: SqlEngine>(
     host: &DevHost<E>,
     query: &GetDefinitionQuery,
@@ -1509,6 +1568,7 @@ pub fn get_definition<E: SqlEngine>(
         environment_id: query.environment_id.clone(),
     };
     authorize(host, &scope, actor, Operation::ReadDefinitions)?;
+    let actor = actor.ok_or_else(read_denied)?;
     check_id(id)?;
     let _epoch = host.definition_read()?;
     let record = {
@@ -1519,7 +1579,7 @@ pub fn get_definition<E: SqlEngine>(
             .map_err(Refusal::host)?
             .ok_or_else(not_found)?
     };
-    let receipt = receipt(host, &record)?;
+    let receipt = receipt(host, questions, actor, &record)?;
     let (restatement, restatement_sha256) = restate(
         kinds,
         questions,

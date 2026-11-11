@@ -1794,6 +1794,7 @@ pub(crate) enum ClosedSchemaUnions {
     /// The declared closed non-null type or null.
     Nullable,
     /// Existing ActionIR input leaves: nullable primitives or bounded JSON.
+    /// ACTION-ACTOR-1 also reserves actor/approved property names at every depth.
     ActionInput,
 }
 
@@ -1917,6 +1918,17 @@ pub(crate) fn validate_closed_schema(
         }
     }
     reject_unknown_object_fields(schema, &allowed, path, diagnostics, artifact_id, code);
+    if schema
+        .get("description")
+        .is_some_and(|description| description.as_string().is_none())
+    {
+        diagnostics.push(invalid_diagnostic(
+            code,
+            "description must be a string",
+            format!("{path}.description"),
+            artifact_id,
+        ));
+    }
 
     match schema_type {
         "object" => {
@@ -1978,6 +1990,16 @@ pub(crate) fn validate_closed_schema(
                 }
             }
             for (field, field_schema) in properties {
+                if matches!(profile.unions, ClosedSchemaUnions::ActionInput)
+                    && matches!(field.as_str(), "actor" | "approved")
+                {
+                    diagnostics.push(invalid_diagnostic(
+                        code,
+                        "ActionIR input reserves actor and approved for authenticated context",
+                        format!("{path}.properties.{field}"),
+                        artifact_id,
+                    ));
+                }
                 validate_closed_schema(
                     Some(field_schema),
                     &format!("{path}.properties.{field}"),
@@ -2470,7 +2492,16 @@ fn validate_setting_typed_value(
     const CODE: &str = "setting.validation.invalid_payload";
     match (value_type, value) {
         (Some("text"), Some(JsonValue::String(_))) => {}
-        (Some("number"), Some(JsonValue::Number(value))) if value.is_finite() => {}
+        (Some("number"), Some(JsonValue::String(value))) => {
+            if let Err(error) = norn_ir::SettingValue::decimal(value) {
+                diagnostics.push(invalid_diagnostic(
+                    "core.values.inexact",
+                    error.to_string(),
+                    "payload.value",
+                    artifact_id,
+                ));
+            }
+        }
         (Some("boolean"), Some(JsonValue::Bool(_))) => {}
         (Some("json"), Some(value)) => {
             validate_json_value(value, "payload.value", diagnostics, artifact_id)
@@ -2483,7 +2514,7 @@ fn validate_setting_typed_value(
         )),
         (Some("number"), Some(_)) => diagnostics.push(invalid_diagnostic(
             CODE,
-            "payload.value must be a finite number for number settings",
+            "payload.value must be an exact decimal string for number settings",
             "payload.value",
             artifact_id,
         )),

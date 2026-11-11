@@ -64,6 +64,8 @@
     "crates/norn-ir/src/source_schema.rs",
     "crates/norn-ir/src/technical_view.rs",
     "crates/norn-ir/src/verification.rs",
+    "crates/norn-ir/src/verification/evidence.rs",
+    "crates/norn-ir/src/verification/guarantees.rs",
     "crates/norn-ir/src/view.rs",
     "crates/norn-ir/src/widget.rs",
     "crates/norn-ir/src/widget_ux.rs",

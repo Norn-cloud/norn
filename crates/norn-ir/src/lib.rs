@@ -73,6 +73,7 @@ pub mod posting;
 pub mod provenance;
 pub mod quantity_ledger;
 pub mod requirement_display;
+pub mod reviewed_locale;
 mod rounding;
 pub use rounding::Rounding;
 pub mod rule;
@@ -259,8 +260,8 @@ pub mod canonical {
 
 pub mod verification;
 pub use verification::{
-    LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity, LawStateScope,
-    LawTiming,
+    LawException, LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity,
+    LawStateScope, LawTiming,
 };
 
 pub const SUPPORTED_IR_VERSION: &str = "0.1";
@@ -1449,7 +1450,11 @@ define_payload_root!(
             modality => "modality" as LawModality,
             response => "response" as LawResponse
         }
-        optional { condition => "condition" as ZenExpression, timing => "timing" as LawTiming }
+        optional {
+            condition => "condition" as ZenExpression,
+            timing => "timing" as LawTiming,
+            exceptions => "exceptions" as Vec<LawException>
+        }
     }
 );
 

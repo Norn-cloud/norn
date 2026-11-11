@@ -26,6 +26,7 @@ name = "canonical_values_kani"
 path = "../../verification/canonical-values-v1/diagnostic_kani.rs"
 
 [dependencies]
+ascent = { workspace = true }
 # Unicode NFC/NFKC for identity-key normalization (#2848); the edge is in
 # SKELETON.md (`norn-checker ← ir, expr, canonical`).
 norn-canonical = { path = "../norn-canonical" }
@@ -43,14 +44,18 @@ serde_path_to_error = "=0.1.20"
 sha2 = "0.10.9"
 
 [build-dependencies]
+# Fixed shared AST admission and build-time projection; never a runtime executor.
+norn-datalog = { path = "../norn-datalog" }
+# Maintained Rust token generation; already present transitively in the workspace.
+quote = "1.0"
 regex-lite = "0.1.9"
 serde_json = "1.0.150"
 
 [dev-dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
 # Pinned OSI-schema round-trip validation only; reuses workspace 0.47.0.
 jsonschema = { version = "=0.47.0", default-features = false }
 proptest = "1.11.0"
-serde = { version = "1.0.228", features = ["derive"] }
 
 [lints]
 workspace = true

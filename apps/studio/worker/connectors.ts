@@ -20,6 +20,8 @@ export interface ConnectorEnv {
   /** The gateway origin, e.g. https://gateway.example; absent when this stage has no gateway. */
   readonly TOOL_GATEWAY_URL?: string
   readonly BETTER_AUTH_URL: string
+  /** The stage's trusted origins; absent means the one `BETTER_AUTH_URL`. */
+  readonly trustedOrigins?: readonly string[]
 }
 
 /** What the routes reach outside the request: the bindings table, the person's grant and the network. */
@@ -125,7 +127,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   if (actor === null) return refusal(401, "connectors.sign_in", "Sign in first.")
   // Service keys cannot hold a person's gateway grant.
   if (actor.actorKind !== "user") return refusal(403, "connectors.user_only", "Connectors act for a signed-in person, not an API key.")
-  if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refusal(403, "connectors.origin", "Cross-origin request refused.")
+  if (!originAllowed(request, actor, env.trustedOrigins ?? [env.BETTER_AUTH_URL])) return refusal(403, "connectors.origin", "Cross-origin request refused.")
   // The cell scope is the session's: its active organization and that organization's environment.
   const { environmentId } = await cellScope(auth, actor.orgId)
   // Every connector verb is the host PDP's decision (#1036); the Worker holds no role logic.

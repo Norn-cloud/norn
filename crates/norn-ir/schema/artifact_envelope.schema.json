@@ -5834,6 +5834,40 @@
         "properties"
       ]
     },
+    "LawException": {
+      "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "description": "Boolean ZEN predicate over the law subject's `self` environment.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "description": "Stable identity, unique within the tree and distinct from the law id.",
+          "type": "string"
+        },
+        "overrides": {
+          "description": "The law's own id, or the id of another exception in the same tree.",
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Reviewed explanation.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source location of the declaration.",
+          "$ref": "#/$defs/RuleSourceSpan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "overrides",
+        "condition",
+        "rationale",
+        "source"
+      ]
+    },
     "LawInterpretationIr": {
       "description": "Typed interpretation contract. Admission refuses until conformance exists.",
       "type": "object",
@@ -5944,6 +5978,14 @@
         "condition": {
           "description": "Optional pointwise activation predicate (not an edge trigger).",
           "$ref": "#/$defs/ZenExpression"
+        },
+        "exceptions": {
+          "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LawException"
+          },
+          "minItems": 1
         },
         "id": {
           "description": "Stable identity, preserved by all authoring faces.",
@@ -7529,6 +7571,10 @@
             "$ref": "#/$defs/KeySpec"
           }
         },
+        "immutable": {
+          "description": "FA-IMM-1: existing instances are append-only; subtypes inherit this flag.",
+          "type": "boolean"
+        },
         "implements": {
           "description": "Interfaces the type implements, in addition to those its supertypes\nimplement. Omitted when empty.",
           "type": "array",
@@ -8825,6 +8871,25 @@
           ]
         },
         {
+          "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+          "type": "object",
+          "properties": {
+            "group": {
+              "description": "Same-name members in one interface bind identically.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal-binding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group"
+          ]
+        },
+        {
           "description": "`true` or `false`.",
           "type": "object",
           "properties": {
@@ -9535,6 +9600,26 @@
         "half_away_from_zero"
       ]
     },
+    "RuleByteRange": {
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ]
+    },
     "RuleConditionV1": {
       "description": "RuleIR v1 closed-operator condition, mirroring the conditions the\n`norn-engine` closed evaluator runs (`RuleCondition`).",
       "oneOf": [
@@ -10020,6 +10105,33 @@
         "modifiedProperty"
       ]
     },
+    "RuleSourceSpan": {
+      "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleByteRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pointer": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "pointer"
+      ]
+    },
     "RuleTrigger": {
       "description": "A committed ledger event that triggers a `decide` rule (T3-DEC-3, #2671).",
       "oneOf": [
@@ -10324,8 +10436,7 @@
         {
           "properties": {
             "value": {
-              "type": "number",
-              "format": "double"
+              "$ref": "#/$defs/DecimalLiteral"
             },
             "valueType": {
               "const": "number"
@@ -10419,7 +10530,7 @@
       ]
     },
     "SettingValueType": {
-      "description": "The JSON type of a setting's `value`.",
+      "description": "The setting value kind; numbers use exact decimal-string literals.",
       "type": "string",
       "enum": [
         "text",
@@ -10474,6 +10585,84 @@
     "SliceKey": {
       "description": "Where a [`SliceDeclaration`]'s key comes from.",
       "oneOf": [
+        {
+          "description": "A unique effective parameter selected from an earlier authorized link list.",
+          "type": "object",
+          "properties": {
+            "parameter": {
+              "type": "object",
+              "properties": {
+                "defaultFrom": {
+                  "description": "Earlier single-object slice holding an explicit default setting.",
+                  "type": "string"
+                },
+                "effectiveAt": {
+                  "description": "Action input field carrying the declared effective timestamp.",
+                  "$ref": "#/$defs/PropertyId"
+                },
+                "from": {
+                  "description": "Earlier list slice containing the candidate setting facts.",
+                  "type": "string"
+                },
+                "precedence": {
+                  "description": "Explicit scope precedence, highest first.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "businessUnitId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "environmentId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "orgId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tenantId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "workspaceId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "settingKey": {
+                  "description": "Stable parameter key.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "settingKey",
+                "effectiveAt",
+                "precedence"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "parameter"
+          ]
+        },
         {
           "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
           "type": "string",
@@ -11152,6 +11341,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "guardRefusalCode": {
+          "description": "GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.\nOmission inherits a parent's diagnostic; guard evidence is retained.",
+          "type": "string"
         },
         "guards": {
           "description": "Boolean ZEN Expressions over the object's properties, evaluated on\nthe state before the change; the transition may be taken only when\nevery one holds (their conjunction). A subtype that redeclares the\ntransition restates every inherited guard verbatim and may append its\nown, so the declaration it carries is the full effective guard set;\ndropping or replacing an inherited guard is a checker error. A guard\nreads the object through `self`; the checker parses it (T1-ONT-2)\nand types it (T1-EXPR-5, #2523); enforcement at commit is the\nkernel's. Omitted when empty.",

@@ -163,6 +163,49 @@ pub(crate) fn put(key: &str, input: i64, recovered: i64, at: &str, metal: &str) 
         ]),
     }
 }
+/// #1175: the `created` ledger event of `write`, carrying its values.
+pub(crate) fn created_event(write: &FactWriteRow) -> Option<V> {
+    let FactWriteRow::Put {
+        object_type,
+        key,
+        values,
+    } = write
+    else {
+        return None;
+    };
+    Some(V::Object(BTreeMap::from([
+        ("op".to_owned(), V::from("created")),
+        ("key".to_owned(), event_key(object_type, key)),
+        ("values".to_owned(), V::Object(values.clone())),
+    ])))
+}
+/// #1175: the `set` ledger event of `write`'s `property`, carrying its value.
+pub(crate) fn set_event(write: &FactWriteRow, property: &str) -> Option<V> {
+    let FactWriteRow::Put {
+        object_type,
+        key,
+        values,
+    } = write
+    else {
+        return None;
+    };
+    Some(V::Object(BTreeMap::from([
+        ("op".to_owned(), V::from("set")),
+        ("key".to_owned(), event_key(object_type, key)),
+        ("property".to_owned(), V::from(property)),
+        ("value".to_owned(), values.get(property)?.clone()),
+    ])))
+}
+fn event_key(object_type: &str, key: &str) -> V {
+    V::Object(BTreeMap::from([
+        ("objectType".to_owned(), V::from(object_type)),
+        ("key".to_owned(), V::from(key)),
+    ]))
+}
+/// `writes` with a `created` event each: the ledger chains their values.
+pub(crate) fn created_events(writes: &[FactWriteRow]) -> Vec<V> {
+    writes.iter().filter_map(created_event).collect()
+}
 pub(crate) fn fixture_writes() -> Vec<FactWriteRow> {
     include_str!("../../../../fixtures/demo/scrap-yield-k1.csv")
         .lines()

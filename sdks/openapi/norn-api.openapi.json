@@ -31,7 +31,7 @@
             "name": "orgId",
             "in": "query",
             "description": "Required organization.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -40,7 +40,7 @@
             "name": "environmentId",
             "in": "query",
             "description": "Required environment.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -59,7 +59,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The definition version.",
             "content": {
               "application/json": {
                 "schema": {
@@ -69,7 +69,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -79,7 +79,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -89,7 +89,7 @@
             }
           },
           "404": {
-            "description": "",
+            "description": "The request was refused: not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -99,7 +99,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -159,7 +159,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "The retired version.",
             "content": {
               "application/json": {
                 "schema": {
@@ -169,7 +169,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -179,7 +179,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -189,7 +189,7 @@
             }
           },
           "404": {
-            "description": "",
+            "description": "The request was refused: not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -199,7 +199,7 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "The request was refused: the definition changed since it was read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -209,7 +209,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused: the definition is not admissible.",
             "content": {
               "application/json": {
                 "schema": {
@@ -219,7 +219,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -270,7 +270,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "The admission decision.",
             "content": {
               "application/json": {
                 "schema": {
@@ -280,7 +280,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -290,7 +290,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -300,7 +300,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -310,7 +310,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused: the definition is not admissible.",
             "content": {
               "application/json": {
                 "schema": {
@@ -320,7 +320,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -371,7 +371,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "The installed version.",
             "content": {
               "application/json": {
                 "schema": {
@@ -381,7 +381,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -391,7 +391,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -401,7 +401,7 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "The request was refused: the definition changed since it was read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -411,7 +411,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -421,7 +421,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused: the definition is not admissible.",
             "content": {
               "application/json": {
                 "schema": {
@@ -431,7 +431,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -455,7 +455,7 @@
             "name": "orgId",
             "in": "query",
             "description": "Required organization.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -464,7 +464,7 @@
             "name": "environmentId",
             "in": "query",
             "description": "Required environment.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -519,7 +519,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "One page of definitions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -529,7 +529,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -539,7 +539,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -549,7 +549,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -598,7 +598,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The exact answer.",
             "content": {
               "application/json": {
                 "schema": {
@@ -608,7 +608,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -618,7 +618,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -628,7 +628,7 @@
             }
           },
           "404": {
-            "description": "",
+            "description": "The request was refused: not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -638,7 +638,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -648,7 +648,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused by a typed compute refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -658,7 +658,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -725,7 +725,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The numeric trace.",
             "content": {
               "application/json": {
                 "schema": {
@@ -735,7 +735,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -745,7 +745,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -755,7 +755,7 @@
             }
           },
           "404": {
-            "description": "",
+            "description": "The request was refused: not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -765,7 +765,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -775,7 +775,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused by a typed compute refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -785,7 +785,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -802,7 +802,7 @@
         "tags": [
           "crate::question_routes"
         ],
-        "summary": "F2b: admit an ad-hoc question against the cell's declared metrics and\nanswer it once, under the same row gates and D53 redaction as a named\nquestion. Nothing is installed.\n# Errors\nAny ungranted or undeclared metric or type (one opaque 403, before\nadmission), an inadmissible question (422 `question.refused` with\ndiagnostics), a bound (413), or a compute refusal.",
+        "summary": "F2b: admit an ad-hoc question against the cell's declared metrics and\nanswer it once, under the same row gates and D53 redaction as a named\nquestion. Nothing is installed.\n# Errors\nAny ungranted metric or type, or an undeclared metric from a caller who\ncannot read every declared metric (one opaque 403, before admission); an\ninadmissible question, including an undeclared metric from a caller who\ncan (422 `question.refused` with diagnostics); a bound (413); or a\ncompute refusal.",
         "operationId": "evaluate_question",
         "parameters": [
           {
@@ -836,7 +836,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "The exact answer.",
             "content": {
               "application/json": {
                 "schema": {
@@ -846,7 +846,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -856,7 +856,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -866,7 +866,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -876,7 +876,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused by a typed compute refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -886,7 +886,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -937,7 +937,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "The numeric trace.",
             "content": {
               "application/json": {
                 "schema": {
@@ -947,7 +947,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "The request was refused as invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -957,7 +957,7 @@
             }
           },
           "403": {
-            "description": "",
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -967,7 +967,7 @@
             }
           },
           "413": {
-            "description": "",
+            "description": "The request was refused: over a resource bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -977,7 +977,7 @@
             }
           },
           "422": {
-            "description": "",
+            "description": "The request was refused by a typed compute refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -987,7 +987,7 @@
             }
           },
           "500": {
-            "description": "",
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1150,11 +1150,11 @@
           "signoff": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SignoffDocument",
                 "description": "This version's sign-off; null when it was installed unsigned."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1205,8 +1205,11 @@
             "minimum": 0
           },
           "receiptHash": {
-            "type": "string",
-            "description": "The commit receipt's hash."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The commit receipt's hash, for a reader granted Values on every object\ntype of the cell; every other reader gets its keyed handle\n(`norn.receipt/1`, D53), since the receipt commits to the ledger head\nand so to every earlier event's values. Null when the cell holds no\nhandle key."
           },
           "recordedAtMs": {
             "type": "integer",
@@ -1340,11 +1343,11 @@
           "signoff": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SignoffRequest",
                 "description": "A sign-off of the payload's plain-words restatement (D59). The host\nrecomputes the restatement and records the installing principal."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -1417,6 +1420,187 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornActionActionDerivedValue": {
+        "type": "object",
+        "description": "One field produced by an ordered action input derivation.",
+        "required": [
+          "field",
+          "value"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The derived field."
+          },
+          "value": {
+            "description": "The exact runtime value written to the effective input. Preserve source\ntext and use an exact-number JSON parser; JavaScript `JSON.parse` may\nlose precision."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionActionPreconditionOutcome": {
+        "type": "object",
+        "description": "The successful outcome of one action precondition.",
+        "required": [
+          "expression",
+          "satisfied"
+        ],
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "The expression evaluated."
+          },
+          "satisfied": {
+            "type": "boolean",
+            "description": "Whether it held (successful records contain only `true`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionCallRecord": {
+        "type": "object",
+        "title": "ActionCallRecord",
+        "description": "The idempotency record of a committed call (the values of its\n[`ACTION_CALL_TYPE`] object).",
+        "required": [
+          "actionId",
+          "object",
+          "input",
+          "actor",
+          "turn",
+          "transition",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "actionArtifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action artifact that was admitted when the call committed. Missing\nonly on records written before action attribution was recorded."
+          },
+          "actionId": {
+            "type": "string",
+            "description": "The action."
+          },
+          "actionVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action artifact version that was admitted when the call committed.\nMissing only on records written before action attribution was recorded."
+          },
+          "actor": {
+            "type": "string",
+            "description": "The actor."
+          },
+          "derivedValues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionDerivedValue"
+            },
+            "description": "The values produced by each derivation, in declaration order."
+          },
+          "effectKind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effect program that committed this call. Missing in legacy records\nwritten before effect attribution and interpreted as `fire_transition`."
+          },
+          "effectiveInput": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The final input after ordered derivations. Legacy records use `input`.\nPreserve source text and use an exact-number JSON parser for its values;\nJavaScript `JSON.parse` may lose precision.",
+            "additionalProperties": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            }
+          },
+          "from": {
+            "type": "string",
+            "description": "The state it left."
+          },
+          "input": {
+            "type": "object",
+            "description": "The call's input.",
+            "additionalProperties": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            }
+          },
+          "object": {
+            "$ref": "#/components/schemas/NornActionFactKey",
+            "description": "The target object."
+          },
+          "preconditionOutcomes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionPreconditionOutcome"
+            },
+            "description": "Successful precondition results, in declaration order."
+          },
+          "rowOperations": {
+            "type": "array",
+            "items": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            },
+            "description": "Normalized row operations committed by a parent-and-rows action."
+          },
+          "ruleBinding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "TXN-RULE-1: exact writer closure, action, scope and world identity."
+          },
+          "to": {
+            "type": "string",
+            "description": "The state it entered."
+          },
+          "transition": {
+            "type": "string",
+            "description": "The fired transition."
+          },
+          "turn": {
+            "type": "string",
+            "description": "The turn the call committed in."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionFactKey": {
+        "type": "object",
+        "description": "Identity of one ontology object in a cell: its type and identity key.",
+        "required": [
+          "objectType",
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The object's identity key value."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornActionInput": {
+        "type": "object",
+        "title": "Map_of_RuntimeValue",
+        "additionalProperties": {
+          "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+        }
+      },
+      "NornActionObjectTypeName": {
+        "type": "string",
+        "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+        "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
       },
       "NornArtifactEnvelope": {
         "oneOf": [
@@ -2143,22 +2327,22 @@
           "span": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerDiagnosticSpan",
                 "description": "Source location in the artifact JSON, when known."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "tier": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerTier",
                 "description": "The checker tier that emitted this finding, when its code is registered."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -2179,11 +2363,11 @@
           "source": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/NornCheckerSourceSpan",
                 "description": "Byte range in the original source text, when available."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -10285,8 +10469,7 @@
             "items": {}
           },
           {
-            "type": "object",
-            "additionalProperties": {}
+            "$ref": "#/components/schemas/NornIrJsonValueAnyOf5"
           }
         ]
       },
@@ -10326,6 +10509,40 @@
           "rule": {
             "$ref": "#/components/schemas/NornIrIdentityRule",
             "description": "How key values are normalized and matched. Omitted: components compare\nexactly as stored."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawException": {
+        "type": "object",
+        "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+        "required": [
+          "id",
+          "overrides",
+          "condition",
+          "rationale",
+          "source"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Boolean ZEN predicate over the law subject's `self` environment."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, unique within the tree and distinct from the law id."
+          },
+          "overrides": {
+            "type": "string",
+            "description": "The law's own id, or the id of another exception in the same tree."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan",
+            "description": "Source location of the declaration."
           }
         },
         "additionalProperties": false
@@ -10484,6 +10701,14 @@
           "condition": {
             "type": "string",
             "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLawException"
+            },
+            "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+            "minItems": 1
           },
           "id": {
             "type": "string",
@@ -10959,7 +11184,6 @@
             }
           },
           "settings": {
-            "$ref": "#/components/schemas/NornIrLayoutJsonValue",
             "description": "Optional editor settings preserved as exact JSON."
           },
           "viewport": {
@@ -11042,31 +11266,6 @@
         "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
         "enum": [
           "0.1"
-        ]
-      },
-      "NornIrLayoutJsonValue": {
-        "anyOf": [
-          {
-            "type": "null"
-          },
-          {
-            "type": "boolean"
-          },
-          {
-            "type": "number",
-            "format": "double"
-          },
-          {
-            "type": "string"
-          },
-          {
-            "type": "array",
-            "items": {}
-          },
-          {
-            "type": "object",
-            "additionalProperties": {}
-          }
         ]
       },
       "NornIrLayoutLayoutViewport": {
@@ -12403,7 +12602,6 @@
             "description": "Relative property path. To-many filters are existential predicates."
           },
           "value": {
-            "$ref": "#/components/schemas/NornIrJsonValue",
             "description": "Exact runtime literal checked against the effective property contract."
           }
         },
@@ -12953,6 +13151,10 @@
               "$ref": "#/components/schemas/NornIrKeySpec"
             },
             "description": "Declared keys. Each is unique among the type's live objects within one\ntenant scope and world, enforced at commit. Omitted when empty: every\nobject always has its kernel-assigned object id, and a type need not\ndeclare a business key."
+          },
+          "immutable": {
+            "type": "boolean",
+            "description": "FA-IMM-1: existing instances are append-only; subtypes inherit this flag."
           },
           "implements": {
             "type": "array",
@@ -14300,6 +14502,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrPropertyTypeOneOf10"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf11"
           }
         ],
         "description": "The value kind of a property, tagged by `kind`."
@@ -14419,6 +14624,31 @@
       },
       "NornIrPropertyTypeOneOf10": {
         "type": "object",
+        "description": "Opaque JSON (an extension payload), optionally described by a JSON\nSchema document the checker does not interpret.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "json-ext"
+            ]
+          },
+          "schema": {
+            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf10PropertySchema"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyTypeOneOf10PropertySchema": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrPropertyTypeOneOf11": {
+        "type": "object",
         "description": "The shared property type (local or registry) with this name.",
         "required": [
           "kind",
@@ -14490,6 +14720,27 @@
       },
       "NornIrPropertyTypeOneOf3": {
         "type": "object",
+        "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+        "required": [
+          "kind",
+          "group"
+        ],
+        "properties": {
+          "group": {
+            "type": "string",
+            "description": "Same-name members in one interface bind identically."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "decimal-binding"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyTypeOneOf4": {
+        "type": "object",
         "description": "`true` or `false`.",
         "required": [
           "kind"
@@ -14504,7 +14755,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf4": {
+      "NornIrPropertyTypeOneOf5": {
         "type": "object",
         "description": "An instant in time with an explicit timezone policy.",
         "required": [
@@ -14533,7 +14784,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf5": {
+      "NornIrPropertyTypeOneOf6": {
         "type": "object",
         "description": "An ISO 8601 calendar date (`YYYY-MM-DD`) with no time and no zone.",
         "required": [
@@ -14549,7 +14800,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf6": {
+      "NornIrPropertyTypeOneOf7": {
         "type": "object",
         "description": "An exact elapsed duration (fixed-length units only; calendar periods\nsuch as months are not durations).",
         "required": [
@@ -14565,7 +14816,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf7": {
+      "NornIrPropertyTypeOneOf8": {
         "type": "object",
         "description": "One of a closed set of string values.",
         "required": [
@@ -14589,7 +14840,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf8": {
+      "NornIrPropertyTypeOneOf9": {
         "type": "object",
         "description": "A closed structured value. Every member is present; nullability of\nthe containing property applies to the whole record.",
         "required": [
@@ -14611,31 +14862,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "NornIrPropertyTypeOneOf9": {
-        "type": "object",
-        "description": "Opaque JSON (an extension payload), optionally described by a JSON\nSchema document the checker does not interpret.",
-        "required": [
-          "kind"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "json-ext"
-            ]
-          },
-          "schema": {
-            "$ref": "#/components/schemas/NornIrPropertyTypeOneOf9PropertySchema"
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrPropertyTypeOneOf9PropertySchema": {
-        "type": "object",
-        "additionalProperties": {
-          "$ref": "#/components/schemas/NornIrJsonValue"
-        }
       },
       "NornIrProposalActor": {
         "type": "string",
@@ -15054,7 +15280,7 @@
             "type": "object",
             "description": "Typed operands; disclosure authority is required before projection.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/NornIrJsonValue"
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
             }
           }
         },
@@ -15183,7 +15409,7 @@
           "exceptions": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/NornIrRequirementRuleException"
+              "$ref": "#/components/schemas/NornIrRequirementLawException"
             }
           },
           "law": {
@@ -15205,6 +15431,40 @@
           "0.1"
         ]
       },
+      "NornIrRequirementLawException": {
+        "type": "object",
+        "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+        "required": [
+          "id",
+          "overrides",
+          "condition",
+          "rationale",
+          "source"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Boolean ZEN predicate over the law subject's `self` environment."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, unique within the tree and distinct from the law id."
+          },
+          "overrides": {
+            "type": "string",
+            "description": "The law's own id, or the id of another exception in the same tree."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRequirementRuleSourceSpan",
+            "description": "Source location of the declaration."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementLawIR": {
         "type": "object",
         "description": "One protected law; its predicates use the subject's `self` environment.",
@@ -15224,6 +15484,14 @@
           "condition": {
             "type": "string",
             "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrRequirementLawException"
+            },
+            "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+            "minItems": 1
           },
           "id": {
             "type": "string",
@@ -15977,27 +16245,6 @@
         },
         "additionalProperties": false
       },
-      "NornIrRequirementRuleException": {
-        "type": "object",
-        "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
-        "required": [
-          "id",
-          "condition",
-          "source"
-        ],
-        "properties": {
-          "condition": {
-            "$ref": "#/components/schemas/NornIrRequirementZenExpression"
-          },
-          "id": {
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/NornIrRequirementRuleSourceSpan"
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrRequirementRuleSourceSpan": {
         "type": "object",
         "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
@@ -16462,6 +16709,26 @@
           "half_even",
           "half_away_from_zero"
         ]
+      },
+      "NornIrRuleByteRange": {
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "start": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRuleConditionV1": {
         "oneOf": [
@@ -17029,6 +17296,33 @@
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
       },
+      "NornIrRuleSourceSpan": {
+        "type": "object",
+        "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+        "required": [
+          "artifactId",
+          "pointer"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "bytes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRuleByteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRuleTrigger": {
         "oneOf": [
           {
@@ -17397,8 +17691,7 @@
               {
                 "properties": {
                   "value": {
-                    "type": "number",
-                    "format": "double"
+                    "$ref": "#/components/schemas/NornIrDecimalLiteral"
                   },
                   "valueType": {
                     "enum": [
@@ -17501,7 +17794,7 @@
       },
       "NornIrSettingValueType": {
         "type": "string",
-        "description": "The JSON type of a setting's `value`.",
+        "description": "The setting value kind; numbers use exact decimal-string literals.",
         "enum": [
           "text",
           "number",
@@ -17556,6 +17849,9 @@
       "NornIrSliceKey": {
         "oneOf": [
           {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf0"
+          },
+          {
             "type": "string",
             "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
             "enum": [
@@ -17584,15 +17880,100 @@
             ]
           },
           {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf4"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5"
           },
           {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf6"
           }
         ],
         "description": "Where a [`SliceDeclaration`]'s key comes from."
       },
-      "NornIrSliceKeyOneOf4": {
+      "NornIrSliceKeyOneOf0": {
+        "type": "object",
+        "description": "A unique effective parameter selected from an earlier authorized link list.",
+        "required": [
+          "parameter"
+        ],
+        "properties": {
+          "parameter": {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf0PropertyParameter"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf0PropertyParameter": {
+        "type": "object",
+        "required": [
+          "from",
+          "settingKey",
+          "effectiveAt",
+          "precedence"
+        ],
+        "properties": {
+          "defaultFrom": {
+            "type": "string",
+            "description": "Earlier single-object slice holding an explicit default setting."
+          },
+          "effectiveAt": {
+            "type": "string",
+            "description": "Action input field carrying the declared effective timestamp.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "from": {
+            "type": "string",
+            "description": "Earlier list slice containing the candidate setting facts."
+          },
+          "precedence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems"
+            },
+            "description": "Explicit scope precedence, highest first."
+          },
+          "settingKey": {
+            "type": "string",
+            "description": "Stable parameter key."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems": {
+        "type": "object",
+        "properties": {
+          "businessUnitId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orgId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspaceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf5": {
         "type": "object",
         "description": "A text property of an earlier slice entry (a link by key).",
         "required": [
@@ -17600,12 +17981,12 @@
         ],
         "properties": {
           "property": {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf4PropertyProperty"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5PropertyProperty"
           }
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf4PropertyProperty": {
+      "NornIrSliceKeyOneOf5PropertyProperty": {
         "type": "object",
         "required": [
           "from",
@@ -17624,7 +18005,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf5": {
+      "NornIrSliceKeyOneOf6": {
         "type": "object",
         "description": "Every target of link `link`, declared on the type of earlier\nsingle-object entry `from`, loaded as a list ordered by target key\nand bounded by the limit profile's slice records (#3079).",
         "required": [
@@ -17632,12 +18013,12 @@
         ],
         "properties": {
           "link": {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5PropertyLink"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf6PropertyLink"
           }
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf5PropertyLink": {
+      "NornIrSliceKeyOneOf6PropertyLink": {
         "type": "object",
         "required": [
           "from",
@@ -18394,6 +18775,10 @@
               "type": "string"
             },
             "description": "The source states, non-empty and distinct; none is `to`."
+          },
+          "guardRefusalCode": {
+            "type": "string",
+            "description": "GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.\nOmission inherits a parent's diagnostic; guard evidence is retained."
           },
           "guards": {
             "type": "array",
@@ -21293,7 +21678,7 @@
           },
           "hash": {
             "type": "string",
-            "description": "The last event hash."
+            "description": "The last event hash for a reader with whole-world Values (D53);\notherwise a keyed handle of it, stable per revision: compare it only for equality."
           },
           "seq": {
             "type": "integer",
@@ -21447,8 +21832,11 @@
             "description": "Full incarnation digest, disclosed with canonical values."
           },
           "receiptHash": {
-            "type": "string",
-            "description": "Emitting receipt identity; no export capability."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Emitting receipt identity; no export capability. Null when any member of\nthe bucket is restricted; a keyed handle (D53) for a reader without whole-world Values."
           },
           "recordedAtMs": {
             "type": "integer",
@@ -21736,7 +22124,7 @@
           },
           "exclusions": {
             "type": "object",
-            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.",
+            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.\nFor a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.",
             "additionalProperties": {
               "type": "string"
             },
@@ -21985,9 +22373,6 @@
           {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "type": "object",
                 "description": "The words a signer can sign: what the host reads the submission as.",
                 "properties": {
@@ -22000,6 +22385,9 @@
                     "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
                   }
                 }
+              },
+              {
+                "type": "null"
               }
             ],
             "description": "On `definition.signoff_mismatch` only: the host's restatement of the\ncaller's own admitted payload, flattened into the refusal as\n`restatement` and `restatementSha256`. Absent otherwise."
@@ -22107,11 +22495,11 @@
           "span": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/RefusalSpan",
                 "description": "Where in the submitted document, when the check can say."
+              },
+              {
+                "type": "null"
               }
             ]
           }

@@ -112,7 +112,8 @@ fn scrap_yield_drills_from_294_over_300_to_exact_authorized_source_rows_and_docu
             contribution.fact_digest.as_deref(),
             Some(proof.snapshot_sha256())
         );
-        assert_eq!(contribution.receipt_hash, proof.receipt().hash);
+        let receipt_hash = proof.receipt().hash.clone();
+        assert_eq!(contribution.receipt_hash, Some(receipt_hash));
     }
 }
 #[test]
@@ -152,6 +153,7 @@ fn source_disclosure_is_independent_of_canonical_values_and_numeric_membership()
                 assert_eq!(contribution.restricted, !values_allowed);
                 assert_eq!(contribution.values.is_some(), values_allowed);
                 assert_eq!(contribution.fact_digest.is_some(), values_allowed);
+                assert_eq!(contribution.receipt_hash.is_some(), values_allowed);
                 if let ContributionSource::Resolved { provenance } = &contribution.source {
                     assert_eq!(provenance.document_digest.is_some(), values_allowed);
                     assert_eq!(provenance.bundle_digest.is_some(), values_allowed);

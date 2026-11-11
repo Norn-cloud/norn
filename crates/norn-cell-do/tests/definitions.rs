@@ -15,6 +15,7 @@ use norn_api::definition_routes::{
     AgentAdmissionContext, AgentToolBinding, DefinitionKinds, connector_well_formed,
 };
 use norn_api::host::DevHost;
+use norn_cell::compute::lineage::{keyed_lineage_handle, keyed_receipt_handle};
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::analytics::{self, DemoQuestions};
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
@@ -29,6 +30,15 @@ const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
 /// The fixture principal holding `viewer`.
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
+/// The host secret the cell's lineage handle key derives from.
+const HANDLE_KEY: [u8; 32] = [5; 32];
+
+/// The keyed receipt handle a reader without whole-world Values sees: the
+/// cell derives its handle key from the host secret and its scope.
+fn receipt_handle(raw: &str) -> String {
+    let key = keyed_lineage_handle(&HANDLE_KEY, &analytics::analytics_scope().key());
+    keyed_receipt_handle(key.as_bytes(), raw)
+}
 
 struct Cell {
     host: DevHost<NativeEngine>,
@@ -53,7 +63,7 @@ fn cell_on(engine: NativeEngine, kinds: DefinitionKinds) -> Cell {
     .unwrap()
     .with_authorizer(policy);
     let questions = DemoQuestions::new(opened.plan, scope)
-        .with_handle_key(&[5; 32])
+        .with_handle_key(&HANDLE_KEY)
         .with_metrics(opened.definitions, opened.catalog);
     Cell {
         host,
@@ -326,7 +336,14 @@ fn install_versions_compare_and_set_and_read_back() {
     assert_eq!(current["version"], json!(2));
     assert_eq!(current["lifecycle"], json!("active"));
     assert_eq!(current["payload"], dashboard("Refinery v2"));
-    assert_eq!(current["receipt"], second["receipt"]);
+    // The viewer holds Population only: the receipt's keyed handle (#1164).
+    let handle = |receipt: &Value| {
+        let mut receipt = receipt.clone();
+        let raw = receipt["receiptHash"].as_str().unwrap().to_owned();
+        receipt["receiptHash"] = json!(receipt_handle(&raw));
+        receipt
+    };
+    assert_eq!(current["receipt"], handle(&second["receipt"]));
     let (status, past) = get(
         &cell,
         &format!("/v1/definitions/{id}"),
@@ -335,7 +352,7 @@ fn install_versions_compare_and_set_and_read_back() {
     );
     assert_eq!(status, 200, "{past}");
     assert_eq!(past["payload"], dashboard("Refinery"));
-    assert_eq!(past["receipt"], first["receipt"]);
+    assert_eq!(past["receipt"], handle(&first["receipt"]));
     for (path, query) in [
         ("/v1/definitions/studio.dashboard.none", ""),
         (&*format!("/v1/definitions/{id}"), "&version=9"),
@@ -671,6 +688,46 @@ fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_
 }
 
 #[test]
+fn the_checker_restatement_signs_off_saved_questions_and_dashboards() {
+    // The worker's generator: the checker's words, which Studio also shows.
+    let cell = cell(
+        DefinitionKinds::default().with_restater(norn_api::definition_routes::checker_restatement),
+    );
+    let admit = |kind: &str, payload: Value| {
+        let (status, admitted) = post(
+            &cell,
+            "/v1/definitions:admit",
+            ADMIN,
+            &json!({ "kind": kind, "id": format!("studio.{kind}.signed"), "payload": payload }),
+        );
+        assert_eq!(status, 200, "{admitted}");
+        assert_eq!(admitted["admitted"], json!(true), "{admitted}");
+        let words = admitted["restatement"].as_str().unwrap().to_owned();
+        assert_eq!(admitted["restatementSha256"], json!(sha256(&words)));
+        words
+    };
+    let asked = admit("question", question());
+    let shown = admit("dashboard", dashboard("Signed"));
+    assert_eq!(shown, format!("Signed\n1. Yield by week: {asked}"));
+    for (kind, id, payload, words) in [
+        ("question", "studio.question.signed", question(), &asked),
+        (
+            "dashboard",
+            "studio.dashboard.signed",
+            dashboard("Signed"),
+            &shown,
+        ),
+    ] {
+        let body = json!({
+            "kind": kind, "id": id, "payload": payload,
+            "signoff": { "restatementSha256": sha256(words) },
+        });
+        let (status, installed) = post(&cell, "/v1/definitions:install", ADMIN, &body);
+        assert_eq!(status, 200, "{installed}");
+    }
+}
+
+#[test]
 fn a_saved_question_is_a_bare_question_ir_admitted_as_a_tile_is() {
     let cell = cell(DefinitionKinds::default());
     let saved = |payload: &Value| {
@@ -746,12 +803,17 @@ fn manifest_digests_match_the_shared_jcs_vectors() {
 fn binding(label: &str, run_role: &str, mapping: &Value) -> Value {
     let input = json!({ "type": "object", "properties": {
         "repo": { "type": "string" }, "limit": { "type": "integer" }, "state": { "enum": ["open", "closed"] } } });
+    binding_over(&input, label, run_role, mapping)
+}
+
+/// A binding over `input` with the host's own JCS digest of its manifest.
+fn binding_over(input: &Value, label: &str, run_role: &str, mapping: &Value) -> Value {
     let output = json!({ "type": "object" });
     let digest = norn_api::binding_definitions::manifest_digest(
         "executor",
         "github",
         "list_issues",
-        &input,
+        input,
         &output,
     )
     .unwrap();
@@ -933,6 +995,56 @@ fn agents_see_installed_active_bindings_only() {
             "/tools/0".to_owned()
         )]
     );
+}
+
+thread_local! {
+    /// The cell a racing checker retires the binding on, taken once.
+    static RACING: std::cell::RefCell<Option<std::rc::Rc<Cell>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// [`binding_agent`], after another writer retires the binding it saw.
+fn racing_agent(payload: &str, context: &AgentAdmissionContext) -> Vec<Diagnostic> {
+    let findings = binding_agent(payload, context);
+    if let Some(cell) = RACING.with(|racing| racing.borrow_mut().take()) {
+        let retire = json!({ "expectedVersion": 1 });
+        let (status, retired) = post(
+            &cell,
+            "/v1/definitions/studio.binding.issues:retire",
+            ADMIN,
+            &retire,
+        );
+        assert_eq!(status, 200, "{retired}");
+    }
+    findings
+}
+
+/// An agent admitted against a binding retired before it commits is not
+/// installed: the install refuses as a version conflict.
+#[test]
+fn an_agent_is_not_installed_over_a_binding_retired_during_admission() {
+    let context = AgentAdmissionContext {
+        models: BTreeSet::new(),
+        bindings: vec![],
+        laws: BTreeSet::new(),
+        limits: ResourceLimitProfile::norn_limits_v1(),
+    };
+    let cell = std::rc::Rc::new(cell(
+        DefinitionKinds::default()
+            .with_roles(ROLES)
+            .with_agent(racing_agent, context),
+    ));
+    let issues = binding("Issues", "member", &json!({}));
+    let (status, installed) = install_binding(&cell, "studio.binding.issues", &issues, None);
+    assert_eq!(status, 200, "{installed}");
+    RACING.with(|racing| *racing.borrow_mut() = Some(std::rc::Rc::clone(&cell)));
+    let agent = json!({ "kind": "agent", "id": "studio.agent.triage",
+        "payload": { "title": "Triage", "tools": ["studio.binding.issues"] } });
+    let (status, refused) = post(&cell, "/v1/definitions:install", ADMIN, &agent);
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(refused["code"], json!("definition.version_conflict"));
+    let (status, _) = get(&cell, "/v1/definitions/studio.agent.triage", "", VIEWER);
+    assert_eq!(status, 404);
 }
 
 fn reworded(kind: &str, payload: &str, _metrics: &[MetricDefinition]) -> Result<String, String> {
@@ -1542,11 +1654,10 @@ fn a_flow_carries_its_title_and_step_labels() {
 /// return the words, and a signed install must sign exactly them.
 #[test]
 fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
-    use norn_api::definition_routes::flow_restater;
     let cell = cell(
         DefinitionKinds::default()
             .with_roles(ROLES)
-            .with_restater(flow_restater),
+            .with_restater(norn_api::definition_routes::checker_restatement),
     );
     assert_eq!(
         install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
@@ -1612,4 +1723,163 @@ fn a_decision_step_restates_as_asking_a_person() {
         norn_api::flow_definitions::restate(&payload.to_string()).unwrap(),
         words
     );
+}
+
+/// #1164 (CWE-200): a retained definition's receipt commits to the ledger
+/// head, so to every earlier event's values. The analytics cell's K1 load
+/// commits Values-gated records before any definition is installed, so a
+/// Population-only reader gets the keyed receipt handle, on the current and a
+/// historical version alike, while the definition itself stays readable to
+/// it; a reader with Values over every object type gets the raw hash.
+#[test]
+fn a_population_reader_never_sees_a_definition_receipt_hash() {
+    let cell = cell(DefinitionKinds::default());
+    let id = "studio.dashboard.receipts";
+    let (status, first) = install(&cell, id, &dashboard("Receipts"), None);
+    assert_eq!(status, 200, "{first}");
+    let (status, second) = install(&cell, id, &dashboard("Receipts v2"), Some(1));
+    assert_eq!(status, 200, "{second}");
+    let raws: Vec<String> = [&first, &second]
+        .map(|installed| {
+            installed["receipt"]["receiptHash"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .to_vec();
+    for raw in &raws {
+        assert_eq!(raw.len(), 64, "{raw}");
+    }
+    for (query, raw, title) in [
+        ("&version=1", &raws[0], "Receipts"),
+        ("", &raws[1], "Receipts v2"),
+    ] {
+        let path = format!("/v1/definitions/{id}");
+        let full = call(&cell, "GET", &path, &format!("{SCOPE}{query}"), ADMIN, "");
+        let document: Value = serde_json::from_str(&full.body).unwrap();
+        assert_eq!(full.status, 200, "{document}");
+        assert_eq!(document["receipt"]["receiptHash"], json!(raw));
+
+        let viewer = call(&cell, "GET", &path, &format!("{SCOPE}{query}"), VIEWER, "");
+        let document: Value = serde_json::from_str(&viewer.body).unwrap();
+        assert_eq!(viewer.status, 200, "{document}");
+        assert_eq!(document["payload"], dashboard(title));
+        assert_eq!(
+            document["receipt"]["receiptHash"],
+            json!(receipt_handle(raw))
+        );
+        for any in &raws {
+            assert!(!viewer.body.contains(any.as_str()), "{}", viewer.body);
+        }
+    }
+    let listed = call(
+        &cell,
+        "GET",
+        "/v1/definitions:list",
+        &format!("{SCOPE}&kind=dashboard&include=retired"),
+        VIEWER,
+        "",
+    );
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    for raw in &raws {
+        assert!(!listed.body.contains(raw.as_str()), "{}", listed.body);
+    }
+
+    // A cell without a question runtime holds no handle key: no receipt hash.
+    let bare = crate::cell(DefinitionKinds::default().with_roles(ROLES));
+    let good = binding("Open issues", "member", &json!({}));
+    let body = json!({ "kind": "binding", "id": "studio.binding.bare", "payload": good });
+    for (method, path, auth, body) in [
+        ("POST", "/v1/definitions:install", ADMIN, body.to_string()),
+        (
+            "GET",
+            "/v1/definitions/studio.binding.bare",
+            VIEWER,
+            String::new(),
+        ),
+        (
+            "GET",
+            "/v1/definitions/studio.binding.bare",
+            ADMIN,
+            String::new(),
+        ),
+    ] {
+        let request = server::Request {
+            method,
+            path,
+            query: SCOPE,
+            authorization: auth,
+            now: 1_800_000_000,
+            body: &body,
+        };
+        let response =
+            server::handle_all(&bare.host, &bare.principals, None, &bare.kinds, &request);
+        let document: Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(response.status, 200, "{document}");
+        assert_eq!(
+            document["receipt"]["receiptHash"],
+            Value::Null,
+            "{document}"
+        );
+    }
+}
+
+/// #1164 (CWE-354): a binding is checked and digested as submitted (JCS) but
+/// stored as Norn1, which NFC-normalizes strings and member names. A
+/// decomposed string or property name is refused, so the checked, digested
+/// and stored manifest are the same bytes; the composed form installs and
+/// reads back with a digest that still recomputes.
+#[test]
+fn binding_strings_and_member_names_are_nfc_so_the_stored_manifest_keeps_its_digest() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let decomposed_enum = json!({ "type": "object", "properties": {
+        "state": { "enum": ["e\u{301}"] } } });
+    let decomposed_name = json!({ "type": "object", "properties": {
+        "e\u{301}tat": { "type": "string" } } });
+    for (input, pointer) in [
+        (decomposed_enum, "/inputSchema/properties/state/enum/0"),
+        (decomposed_name, "/inputSchema/properties/e\u{301}tat"),
+    ] {
+        let payload = binding_over(&input, "Accents", "member", &json!({}));
+        // The submitted digest is the correct JCS one over the decomposed text.
+        assert!(
+            payload["manifestDigest"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        let (status, refused) = install_binding(&cell, "studio.binding.nfd", &payload, None);
+        assert_eq!(status, 422, "{refused}");
+        assert_eq!(
+            pointers(&refused),
+            [("definition.binding_not_nfc".to_owned(), pointer.to_owned())],
+            "{refused}"
+        );
+        let (status, missing) = get(&cell, "/v1/definitions/studio.binding.nfd", "", VIEWER);
+        assert_eq!(status, 404, "{missing}");
+    }
+
+    let composed = json!({ "type": "object", "properties": {
+        "\u{e9}tat": { "type": "string" }, "state": { "enum": ["\u{e9}"] } } });
+    let payload = binding_over(
+        &composed,
+        "Accents",
+        "member",
+        &json!({ "state": { "fixed": "\u{e9}" } }),
+    );
+    let (status, installed) = install_binding(&cell, "studio.binding.nfc", &payload, None);
+    assert_eq!(status, 200, "{installed}");
+    let (status, read) = get(&cell, "/v1/definitions/studio.binding.nfc", "", VIEWER);
+    assert_eq!(status, 200, "{read}");
+    assert_eq!(read["payload"], payload);
+    let stored = &read["payload"];
+    let recomputed = norn_api::binding_definitions::manifest_digest(
+        stored["connector"]["gateway"].as_str().unwrap(),
+        stored["connector"]["app"].as_str().unwrap(),
+        stored["connector"]["tool"].as_str().unwrap(),
+        &stored["inputSchema"],
+        &stored["outputSchema"],
+    )
+    .unwrap();
+    assert_eq!(stored["manifestDigest"], json!(recomputed));
 }

@@ -58,6 +58,9 @@ declare module "@norn/authoring" {
       | { readonly kind: "undeclared" | "additive" | "semi_additive" | "non_additive" }
       | { readonly kind: "ratio"; readonly numerator: string; readonly denominator: string }
 
+    /** Interface-only Decimal; members sharing a group require identical concrete unit and scale. */
+    function boundDecimal(group: string): Schema.Finite
+
     /**
      * Exact decimal value type (EntityIR `decimal`): every value is held at
      * `scale` fraction digits, optionally a quantity in `unit`, or money whose
@@ -92,6 +95,7 @@ declare module "@norn/authoring" {
       readonly to: V
       /** ZEN Expression guards, conjoined. */
       readonly guards?: ReadonlyArray<Expression<boolean>>
+      readonly guardRefusalCode?: string
     }
 
     /** A lifecycle over one enum property of `T`; its states are that property's values. */
@@ -429,6 +433,7 @@ declare module "@norn/authoring" {
         | "triggerObject"
         | { readonly property: { readonly from: string; readonly property: string } }
         | { readonly link: { readonly from: string; readonly link: string } }
+        | { readonly parameter: { readonly from: string; readonly settingKey: string; readonly effectiveAt: string; readonly precedence: ReadonlyArray<Readonly<Partial<Record<`${ScopeDimension}Id`, string>>>>; readonly defaultFrom?: string } }
       readonly optional?: boolean
     }
 
@@ -471,7 +476,7 @@ declare module "@norn/authoring" {
 
     interface Expression<T> { readonly _tag: "NornExpression"; readonly __type?: T }
     /** Syntax-only expression; the callback is never executed. */
-    function expression<S extends Schema.Top, T>(schema: S, body: (input: S["Type"]) => T): Expression<T>
+    function expression<S extends Schema.Top, T>(schema: S, body: (input: S["Type"]) => T, options?: { readonly root: "context" }): Expression<T>
     /** Explicit untyped escape hatch. Reported as a warning; Rust still checks admission. */
     function unsafeZen<T = string>(text: string): T & Expression<T>
     function unsafeZen(graph: JdmGraph): UnsafeJdmGraph

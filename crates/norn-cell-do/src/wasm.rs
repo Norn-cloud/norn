@@ -11,7 +11,7 @@
 //! tests). The analytics cell also needs the stage's lineage key
 //! (`NORN_LINEAGE_KEY`, at least 32 bytes) and refuses to open without it.
 
-use norn_api::definition_routes::{self, DefinitionKinds};
+use norn_api::definition_routes::DefinitionKinds;
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::scope::CellScope;
@@ -156,15 +156,16 @@ impl NornCell {
             object_types,
             // Dashboards are built in; agents wait for lane CANVAS's checker.
             kinds: DefinitionKinds::default()
+                // Sign-offs verify against the checker's words, as Studio shows
+                // them; D59: a flow is installed by signing the server's words for it.
+                .with_restater(norn_api::definition_routes::checker_restatement)
                 // A binding runs as a role of the cell's declared grant table.
                 .with_roles(
                     crate::policy::DEMO_GRANTS
                         .entries
                         .iter()
                         .map(|(role, _)| *role),
-                )
-                // D59: a flow is installed by signing the server's words for it.
-                .with_restater(definition_routes::flow_restater),
+                ),
         })
     }
 

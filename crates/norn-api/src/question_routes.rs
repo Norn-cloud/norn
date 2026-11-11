@@ -12,9 +12,13 @@ use norn_cell::{
     CellError, CellStore, KnowledgeCutoff, ObjectRecord,
     compute::{
         HistoricalQuestionResult, QueryContext, QueryResult,
-        lineage::{LineageDisclosure, NumericTrace, keyed_lineage_handle, lineage_handle_matches},
+        lineage::{
+            LineageDisclosure, NumericTrace, keyed_finding_handle, keyed_lineage_handle,
+            keyed_receipt_handle, keyed_revision_handle, lineage_handle_matches,
+        },
     },
     engine::SqlEngine,
+    system::GENESIS_HASH,
 };
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
@@ -67,6 +71,22 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     /// held by the host (Durable Object storage or a Worker secret), never
     /// derived from cell data. A shorter key refuses every answer and trace.
     fn handle_key(&self) -> &[u8];
+    /// #1175 (D53): map `capability` over the whole collection `object_type`
+    /// (resource ID and type are the type) without reading cell data. A
+    /// reader granted Values on every object type of the cell sees raw ledger
+    /// and receipt hashes; every other reader sees their keyed handles. The
+    /// default maps nothing, so every reader sees handles.
+    /// # Errors
+    /// Missing principal claims or an unavailable mapping deny the read.
+    fn collection_access(
+        &self,
+        _scope: &CellScope,
+        _actor: &str,
+        _capability: ReadCapability,
+        _object_type: &str,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        Err(read_denied())
+    }
 }
 
 /// The declared default minimum disclosed bucket size (D53).
@@ -114,7 +134,7 @@ pub struct TraceQuery {
 /// Evaluate using the native exact engine; analytical freshness labels are preserved.
 /// # Errors
 /// Denied scope/authority, unavailable trusted inputs, or typed compute refusal.
-#[utoipa::path(get, path = "/v1/questions/{question}/answer", params(ScopeQuery, ("question" = String, Path)), responses((status = 200, body = crate::answers::NornQuestionAnswer), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/questions/{question}/answer", params(ScopeQuery, ("question" = String, Path)), responses((status = 200, description = "The exact answer.", body = crate::answers::NornQuestionAnswer), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused by a typed compute refusal.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_answer<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -168,13 +188,121 @@ fn answer_plan<E: SqlEngine>(
             .map(QuestionAnswer::Live),
     }
     .map_err(Refusal::from_compute)?;
+    let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     let result = match &mut answer {
         QuestionAnswer::Live(result) => result,
-        QuestionAnswer::Historical(historical) => &mut historical.result,
+        QuestionAnswer::Historical(historical) => {
+            withhold_cutoff_receipt(historical, key, world)?;
+            &mut historical.result
+        }
     };
+    withhold_ledger_head(result, key, world);
+    withhold_exclusions(result, key, world);
     withhold_values(result, &withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(answer)
+}
+
+/// #1164 (D53): the receipt coordinate `actor` may see for a commit outside
+/// any answer (a retained definition's install). The receipt hash commits to
+/// the ledger head, which chains every earlier event's values, so only a
+/// reader with whole-world Values sees it raw; every other reader sees its
+/// keyed receipt handle. A cell without a question runtime holds no handle
+/// key and decides no collection grant, so it discloses neither (`None`).
+/// # Errors
+/// A handle key shorter than 32 bytes.
+pub(crate) fn disclosed_receipt<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: Option<&dyn AdHocQuestions<E>>,
+    store: &CellStore<E>,
+    actor: &str,
+    receipt_hash: &str,
+) -> Result<Option<String>, Refusal> {
+    let Some(runtime) = runtime else {
+        return Ok(None);
+    };
+    let runtime: &dyn QuestionRuntime<E> = runtime;
+    let key = handle_key(runtime)?;
+    Ok(Some(if world_values(host, runtime, store, actor) {
+        receipt_hash.to_owned()
+    } else {
+        keyed_receipt_handle(key, receipt_hash)
+    }))
+}
+
+/// #1175 (D53): whether `actor` holds Values over the whole world: a
+/// collection-level grant on every object type of the cell, decided by the
+/// host policy without reading cell data. Raw ledger and receipt hashes chain
+/// every event's values, so only such a reader sees them. An unmappable or
+/// mismatched mapping is no grant.
+fn world_values<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: &dyn QuestionRuntime<E>,
+    store: &CellStore<E>,
+    actor: &str,
+) -> bool {
+    let mut types = store.model().object_types().peekable();
+    types.peek().is_some()
+        && types.all(|object_type| {
+            let name = object_type.name.as_str();
+            runtime
+                .collection_access(host.scope(), actor, Values, name)
+                .is_ok_and(|access| {
+                    access.principal.subject_id == actor
+                        && access.resource.object_type == name
+                        && access.resource.id == name
+                        && host.read_permitted(&ReadRequest {
+                            capability: Values,
+                            access: &access,
+                        })
+                })
+        })
+}
+
+/// #1175 (DATA-VALUES-1, D53): `revision.hash` is the unkeyed ledger chain
+/// hash, and the chained events carry record values: a reader who saw the
+/// previous revision could confirm a guessed value of one new event offline.
+/// A reader without whole-world Values sees the keyed revision handle; the
+/// genesis head chains nothing and stays. Internal pins keep the raw head.
+fn withhold_ledger_head(result: &mut QueryResult, key: &[u8], world: bool) {
+    let genesis = result.revision.seq == 0 && result.revision.hash == GENESIS_HASH;
+    if !(world || genesis) {
+        result.revision.hash = keyed_revision_handle(key, &result.revision.hash);
+    }
+}
+
+/// #1175 (DATA-VALUES-1, D53): an exclusion maps a quarantined record to its
+/// finding ID, and the finding identity hashes that record's canonical values
+/// without a key: Population alone shows the exclusion, so a reader without
+/// Values could confirm a guessed value offline. A reader without whole-world
+/// Values sees the keyed finding handle; the record IDs stay (Population).
+fn withhold_exclusions(result: &mut QueryResult, key: &[u8], world: bool) {
+    if !world {
+        for finding in result.exclusions.values_mut() {
+            *finding = keyed_finding_handle(key, finding);
+        }
+    }
+}
+
+/// #1175 (DATA-VALUES-1, D53): the historical world names its cutoff commit by
+/// receipt hash, which commits to that commit's values and to the ledger head.
+/// A reader without whole-world Values sees the keyed receipt handle instead,
+/// so the coordinate never confirms a guess offline.
+fn withhold_cutoff_receipt(
+    historical: &mut HistoricalQuestionResult,
+    key: &[u8],
+    world: bool,
+) -> Result<(), Refusal> {
+    let norn_kernel::World::Historical { commit } = &mut historical.world else {
+        return Err(Refusal::from_compute(CellError::ComputeRefused(
+            "core.compute.unsupported_engine",
+        )));
+    };
+    // Genesis has no receipt: its coordinate commits to nothing.
+    if !world && historical.result.known_as_of != 0 {
+        commit.0 = keyed_receipt_handle(key, &commit.0);
+    }
+    Ok(())
 }
 
 /// Population decides membership; a member without Values is recorded so its
@@ -203,7 +331,7 @@ fn withhold_values(result: &mut QueryResult, withheld: &BTreeSet<String>, min_di
 /// LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
 /// # Errors
 /// Nonexact/stale results, historical tracing, changed pins or unavailable evidence refuse.
-#[utoipa::path(get, path = "/v1/questions/{question}/trace", params(TraceQuery, ("question" = String, Path)), responses((status = 200, body = crate::trace_contract::NornNumericTrace), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/questions/{question}/trace", params(TraceQuery, ("question" = String, Path)), responses((status = 200, description = "The numeric trace.", body = crate::trace_contract::NornNumericTrace), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused by a typed compute refusal.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_numeric_trace<E: SqlEngine>(
     host: &DevHost<E>,
     query: &TraceQuery,
@@ -279,6 +407,18 @@ fn trace_plan<E: SqlEngine>(
             },
         )
         .map_err(Refusal::from_compute)?;
+    let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
+    withhold_ledger_head(&mut trace.result, key, world);
+    withhold_exclusions(&mut trace.result, key, world);
+    if !world {
+        for receipt in trace
+            .contributions
+            .iter_mut()
+            .filter_map(|c| c.receipt_hash.as_mut())
+        {
+            *receipt = keyed_receipt_handle(key, receipt);
+        }
+    }
     withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
     lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)
@@ -538,7 +678,7 @@ pub fn check_ad_hoc<E: SqlEngine>(
 /// inadmissible question, including an undeclared metric from a caller who
 /// can (422 `question.refused` with diagnostics); a bound (413); or a
 /// compute refusal.
-#[utoipa::path(post, path = "/v1/questions:evaluate", params(ScopeQuery), request_body = EvaluateRequest, responses((status = 200, body = crate::answers::NornQuestionAnswer), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/questions:evaluate", params(ScopeQuery), request_body = EvaluateRequest, responses((status = 200, description = "The exact answer.", body = crate::answers::NornQuestionAnswer), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused by a typed compute refusal.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn evaluate_question<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -564,7 +704,7 @@ pub fn evaluate_question<E: SqlEngine>(
 /// keyed handle that answer returned. Authorized and admitted as `:evaluate`.
 /// # Errors
 /// As [`evaluate_question`], and as [`get_numeric_trace`] for the trace.
-#[utoipa::path(post, path = "/v1/questions:trace", params(ScopeQuery), request_body = AdHocTraceRequest, responses((status = 200, body = crate::trace_contract::NornNumericTrace), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(post, path = "/v1/questions:trace", params(ScopeQuery), request_body = AdHocTraceRequest, responses((status = 200, description = "The numeric trace.", body = crate::trace_contract::NornNumericTrace), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 413, description = "The request was refused: over a resource bound.", body = Refusal), (status = 422, description = "The request was refused by a typed compute refusal.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn trace_ad_hoc<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,

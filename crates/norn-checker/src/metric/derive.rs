@@ -188,6 +188,7 @@ fn conservation_laws(
             if &law.scope.root != scope
                 || law.condition.is_some()
                 || law.timing.is_some()
+                || !law.exceptions.is_empty()
                 || law.severity != LawSeverity::Error
                 || !matches!(law.modality, LawModality::Always {})
                 || !law.scope.lifecycle_states.is_empty()

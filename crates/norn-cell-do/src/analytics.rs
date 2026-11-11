@@ -397,6 +397,23 @@ impl<E: SqlEngine> QuestionRuntime<E> for DemoQuestions {
         &self.handle_key
     }
 
+    /// #1175 (D53): the cell policy's collection request, so a role granted
+    /// Values over every object type sees raw ledger and receipt hashes.
+    fn collection_access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+    ) -> Result<AccessRequest, Refusal> {
+        Ok(crate::policy::collection_access(
+            scope,
+            actor,
+            capability,
+            object_type,
+        ))
+    }
+
     fn access(
         &self,
         scope: &CellScope,
