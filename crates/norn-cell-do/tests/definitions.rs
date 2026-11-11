@@ -707,7 +707,12 @@ fn the_checker_restatement_signs_off_saved_questions_and_dashboards() {
     assert_eq!(shown, format!("Signed\n1. Yield by week: {asked}"));
     for (kind, id, payload, words) in [
         ("question", "studio.question.signed", question(), &asked),
-        ("dashboard", "studio.dashboard.signed", dashboard("Signed"), &shown),
+        (
+            "dashboard",
+            "studio.dashboard.signed",
+            dashboard("Signed"),
+            &shown,
+        ),
     ] {
         let body = json!({
             "kind": kind, "id": id, "payload": payload,

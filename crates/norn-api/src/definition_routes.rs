@@ -219,7 +219,8 @@ pub fn checker_restatement(
             restate_question(&question, metrics).map_err(|error| error.to_string())
         }
         "dashboard" => {
-            let payload: Value = serde_json::from_str(canonical).map_err(|error| error.to_string())?;
+            let payload: Value =
+                serde_json::from_str(canonical).map_err(|error| error.to_string())?;
             restate_dashboard(&payload, metrics).map_err(|error| error.to_string())
         }
         other => Err(format!("{other} has no restatement")),
