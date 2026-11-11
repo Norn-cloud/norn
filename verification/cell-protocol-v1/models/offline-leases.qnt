@@ -281,10 +281,10 @@ module offline_leases {
   action stepUnsequencedReturn = stepWith(false, false, false)
 
   // --- Invariants ------------------------------------------------------
-  // Candidate theorems, each refuted by a mutant: onHandNonNegative
+  // Candidate theorems, each refuted by a recorded mutant: onHandNonNegative
   // (stepUnsequencedReturn), withinLeaseNeverShort (stepClampDeficit,
-  // stepReclaimOffline), localTracksLease. Unrefuted so far: conservation,
-  // shortfallObligated, factNeverRefused, prefixApplied. Hold by construction
+  // stepReclaimOffline). No recorded mutant yet: localTracksLease,
+  // conservation, shortfallObligated, factNeverRefused, prefixApplied. Hold by construction
   // here (consistency checks, not theorem candidates): replayEqualsLive (the
   // books and the log are written by the same commit), shortfallOnlyFromFacts,
   // obligationProgress (deadlines are clamped to MAX_TIME).

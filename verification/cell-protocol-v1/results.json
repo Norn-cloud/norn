@@ -7,14 +7,14 @@
   "jdk": "17",
   "models": {
     "cell-lifecycle": {
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
       "bmc": [
         {
           "step": "step",
           "invariant": "invariantWithProgress",
           "maxSteps": 8,
           "verdict": "bounded-no-counterexample",
-          "seconds": 587
+          "seconds": 477
         }
       ],
       "simulation": {
@@ -27,7 +27,7 @@
       },
       "witnesses": {
         "witnessReissuedConsumed": 6,
-        "witnessFencedUncommitted": 84906,
+        "witnessFencedUncommitted": 62512,
         "witnessRefused": 33241,
         "witnessStaleRefused": 17998,
         "witnessRescheduledFired": 6712,
@@ -39,55 +39,74 @@
           "invariant": "refusedNeverExecutes",
           "verdict": "refuted",
           "engine": "quint-rust-simulator",
+          "seed": 7,
           "counterexampleSteps": 24,
-          "trace": "traces/cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json",
-          "seed": 7
+          "trace": "traces/cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json"
         },
         {
           "step": "stepNoTimerFence",
           "invariant": "noStaleTimer",
           "verdict": "refuted",
           "engine": "quint-rust-simulator",
+          "seed": 7,
           "counterexampleSteps": 14,
-          "trace": "traces/cell-lifecycle-stepNoTimerFence-noStaleTimer.cex.json",
-          "seed": 7
+          "trace": "traces/cell-lifecycle-stepNoTimerFence-noStaleTimer.cex.json"
         },
         {
           "step": "stepDoubleDispatch",
           "invariant": "dispatchOnce",
           "verdict": "refuted",
           "engine": "quint-rust-simulator",
+          "seed": 7,
           "counterexampleSteps": 24,
-          "trace": "traces/cell-lifecycle-stepDoubleDispatch-dispatchOnce.cex.json",
-          "seed": 7
+          "trace": "traces/cell-lifecycle-stepDoubleDispatch-dispatchOnce.cex.json"
         },
         {
           "step": "stepNoConsumeMark",
           "invariant": "exactlyOnce",
           "verdict": "refuted",
           "engine": "quint-rust-simulator",
+          "seed": 7,
           "counterexampleSteps": 25,
-          "trace": "traces/cell-lifecycle-stepNoConsumeMark-exactlyOnce.cex.json",
-          "seed": 7
+          "trace": "traces/cell-lifecycle-stepNoConsumeMark-exactlyOnce.cex.json"
+        },
+        {
+          "step": "stepNoConsumeMark",
+          "invariant": "atomicity",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 23,
+          "trace": "traces/cell-lifecycle-stepNoConsumeMark-atomicity.cex.json"
         },
         {
           "step": "stepNoResultFence",
           "invariant": "noStaleGeneration",
           "verdict": "refuted",
           "engine": "quint-rust-simulator",
+          "seed": 7,
           "counterexampleSteps": 18,
-          "trace": "traces/cell-lifecycle-stepNoResultFence-noStaleGeneration.cex.json",
-          "seed": 7
+          "trace": "traces/cell-lifecycle-stepNoResultFence-noStaleGeneration.cex.json"
+        },
+        {
+          "step": "stepNoProviderDedupe",
+          "invariant": "execOnce",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 22,
+          "trace": "traces/cell-lifecycle-stepNoProviderDedupe-execOnce.cex.json"
         },
         {
           "step": "stepNoProviderDedupe",
           "invariant": "resultFidelity",
           "verdict": "refuted",
           "engine": "quint-rust-simulator",
+          "seed": 13,
           "counterexampleSteps": 20,
           "trace": "traces/cell-lifecycle-stepNoProviderDedupe-resultFidelity.cex.json",
-          "seed": 13,
-          "note": "not found in 300k samples at seed 7; found at seeds 11-14 with 3M-sample budgets (seed 13 recorded)"
+          "samples": 3000000,
+          "note": "needs a stale request to re-execute the key before the other execution's result is recorded and consumed; not found in 300k samples at seed 7, found at seed 13 with a 3M-sample budget"
         }
       ],
       "liveness": {
@@ -98,7 +117,7 @@
         ],
         "engine": "TLC",
         "verdict": "unknown",
-        "note": "on the previous model revision TLC stopped after 840 s at 956,289 distinct states (618,890 queued) with no violation; not re-run on this revision"
+        "note": "TLC on the previous model and harness revision (before reconcileF gained providerFence) stopped after 840 s at 956,289 distinct states (618,890 queued) with no violation; not re-run on this revision"
       },
       "inductive": {
         "verdict": "not attempted",
@@ -175,7 +194,7 @@
       }
     },
     "offline-leases": {
-      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "modelSha256": "196cd918443a5d1e50dadfd46dc449b9239dd3c5f85443d38201785c3b6684e3",
       "bmc": [
         {
           "step": "step",
@@ -243,7 +262,8 @@
       },
       "inductive": {
         "verdict": "not attempted"
-      }
+      },
+      "modelShaNote": "comment-only edits since the recorded checks; checks not re-run"
     },
     "cross-cell-commitment": {
       "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
@@ -367,7 +387,6 @@
   "toolingNotes": [
     "quint 0.32.0 `compile --target tlaplus` prints `x = LET .. IN ApaFoldSet(..) /\\ Q`, so the LET swallows Q; a lambda fold must end its conjunction. Apalache 0.56.1 rejects a named fold function from an imported module (`Expected F to be a binary operator passed by name`)."
   ],
-  "round": "review round 2 (Fable CHANGES on 4f5621c2)",
   "fairnessHonoured": {
     "cell-lifecycle": {
       "reconcileF": "not honoured on main: perform() returns PerformOutcomeUnknown and claim_reconciled_perform needs a caller-ledgered authorization, so reconciliation is a manual policy step; the provider lookup-and-fence (A2) does not exist",

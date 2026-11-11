@@ -73,6 +73,12 @@
           "meaning": "a commit that does not mark the generation consumed lets it be consumed again"
         },
         {
+          "step": "stepNoConsumeMark",
+          "invariant": "atomicity",
+          "expect": "refuted",
+          "meaning": "the consumed generation is missing from consumedGen while the ledger holds it"
+        },
+        {
           "step": "stepNoResultFence",
           "invariant": "noStaleGeneration",
           "expect": "refuted",
@@ -82,7 +88,13 @@
           "step": "stepNoProviderDedupe",
           "invariant": "resultFidelity",
           "expect": "refuted",
-          "meaning": "without A1, a re-executed key changes the provider's outcome after the cell consumed the first"
+          "meaning": "without A1 the provider executes a key once per request: a stale generation's request re-executes the key (execOnce) and can overwrite the outcome before the cell records and consumes the other execution's result (resultFidelity)"
+        },
+        {
+          "step": "stepNoProviderDedupe",
+          "invariant": "execOnce",
+          "expect": "refuted",
+          "meaning": "without A1, two requests for one operation key both execute"
         }
       ],
       "witnesses": [
@@ -102,10 +114,11 @@
       ],
       "candidateTheorems": [
         "exactlyOnce",
+        "atomicity",
         "dispatchOnce",
         "noStaleGeneration",
         "noStaleTimer",
-        "atomicity",
+        "execOnce",
         "resultFidelity",
         "refusedNeverExecutes"
       ],
@@ -191,6 +204,9 @@
       "mergeAtomicity": "not atomic: commands replay one by one as ordinary main commits (Core 08 FORK-MERGE-1); a refusal keeps the replayed prefix in main and reopens the fork; a later promote resumes at the durable cursor",
       "exclusions": [
         "The #1239 finding concerns #1226's head (export_record with the own-base fence). export_record on main has no fork fence at all; re-check there once forks land."
+      ],
+      "unrefuted": [
+        "mergeReachable"
       ]
     },
     {
@@ -272,6 +288,13 @@
       ],
       "exclusions": [
         "Stranded lease: localTracksLease is one-sided, so the cell can hold lease units for a device that the device can neither sell within lease nor return (lease 1, sell 2 offline, apply, grant 1). Reported on #1225; not prevented by this model."
+      ],
+      "unrefuted": [
+        "localTracksLease",
+        "conservation",
+        "shortfallObligated",
+        "factNeverRefused",
+        "prefixApplied"
       ]
     },
     {

@@ -36,7 +36,7 @@ module cell_lifecycle {
     doneVal: int -> int, fenced: int -> bool }
   type Ghost = { dispatches: Pair -> int, claimedEver: Set[Pair], replaced: Set[Pair],
     last: str, rescheduledIncs: Set[int], epoch: int, claimEpoch: Pair -> int, lastRecorded: Pair,
-    staleIncs: Set[int], reissued: Set[Pair] }
+    staleIncs: Set[int], reissued: Set[Pair], execs: int -> int, fencedCrash: bool }
   // Mutants: each flag removes one mechanism; the matching step must refute
   // the invariant that depends on it (manifest `variants`).
   type Mut = { unfenced: bool, noTimerFence: bool, keepLicence: bool, noConsumeMark: bool,
@@ -72,7 +72,7 @@ module cell_lifecycle {
       fenced: CMDS.mapBy(_ => false) },
     g' = { dispatches: PAIRS.mapBy(_ => 0), claimedEver: Set(), replaced: Set(),
       last: "init", rescheduledIncs: Set(), epoch: 0, claimEpoch: PAIRS.mapBy(_ => 0),
-      lastRecorded: (0, 0), staleIncs: Set(), reissued: Set() },
+      lastRecorded: (0, 0), staleIncs: Set(), reissued: Set(), execs: zeroC, fencedCrash: false },
   }
 
   def pending(c: int): bool = d.gen.get(c) > d.consumedGen.get(c)
@@ -128,7 +128,10 @@ module cell_lifecycle {
     val c = p._1
     all {
       env.toProvider.contains(p),
-      d' = d, v' = v, g' = { ...g, last: "providerExec" },
+      d' = d, v' = v,
+      g' = { ...g, last: "providerExec",
+        execs: if (env.fenced.get(c) or (dedupe and env.done.get(c) != 0)) g.execs
+          else g.execs.setBy(c, n => n + 1) },
       env' = if (env.fenced.get(c)) { ...env, toProvider: env.toProvider.exclude(Set(p)) }
         else if (dedupe and env.done.get(c) != 0) { ...env, toProvider: env.toProvider.exclude(Set(p)),
           net: env.net.union(Set({ cmd: c, gen: p._2, value: env.doneVal.get(c) })) }
@@ -267,14 +270,18 @@ module cell_lifecycle {
   // --- Process failure -------------------------------------------------
   // A crash can strike anywhere, including between peek and commit (the
   // commit is one transaction, so mid-commit equals before-commit).
+  // Ghost: a process died while a key was fenced at the provider and the
+  // cell had not committed the refusal (I12 across a failure).
+  def fencedUncommitted: bool = CMDS.exists(c => env.fenced.get(c) and d.refusedGen.get(c) == 0)
   action crash = all {
-    v.up, d' = d, env' = env, g' = { ...g, last: "crash" },
+    v.up, d' = d, env' = env,
+    g' = { ...g, last: "crash", fencedCrash: g.fencedCrash or fencedUncommitted },
     v' = { ...emptyVolatile, up: false },
   }
   // DO eviction happens only when idle: no turn, no call in flight.
   action evict = all {
     v.up, v.turn == NONE, v.inflight == Set(),
-    d' = d, env' = env, g' = { ...g, last: "evict" },
+    d' = d, env' = env, g' = { ...g, last: "evict", fencedCrash: g.fencedCrash or fencedUncommitted },
     v' = { ...emptyVolatile, up: false },
   }
   // Reopen reloads the cache from the durable store; a retry redelivers.
@@ -308,9 +315,10 @@ module cell_lifecycle {
   action stepNoProviderDedupe = stepWith({ ...NOMUT, noProviderDedupe: true })
 
   // --- Invariants ------------------------------------------------------
-  // Candidate theorems (each has a mutant that refutes it, see manifest):
-  // exactlyOnce, dispatchOnce, noStaleGeneration, noStaleTimer, atomicity,
-  // resultFidelity, refusedNeverExecutes. Consistency checks that hold by
+  // Candidate theorems, each refuted by a recorded mutant (manifest
+  // `variants`): exactlyOnce, atomicity (both stepNoConsumeMark),
+  // dispatchOnce, noStaleGeneration, noStaleTimer, execOnce, resultFidelity
+  // (both stepNoProviderDedupe), refusedNeverExecutes. Consistency checks that hold by
   // construction of this model (not theorem candidates): dispatchNeedsClaim,
   // replayEqualsLive (state and log are written by the same assignment),
   // progressEnabled (follows from the definition of outcomeUnknown).
@@ -347,18 +355,22 @@ module cell_lifecycle {
   // RESULT FIDELITY: a consumed result is the provider's one execution.
   def resultFidelity = d.log.forall(e => e.kind == "result" implies
     (env.done.get(e.id) != 0 and e.value == env.doneVal.get(e.id)))
+  // EXEC-ONCE: the provider executes each operation key at most once (A1).
+  def execOnce = CMDS.forall(c => g.execs.get(c) <= 1)
   // NO LOST EFFECT: a refused command never executes at the provider.
   def refusedNeverExecutes = CMDS.forall(c => d.refusedGen.get(c) != 0 implies env.done.get(c) == 0)
   def invariant = exactlyOnce and dispatchOnce and dispatchNeedsClaim and noStaleGeneration
     and noStaleTimer and atomicity and replayEqualsLive and resultFidelity and refusedNeverExecutes
+    and execOnce
   temporal safety = always(invariant)
 
   // Non-vacuity witnesses: each must be reachable (a run violating
   // `not(witness)` exports the witnessing trace).
   // A generation created by reconcileReissue (not a plain replacement) was consumed.
   def witnessReissuedConsumed = d.log.exists(e => e.kind == "result" and g.reissued.contains((e.id, e.gen)))
-  // The provider fenced and the cell has not committed the refusal (I12).
-  def witnessFencedUncommitted = CMDS.exists(c => env.fenced.get(c) and d.refusedGen.get(c) == 0)
+  // The process crashed or was evicted while a key was fenced at the
+  // provider and the refusal was not yet committed (I12 across a failure).
+  def witnessFencedUncommitted = g.fencedCrash
   def witnessRefused = d.log.exists(e => e.kind == "refused")
   def witnessStaleRefused = g.last == "refuseStale"
   // A fired incarnation that replaced a still-scheduled timer.

@@ -11,8 +11,8 @@
       "violates": null,
       "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "1a53ff20fd7eb7de208bfbf6bebb55e860c897a7aa2b1523a854a28882c617f7"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "c88588b18dd53234052e3ca76dd2529c8153132038351ab96693a4a131d50f65"
     },
     {
       "file": "cell-lifecycle-step-2.json",
@@ -23,8 +23,8 @@
       "violates": null,
       "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "cae1a2ca67fd1f907b9f63d2881f5cf884936fa3536d1e39470ae4091fc9894b"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "a3d185a7e48777035c01fed0d54626fdb971bd3b81740d728915d9f8ef884a1c"
     },
     {
       "file": "cell-lifecycle-step-3.json",
@@ -35,8 +35,8 @@
       "violates": null,
       "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "4b61612f7b54848d55f3245f76b1c68c4b4a65ab389a084125fbe99895f54a16"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "4a54702e9c2d26067ffc64dd339719c156b489f7d17b096db091ab734805e39e"
     },
     {
       "file": "cell-lifecycle-stepDoubleDispatch-dispatchOnce.cex.json",
@@ -47,8 +47,20 @@
       "violates": "dispatchOnce",
       "engine": "quint-rust-simulator",
       "states": 25,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "938d3e3983f4c98a3201d6c886e1b4fcaed7c5d948b773f9b7e1f1970c679f68"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "500a7b3e59cbc7e3fab33195fcfe9108c238b3f120abee3166fd65575961442f"
+    },
+    {
+      "file": "cell-lifecycle-stepNoConsumeMark-atomicity.cex.json",
+      "model": "cell-lifecycle",
+      "kind": "counterexample",
+      "step": "stepNoConsumeMark",
+      "seed": 7,
+      "violates": "atomicity",
+      "engine": "quint-rust-simulator",
+      "states": 24,
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "30d3e17be0c37e061549728fa1072df1596f0aa660b843bed87f285361087b45"
     },
     {
       "file": "cell-lifecycle-stepNoConsumeMark-exactlyOnce.cex.json",
@@ -59,8 +71,20 @@
       "violates": "exactlyOnce",
       "engine": "quint-rust-simulator",
       "states": 26,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "2e1123088a231fbde32138981cf6ecc2f90890690a78ef3ebac933e9f5926cd6"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "596e44086d3a461a4a476be2885acf61e8c97ee7e49faa53606f7ecb976ab912"
+    },
+    {
+      "file": "cell-lifecycle-stepNoProviderDedupe-execOnce.cex.json",
+      "model": "cell-lifecycle",
+      "kind": "counterexample",
+      "step": "stepNoProviderDedupe",
+      "seed": 7,
+      "violates": "execOnce",
+      "engine": "quint-rust-simulator",
+      "states": 23,
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "70e0843ff9defc3b9b1f9cb003ace86a439e930f4b70273c54e47eb6a88b3a23"
     },
     {
       "file": "cell-lifecycle-stepNoProviderDedupe-resultFidelity.cex.json",
@@ -71,8 +95,8 @@
       "violates": "resultFidelity",
       "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "a2648eb618828b63b2bd68e8aecae346e1113e78fef9943c4ab3bd9f8aaebbf3"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "d8d591addfa56ed9bcd1457df80c4bcfe8e1d5b6143705e70091e7a92b4dde21"
     },
     {
       "file": "cell-lifecycle-stepNoResultFence-noStaleGeneration.cex.json",
@@ -83,8 +107,8 @@
       "violates": "noStaleGeneration",
       "engine": "quint-rust-simulator",
       "states": 19,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "c0bc7e8aee9c189d432737b2e94539a500c9120a8394ea6a99444d233d0396e8"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "7c1b6f9bff8732494dcc30a6207edcca3d2496b37ea46ff5c0bad2566d3b0fdb"
     },
     {
       "file": "cell-lifecycle-stepNoTimerFence-noStaleTimer.cex.json",
@@ -95,8 +119,8 @@
       "violates": "noStaleTimer",
       "engine": "quint-rust-simulator",
       "states": 15,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "c95350edc71c89d783434f3e314a867ad84121167b6045da70fb86fa6930e975"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "5a152aa3b2dcfab05c9ad446a7937d9b92e660631d5ea0b72c2a078955148579"
     },
     {
       "file": "cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json",
@@ -107,8 +131,8 @@
       "violates": "refusedNeverExecutes",
       "engine": "quint-rust-simulator",
       "states": 25,
-      "modelSha256": "2a6f65e40e6fa1602b93168697d69bb0ec924bd99ba15c30355e417c3f1cc447",
-      "traceSha256": "524ba7e221800b8d7270a883bb223c5c4b387badf096ef55febe5536922c6853"
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "traceSha256": "ce2ad371956c22f53970f98d76c31ed91c9d9ca29bb24f329d5da131e0cc6c3a"
     },
     {
       "file": "cross-cell-commitment-step-1.json",
@@ -287,7 +311,7 @@
       "violates": null,
       "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "modelSha256": "196cd918443a5d1e50dadfd46dc449b9239dd3c5f85443d38201785c3b6684e3",
       "traceSha256": "51b300d873a12f21f2a38c5beb1e7288aa5dbe1e3256a4a9770071433cb6bae4"
     },
     {
@@ -299,7 +323,7 @@
       "violates": null,
       "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "modelSha256": "196cd918443a5d1e50dadfd46dc449b9239dd3c5f85443d38201785c3b6684e3",
       "traceSha256": "105190cfceaa2e13b57b9f36f14eda9afad703d2bd60a491c0cbc19414b2fccb"
     },
     {
@@ -311,7 +335,7 @@
       "violates": null,
       "engine": "quint-rust-simulator",
       "states": 21,
-      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "modelSha256": "196cd918443a5d1e50dadfd46dc449b9239dd3c5f85443d38201785c3b6684e3",
       "traceSha256": "4605e4c1d3e4c62172dd77980fed856ab7b4e124f895c45522ebd44d34e0d2bd"
     },
     {
@@ -323,7 +347,7 @@
       "violates": "withinLeaseNeverShort",
       "engine": "quint-rust-simulator",
       "states": 25,
-      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "modelSha256": "196cd918443a5d1e50dadfd46dc449b9239dd3c5f85443d38201785c3b6684e3",
       "traceSha256": "818009b251cd9a9ca293c9c34e41dd60a85beb593daf654c3d5115ddebade6a5"
     },
     {
@@ -335,7 +359,7 @@
       "violates": "withinLeaseNeverShort",
       "engine": "quint-rust-simulator",
       "states": 20,
-      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "modelSha256": "196cd918443a5d1e50dadfd46dc449b9239dd3c5f85443d38201785c3b6684e3",
       "traceSha256": "2986422e7d7f58a370ef93bf65dd81ea0c0b79d5e7c5d5b25c6277aaf88aed68"
     },
     {
@@ -347,7 +371,7 @@
       "violates": "onHandNonNegative",
       "engine": "quint-rust-simulator",
       "states": 24,
-      "modelSha256": "e9f66bf00e6c208123233446159ce585397c3048a6edabee3bd2e6fb2b86a1d3",
+      "modelSha256": "196cd918443a5d1e50dadfd46dc449b9239dd3c5f85443d38201785c3b6684e3",
       "traceSha256": "c3bda29fbc147bb1763e3509337ae4aa04a517f194e3f84f401f811f89f5ab82"
     }
   ]
