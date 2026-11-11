@@ -109,6 +109,7 @@ struct ManifestDev {
 
 /// A setup or usage failure: a stable code, an actionable message and the
 /// shared exit status (2 usage, 3 setup).
+#[derive(Debug)]
 struct Failure {
     code: &'static str,
     message: String,
