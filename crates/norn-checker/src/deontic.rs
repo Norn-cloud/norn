@@ -399,7 +399,9 @@ pub fn check_requirement(
             }
             None
         }
-        LawResponse::Action { .. } | LawResponse::Transition { .. } => {
+        LawResponse::Action { .. }
+        | LawResponse::Transition { .. }
+        | LawResponse::TranslationPreserves { .. } => {
             return Err(R::UnsupportedResponse);
         }
     };

@@ -132,9 +132,9 @@ declare module "@norn/authoring" {
     }
 
     /** Opaque object type definition; the syntax compiler lowers the call. */
-    interface TypeDefinition<T> {
+    interface TypeDefinition<T, L extends ReadonlyArray<LinkSpec> = ReadonlyArray<LinkSpec>> {
       readonly _tag: "NornType"
-      readonly __types?: { readonly type: T }
+      readonly __types?: { readonly type: T; readonly links?: L }
     }
 
     /** Candidate QuestionIR; the host must admit it with the selected metric definitions. */
@@ -227,12 +227,13 @@ declare module "@norn/authoring" {
       S extends Schema.Top,
       E extends TypeDefinition<unknown> | string | undefined = undefined,
       I extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
+      L extends ReadonlyArray<LinkSpec> = ReadonlyArray<LinkSpec>,
     > extends InterfaceMeta<S> {
       /** The one supertype, declared locally or named from the installed registry. */
       readonly extends?: E
       readonly implements?: I
       readonly pathEquations?: ReadonlyArray<import("../src/builder/entity.ts").PathEquation>
-      readonly links?: ReadonlyArray<LinkSpec>
+      readonly links?: L
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
       readonly defaults?: { readonly [P in keyof S["Type"]]?: S["Type"][P] }
@@ -244,9 +245,10 @@ declare module "@norn/authoring" {
       S extends Schema.Top,
       const E extends TypeDefinition<unknown> | string | undefined = undefined,
       const I extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
+      const L extends ReadonlyArray<LinkSpec> = readonly [],
     >(
-      meta: TypeMeta<S, E, I>,
-    ): TypeDefinition<EffectiveProperties<E, I, S["Type"]>>
+      meta: TypeMeta<S, E, I, L>,
+    ): TypeDefinition<EffectiveProperties<E, I, S["Type"]>, L>
 
     /** An EntityIR v2 interface (`interface` is a reserved word). */
     function interfaceType<
@@ -386,11 +388,50 @@ declare module "@norn/authoring" {
 
     /** Data-only law over ontology-bound ZEN predicates. The Rust schema is authoritative. */
     interface LawDefinition { readonly _tag: "NornLaw" }
+    /** What a law lambda reads as `self`: the subject's properties and, one level deep, its links. */
+    type LinkTargetProperties<K> = K extends { readonly target: TypeDefinition<infer T, any> } ? T : {}
+    type LinkValues<L extends ReadonlyArray<LinkSpec>> = {
+      readonly [K in L[number] as K["id"]]: K["cardinality"]["to"] extends "many"
+        ? ReadonlyArray<LinkTargetProperties<K>>
+        : K["cardinality"] extends { readonly required: true } ? LinkTargetProperties<K> : LinkTargetProperties<K> | null
+    }
+    type SelfOf<D> = D extends TypeDefinition<infer T, infer L> ? T & LinkValues<L> : D extends InterfaceDefinition<infer T> ? T : never
+    type LawPredicate<D> = (self: SelfOf<NoInfer<D>>) => boolean
+    interface LawSpecBase<D> {
+      /** The subject: an object type or an interface (every implementation inherits the law). */
+      readonly on: D
+      /** Condition under which the law applies. */
+      readonly when?: LawPredicate<D>
+      /** `before` is a bare read of a timestamp property only (`self => self.due_at`). */
+      readonly within?: { readonly days?: number; readonly hours?: number } | { readonly before: (self: SelfOf<NoInfer<D>>) => string }
+      /** Default "error". */
+      readonly severity?: "error" | "warning"
+      /** Rationale, required. */
+      readonly because: string
+      /** Codemod only: keep an existing law id instead of `<namespace>.<Type>.<name>`. */
+      readonly id?: string
+    }
+    /** Exactly one of `must` / `never` / `eventually`. */
+    type LawSpec<D> = LawSpecBase<D> & (
+      | { readonly must: LawPredicate<D>; readonly never?: undefined; readonly eventually?: undefined }
+      | { readonly never: LawPredicate<D>; readonly must?: undefined; readonly eventually?: undefined }
+      | { readonly eventually: LawPredicate<D>; readonly must?: undefined; readonly never?: undefined }
+    )
+    /**
+     * A law over a subject type (dx-spec §4.5). Id, scope, `objectTypes`,
+     * `lawVersion`, owner, provenance and the entity dependency are inferred;
+     * the lambdas compile statically and never run.
+     */
+    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any>>(name: string, spec: LawSpec<D>): LawDefinition
     function law(meta: {
       readonly id: string
       readonly title: string
       readonly version: string
-      readonly law: import("../src/builder/law.ts").LawIR
+      /** `condition` and a predicate `response.expression` may be typed lambdas (`Norn.expression(Subject, self => ...)`). */
+      readonly law: Omit<import("../src/builder/law.ts").LawIR, "condition" | "response"> & {
+        readonly condition?: string | Expression<boolean>
+        readonly response: Exclude<import("../src/builder/law.ts").LawResponse, { readonly kind: "predicate" }> | { readonly kind: "predicate"; readonly expression: string | Expression<boolean> }
+      }
       readonly dependencies: import("../src/builder/law.ts").LawDef["dependencies"]
     }): LawDefinition
 
@@ -495,6 +536,12 @@ declare module "@norn/authoring" {
     function parseTimestamp(text: string): string
     /** UTF-8 byte count, matching the canonical ZEN profile. */
     function byteLength(text: string): number
+    /** Sum of a list of numbers (`sum`); an empty list sums to 0. */
+    function sum(values: ReadonlyArray<number>): number
+    /** Signed calendar days from `start` to `end` (`days_between`); raw date text is parsed. */
+    function daysBetween(start: string, end: string): number
+    /** The calendar date `days` after `date` (`add_days`); a parsed date, comparable with other parsed dates. */
+    function addDays(date: string, days: number): string
 
     interface SourceSchemaSpec {
       readonly id: string

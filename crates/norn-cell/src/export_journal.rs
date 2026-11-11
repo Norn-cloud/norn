@@ -250,12 +250,32 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(self.read().next_commit_seq()?.saturating_sub(1))
     }
 
-    /// Return the immutable export record for one commit, verifying its local Norn1 hash.
+    /// Return a portable record after verifying its hash, events and versioned
+    /// cell identity against the owning store. Unqualified history stays local.
     ///
     /// # Errors
     ///
     /// Engine errors, invalid JSON, or an export record whose content hash does not verify.
     pub fn export_record(&self, commit_seq: u64) -> Result<Option<ExportRecord>, CellError> {
+        let Some(record) = self.local_export_record(commit_seq)? else {
+            return Ok(None);
+        };
+        let Some(record_cell_id) = crate::cell_identity::from_bindings(&record.bindings)? else {
+            return Err(CellError::BindingMismatch {
+                key: crate::cell_identity::KEY.to_owned(),
+                expected: "a qualified cell export".to_owned(),
+                found: String::new(),
+            });
+        };
+        self.require_cell_id(&record_cell_id)?;
+        Ok(Some(record))
+    }
+
+    /// Verified local history remains usable without portable cell provenance.
+    pub(crate) fn local_export_record(
+        &self,
+        commit_seq: u64,
+    ) -> Result<Option<ExportRecord>, CellError> {
         let Some(record) = read_record(&self.conn, commit_seq)? else {
             return Ok(None);
         };
