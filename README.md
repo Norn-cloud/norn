@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,953 records across 142 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,954 records across 142 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -110,7 +110,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `proof.gate.artifact_governance_extraction.s` | 95 | s (single) | boat | 1 | 95 / 95 | ▁ | `328a1a1aa3` | [link](https://github.com/Norn-cloud/norn/pull/1244) |
 | `proof.gate.checker-certificates-correspondence.s` | 177 | s (single) | boat | 1 | 177 / 177 | ▁ | `12bf2239d4` | [link](https://github.com/Norn-cloud/norn/pull/1232) |
 | `proof.gate.checker_certificates.s` | 403 | s (single) | boat | 3 | 210 / 403 | ▆▁█ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
-| `proof.gate.exact_arith.s` | 2,917 | s (single) | boat | 9 | 647 / 4,663 | ▁▂▂▃▃█▃▁▅ | `397eb076d1` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
+| `proof.gate.exact_arith.s` | 2,946 | s (single) | boat | 10 | 647 / 4,663 | ▁▂▂▃▃█▃▁▅▅ | `07f5325866` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_binding.s` | 344 | s (single) | boat | 2 | 236 / 344 | ▁█ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_commit.s` | 194 | s (single) | boat | 2 | 194 / 301 | █▁ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
 | `proof.gate.kernel_decider.s` | 253 | s (single) | boat | 2 | 214 / 253 | ▁█ | `96a15b9c16` | [link](https://github.com/Norn-cloud/norn/pull/1254) |
@@ -272,7 +272,7 @@ What limits each metric's latest value, in the measurer's words.
 - `proof.gate.artifact_governance_extraction.s`: Second run on the same VM: the first run (197 s, cold build of norn-ir) failed only on a workspace-path check caused by a symlinked checkout; this run reused that build. One run. Two default (8 GiB) VMs became unresponsive on this gate.
 - `proof.gate.checker-certificates-correspondence.s`: one run, wall clock incl. Mathlib/Aeneas olean import and every mutant re-extraction; same VM ran the four gates sequentially; Lean import is IO-bound on 8 GB (about 40-100 s per process)
 - `proof.gate.checker_certificates.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
-- `proof.gate.exact_arith.s`: affected mutant mode, 24 mutants (mutant phase 2078 s); contended with a concurrent nextest run on 4 vCPU; mutants serial, RAM-bound per Lean process
+- `proof.gate.exact_arith.s`: affected mode, 24 mutants (mutant phase 2787 s); contended: 2-3 steps ran at once on one 4 vCPU VM for most of the run
 - `proof.gate.kernel_binding.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
 - `proof.gate.kernel_commit.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
 - `proof.gate.kernel_decider.s`: contended: ran alongside the exact-arith gate on the same 4 vCPU VM; 3-10x lane solo times
