@@ -326,13 +326,13 @@ pub(crate) fn applied_exceptions<T: PartialEq>(
 ) {
     let mut index = 0_usize;
     while index < applied.len() {
-        let applies = if let (Some(true), Some(false)) = (matched.get(index), level.get(index)) {
+        let marked = if let (Some(true), Some(false)) = (matched.get(index), level.get(index)) {
             ancestors_hold(law, ids, parents, matched, index)
         } else {
             false
         };
         if let Some(slot) = applied.get_mut(index) {
-            *slot = applies;
+            *slot = marked;
         }
         let Some(next) = index.checked_add(1) else {
             return;
