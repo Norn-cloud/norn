@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 /** Compile typed definitions and run the authoritative Rust checker ABI. */
 import { statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
@@ -26,6 +27,16 @@ if (process.argv[2] === "explain") {
     process.exit(error.exitCode)
   }
 }
+if (process.argv[2] === "dev") {
+  const { dev } = await import("./dev.ts")
+  const { ProjectError } = await import("./project.ts")
+  try { process.exit(await dev(process.argv.slice(3))) }
+  catch (error) {
+    if (!(error instanceof ProjectError)) throw error
+    process.stdout.write(`${JSON.stringify(error.diagnostic)}\n`)
+    process.exit(error.exitCode)
+  }
+}
 if (process.argv[2] === "init") {
   const { init } = await import("./init.ts")
   const { ProjectError } = await import("./project.ts")
@@ -44,7 +55,7 @@ function option(name: string): string | undefined {
   return index < 0 ? undefined : flags[index + 1]
 }
 if (!input || (command !== "check" && command !== "compile" && command !== "profile" && command !== "question")) {
-  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE]\n       norn question <file.ts> [--out FILE]\n")
+  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n")
   process.exit(2)
 }
 if (command === "profile") {
