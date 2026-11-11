@@ -201,10 +201,12 @@ test("a draft is read and written by pointer, nested records included", () => {
   expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":"10.500","location":{"site":"vault-a"}}')
 })
 
-test("contract v1 as CELL-DO approved it: any 404 or 503 is not served, whatever its body", async () => {
+test("contract v1 as CELL-DO approved it: a 404 or 503 is not served, unless it refuses the call's target", async () => {
   const notFound = () => Response.json({ code: "route.not_found", message: "No such route." }, { status: 404 })
   expect(await listActions(undefined, cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
   expect(await callAction("a", "{}", "k", cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
+  const noTarget = () => Response.json({ code: "action.target_not_found", message: "not found", diagnostics: [{ code: "action.target_not_found", message: "No such holding.", span: { pointer: "/input/id" } }] }, { status: 404 })
+  expect(await callAction("a", "{}", "k", cell(noTarget).fetcher)).toEqual({ kind: "refused", status: 404, code: "action.target_not_found", message: "not found", diagnostics: [{ code: "action.target_not_found", message: "No such holding.", pointer: "/input/id" }] })
   expect(await listActions(undefined, cell(() => Response.json({ code: "host.down", message: "down" }, { status: 503 })).fetcher)).toEqual({ kind: "unavailable" })
 })
 

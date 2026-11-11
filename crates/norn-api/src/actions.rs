@@ -38,7 +38,10 @@ pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionRequest {
-    /// Exact business arguments: number tokens are decoded digit for digit.
+    /// Exact business arguments. A field declared `nornType: decimal` travels
+    /// as its exact decimal text (`"12.500"`, VAL-EXACT-1); a number token
+    /// there refuses `action.invalid_input`. Other number tokens are decoded
+    /// digit for digit.
     #[schema(schema_with = action_input_schema)]
     pub input: RuntimeValue,
     /// The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes.

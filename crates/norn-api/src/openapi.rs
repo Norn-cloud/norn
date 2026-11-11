@@ -36,6 +36,12 @@ mod action_contract_tests {
                 .unwrap()
                 .contains("exact-decimal")
         );
+        assert!(
+            schemas["NornActionInput"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("travels as its exact decimal text")
+        );
         assert!(schemas.get("NornActionJsonValue").is_none());
         let record = &schemas["NornActionCallRecord"]["properties"];
         for name in [
