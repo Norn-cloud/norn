@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-1,922 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+1,923 records across 139 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -165,7 +165,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `ci.core.run.s` | 3,291 | s (single) | github-hosted | 170 | 35 / 9,710 | ▃▂▅▂▃▂▂▄▃▃▂▂▃▃▂▃▃▃▃▃▃▄▃▂▂▂▃▂▃▂▃▃▃▃▃▃▃▂▃▃ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.phase.browser.s` | 272 | s (single) | github-hosted | 23 | 0 / 447 | ▁▁▁▄▆▆▄▅▅▇▆▇▆▆▆▅▆▅▇█▅▇▅ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.phase.clippy.s` | 77 | s (single) | boat, github-hosted | 72 | 42 / 121 | ▆▁▅▆▄▃▃▃▃▂▂▄▄▃▃▄▃▂▁▃▁▄▃▃▅▂▄▄▄▃▄▂▃▃▅█▆▃▆▄ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
-| `ci.core.task.phase.doc.s` | 32 | s (single) | github-hosted | 71 | 16 / 73 | ▃▄▁▅▅▃▂▂▂▂▄▁▆▂▃▅▃▂▃▁▃▁▅▅▁▃▃▅▅▃▅▅▂▄▂▄█▃▅▃ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
+| `ci.core.task.phase.doc.s` | 36 | s (single) | boat, github-hosted | 72 | 16 / 73 | ▄▁▅▅▃▂▂▂▂▄▁▆▂▃▅▃▂▃▁▃▁▅▅▁▃▃▅▅▃▅▅▂▄▂▄█▃▅▃▃ | `a23725859a` | [link](https://github.com/Norn-cloud/norn/pull/1253) |
 | `ci.core.task.phase.doctest.s` | 21 | s (single) | github-hosted | 79 | 18 / 53 | █▂▃▃▂▂▁▂▂▁▃▄▂▁▂▃▁▃▂▃▁▂▂▂▁▁▃▁▁▃▃▃▂▄▃▄▂▂▃▂ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.phase.features.s` | 667 | s (single) | github-hosted | 67 | 296 / 1,013 | ▅▄▃▄▆▆▃▇▆▆▆▆▄▆▆▃▃▇▆▄▄▆▇▅▆▄▅▇▅▅█▇▆▇▇█▇▆█▅ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
 | `ci.core.task.phase.guards.s` | 590 | s (single) | github-hosted | 81 | 226 / 805 | ▇▄▆▆▆▆▆▅▆▆▄▄▆▆▆▆▄▅▅▅▆▅▆▅▆▅▅▆▅▅▇▆▆▇▇██▇▇▅ | `6cbc5766c3` | [link](https://github.com/Norn-cloud/norn/actions/runs/43024711474) |
