@@ -1,14 +1,14 @@
-import ScaledQuotient.Funs
+import Scaled.Funs
 import RoundingMath
 
 /-!
 # Production `rounded_quotient` meets FOLD-ARITHMETIC
 
-`ScaledQuotient` is the fresh Aeneas translation of `rounded_quotient` in the
-production file `vendor/zen/core/expression/src/scaled.rs`, with the two core
-models of `ScaledQuotient/FunsExternal.lean`. For every rounding mode and every
-pair of `i128` operands the function returns (never panics or diverges) and
-its result is exactly the written semantics `quantize`: refusal is `Err`, and an
+`Scaled` is the fresh Aeneas translation of the scaled core of the production
+file `vendor/zen/core/expression/src/scaled.rs`, with the models of
+`CoreModels.lean` and `Scaled/`. For every rounding mode and every pair of
+`i128` operands `rounded_quotient` returns (never panics or diverges) and its
+result is exactly the written semantics `quantize`: refusal is `Err`, and an
 `Ok` coefficient is the declared rounding of the exact quotient.
 -/
 

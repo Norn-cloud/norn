@@ -61,3 +61,30 @@ def core.option.Option.Insts.CoreOpsTry_traitTry.branch {T : Type} (x : Option T
 def core.option.Option.Insts.CoreOpsTry_traitFromResidualOptionInfallible.from_residual
     (T : Type) (_residual : Option core.convert.Infallible) : Result (Option T) :=
   ok none
+
+
+/-- `i128::pow`: `x^n`. Overflow panics, as with overflow checks on; the
+    correspondence theorems show it never happens on the paths they cover, so
+    the wrapping release behaviour agrees there. -/
+def core.num.I128.pow (x : Std.I128) (n : Std.U32) : Result Std.I128 :=
+  if h : -2 ^ (IScalarTy.I128.numBits - 1) ≤ x.val ^ n.val ∧
+      x.val ^ n.val < 2 ^ (IScalarTy.I128.numBits - 1) then
+    ok (I128.ofIntCore (x.val ^ n.val) h)
+  else fail .integerOverflow
+
+/-- `<i64 as From<u32>>::from`: the same value. -/
+def I64.Insts.CoreConvertFromU32.from (x : Std.U32) : Result Std.I64 :=
+  if h : -2 ^ (IScalarTy.I64.numBits - 1) ≤ (x.val : ℤ) ∧
+      (x.val : ℤ) < 2 ^ (IScalarTy.I64.numBits - 1) then
+    ok (I64.ofIntCore x.val h)
+  else fail .integerOverflow
+
+/-- `i64::unsigned_abs`: the magnitude as `u64`; total, never panics. -/
+def core.num.I64.unsigned_abs (x : Std.I64) : Result Std.U64 :=
+  ok ⟨BitVec.ofNat 64 x.val.natAbs⟩
+
+/-- `<u32 as TryFrom<u64>>::try_from`: `Ok` exactly when the value fits. -/
+def U32.Insts.CoreConvertTryFromU64TryFromIntError.try_from (x : Std.U64) :
+    Result (core.result.Result Std.U32 core.num.error.TryFromIntError) :=
+  ok (if x.val < 2 ^ 32 then
+    core.result.Result.Ok ⟨BitVec.ofNat 32 x.val⟩ else core.result.Result.Err ())

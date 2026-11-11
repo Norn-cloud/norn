@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # #717 (D78): Charon/Aeneas extract the production exact-arithmetic core and
 # Lean proves it against the written VAL-EXACT-1 / FOLD-ARITHMETIC /
-# EXACT-RATIONAL-1 semantics in verification/exact-arith-v1. Every seeded rounding and overflow mutant
+# FOLD-SCALED / VAL-ROUND / EXACT-RATIONAL-1 semantics in
+# verification/exact-arith-v1. Every seeded rounding and overflow mutant
 # must then extract and fail the same proof.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,7 +26,10 @@ proof_files=(
   verification/exact-arith-v1/RationalReference.lean
   verification/exact-arith-v1/RoundingMath.lean
   verification/exact-arith-v1/RoundingReference.lean
-  verification/exact-arith-v1/ScaledQuotient/FunsExternal.lean
+  verification/exact-arith-v1/Scaled/FunsExternal.lean
+  verification/exact-arith-v1/Scaled/TypesExternal.lean
+  verification/exact-arith-v1/ScaledProof.lean
+  verification/exact-arith-v1/ScaledReference.lean
 )
 test "$(cd "$repo_root" && find verification/exact-arith-v1 -name '*.lean' | LC_ALL=C sort)" = \
   "$(printf '%s\n' "${proof_files[@]}")"
@@ -45,7 +49,7 @@ mkdir -p "$result/common"
 # Each step returns on failure explicitly: callers also run this under `if !`.
 extract() {
   local tree="$1" out="$2"
-  mkdir -p "$out/Decimal" "$out/ScaledQuotient" "$out/ExactRational" || return
+  mkdir -p "$out/Decimal" "$out/Scaled" "$out/ExactRational" || return
   # decimal.rs uses pub(super), so it is compiled as the module it is in production.
   printf '#[path = "%s"]\npub mod decimal;\n' "$tree/$decimal_source" > "$out/decimal_root.rs" || return
   (cd "$tree" && "$charon" rustc --preset=aeneas --error-on-warnings \
@@ -59,17 +63,20 @@ extract() {
     --start-from crate::exact_rational \
     --dest-file "$out/exact_rational.llbc" -- --crate-name norn_checker_rational \
     --crate-type lib --edition 2024 "$out/rational_root.rs") || return
+  local core=(rounding_site exact_result_scale exact_binary exact_compare coefficient rescale
+    divide binary rounded_quotient)
   (cd "$tree" && "$charon" cargo --preset=aeneas --error-on-warnings \
-    --start-from crate::scaled::rounded_quotient \
-    --dest-file "$out/scaled_quotient.llbc" -- -p zen-expression --lib) || return
+    "${core[@]/#/--start-from=crate::scaled::}" \
+    --dest-file "$out/scaled.llbc" -- -p zen-expression --lib) || return
   "$aeneas" -backend lean -dest "$out/Decimal" -emit-json -split-files -warnings-as-errors \
     "$out/decimal.llbc" || return
-  "$aeneas" -backend lean -dest "$out/ScaledQuotient" -emit-json -split-files \
-    -warnings-as-errors "$out/scaled_quotient.llbc" || return
+  "$aeneas" -backend lean -dest "$out/Scaled" -emit-json -split-files \
+    -warnings-as-errors "$out/scaled.llbc" || return
   "$aeneas" -backend lean -dest "$out/ExactRational" -emit-json -split-files \
     -warnings-as-errors "$out/exact_rational.llbc" || return
   cp "$proof_root/Decimal/FunsExternal.lean" "$out/Decimal/FunsExternal.lean" || return
-  cp "$proof_root/ScaledQuotient/FunsExternal.lean" "$out/ScaledQuotient/FunsExternal.lean" || return
+  cp "$proof_root/Scaled/TypesExternal.lean" "$out/Scaled/TypesExternal.lean" || return
+  cp "$proof_root/Scaled/FunsExternal.lean" "$out/Scaled/FunsExternal.lean" || return
   cp "$proof_root/ExactRational/FunsExternal.lean" "$out/ExactRational/FunsExternal.lean"
 }
 
@@ -84,16 +91,19 @@ lean_check() {
 # generated <out>: the extracted code and its core models must elaborate.
 generated() {
   local out="$1" prefix module
-  for prefix in Decimal ScaledQuotient ExactRational; do
-    for module in Types FunsExternal Funs; do
-      lean_check "$out" "$out" "$prefix/$module" || return
+  for prefix in Decimal Scaled ExactRational; do
+    for module in TypesExternal Types FunsExternal Funs; do
+      if [[ "$module" != TypesExternal || -f "$out/$prefix/TypesExternal.lean" ]]; then
+        lean_check "$out" "$out" "$prefix/$module" || return
+      fi
     done
   done
 }
 
 (cd "$lean_root" && lake build Aeneas)
 # The written semantics never import the extraction.
-for module in CoreModels DecimalReference RoundingReference RoundingMath RationalReference; do
+for module in CoreModels DecimalReference RoundingReference RoundingMath RationalReference \
+  ScaledReference; do
   lean_check "$result/common" "$proof_root" "$module"
 done
 
@@ -117,12 +127,25 @@ expected = {
         "core.option.Option.Insts.CoreOpsTry_traitTry.branch",
         "core.option.Option.Insts.CoreOpsTry_traitFromResidualOptionInfallible.from_residual",
     }),
-    "ScaledQuotient": ("zen_expression", "vendor/zen/core/expression/src/scaled.rs", {
-        "zen_expression.scaled.rounded_quotient",
-        "zen_expression.scaled.Rounding.Insts.CoreCmpPartialEqRounding.eq",
+    "Scaled": ("zen_expression", "vendor/zen/core/expression/src/scaled.rs", {
+        f"zen_expression.scaled.{name}" for name in (
+            "Rounding.Insts.CoreCmpPartialEqRounding.eq", "ScaledArithmetic.quotient",
+            "ScaledRefusal.Insts.CoreConvertFromQuotientRefusal.from", "binary", "coefficient",
+            "divide", "exact_binary", "exact_compare", "exact_result_scale", "rescale",
+            "rounded_quotient", "rounding_site", "to_decimal",
+        )
     }, {
+        "I64.Insts.CoreConvertFromU32.from",
+        "U32.Insts.CoreConvertTryFromU64TryFromIntError.try_from",
+        "core.num.I128.pow",
         "core.num.I128.unsigned_abs",
+        "core.num.I64.unsigned_abs",
         "core.option.Option.ok_or",
+        "core.result.Result.ok",
+        "rust_decimal.decimal.Decimal.mantissa",
+        "rust_decimal.decimal.Decimal.normalize",
+        "rust_decimal.decimal.Decimal.scale",
+        "rust_decimal.decimal.Decimal.try_from_i128_with_scale",
     }),
     "ExactRational": ("norn_checker_rational", "crates/norn-checker/src/exact_rational.rs", {
         f"norn_checker_rational.exact_rational.Rational.{name}" for name in (
@@ -143,6 +166,7 @@ expected = {
 }
 # Only the derived impls of the stored type itself may be extracted.
 derived = {
+    "Scaled": {"zen_expression.scaled.ScaledRefusal.Insts.CoreConvertFromQuotientRefusal"},
     "ExactRational": {
         f"norn_checker_rational.exact_rational.Rational.Insts.{name}" for name in (
             "CoreFmtDebug", "CoreCloneClone", "CoreMarkerCopy", "CoreMarkerStructuralPartialEq",
@@ -178,7 +202,7 @@ for prefix, (crate, source, local, external) in expected.items():
 PYMANIFEST
 generated "$baseline"
 proof_output=""
-for module in DecimalProof QuotientProof RationalProof; do
+for module in DecimalProof QuotientProof RationalProof ScaledProof; do
   if module_output="$(lean_check "$baseline" "$proof_root" "$module" 2>&1)"; then
     proof_output+="$module_output"$'\n'
   else
@@ -200,13 +224,23 @@ expected_axioms="$(printf '%s\n' \
   "'Norn.ExactRational.checked_mul_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.ExactRational.checked_div_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.ExactRational.checked_neg_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
-  "'Norn.ExactRational.cmp_correct' depends on axioms: [propext, Classical.choice, Quot.sound]")"
+  "'Norn.ExactRational.cmp_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.OrderedFold.coefficient_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.OrderedFold.to_decimal_correct' depends on axioms: [propext, Quot.sound]" \
+  "'Norn.OrderedFold.exact_result_scale_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.OrderedFold.exact_compare_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.OrderedFold.exact_binary_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.OrderedFold.rescale_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.OrderedFold.divide_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.OrderedFold.binary_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
+  "'Norn.OrderedFold.rounding_site_correct' depends on axioms: [propext, Classical.choice, Quot.sound]")"
 test "${proof_output%$'\n'}" = "$expected_axioms"
 # Check the exact propositions, not only the theorem names or an exit code.
 printf '%s\n' \
   'import DecimalProof' \
   'import QuotientProof' \
   'import RationalProof' \
+  'import ScaledProof' \
   'open Aeneas.Std in' \
   'example (u : I128) (s : U8) : ∃ c s'"'"', norn_checker_decimal.decimal.canonical_parts u s = .ok (c, s'"'"') ∧' \
   '    Norn.QuantityLedger.IsCanonicalForm u.val s.val c.val s'"'"'.val :=' \
@@ -235,6 +269,16 @@ printf '%s\n' \
   '    (hs : 0 < s.denominator.val) : norn_checker_rational.exact_rational.Rational.cmp r s =' \
   '      .ok (some (compare (Norn.ExactRational.value r) (Norn.ExactRational.value s))) :=' \
   '  Norn.ExactRational.cmp_correct r s hr hs' \
+  'example (profile : zen_expression.scaled.ScaledArithmetic) (v : rust_decimal.decimal.Decimal) :' \
+  '    ∃ r, zen_expression.scaled.rescale profile v = .ok r ∧ Norn.OrderedFold.projDec r =' \
+  '      Norn.OrderedFold.rescaleSpec (Norn.OrderedFold.modeOf profile.rounding)' \
+  '        profile.scale.val (Norn.OrderedFold.decOf v) :=' \
+  '  Norn.OrderedFold.rescale_correct profile v' \
+  'example (profile : zen_expression.scaled.ScaledArithmetic) (a b : rust_decimal.decimal.Decimal) :' \
+  '    ∃ r, zen_expression.scaled.divide profile a b = .ok r ∧ Norn.OrderedFold.projDec r =' \
+  '      Norn.OrderedFold.divideSpec (Norn.OrderedFold.modeOf profile.rounding) profile.scale.val' \
+  '        a.coeff a.places b.coeff b.places :=' \
+  '  Norn.OrderedFold.divide_correct profile a b' \
   | (cd "$lean_root" && LEAN_PATH="$baseline:$result/common" lake env lean -DwarningAsError=true --stdin)
 echo "exact-arith: production fragments proved against the written semantics"
 
@@ -309,7 +353,7 @@ while read -r name path; do
     exit 1
   fi
   refuted=false
-  for module in DecimalProof QuotientProof RationalProof; do
+  for module in DecimalProof QuotientProof RationalProof ScaledProof; do
     if ! lean_check "$out" "$proof_root" "$module" > "$result/mutants/$name/$module.log" 2>&1; then
       refuted=true
     fi
