@@ -403,6 +403,33 @@ declare module "@norn/authoring" {
       readonly rules: ReadonlyArray<AccessRuleSpec>
     }): AccessDefinition
 
+    /** One type's labels in a standalone catalog. */
+    interface TypeLabels extends Localized {
+      /** Property id → label. */
+      readonly properties?: { readonly [property: string]: LocaleText }
+      /** Enum property id → stored value → label. */
+      readonly values?: { readonly [property: string]: { readonly [value: string]: LocaleText } }
+    }
+    interface LabelsDefinition { readonly _tag: "NornLabels" }
+    /**
+     * A standalone labels catalog: a tenant or locale pack labels definitions another
+     * layer owns, without touching them (LABEL-LOCALE-1). Its labels replace the
+     * installed ones for the same target and locale; the Rust checker resolves targets.
+     */
+    function labels(meta: {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      /** Locales this layer serves; definitions with no label in one are listed as a warning. */
+      readonly requiredLocales?: ReadonlyArray<string>
+      /** Locales whose labels were proposed and still need review. */
+      readonly needsReview?: ReadonlyArray<string>
+      /** Object type or interface name → labels. */
+      readonly types?: { readonly [objectType: string]: TypeLabels }
+      /** Action id → labels. */
+      readonly actions?: { readonly [actionId: string]: Localized }
+    }): LabelsDefinition
+
     /** Data-only law over ontology-bound ZEN predicates. The Rust schema is authoritative. */
     interface LawDefinition { readonly _tag: "NornLaw" }
     function law(meta: Localized & {

@@ -98,3 +98,59 @@ export function lowerLabels(owner: LabelOwner, entries: ReadonlyArray<LabelEntry
     options,
   )
 }
+
+/** One type's labels in a standalone catalog: its own, and its properties' and enum values'. */
+export interface TypeLabels extends Localized {
+  /** Property id → label. */
+  readonly properties?: Readonly<Record<string, LocaleText>>
+  /** Enum property id → stored value → label. */
+  readonly values?: Readonly<Record<string, Readonly<Record<string, LocaleText>>>>
+}
+
+/**
+ * A standalone labels catalog (`Norn.labels`): a tenant or locale pack labels
+ * definitions another layer owns, without touching them. Its labels replace
+ * the installed ones for the same target and locale (LABEL-LOCALE-1).
+ */
+export interface LabelsDef {
+  readonly _tag: "Labels"
+  /** The artifact id (`locale.ar_eg.labels`). */
+  readonly id: string
+  readonly title: string
+  readonly version: string
+  /** Locales this layer serves; definitions with no label in one are listed (`labels.lint.missing_label`). */
+  readonly requiredLocales?: ReadonlyArray<string>
+  /** Locales whose labels were proposed and still need review, for every entry below. */
+  readonly needsReview?: ReadonlyArray<string>
+  /** Object type or interface name → labels. */
+  readonly types?: Readonly<Record<string, TypeLabels>>
+  /** Action id → labels. */
+  readonly actions?: Readonly<Record<string, Localized>>
+}
+
+export function catalog(meta: Omit<LabelsDef, "_tag">): LabelsDef {
+  return { _tag: "Labels", ...meta }
+}
+
+/** Lower a standalone catalog to its `labels` artifact. */
+export function lowerCatalog(def: LabelsDef, options: EnvelopeOptions): { readonly ok: true; readonly artifact: Json } {
+  const review = def.needsReview ?? []
+  const entries = [
+    ...Object.entries(def.types ?? {}).flatMap(([objectType, labels]) => labelEntries(
+      { kind: "objectType", objectType },
+      { ...labels, propertyLabels: labels.properties, valueLabels: labels.values, needsReview: labels.needsReview ?? review },
+    )),
+    ...Object.entries(def.actions ?? {}).flatMap(([actionId, labels]) => labelEntries(
+      { kind: "action", actionId },
+      { ...labels, needsReview: labels.needsReview ?? review },
+    )),
+  ]
+  return {
+    ok: true,
+    artifact: envelope(
+      { kind: "labels", artifactId: def.id, namespace: def.id.split(".")[0]!, name: def.title, version: def.version },
+      { labelsVersion: "0.1", entries: entries as unknown as Json, ...(def.requiredLocales?.length ? { requiredLocales: [...def.requiredLocales] } : {}) },
+      options,
+    ),
+  }
+}

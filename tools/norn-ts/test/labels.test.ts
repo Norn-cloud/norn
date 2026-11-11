@@ -55,3 +55,23 @@ test.skipIf(!checker)("Rust admits the labelled set and refuses a label on an un
   const codes = (checker!.checkArtifactSet(unknown).diagnostics.diagnostics as unknown as readonly { code: string }[]).map(d => d.code)
   expect(codes).toContain("labels.admission.unknown_target")
 }, 30_000)
+
+test("a standalone Norn.labels catalog overlays another layer's types and needs no definition of its own", () => {
+  const source = `import { Norn } from "@norn/authoring"
+export const Arabic = Norn.labels({
+  id: "locale.ar_eg.labels", title: "Arabic", version: "0.1.0", requiredLocales: ["ar"], needsReview: ["ar"],
+  types: { "sales.Invoice": { label: { ar: "فاتورة" }, properties: { status: { ar: "الحالة" } }, values: { status: { posted: { ar: "مُرحّلة" } } } } },
+  actions: { "sales.post": { label: { ar: "ترحيل الفاتورة" }, needsReview: [] } },
+})
+`
+  const [catalog] = compile(source)
+  expect(catalog.kind).toBe("labels")
+  expect(catalog.artifactId).toBe("locale.ar_eg.labels")
+  expect(catalog.payload.requiredLocales).toEqual(["ar"])
+  expect(catalog.payload.entries).toEqual([
+    { target: { kind: "objectType", objectType: "sales.Invoice" }, label: { ar: "فاتورة" }, review: { ar: "needs_review" } },
+    { target: { kind: "property", objectType: "sales.Invoice", property: "status" }, label: { ar: "الحالة" }, review: { ar: "needs_review" } },
+    { target: { kind: "enumValue", objectType: "sales.Invoice", property: "status", value: "posted" }, label: { ar: "مُرحّلة" }, review: { ar: "needs_review" } },
+    { target: { kind: "action", actionId: "sales.post" }, label: { ar: "ترحيل الفاتورة" } },
+  ])
+}, 30_000)

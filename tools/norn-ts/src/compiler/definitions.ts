@@ -37,7 +37,7 @@ import { SchemaProjection } from "./schema.ts"
 import { CompileError } from "./types.ts"
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -73,9 +73,10 @@ const DECISION = "@norn/authoring#Norn.decision"
 const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
+const LABELS = "@norn/authoring#Norn.labels"
 const FLOW = "@norn/authoring#Norn.flow"
 const QUESTION = "@norn/authoring#Norn.question"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -179,6 +180,7 @@ export function compileDefinitionFiles(
         : def._tag === "OntologyPack" ? OP.lowerOntologyPack(def, envelopeOptions)
         : def._tag === "PackLink" ? PL.lowerPackLink(def, envelopeOptions)
         : def._tag === "Markings" ? E.lowerMarkings(def, envelopeOptions)
+        : def._tag === "Labels" ? LB.lowerCatalog(def, envelopeOptions)
         : E.lowerEntity(def, envelopeOptions)
       if (built.ok) {
         artifacts.push(built.artifact)
@@ -307,6 +309,7 @@ class DefinitionCompiler {
           : id === CONNECTOR ? this.connector(init)
           : id === MAPPING ? this.mapping(init)
           : id === LAW ? this.law(init)
+          : id === LABELS ? this.labels(init)
           : this.decision(init)
         this.expansion.assert(def)
         out.push(def)
@@ -1049,6 +1052,30 @@ class DefinitionCompiler {
     const kind = pin.has("kind") ? this.string(pin.get("kind")!) : undefined
     if (kind !== undefined && kind !== "entity" && kind !== "rule") throw new CompileError("NORN-FLOW-LITERAL","dependency kind must be entity or rule",input)
     return { ...(kind === undefined ? {} : {kind}), artifactId: this.string(pin.get("artifactId")!), version: this.string(pin.get("version")!) }
+  }
+
+  /** A standalone labels catalog (`Norn.labels`); targets are checked by the Rust checker. */
+  private labels(call: ts.CallExpression): LB.LabelsDef {
+    const members = this.meta(call, ["id", "title", "version", "requiredLocales", "needsReview", "types", "actions"])
+    const need = (key: string): ts.Expression => this.member(members, key, call)
+    const types = members.get("types"), actions = members.get("actions"), required = members.get("requiredLocales"), review = members.get("needsReview")
+    return LB.catalog({
+      id: this.string(need("id")),
+      title: this.string(need("title")),
+      version: this.string(need("version")),
+      ...(required ? { requiredLocales: this.strings(required) } : {}),
+      ...(review ? { needsReview: this.strings(review) } : {}),
+      ...(types ? { types: Object.fromEntries([...this.record(types)].map(([name, node]) => {
+        const m = this.closedRecord(node, ["label", "localizedDescription", "needsReview", "properties", "values"], [])
+        const properties = m.get("properties"), values = m.get("values")
+        return [name, {
+          ...this.localized(m),
+          ...(properties ? { properties: Object.fromEntries([...this.record(properties)].map(([id, text]) => [id, this.localeText(text)])) } : {}),
+          ...(values ? { values: Object.fromEntries([...this.record(values)].map(([id, byValue]) => [id, Object.fromEntries([...this.record(byValue)].map(([value, text]) => [value, this.localeText(text)]))])) } : {}),
+        }]
+      })) } : {}),
+      ...(actions ? { actions: Object.fromEntries([...this.record(actions)].map(([actionId, node]) => [actionId, this.localized(this.closedRecord(node, ["label", "localizedDescription", "needsReview"], []))])) } : {}),
+    })
   }
 
   private law(call: ts.CallExpression): L.LawDef {
