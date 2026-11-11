@@ -9607,6 +9607,40 @@
         },
         "additionalProperties": false
       },
+      "NornIrLawException": {
+        "type": "object",
+        "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+        "required": [
+          "id",
+          "overrides",
+          "condition",
+          "rationale",
+          "source"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Boolean ZEN predicate over the law subject's `self` environment."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, unique within the tree and distinct from the law id."
+          },
+          "overrides": {
+            "type": "string",
+            "description": "The law's own id, or the id of another exception in the same tree."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan",
+            "description": "Source location of the declaration."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLawInterpretationIr": {
         "type": "object",
         "description": "Typed interpretation contract. Admission refuses until conformance exists.",
@@ -9761,6 +9795,14 @@
           "condition": {
             "type": "string",
             "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLawException"
+            },
+            "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+            "minItems": 1
           },
           "id": {
             "type": "string",
@@ -14461,7 +14503,7 @@
           "exceptions": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/NornIrRequirementRuleException"
+              "$ref": "#/components/schemas/NornIrRequirementLawException"
             }
           },
           "law": {
@@ -14483,6 +14525,40 @@
           "0.1"
         ]
       },
+      "NornIrRequirementLawException": {
+        "type": "object",
+        "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+        "required": [
+          "id",
+          "overrides",
+          "condition",
+          "rationale",
+          "source"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Boolean ZEN predicate over the law subject's `self` environment."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, unique within the tree and distinct from the law id."
+          },
+          "overrides": {
+            "type": "string",
+            "description": "The law's own id, or the id of another exception in the same tree."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRequirementRuleSourceSpan",
+            "description": "Source location of the declaration."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementLawIR": {
         "type": "object",
         "description": "One protected law; its predicates use the subject's `self` environment.",
@@ -14502,6 +14578,14 @@
           "condition": {
             "type": "string",
             "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrRequirementLawException"
+            },
+            "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+            "minItems": 1
           },
           "id": {
             "type": "string",
@@ -15255,27 +15339,6 @@
         },
         "additionalProperties": false
       },
-      "NornIrRequirementRuleException": {
-        "type": "object",
-        "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
-        "required": [
-          "id",
-          "condition",
-          "source"
-        ],
-        "properties": {
-          "condition": {
-            "$ref": "#/components/schemas/NornIrRequirementZenExpression"
-          },
-          "id": {
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/NornIrRequirementRuleSourceSpan"
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrRequirementRuleSourceSpan": {
         "type": "object",
         "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
@@ -15740,6 +15803,26 @@
           "half_even",
           "half_away_from_zero"
         ]
+      },
+      "NornIrRuleByteRange": {
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "start": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRuleConditionV1": {
         "oneOf": [
@@ -16306,6 +16389,33 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
+      },
+      "NornIrRuleSourceSpan": {
+        "type": "object",
+        "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+        "required": [
+          "artifactId",
+          "pointer"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "bytes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRuleByteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRuleTrigger": {
         "oneOf": [
