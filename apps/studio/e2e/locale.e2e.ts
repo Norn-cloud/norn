@@ -47,6 +47,8 @@ for (const locale of LOCALES) for (const scheme of ["light", "dark"] as const) {
     expect(text).toContain(locale.tag === "ar" ? "\u2068+20 100 123 4567\u2069" : "+20 100 123 4567")
 
     const problems = page.locator('[data-state="locale/problems"]')
+    // The inspector's shortcut line keeps every hint left to right.
+    await expect(problems.locator('kbd[dir="ltr"]', { hasText: "⌘⇧Z" })).toHaveCount(1)
     await expect(problems.locator('[data-code="lifecycle.validation.dead_end_state"]').first()).toHaveAttribute("data-message-lang", locale.tag)
     await shoot(page, `${locale.tag}-${scheme}`)
   })
@@ -60,6 +62,13 @@ test("the Studio language switch mirrors the app and is kept for the next visit"
   await page.getByRole("radio", { name: "العربية" }).click()
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl")
   await expect(page.locator("html")).toHaveAttribute("lang", "ar")
+  // The recorded model carries the Arabic locale pack (registry/packs/locale-ar): titles read in Arabic.
+  await expect(page.getByText("رصيد مخزون").first()).toBeVisible()
+  await expect(page.getByText("Holding", { exact: true })).toHaveCount(0)
+  // Shortcut hints stay one left-to-right isolate: ⌘K, never K⌘.
+  const hint = page.locator("kbd", { hasText: "⌘K" }).first()
+  await expect(hint).toHaveAttribute("dir", "ltr")
+  await expect(hint).toHaveText("⌘K")
   await page.reload()
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl")
   for (const scheme of ["light", "dark"] as const) {

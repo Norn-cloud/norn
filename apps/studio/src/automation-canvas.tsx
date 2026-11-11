@@ -14,6 +14,7 @@ import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
 import { words } from "./lib/format.ts"
+import { EditorShortcuts } from "@/components/keys"
 
 const META = { id: "studio.automation", version: "0.1.0" }
 export const STEP_KINDS = { start: "Start", perform: "Tool", route: "Route", sleep: "Wait", succeed: "Outcome" } as const
@@ -120,7 +121,7 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
   if (count === 0) return (
     <>
       <p className="text-muted-foreground">Select a step. Drag from a step's right edge to the next one, or drag a connection's end to reconnect it.</p>
-      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · Delete removes</p>
+      <EditorShortcuts className="text-meta text-muted-foreground" />
     </>
   )
   if (count > 1) return (

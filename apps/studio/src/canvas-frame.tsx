@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
 import { CodedMessage } from "@/components/coded-message"
 import { Iso } from "@/components/iso"
+import { keysText } from "@/components/keys"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
 export interface Issue {
@@ -211,10 +212,10 @@ function Frame(props: CanvasFrameProps) {
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
         <div className="flex flex-wrap items-center gap-1.5 px-2.5 pb-2">
           {props.palette(editing)}
-          <Button size="sm" variant="outline" aria-label="Duplicate" title="Duplicate (⌘D)" disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
-          <Button size="sm" variant="outline" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
-          <Button size="sm" variant="outline" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
-          <Button size="sm" variant="outline" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
+          <Button size="sm" variant="outline" aria-label="Duplicate" title={`Duplicate (${keysText("⌘D")})`} disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
+          <Button size="sm" variant="outline" aria-label="Undo" title={`Undo (${keysText("⌘Z")})`} disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
+          <Button size="sm" variant="outline" aria-label="Redo" title={`Redo (${keysText("⌘⇧Z")})`} disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
+          <Button size="sm" variant="outline" title={`Save a draft (${keysText("⌘S")})`} onClick={saveDraft}><Save />Save draft</Button>
           <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
           {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
         </div>

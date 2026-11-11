@@ -20,6 +20,7 @@ import { ViewProvider, ViewToggle, useView } from "@/lib/view"
 import { LocaleProvider, LocaleToggle, directionOf, useLocale } from "@/lib/locale"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
 import nornMark from "@/assets/norn-mark.webp"
+import { Keys } from "@/components/keys"
 
 export interface Section {
   readonly path: string
@@ -241,7 +242,7 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   return (
     <>
       <Button variant="outline" aria-label="Search" className="h-9 justify-start gap-2 px-2.5 font-normal text-muted-foreground shadow-none md:w-56 md:px-3" onClick={() => setOpen(true)}>
-        <Search /><span className="hidden md:inline">Search…</span><kbd className="ms-auto hidden font-sans text-meta md:inline">⌘K</kbd>
+        <Search /><span className="hidden md:inline">Search…</span><Keys className="ms-auto hidden text-meta md:inline">⌘K</Keys>
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen} title="Search Studio" description="Go to a section or an item">
         <Command>
