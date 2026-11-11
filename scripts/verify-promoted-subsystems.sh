@@ -738,6 +738,9 @@ run_gate full kernel-l1-reference \
 run_gate full kernel-l1-version-correspondence \
   "scripts/verify-kernel-l1-aeneas.sh" command \
   scripts/verify-kernel-l1-aeneas.sh
+run_gate full semantics-v1-lean \
+  "scripts/verify-semantics-lean.sh" command \
+  scripts/verify-semantics-lean.sh
 
 # Validate observed selectors only after every producing gate has run.
 run_gate full verification-executed-test-selectors \
