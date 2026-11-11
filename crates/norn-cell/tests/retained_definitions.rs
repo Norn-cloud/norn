@@ -373,7 +373,13 @@ fn provisioning_reopen_adds_the_retained_table_to_an_older_file() {
         None,
     );
     store
-        .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &dashboard)
+        .install_retained_definition(
+            store.model().clone(),
+            &input(&canonical, 20),
+            Some(1),
+            SCOPE,
+            &dashboard,
+        )
         .expect("retained install on the reopened file");
     let listed = store
         .read()
