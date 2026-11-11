@@ -12,7 +12,10 @@ export interface Field {
   readonly label?: string
   /** The language `label` is written in. */
   readonly labelLang?: string
-  /** Enum values' labels in the reader's language, by stored value; a value without one shows as stored. */
+  /**
+   * Enum values' labels in the reader's language, by stored value. It holds only the values that have
+   * one: a renderer walks `scalar.values` and shows every value, as its label or as stored.
+   */
   readonly valueLabels?: ReadonlyMap<string, string>
   readonly type: string
   readonly optional: boolean
@@ -75,6 +78,8 @@ export interface Concept {
   readonly definition: "object type" | "interface"
   /** The definition's one-line name when it says more than the title, e.g. "Owner and location partitioned holding". Business view. */
   readonly summary: string | undefined
+  /** The language `summary` is written in: the label's tag when it is the label's description, else `en`. */
+  readonly summaryLang: string
   /** The registry's full description; it may name fields and laws, so Studio shows it in the Technical view only. */
   readonly description: string | undefined
   readonly parents: readonly string[]
@@ -227,6 +232,7 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       // The Business summary: the type's description in the reader's language when its label has one,
       // else the definition's own one-line name when it says more than its title in any language.
       summary: own?.description ?? ([def.name, conceptTitle(def.name), title].includes(artifact.name) ? undefined : artifact.name),
+      summaryLang: own?.description === undefined ? "en" : own.tag,
       description: def.description,
       parents,
       fields: (def.properties ?? []).map(({ id, type, constraints }) => {

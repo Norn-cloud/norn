@@ -75,3 +75,15 @@ export const Arabic = Norn.labels({
     { target: { kind: "action", actionId: "sales.post" }, label: { ar: "ترحيل الفاتورة" } },
   ])
 }, 30_000)
+
+test("a description without a label is a compile error, and label text is lowered in NFC", () => {
+  const source = readFileSync(file, "utf8")
+  const orphan = compileModule(source.replace('  label: { en: "Party", ar: "طرف" },\n', '  localizedDescription: { en: "A party" },\n'), scope)
+  expect(orphan.ok).toBe(false)
+  expect(JSON.stringify(orphan)).toContain("localizedDescription needs a label")
+  // "e" + U+0301 and dal + shadda + fatha are not NFC; the artifact carries the normalized text.
+  const loose = compile(source.replace('label: { en: "Party", ar: "طرف" }', 'label: { en: "Cafe\\u0301", ar: "\\u062f\\u0651\\u064e" }'))
+  const party = loose.find(a => a.artifactId === "sales.Party.interface.labels").payload.entries[0]
+  expect(party.label).toEqual({ en: "Caf\u00e9", ar: "\u062f\u064e\u0651" })
+  expect(party.label.en.normalize("NFC")).toBe(party.label.en)
+}, 30_000)

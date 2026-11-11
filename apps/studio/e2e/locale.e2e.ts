@@ -10,8 +10,11 @@ const LOCALES = [
   { tag: "ar", dir: "rtl", order: "أمر بيع", status: "الحالة", dependency: "ليس في مجموعة الأدوات" },
 ] as const
 
+/** Wait for the state a screenshot needs: every running colour transition has finished. */
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)).then(() => undefined))
+
 async function shoot(page: Page, name: string) {
-  await page.waitForTimeout(400) // past the colour transitions
+  await settled(page)
   for (const state of ["facts", "message", "problems"]) {
     await page.locator(`[data-state="locale/${state}"]`).screenshot({ path: `test-results/locale/${state}-${name}.png` })
   }
@@ -31,6 +34,15 @@ for (const locale of LOCALES) for (const scheme of ["light", "dark"] as const) {
     await expect(row("status")).toContainText(locale.status)
     // An unlabelled fact keeps its id in words and says it is English.
     await expect(row("order_date").locator('span[lang="en"]')).toHaveText("order date")
+    // A partially labelled enum shows every declared value: six labels in Arabic, and `on_hold`, which has none, as stored and marked English.
+    if (locale.tag === "ar") {
+      const values = row("status").locator("[data-values]")
+      await expect(values).toHaveAttribute("data-values", "7")
+      for (const label of ["مسودة", "مُقدَّم", "معتمد", "تمت فوترته", "مكتمل", "ملغى"]) await expect(values).toContainText(label)
+      await expect(values.locator('bdi[lang="en"]')).toHaveText("on_hold")
+    } else {
+      await expect(row("status")).toContainText("One of: draft, submitted, on hold, approved, invoiced, completed, cancelled")
+    }
     // Every id is an isolate in its own direction.
     const id = row("order_number").locator("bdi").first()
     await expect(id).toHaveText("order_number")
@@ -76,7 +88,7 @@ test("the Studio language switch mirrors the app and is kept for the next visit"
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl")
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme })
-    await page.waitForTimeout(400)
+    await settled(page)
     await page.screenshot({ path: `test-results/locale/app-ar-${scheme}.png` })
   }
   await page.getByRole("radio", { name: "English" }).click()

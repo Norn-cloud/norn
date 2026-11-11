@@ -49,6 +49,9 @@ export interface MemberLabels {
   readonly valueLabels?: Readonly<Record<string, Readonly<Record<string, LocaleText>>>>
 }
 
+/** Text as the checker admits it: Unicode NFC, so canonically equivalent spellings are one text. */
+const nfc = (text: LocaleText): LocaleText => Object.fromEntries(Object.entries(text).map(([tag, value]) => [tag, value.normalize("NFC")]))
+
 const entry = (target: LabelTarget, label: LocaleText, description: LocaleText | undefined, needsReview: ReadonlyArray<string>): LabelEntry => {
   const review = Object.fromEntries(
     needsReview
@@ -57,8 +60,8 @@ const entry = (target: LabelTarget, label: LocaleText, description: LocaleText |
   )
   return {
     target,
-    label,
-    ...(description === undefined ? {} : { description }),
+    label: nfc(label),
+    ...(description === undefined ? {} : { description: nfc(description) }),
     ...(Object.keys(review).length === 0 ? {} : { review }),
   }
 }
@@ -67,6 +70,8 @@ const entry = (target: LabelTarget, label: LocaleText, description: LocaleText |
 export function labelEntries(own: LabelTarget, def: Localized & MemberLabels): ReadonlyArray<LabelEntry> {
   const needsReview = def.needsReview ?? []
   const entries: LabelEntry[] = []
+  // A description is shown under its label, and the checker refuses one without it: never drop it silently.
+  if (def.label === undefined && def.localizedDescription !== undefined) throw new Error("a localizedDescription needs a label in the same locales")
   if (def.label !== undefined) entries.push(entry(own, def.label, def.localizedDescription, needsReview))
   if (own.kind === "objectType") {
     for (const [property, label] of Object.entries(def.propertyLabels ?? {})) {

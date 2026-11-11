@@ -221,6 +221,37 @@ proptest! {
         prop_assert_eq!(codes(&check_artifact(&catalog)), BTreeSet::from(["labels.validation.bidi_control".to_owned()]));
     }
 
+    /// A label or description is admitted exactly when its text, as sent, is
+    /// NFC: a canonically equivalent spelling (a base letter and a combining
+    /// mark, marks out of canonical order) refuses with its own code.
+    #[test]
+    fn text_is_admitted_exactly_when_it_is_nfc(
+        pieces in prop::collection::vec(
+            prop::sample::select(vec![
+                "a", "e\u{301}", "\u{e9}", "\u{627}\u{654}", "\u{623}", "\u{62f}\u{651}\u{64e}",
+                "\u{62f}\u{64e}\u{651}", "\u{645}", " ", "1",
+            ]),
+            1..6,
+        ),
+        in_description in any::<bool>(),
+    ) {
+        let text: String = pieces.concat();
+        prop_assume!(!text.trim().is_empty());
+        let mut entry = json!({ "target": { "kind": "objectType", "objectType": "sales.Invoice" }, "label": { "ar": "فاتورة" } });
+        if in_description {
+            entry["description"] = json!({ "ar": text });
+        } else {
+            entry["label"] = json!({ "ar": text });
+        }
+        let found = codes(&check_artifact(&labels("sales.labels", &json!([entry]))));
+        let expected = if norn_canonical::nfc(&text) == text {
+            BTreeSet::new()
+        } else {
+            BTreeSet::from(["labels.validation.not_nfc".to_owned()])
+        };
+        prop_assert_eq!(found, expected);
+    }
+
     /// Plain Arabic and Latin text with digits, including LRM/RLM/ALM marks
     /// (legitimate in Arabic text), is admitted in any well-formed locale.
     #[test]

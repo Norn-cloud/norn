@@ -802,6 +802,10 @@
       "message": "حمولة التسميات لا تطابق جذرها الصارم",
       "review": "needs_review"
     },
+    "labels.validation.not_nfc": {
+      "message": "تسمية أو وصف ليس بصيغة Unicode NFC",
+      "review": "needs_review"
+    },
     "labels.validation.unlabelled_locale": {
       "message": "وصف أو حالة مراجعة تسمّي لغة ليس لها تسمية",
       "review": "needs_review"

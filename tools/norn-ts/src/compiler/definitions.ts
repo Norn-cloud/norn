@@ -495,6 +495,7 @@ class DefinitionCompiler {
   /** `label`, `localizedDescription` and `needsReview` (LABEL-LOCALE-1). */
   private localized(members: Members): LB.Localized {
     const label = members.get("label"), description = members.get("localizedDescription"), review = members.get("needsReview")
+    if (description && !label) throw new CompileError("NORN-FLOW-LITERAL", "localizedDescription needs a label: a description is shown under its label, in the same locales", description)
     return {
       ...(label ? { label: this.localeText(label) } : {}),
       ...(description ? { localizedDescription: this.localeText(description) } : {}),

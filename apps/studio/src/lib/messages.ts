@@ -47,23 +47,40 @@ export function parseMessage(message: string): readonly Part[] {
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
-/** The values an English message carries, read through its template; undefined when it does not match. */
+/**
+ * The values an English message carries, read through its template. Undefined when the message does
+ * not match, or when it matches in more than one way: a value that contains the template's next
+ * literal (`fk: line→order` before `: `) could be split at either place, and a wrong split would put
+ * the pieces in the wrong slots of the translation. The parse is unique exactly when the shortest-first
+ * and the longest-first matches agree on every value, so only then is it accepted.
+ */
 export function readValues(template: string, message: string): Readonly<Record<string, string>> | undefined {
-  const groups: string[] = []
-  const pattern = parseMessage(template).map((part) => {
-    if ("text" in part) return escapeRegExp(part.text)
-    const seen = groups.indexOf(part.variable)
-    if (seen >= 0) return `\\${seen + 1}`
-    groups.push(part.variable)
-    return "([\\s\\S]*?)"
-  }).join("")
-  const match = new RegExp(`^${pattern}$`).exec(message)
-  if (!match) return undefined
-  return Object.fromEntries(groups.map((name, index) => [name, match[index + 1] ?? ""]))
+  const parts = parseMessage(template)
+  const names = [...new Set(parts.flatMap((part) => "variable" in part ? [part.variable] : []))]
+  const read = (capture: string): readonly string[] | undefined => {
+    const seen: string[] = []
+    const pattern = parts.map((part) => {
+      if ("text" in part) return escapeRegExp(part.text)
+      const group = seen.indexOf(part.variable)
+      if (group >= 0) return `\\${group + 1}`
+      seen.push(part.variable)
+      return capture
+    }).join("")
+    const match = new RegExp(`^${pattern}$`).exec(message)
+    return match ? names.map((_, index) => match[index + 1] ?? "") : undefined
+  }
+  const shortest = read("([\\s\\S]*?)")
+  const longest = read("([\\s\\S]*)")
+  if (shortest === undefined || longest === undefined || shortest.some((value, index) => value !== longest[index])) return undefined
+  return Object.fromEntries(names.map((name, index) => [name, shortest[index] ?? ""]))
 }
 
-/** First-strong isolate around a value, so an id, code or number keeps its own direction inside Arabic text. */
-export const isolate = (value: string) => `⁨${value}⁩`
+/**
+ * First-strong isolate (FSI … PDI) around a value, so an id, code or number keeps its own direction
+ * inside Arabic text. Isolate controls inside the value (U+2066–2069) are removed first: a PDI in a
+ * server value would close the isolate early and let the rest reorder the sentence.
+ */
+export const isolate = (value: string) => `\u2068${value.replace(/[\u2066-\u2069]/g, "")}\u2069`
 
 /** Format a catalog message with values; every value is isolated. */
 export function formatMessage(message: string, values: Readonly<Record<string, string>>): string {

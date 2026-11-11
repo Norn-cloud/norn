@@ -1,11 +1,17 @@
 import { Norn } from "@norn/authoring"
 
-// Egyptian business Arabic for the core and canon model the three-systems demo installs
-// (the core types the canon pack builds on, and every canon type).
+// Egyptian business Arabic for the core and canon model the three-systems demo installs: every canon
+// type and the core interfaces it builds on, with every property and enum value of each.
+// Not labelled here: `core.Conversion`, `core.Exchange`, `core.Process`, `core.analytics.*` and
+// `norn.ObservedLinkClaim`, which are outside the set this pack is admitted with. The pack declares
+// no `requiredLocales`, so the coverage lint does not list them.
 // A locale pack: it labels types other packs own, without touching them. Machine-proposed,
 // so every Arabic label is marked for review (LABEL-LOCALE-1, norn-platform#3438).
 const quantity = { ar: "الكمية" }, unit = { ar: "الوحدة" }, currency = { ar: "العملة" }, amount = { ar: "المبلغ" }
 const commitmentStatus = { requested: { ar: "مطلوب" }, promised: { ar: "موعود به" }, fulfilled: { ar: "منفَّذ" }, cancelled: { ar: "ملغى" }, breached: { ar: "مُخلّ به" } }
+const valuation = { fifo: { ar: "الوارد أولًا يُصرف أولًا" }, moving_average: { ar: "المتوسط المتحرك" } }
+const settlementKind = { payment: { ar: "دفعة" }, refund: { ar: "استرداد" } }
+const catalogProperties = { id: { ar: "المعرّف" }, code: { ar: "الكود" }, label: { ar: "الاسم" } }
 const eventAction = { transfer_ownership: { ar: "نقل الملكية" }, transfer_custody: { ar: "نقل الحيازة" }, consume: { ar: "استهلاك" }, produce: { ar: "إنتاج" } }
 
 export const ArabicLabels = Norn.labels({
@@ -15,16 +21,20 @@ export const ArabicLabels = Norn.labels({
   needsReview: ["ar"],
   types: {
     "core.Agent": { label: { ar: "جهة" }, properties: { display_name: { ar: "الاسم" }, kind: { ar: "النوع" } }, values: { kind: { person: { ar: "شخص" }, organization: { ar: "مؤسسة" }, system: { ar: "نظام" } } } },
-    "core.AgentRole": { label: { ar: "دور الجهة" } },
-    "core.Claim": { label: { ar: "مطالبة" } },
-    "core.Commitment": { label: { ar: "التزام" } },
-    "core.EconomicEvent": { label: { ar: "حدث اقتصادي" } },
-    "core.Hold": { label: { ar: "حجز" } },
-    "core.LedgerEffect": { label: { ar: "أثر في الدفتر" } },
-    "core.Resource": { label: { ar: "مورد" } },
-    "canon.Catalog": { label: { ar: "كتالوج" }, localizedDescription: { ar: "بيانات وصفية للكتالوج، وليست مخزونًا" } },
-    "canon.Settlement": { label: { ar: "تسوية" }, localizedDescription: { ar: "دليل تسوية مُبلَّغ عنه" } },
-    "canon.Item": { label: { ar: "صنف" }, properties: { id: { ar: "المعرّف" }, code: { ar: "الكود" }, label: { ar: "الاسم" } } },
+    "core.AgentRole": { label: { ar: "دور الجهة" }, properties: { role: { ar: "الدور" }, valid_from: { ar: "ساري من" }, valid_to: { ar: "ساري حتى" } } },
+    "core.Claim": { label: { ar: "مطالبة" }, properties: { amount, currency, due_date: { ar: "تاريخ الاستحقاق" } } },
+    "core.Commitment": { label: { ar: "التزام" }, properties: { status: { ar: "الحالة" }, due_at: { ar: "موعد الاستحقاق" }, quantity, unit, currency }, values: { status: commitmentStatus } },
+    "core.EconomicEvent": { label: { ar: "حدث اقتصادي" }, properties: { action: { ar: "الحركة" }, occurred_at: { ar: "وقت الحدوث" }, quantity, unit, currency }, values: { action: eventAction } },
+    "core.Hold": {
+      label: { ar: "حجز" },
+      properties: { status: { ar: "الحالة" }, quantity, unit, currency, expires_at: { ar: "وقت الانتهاء" } },
+      values: { status: { open: { ar: "مفتوح" }, released: { ar: "مُفرَج عنه" }, consumed: { ar: "مُستهلَك" }, expired: { ar: "منتهٍ" } } },
+    },
+    "core.LedgerEffect": { label: { ar: "أثر في الدفتر" }, properties: { account_code: { ar: "كود الحساب" }, amount, currency } },
+    "core.Resource": { label: { ar: "مورد" }, properties: { resource_code: { ar: "كود المورد" }, quantity, unit, currency, valuation_method: { ar: "طريقة التقييم" } }, values: { valuation_method: valuation } },
+    "canon.Catalog": { label: { ar: "كتالوج" }, localizedDescription: { ar: "بيانات وصفية للكتالوج، وليست مخزونًا" }, properties: catalogProperties },
+    "canon.Settlement": { label: { ar: "تسوية" }, localizedDescription: { ar: "دليل تسوية مُبلَّغ عنه" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind } },
+    "canon.Item": { label: { ar: "صنف" }, properties: catalogProperties },
     "canon.Holding": {
       label: { ar: "رصيد مخزون" }, localizedDescription: { ar: "رصيد مقسَّم حسب المالك والموقع" },
       properties: {
@@ -32,7 +42,7 @@ export const ArabicLabels = Norn.labels({
         location: { ar: "المخزن" }, quantity_basis: { ar: "أساس الكمية" }, stock_cost: { ar: "تكلفة المخزون" }, cost_currency: { ar: "عملة التكلفة" },
       },
       values: {
-        valuation_method: { fifo: { ar: "الوارد أولًا يُصرف أولًا" }, moving_average: { ar: "المتوسط المتحرك" } },
+        valuation_method: valuation,
         quantity_basis: { on_hand: { ar: "الرصيد الفعلي" }, available: { ar: "المتاح" } },
       },
     },
@@ -41,6 +51,6 @@ export const ArabicLabels = Norn.labels({
     "canon.Party": { label: { ar: "طرف" }, properties: { display_name: { ar: "الاسم" }, kind: { ar: "النوع" } }, values: { kind: { person: { ar: "شخص" }, organization: { ar: "مؤسسة" }, system: { ar: "نظام" } } } },
     "canon.PartyRole": { label: { ar: "دور الطرف" }, localizedDescription: { ar: "دور الطرف كما ورد في المصدر" }, properties: { role: { ar: "الدور" }, valid_from: { ar: "ساري من" }, valid_to: { ar: "ساري حتى" } } },
     "canon.Posting": { label: { ar: "ترحيل" }, localizedDescription: { ar: "قيد دفتري مرصود بإشارة، وليس أمر ترحيل" }, properties: { account_code: { ar: "كود الحساب" }, amount, currency, book: { ar: "الدفتر" }, account_role: { ar: "دور الحساب" } } },
-    "canon.SettlementObservation": { label: { ar: "تسوية مرصودة" }, localizedDescription: { ar: "تسوية مرصودة من المصدر" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: { payment: { ar: "دفعة" }, refund: { ar: "استرداد" } } } },
+    "canon.SettlementObservation": { label: { ar: "تسوية مرصودة" }, localizedDescription: { ar: "تسوية مرصودة من المصدر" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind } },
   },
 })

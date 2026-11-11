@@ -2,10 +2,11 @@
 //!
 //! Per catalog (`check_local`): the payload decodes into the strict
 //! [`LabelCatalogRoot`]; every locale tag is well-formed BCP 47 and unique
-//! ignoring case; every text is non-blank and free of bidi embedding,
-//! override and isolate controls (renderers isolate ids themselves, and a
-//! stored control could reorder surrounding text); a description or review
-//! entry names a locale that has a label; a target appears once.
+//! ignoring case; every text is non-blank, in Unicode NFC as sent, and free
+//! of bidi embedding, override and isolate controls (renderers isolate ids
+//! themselves, and a stored control could reorder surrounding text); a
+//! description or review entry names a locale that has a label; a target
+//! appears once.
 //!
 //! Over an artifact set (`check_label_set`): every candidate target resolves
 //! to a definition in the candidate set or the installed base, and no two
@@ -28,6 +29,7 @@ const INVALID_LOCALE: &str = "labels.validation.invalid_locale";
 const DUPLICATE_LOCALE: &str = "labels.validation.duplicate_locale";
 const BLANK_TEXT: &str = "labels.validation.blank_text";
 const BIDI_CONTROL: &str = "labels.validation.bidi_control";
+const NOT_NFC: &str = "labels.validation.not_nfc";
 const UNLABELLED_LOCALE: &str = "labels.validation.unlabelled_locale";
 const DUPLICATE_TARGET: &str = "labels.validation.duplicate_target";
 const UNKNOWN_TARGET: &str = "labels.admission.unknown_target";
@@ -72,6 +74,15 @@ pub(crate) fn check_local(
     let mut push = |code: &str, message: String, path: String| {
         diagnostics.push(invalid_diagnostic(code, message, path, artifact_id));
     };
+    // `decode` reads the Norn1 canonical bytes, whose strings are already NFC:
+    // the form of the text as it was sent is only visible on the wire value.
+    for (path, tag, member) in non_nfc_texts(payload) {
+        push(
+            NOT_NFC,
+            format!("{member} for {tag} is not in Unicode NFC form; send the normalized text"),
+            path,
+        );
+    }
     check_tags(
         root.required_locales.iter(),
         "payload.requiredLocales",
@@ -147,6 +158,33 @@ pub(crate) fn check_local(
             }
         }
     }
+}
+
+/// Every label or description whose text, as sent, is not NFC: its path, tag
+/// and member. Two canonically equivalent spellings would otherwise be
+/// admitted as different texts, and hashing would then normalize them into one.
+fn non_nfc_texts(payload: &ArtifactPayload) -> Vec<(String, String, &'static str)> {
+    let wire = serde_json::to_value(payload.to_json_value()).unwrap_or_default();
+    let entries = wire.get("entries").and_then(serde_json::Value::as_array);
+    let mut found = Vec::new();
+    for (index, entry) in entries.into_iter().flatten().enumerate() {
+        for member in ["label", "description"] {
+            let texts = entry.get(member).and_then(serde_json::Value::as_object);
+            for (tag, text) in texts.into_iter().flatten() {
+                if text
+                    .as_str()
+                    .is_some_and(|text| norn_canonical::nfc(text) != text)
+                {
+                    found.push((
+                        format!("payload.entries.{index}.{member}.{tag}"),
+                        tag.clone(),
+                        member,
+                    ));
+                }
+            }
+        }
+    }
+    found
 }
 
 fn check_tags<'a>(

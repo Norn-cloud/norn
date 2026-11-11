@@ -53,7 +53,11 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
 }
 
 /** Business shows a type's plain one-line summary; Technical shows the registry's own description and the type's id. */
-const about = (concept: Concept, view: View) => view === "technical" ? concept.description ?? concept.summary : concept.summary
+const about = (concept: Concept, view: View): { readonly text: string; readonly lang: string } | undefined => {
+  // The registry's own description is English; a summary carries the language it was written in.
+  if (view === "technical" && concept.description !== undefined) return { text: concept.description, lang: "en" }
+  return concept.summary === undefined ? undefined : { text: concept.summary, lang: concept.summaryLang }
+}
 
 function ConceptCard({ concept }: { readonly concept: Concept }) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
@@ -63,7 +67,7 @@ function ConceptCard({ concept }: { readonly concept: Concept }) {
       <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
         <CardHeader>
           <CardTitle lang={concept.titleLang}>{concept.title}</CardTitle>
-          <CardDescription className="line-clamp-2 min-h-[2lh]">{about(concept, view)}</CardDescription>
+          <CardDescription lang={about(concept, view)?.lang} className="line-clamp-2 min-h-[2lh]">{about(concept, view)?.text}</CardDescription>
         </CardHeader>
         <CardContent className="mt-auto space-y-3 text-sm">
           <p className="text-muted-foreground tabular-nums">{concept.fields.length} facts · {concept.relationships.length} links</p>
@@ -134,8 +138,21 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
             {technical && <> <Iso className="font-mono text-xs text-muted-foreground">{field.id}</Iso></>}
           </TableCell>
           <TableCell className="whitespace-normal text-muted-foreground">
-            {field.valueLabels !== undefined && field.valueLabels.size > 0
-              ? <span dir={directionOf(locale)}>{[...field.valueLabels].map(([value, label], index) => <span key={value}>{index > 0 && comma}{label}{technical && <> <Iso className="font-mono text-xs">{value}</Iso></>}</span>)}</span>
+            {field.scalar.kind === "enum" && field.valueLabels !== undefined && field.valueLabels.size > 0
+              // Every declared value, in order: its label, or the stored value itself (marked English) when it has none.
+              ? <span dir={directionOf(locale)} data-values={field.scalar.values.length}>{field.scalar.values.map((value, index) => {
+                const label = field.valueLabels?.get(value)
+                return (
+                  // An explicit direction: a value shown only as its id has no strong character of the page's
+                  // script, and would otherwise order its own separator left to right.
+                  <span key={value} dir={directionOf(locale)}>
+                    {index > 0 && comma}
+                    {label !== undefined
+                      ? <>{label}{technical && <> <Iso className="font-mono text-xs">{value}</Iso></>}</>
+                      : technical ? <Iso lang="en" className="font-mono text-xs">{value}</Iso> : <bdi lang="en">{value.replaceAll("_", " ")}</bdi>}
+                  </span>
+                )
+              })}</span>
               : <span>{field.type}</span>}
           </TableCell>
         </TableRow>
@@ -161,7 +178,7 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
           <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>
           {view === "technical" && <Iso className="font-mono">{concept.name}</Iso>}
         </div>
-        {text !== undefined && <p className="max-w-2xl text-muted-foreground">{text}</p>}
+        {text !== undefined && <p lang={text.lang} className="max-w-2xl text-muted-foreground">{text.text}</p>}
         {concept.parents.length > 0 && <p className="text-sm">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
       </header>
       <Panel icon={Shapes} label="Facts recorded">
@@ -236,7 +253,7 @@ export function SourcesPage() {
   const { read, catalog } = useCatalog()
   const [search, setSearch] = useState("")
   const { view } = useView()
-  const matches = (concept: Concept) => `${concept.title} ${about(concept, view) ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
+  const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
     <section className="space-y-8">
       <div className="space-y-2">

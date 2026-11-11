@@ -251,9 +251,76 @@ fn seed_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &CellScope) -> Resul
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "seed regression")]
-    use super::{SEED_ITEMS, SEED_PARTIES, SEED_ROWS_KEY, demo_scope, seed_rows};
+    use super::{
+        DEFINITIONS, SEED_ITEMS, SEED_PARTIES, SEED_ROWS_KEY, demo_scope, provision_set, seed_rows,
+    };
+    use norn_cell::engine::NativeEngine;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model};
+    use norn_ir::{ArtifactEnvelope, ArtifactKind};
     use std::collections::BTreeMap;
+
+    /// LABEL-LOCALE-1 on the host's real path: admission, model projection,
+    /// install and the first commit, for the recorded set with its label
+    /// catalog and for the same set without it. The catalog changes the
+    /// installed set and its admission receipt (a governed install of its
+    /// own), and nothing else: the model, the DDL and every seeded fact's
+    /// committed snapshot are the same.
+    #[test]
+    fn label_catalogs_change_no_model_and_no_seeded_fact() {
+        let labelled: Vec<ArtifactEnvelope> = serde_json::from_str(DEFINITIONS).unwrap();
+        let plain: Vec<ArtifactEnvelope> = labelled
+            .iter()
+            .filter(|artifact| artifact.kind() != ArtifactKind::Labels)
+            .cloned()
+            .collect();
+        assert!(
+            plain.len() < labelled.len(),
+            "the recording carries a label catalog"
+        );
+        let provisioned = |artifacts: &[ArtifactEnvelope]| {
+            let store = provision_set(
+                NativeEngine::open_in_memory().unwrap(),
+                &demo_scope(),
+                artifacts,
+            )
+            .unwrap();
+            let reader = store.read();
+            let installed = reader.installed_definitions(None).unwrap().unwrap();
+            let seeded = reader
+                .receipt_by_idempotency_key(MAIN_WORLD, SEED_ROWS_KEY)
+                .unwrap()
+                .unwrap();
+            let written: Vec<_> = seeded
+                .body
+                .written
+                .iter()
+                .map(|row| {
+                    (
+                        row.object_type.clone(),
+                        row.key.clone(),
+                        row.version,
+                        row.snapshot_sha256.clone(),
+                    )
+                })
+                .collect();
+            assert!(written.iter().all(|(_, _, _, snapshot)| snapshot.is_some()));
+            (
+                (
+                    installed.model_hash,
+                    installed.ddl_hash,
+                    seeded.body.request_hash,
+                    written,
+                ),
+                (installed.receipt_sha256, installed.canonical_set),
+            )
+        };
+        let (plain_model, plain_install) = provisioned(&plain);
+        let (labelled_model, labelled_install) = provisioned(&labelled);
+        assert_eq!(plain_model, labelled_model);
+        assert_eq!(plain_model.3.len(), SEED_ITEMS.len() + SEED_PARTIES.len());
+        assert_ne!(plain_install.0, labelled_install.0);
+        assert_ne!(plain_install.1, labelled_install.1);
+    }
 
     /// The two seeded types alone, with every property optional.
     fn model() -> Model {

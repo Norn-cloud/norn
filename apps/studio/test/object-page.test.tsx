@@ -208,3 +208,48 @@ test("rendering again with a different lineage shows only that lineage's digests
   expect(first).toContain("b".repeat(12))
   expect(second).not.toContain("b".repeat(12))
 })
+
+test("LABEL-LOCALE-1: a partially labelled enum shows every declared value, labelled or as stored and marked English", async () => {
+  const { catalogOf } = await import("../src/lib/catalog.ts")
+  const { FactsTable } = await import("../src/sources.tsx")
+  const { LocaleProvider } = await import("../src/lib/locale.tsx")
+  const envelope = (artifactId: string, kind: string, payload: unknown) => ({
+    irVersion: "0.1", artifactId, kind, namespace: "sales", name: "Invoice", version: "1.0.0", lifecycle: "active",
+    scope: {}, dependencies: [], provenance: { source: "system" }, payload,
+  })
+  const values = ["draft", "posted", "on_hold", "void"]
+  const status = { kind: "enumValue", objectType: "sales.Invoice", property: "status" }
+  const artifacts = [
+    envelope("sales.Invoice.entity", "entity", { entityVersion: "2.0", objectType: { name: "sales.Invoice", properties: [{ id: "status", type: { kind: "enum", values: values.map((value) => ({ value })) } }] } }),
+    envelope("sales.labels", "labels", { labelsVersion: "0.1", entries: [
+      { target: { ...status, value: "posted" }, label: { ar: "مُرحّلة" } },
+      { target: { ...status, value: "void" }, label: { ar: "ملغاة" } },
+    ] }),
+  ] as unknown as Parameters<typeof catalogOf>[0]
+  const concept = catalogOf(artifacts, "ar").byName.get("sales.Invoice")!
+  for (const technical of [false, true]) {
+    const html = renderToStaticMarkup(<LocaleProvider initial="ar"><FactsTable concept={concept} technical={technical} /></LocaleProvider>)
+    // Every declared value is on the page, in declaration order: nothing is hidden for lack of a label.
+    const shown = ["draft", "مُرحّلة", technical ? "on_hold" : "on hold", "ملغاة"]
+    const at = shown.map((text) => html.indexOf(text))
+    expect(at.every((index) => index >= 0)).toBe(true)
+    expect([...at].sort((a, b) => a - b)).toEqual(at)
+    expect(html).toContain(`data-values="${values.length}"`)
+    // An unlabelled value is marked as English; a labelled one is not.
+    expect(html).toMatch(/<bdi[^>]*lang="en"[^>]*>draft<\/bdi>/)
+    expect(html).not.toMatch(/lang="en"[^>]*>مُرحّلة/)
+  }
+  // With no label at all in the reader's language, the type's own description lists every value.
+  const english = renderToStaticMarkup(<FactsTable concept={catalogOf(artifacts, "en").byName.get("sales.Invoice")!} technical={false} />)
+  expect(english).toContain("One of: draft, posted, on hold, void")
+})
+
+test("an English summary under an Arabic title is marked lang=en; an Arabic one carries its own tag", async () => {
+  const { catalogOf } = await import("../src/lib/catalog.ts")
+  const document = (fixture("three-systems.definitions.json") as { document: Parameters<typeof catalogOf>[0] }).document
+  const arabic = catalogOf(document, "ar")
+  // The locale pack describes canon.Holding in Arabic; core.Agent has an Arabic label and no Arabic description.
+  expect(arabic.byName.get("canon.Holding")).toMatchObject({ titleLang: "ar", summary: "رصيد مقسَّم حسب المالك والموقع", summaryLang: "ar" })
+  expect(arabic.byName.get("core.Agent")).toMatchObject({ titleLang: "ar", summaryLang: "en" })
+  expect(catalogOf(document, "en").byName.get("canon.Holding")).toMatchObject({ titleLang: "en", summary: "Owner and location partitioned holding", summaryLang: "en" })
+})

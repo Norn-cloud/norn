@@ -1,15 +1,25 @@
-//! LABEL-LOCALE-1 (#679): localizing never changes a digest or evidence
-//! identity. Over the admitted three-systems set, arbitrary valid label
-//! catalogs (an installed upstream layer plus a downstream overlay) are
-//! admitted and leave the model hash, the DDL hash, every definition
-//! artifact's Norn1 hash and the governing laws exactly as they were.
+//! LABEL-LOCALE-1 (#679): installing label catalogs changes no model
+//! identity. Over the admitted three-systems set, arbitrary valid catalogs
+//! (an installed upstream layer plus a downstream overlay) are admitted, and
+//! the set carrying them installs through `CellStore::install_definitions`
+//! with the same recorded model hash, DDL hash and governing laws as the
+//! label-free install; the installed catalog still reads.
+//!
+//! What this does not test: the model here is projected from entity roots by
+//! this file, as a host does. The host's own projection, install and first
+//! commit are checked with the real recording in `norn-cell-do`
+//! (`label_catalogs_change_no_model_and_no_seeded_fact`), and source-evidence
+//! digests in `norn-api` (`explorer_objects`). A definition artifact's own
+//! hash cannot change, because a catalog is a separate artifact. The install
+//! itself is a governed change with its own admission receipt.
 #![allow(
     clippy::expect_used,
     clippy::panic,
     missing_docs,
     reason = "property test over the retained three-systems set"
 )]
-use norn_cell::Model;
+use norn_cell::catalog::CatalogSnapshot;
+use norn_cell::{CellStore, InstalledDefinitionInput, Model};
 use norn_checker::{
     EntityArtifactSetContext,
     receipt::{ReceiptSources, check_artifact_set_with_receipt},
@@ -65,9 +75,11 @@ fn is_base(artifact: &ArtifactEnvelope) -> bool {
     artifact.artifact_id.starts_with("core.") || artifact.artifact_id.starts_with("std.")
 }
 
-/// Admit `artifacts` (the `core.`/`std.` layer as the installed base) and
-/// return the admission findings.
-fn admit(artifacts: &[ArtifactEnvelope]) -> (bool, Vec<String>) {
+/// Admit `artifacts` (the `core.`/`std.` layer as the installed base), then
+/// install the whole set through the store as its first definitions version.
+/// Returns the admission errors and, when there are none, what the store
+/// recorded and retained.
+fn admit_and_install(artifacts: &[ArtifactEnvelope]) -> (Vec<String>, BTreeMap<String, String>) {
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(is_base);
     let values = |set: &[ArtifactEnvelope]| -> Vec<RuntimeValue> {
         set.iter()
@@ -87,17 +99,57 @@ fn admit(artifacts: &[ArtifactEnvelope]) -> (bool, Vec<String>) {
         &ResourceLimitProfile::norn_limits_v1(),
     )
     .expect("checked");
-    let findings = checked
-        .diagnostics
-        .iter()
-        .filter(|d| d.is_error())
-        .map(|d| format!("{} {:?}: {}", d.code.as_str(), d.artifact_id, d.message))
-        .collect();
-    (checked.receipt.admitted, findings)
+    if !checked.receipt.admitted {
+        let errors = checked
+            .diagnostics
+            .iter()
+            .filter(|d| d.is_error())
+            .map(|d| format!("{} {:?}: {}", d.code.as_str(), d.artifact_id, d.message))
+            .collect();
+        return (errors, BTreeMap::new());
+    }
+    let model = model(artifacts);
+    let input = InstalledDefinitionInput {
+        canonical_set: String::from_utf8(
+            RuntimeValue::from_json(serde_json::to_value(artifacts).expect("set"))
+                .expect("value")
+                .canonical_json()
+                .expect("canonical"),
+        )
+        .expect("UTF-8"),
+        registry: vec![],
+        receipt_sha256: checked.receipt.content_sha256().expect("receipt digest"),
+        admission_receipt: Some(
+            String::from_utf8(checked.receipt.canonical_json().expect("receipt")).expect("UTF-8"),
+        ),
+        readmission: None,
+        diff: serde_json::json!({}),
+        installed_at: 1,
+        layout: None,
+    };
+    let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+    store
+        .install_definitions(model, input, Some(0), "org_demo/dev")
+        .expect("installed");
+    // The catalog read projects the installed set, label catalogs included.
+    CatalogSnapshot::read_active(&store, &BTreeSet::new()).expect("catalog reads project it");
+    let installed = store
+        .read()
+        .installed_definitions(None)
+        .expect("definitions")
+        .expect("active");
+    let mut recorded = BTreeMap::from([
+        ("model".to_owned(), installed.model_hash),
+        ("ddl".to_owned(), installed.ddl_hash),
+    ]);
+    for law in store.model().law_artifacts() {
+        recorded.insert(format!("law:{}", law.artifact_id), artifact_hash(law));
+    }
+    (Vec::new(), recorded)
 }
 
-/// The model the cell builds from a set, as the host seed builds it: entity
-/// roots plus governing laws read from the whole set.
+/// The model a host projects from a set (as `norn-cell-do`'s seed does):
+/// entity roots, plus the governing laws the model retains from the whole set.
 fn model(artifacts: &[ArtifactEnvelope]) -> Model {
     let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
     for artifact in artifacts
@@ -132,31 +184,13 @@ fn artifact_hash(artifact: &ArtifactEnvelope) -> String {
         .expect("hash")
 }
 
-/// Every digest the cell and the definitions carry, keyed by name.
-fn digests(artifacts: &[ArtifactEnvelope]) -> BTreeMap<String, String> {
-    let model = model(artifacts);
-    let mut out = BTreeMap::from([
-        ("model".to_owned(), model.model_hash().to_owned()),
-        ("ddl".to_owned(), model.ddl_hash().to_owned()),
-    ]);
-    for law in model.law_artifacts() {
-        out.insert(format!("law:{}", law.artifact_id), artifact_hash(law));
-    }
-    for artifact in artifacts
-        .iter()
-        .filter(|a| a.kind() != ArtifactKind::Labels)
-    {
-        out.insert(
-            format!("artifact:{}", artifact.artifact_id),
-            artifact_hash(artifact),
-        );
-    }
-    out
-}
-
 fn baseline() -> &'static BTreeMap<String, String> {
-    static DIGESTS: OnceLock<BTreeMap<String, String>> = OnceLock::new();
-    DIGESTS.get_or_init(|| digests(definitions()))
+    static RECORDED: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    RECORDED.get_or_init(|| {
+        let (errors, recorded) = admit_and_install(definitions());
+        assert!(errors.is_empty(), "the label-free set admits: {errors:#?}");
+        recorded
+    })
 }
 
 fn targets() -> &'static [LabelTarget] {
@@ -255,22 +289,21 @@ fn the_label_universe_covers_every_definition_kind() {
             "the fixture declares no {kind} target: {kinds:?}"
         );
     }
-    let (admitted, findings) = admit(definitions());
-    assert!(admitted, "{findings:#?}");
+    assert!(baseline().keys().any(|key| key.starts_with("law:")));
 }
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
 
-    /// LABEL-LOCALE-1: adding, changing or overlaying labels is admitted and
-    /// changes no model, DDL, artifact or law digest.
+    /// LABEL-LOCALE-1: a set carrying label catalogs is admitted and installs
+    /// with the same recorded model hash, DDL hash and governing laws.
     #[test]
-    fn labels_never_change_a_digest((upstream, overlay) in layers()) {
+    fn installing_labels_records_the_same_model((upstream, overlay) in layers()) {
         let mut labelled = definitions().to_vec();
         labelled.push(envelope("core.labels", &upstream));
         labelled.push(envelope("tenant.labels", &overlay));
-        let (admitted, findings) = admit(&labelled);
-        prop_assert!(admitted, "{:#?}", findings);
-        prop_assert_eq!(&digests(&labelled), baseline());
+        let (errors, recorded) = admit_and_install(&labelled);
+        prop_assert!(errors.is_empty(), "{:#?}", errors);
+        prop_assert_eq!(&recorded, baseline());
     }
 }

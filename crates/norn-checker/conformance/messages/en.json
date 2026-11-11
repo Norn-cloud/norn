@@ -602,6 +602,9 @@
     "labels.validation.invalid_payload": {
       "message": "labels payload does not match its strict root"
     },
+    "labels.validation.not_nfc": {
+      "message": "a label or description is not in Unicode NFC form"
+    },
     "labels.validation.unlabelled_locale": {
       "message": "a description or review state names a locale that has no label"
     },

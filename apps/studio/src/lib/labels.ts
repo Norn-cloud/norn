@@ -52,15 +52,19 @@ export function labelIndex(artifacts: readonly Artifact[]): LabelIndex {
 }
 
 /**
- * The label for `locale`: its exact tag first, then a regional variant of the
- * same language (`ar-EG` for `ar`). Nothing else: a missing label returns
- * undefined, and the caller shows the canonical name, marked as such.
+ * The label for `locale` (spec core 08, "one locale rule"): a label is in the locale whose tag it
+ * carries, so the exact tag wins. Without one, display falls back within the same language only:
+ * the base tag (`ar` for `ar-EG`), then a regional tag (`ar-EG` for `ar`). The label keeps its own
+ * `tag`, so the caller marks it. It never crosses languages: a missing label returns undefined,
+ * and the caller shows the canonical name, marked as such.
  */
 export function pick(index: LabelIndex, key: string, locale: string): Label | undefined {
   const tags = index.get(key)
   if (!tags) return undefined
   const wanted = locale.toLowerCase()
-  const all = [...tags.values()]
+  const language = (tag: string) => tag.toLowerCase().split("-")[0]
+  const all = [...tags.values()].sort((a, b) => a.tag.localeCompare(b.tag))
   return all.find(({ tag }) => tag.toLowerCase() === wanted)
-    ?? all.filter(({ tag }) => tag.toLowerCase().split("-")[0] === wanted).sort((a, b) => a.tag.localeCompare(b.tag))[0]
+    ?? all.find(({ tag }) => tag.toLowerCase() === language(wanted))
+    ?? all.find(({ tag }) => language(tag) === language(wanted))
 }

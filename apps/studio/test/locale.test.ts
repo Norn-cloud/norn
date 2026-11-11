@@ -50,6 +50,42 @@ test("MESSAGE-LOCALE-1: an Arabic message carries every value, isolated, and not
   }
 })
 
+test("MESSAGE-LOCALE-1: a value that contains template text is read exactly or not at all, never split wrongly", () => {
+  const next = random(3)
+  // Values built from the fragments templates use as separators, so most parses are ambiguous.
+  const fragments = [": ", " ", ", ", "; ", " -> ", "→", "(", ")", "'", "`", "a", "b", "1", "_", "."]
+  const tricky = () => Array.from({ length: 1 + Math.floor(next() * 5) }, () => fragments[Math.floor(next() * fragments.length)]).join("")
+  let refused = 0, read = 0
+  for (const [code, { message }] of Object.entries(EN)) {
+    if (variables(message).length === 0) continue
+    for (let run = 0; run < 6; run += 1) {
+      const values = Object.fromEntries(variables(message).map((name) => [name, tricky()]))
+      const said = parseMessage(message).map((part) => "text" in part ? part.text : values[part.variable]).join("")
+      const got = readValues(message, said)
+      if (got === undefined) refused += 1
+      else { read += 1; expect(got, `${code}: ${said}`).toEqual(values) }
+      // Whatever was read, the Arabic text is either built from exactly these values or the server's words.
+      const localized = localizeMessage(code, said, "ar")
+      expect(localized.text, code).toBe(got === undefined ? said : formatMessage(AR[code]!.message, values))
+    }
+  }
+  // Both outcomes occur: the generator reaches ambiguous and unambiguous messages.
+  expect(refused).toBeGreaterThan(0)
+  expect(read).toBeGreaterThan(0)
+  // The reviewer's case: the rule's own text contains the template's ": ".
+  const said = "the data breaks fk: line→order: no such order"
+  expect(readValues(EN["consistency.instance.violation"]!.message, said)).toBeUndefined()
+  expect(localizeMessage("consistency.instance.violation", said, "ar")).toEqual({ text: said, lang: "en", needsReview: false })
+  expect(readValues(EN["consistency.instance.violation"]!.message, "the data breaks fk_line_order: no such order")).toEqual({ rule: "fk_line_order", detail: "no such order" })
+})
+
+test("an isolated value cannot close its own isolate: isolate controls inside it are removed", () => {
+  expect(isolate("a\u2069b\u2066c\u2067d\u2068e")).toBe("\u2068abcde\u2069")
+  const text = formatMessage("x {$v} y", { v: "1\u2069 2" })
+  expect([...text].filter((char) => char === "\u2069")).toHaveLength(1)
+  expect(text.endsWith("\u2069 y")).toBe(true)
+})
+
 test("a message that does not match its code's template, or an unknown code, stays in the server's words", () => {
   expect(localizeMessage("lifecycle.validation.empty_initial", "something else entirely", "ar")).toEqual({ text: "something else entirely", lang: "en", needsReview: false })
   expect(localizeMessage("demo.unknown_code", "kept as sent", "ar")).toEqual({ text: "kept as sent", lang: "en", needsReview: false })
@@ -77,8 +113,12 @@ test("LABEL-LOCALE-1: later catalogs win per tag, a regional label serves its la
   expect(pick(index, key, "ar-EG")).toEqual({ text: "فاتورة بيع", description: undefined, tag: "ar-EG", needsReview: true })
   expect(pick(index, key, "en")?.text).toBe("Invoice")
   expect(pick(index, key, "fr")).toBeUndefined()
-  const regional = labelIndex([envelope("tenant.labels", [{ target: invoice, label: { "ar-EG": "فاتورة بيع" } }])])
+  // One locale rule: display falls back within the language only, both ways, and the label keeps its own tag.
+  const regional = labelIndex([envelope("tenant.labels", [{ target: invoice, label: { "ar-EG": "فاتورة بيع", en: "Invoice" } }])])
   expect(pick(regional, key, "ar")?.tag).toBe("ar-EG")
+  const base = labelIndex([envelope("tenant.labels", [{ target: invoice, label: { ar: "فاتورة", "ar-SA": "فاتورة", en: "Invoice" } }])])
+  expect(pick(base, key, "ar-EG")?.tag).toBe("ar")
+  expect(pick(base, key, "fr-CA")).toBeUndefined()
 })
 
 test("labels change the words, never the ids: a localized catalog keeps every name and fact id", () => {

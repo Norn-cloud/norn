@@ -51,7 +51,8 @@ function frame(id: string, issues: readonly Issue[], status: ReactNode, extra: P
   return <CanvasFrame {...props} draftKey={`sheet:${id}`} {...extra} />
 }
 
-// Specimen labels for the sales order (Egyptian business Arabic); `order_date` is left unlabelled to show the fallback.
+// Specimen labels for the sales order (Egyptian business Arabic). `order_date` and the `on_hold` status value
+// are left unlabelled, to show both fallbacks: every fact and every enum value still shows.
 const ORDER_LABELS = {
   irVersion: "0.1", artifactId: "sheet.SalesOrder.labels", kind: "labels", namespace: "sheet", name: "Sales order labels", version: "0.1.0",
   lifecycle: "draft", scope: {}, dependencies: [], provenance: { source: "system" },
@@ -61,7 +62,7 @@ const ORDER_LABELS = {
     { target: { kind: "property", objectType: "commerce.SalesOrder", property: "currency" }, label: { en: "Currency", ar: "العملة" } },
     { target: { kind: "property", objectType: "commerce.SalesOrder", property: "total_amount" }, label: { en: "Total", ar: "الإجمالي" } },
     { target: { kind: "property", objectType: "commerce.SalesOrder", property: "status" }, label: { en: "Status", ar: "الحالة" } },
-    ...Object.entries({ draft: "مسودة", submitted: "مُقدَّم", on_hold: "معلّق", approved: "معتمد", invoiced: "تمت فوترته", completed: "مكتمل", cancelled: "ملغى" })
+    ...Object.entries({ draft: "مسودة", submitted: "مُقدَّم", approved: "معتمد", invoiced: "تمت فوترته", completed: "مكتمل", cancelled: "ملغى" })
       .map(([value, ar]) => ({ target: { kind: "enumValue", objectType: "commerce.SalesOrder", property: "status", value }, label: { ar }, review: { ar: "needs_review" } })),
   ] },
 } as unknown as Artifact
