@@ -314,6 +314,26 @@ fn denials_are_one_opaque_document_and_commit_nothing() {
         assert_eq!(refused.status, 403);
         assert_eq!(serde_json::to_string(&refused).unwrap(), opaque);
     }
+    // A caller the host does not grant the action learns nothing from the
+    // known action's own refusals: input its schema refuses and a stale
+    // definitions pin read byte for byte as the unknown action does, because
+    // the host grant is decided before the action is looked up.
+    let invalid = melt_body("melt-x", "not-a-decimal", "10", "denied-invalid");
+    let stale = ActionQuery {
+        version: Some(99),
+        ..scoped("org_demo")
+    };
+    let stranger = Some("user:stranger");
+    for (query, sent) in [
+        (scoped("org_demo"), invalid.as_str()),
+        (stale, body.as_str()),
+    ] {
+        for action in [MELT_ACTION, "constitution.melt.unknown"] {
+            let refused = call(&host, &query, stranger, action, sent).unwrap_err();
+            assert_eq!(refused.status, 403);
+            assert_eq!(serde_json::to_string(&refused).unwrap(), opaque);
+        }
+    }
     // The host grants every `CallAction` to HOST_ONLY and HIDDEN; the kernel
     // denies one (permission) and hides the target from the other
     // (`target_not_found`). A known action with a made-up target reads byte
