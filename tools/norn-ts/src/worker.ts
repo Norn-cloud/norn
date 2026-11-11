@@ -16,7 +16,7 @@
  * which bytes a result belongs to. A setup failure prints `{ event: "fatal" }`.
  */
 import { createHash } from "node:crypto"
-import { existsSync, readdirSync, readFileSync, statSync, watch } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, watch } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
 import { compilePack, packModules } from "./pack.ts"
 import { ProjectError, readProject, type Project } from "./project.ts"
@@ -36,12 +36,19 @@ const posix = (path: string) => path.split(sep).join("/")
 
 function sourceFiles(root: string, manifest: Project): string[] {
   const files: string[] = []
+  // Symlinks are never followed (no cycle, nothing outside the project), and
+  // each real directory is read once.
+  const visited = new Set<string>()
   const walk = (dir: string) => {
-    if (!existsSync(dir)) return
+    if (!existsSync(dir) || !lstatSync(dir).isDirectory()) return
+    const real = realpathSync(dir)
+    if (visited.has(real)) return
+    visited.add(real)
     for (const entry of readdirSync(dir).sort()) {
       const path = join(dir, entry)
-      if (statSync(path).isDirectory()) walk(path)
-      else if (entry.endsWith(".ts")) files.push(path)
+      const kind = lstatSync(path)
+      if (kind.isDirectory()) walk(path)
+      else if (kind.isFile() && entry.endsWith(".ts")) files.push(path)
     }
   }
   for (const source of manifest.sources) walk(resolve(root, source))
@@ -63,7 +70,7 @@ export function compileProject(root: string, manifest: Project, gen: number): Co
   const digest = sourceDigest(root, manifest)
   const modules = manifest.sources.flatMap((source) => {
     const dir = resolve(root, source)
-    return existsSync(dir) && statSync(dir).isDirectory() ? packModules(dir) : []
+    return existsSync(dir) && lstatSync(dir).isDirectory() ? packModules(dir) : []
   })
   const pack = compilePack(root, { modules, scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId }, root })
   if (!pack.ok) {
@@ -101,7 +108,10 @@ export function main(args: readonly string[]): void {
     gen += 1
     try { emit(compileProject(root, manifest, gen)) }
     catch (error) {
-      emit({ event: "compiled", gen, sourceDigest: sourceDigest(root, manifest), ok: false,
+      // The digest can fail for the same reason the compile did; the worker survives either.
+      let digest = ""
+      try { digest = sourceDigest(root, manifest) } catch { /* reported below */ }
+      emit({ event: "compiled", gen, sourceDigest: digest, ok: false,
         diagnostics: [{ code: "cli.compile.internal", message: `The compiler failed on this source: ${String(error)}` }] })
     }
   }

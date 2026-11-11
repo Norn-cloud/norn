@@ -11,7 +11,7 @@
  */
 import { expect, test } from "bun:test"
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -19,7 +19,7 @@ import { TOOL_ROOT } from "../src/profile.ts"
 const native = process.env.NORN_DEV_HOST_BIN
 if (process.env.CI && !native) throw new Error("dev loop tests require NORN_DEV_HOST_BIN")
 const CLI = join(TOOL_ROOT, "src/cli.ts")
-const env = { ...process.env, NORN_HOST_BIN: native ?? "" }
+const env = { ...process.env, NORN_DEV_HOST_BIN: native ?? "" }
 
 type Event = Record<string, any>
 
@@ -90,6 +90,9 @@ test("developer_loop_roundtrip: author, observe, break, repair and restart throu
     expect(ready.active.version).toBe(1)
     expect(ready.scope).toEqual({ orgId: "local", environmentId: "dev" })
     expect(ready.actor).toBe("local:developer")
+    expect(ready.stability).toBe("experimental")
+    expect(JSON.parse(readFileSync(join(dir, ".norn/dev.json"), "utf8"))).toMatchObject({ format: "norn-dev/1", stability: "experimental" })
+    expect(statSync(join(dir, ".norn/dev.token")).mode & 0o777).toBe(0o600)
     const token = readFileSync(join(dir, ".norn/dev.token"), "utf8").trim()
     const scope = "orgId=local&environmentId=dev"
     const call = async (sku: string, headers: Record<string, string> = { authorization: `Bearer ${token}` }, pin = "") => {
@@ -156,10 +159,40 @@ test("norn dev outside a project or without a host refuses with an actionable co
     expect(outside.status).toBe(1)
     expect(outside.stdout).toContain("cli.project.not_found")
     expect(spawnSync(process.execPath, [CLI, "init", join(root, "p"), "--no-install"], { env }).status).toBe(0)
-    const missing = spawnSync(process.execPath, [CLI, "dev"], { cwd: join(root, "p"), env: { ...process.env, NORN_HOST_BIN: "" }, encoding: "utf8" })
+    const missing = spawnSync(process.execPath, [CLI, "dev"], { cwd: join(root, "p"), env: { ...process.env, NORN_DEV_HOST_BIN: "" }, encoding: "utf8" })
     expect(missing.status).toBe(3)
     expect(missing.stdout).toContain("cli.setup.host_unavailable")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("norn.json can point norn dev only inside the project", () => {
+  const root = mkdtempSync(join(tmpdir(), "norn-dev-confine-"))
+  try {
+    const dir = join(root, "p")
+    expect(spawnSync(process.execPath, [CLI, "init", dir, "--no-install"], { env }).status).toBe(0)
+    const manifest = JSON.parse(readFileSync(join(dir, "norn.json"), "utf8"))
+    for (const change of [{ cell: join(root, "other.sqlite") }, { cell: "../other.sqlite" }, { cell: ".norn/../../other.sqlite" }, { sources: ["../elsewhere"] }, { sources: [root] }]) {
+      writeFileSync(join(dir, "norn.json"), JSON.stringify({ ...manifest, ...change }))
+      const refused = spawnSync(process.execPath, [CLI, "dev"], { cwd: dir, env, encoding: "utf8" })
+      expect({ change, status: refused.status, code: JSON.parse(refused.stdout).code }).toEqual({ change, status: 1, code: "cli.project.invalid_manifest" })
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("the compile worker survives a symlink cycle in its sources", () => {
+  const root = mkdtempSync(join(tmpdir(), "norn-dev-cycle-"))
+  try {
+    const dir = join(root, "p")
+    expect(spawnSync(process.execPath, [CLI, "init", dir, "--no-install"], { env }).status).toBe(0)
+    symlinkSync(join(dir, "src"), join(dir, "src", "loop"))
+    const once = spawnSync(process.execPath, [join(TOOL_ROOT, "src/worker.ts"), "--project", dir, "--once"], { env, encoding: "utf8", timeout: 60_000 })
+    expect(once.status).toBe(0)
+    expect(JSON.parse(once.stdout.trim().split("\n").at(-1)!)).toMatchObject({ event: "compiled", gen: 1, ok: true })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 90_000)

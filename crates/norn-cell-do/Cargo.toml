@@ -42,6 +42,10 @@ clap = { version = "4.6.7", features = ["derive"] }
 # The per-session dev token and lineage handle key.
 getrandom = "0.3.4"
 
+# O_NOFOLLOW for the owner-only session files.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
 tempfile = "3.27.0"
