@@ -59,11 +59,21 @@ mod tests {
                 prop_assert_eq!((coefficient, normalized_scale), (0, 0));
             }
         }
+    }
 
-        #[test]
-        fn decimal_multiplier_refuses_exactly_on_overflow(exponent in any::<u8>()) {
-            prop_assert_eq!(checked_pow10(exponent), 10_i128.checked_pow(u32::from(exponent)));
-            prop_assert_eq!(checked_pow10(exponent).is_none(), exponent > 38);
+    #[test]
+    fn decimal_multiplier_refuses_exactly_on_overflow() {
+        for exponent in 0..=u8::MAX {
+            assert_eq!(
+                checked_pow10(exponent),
+                10_i128.checked_pow(u32::from(exponent)),
+                "exponent {exponent}"
+            );
+            assert_eq!(
+                checked_pow10(exponent).is_none(),
+                exponent > 38,
+                "exponent {exponent}"
+            );
         }
     }
 }

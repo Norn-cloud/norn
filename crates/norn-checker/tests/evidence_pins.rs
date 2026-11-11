@@ -263,28 +263,31 @@ fn mapping_pool() -> Vec<Value> {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
+    // Every edit runs in every case; the seed stays generated.
     #[test]
-    fn any_pin_or_result_edit_is_unknown(seed in any::<u64>(), field in 0u8..11) {
+    fn any_pin_or_result_edit_is_unknown(seed in any::<u64>()) {
         let challenge = challenge(&pool());
         let current = pins(&challenge, seed);
-        let mut record = challenge.record_evidence(&current, r#"{"status":"bounded-pass"}"#).expect("identity");
-        let digest = record.result_sha256.clone();
-        match field {
-            0 => record.pins.seed ^= 1,
-            1 => record.pins.tool.id.push('x'),
-            2 => record.pins.tool.version.push('x'),
-            3 => record.pins.tool.implementation_sha256.replace_range(..1, "b"),
-            4 => record.pins.bounds_json.push(' '),
-            5 => record.pins.goal_index = u32::MAX,
-            6 => record.pins.goal_sha256.push('0'),
-            7 => record.pins.challenge_sha256.push('0'),
-            8 => record.challenge_json.push(' '),
-            9 => record.result_sha256.push('0'),
-            _ => record = challenge.record_evidence(&current, "null").expect("joint payload/hash edit"),
-        }
-        prop_assert_eq!(challenge.evidence_identity(&current, &digest, &record), EvidenceIdentity::Unknown);
-        if (5..=7).contains(&field) {
-            prop_assert!(challenge.record_evidence(&record.pins, "null").is_err());
+        for field in 0u8..11 {
+            let mut record = challenge.record_evidence(&current, r#"{"status":"bounded-pass"}"#).expect("identity");
+            let digest = record.result_sha256.clone();
+            match field {
+                0 => record.pins.seed ^= 1,
+                1 => record.pins.tool.id.push('x'),
+                2 => record.pins.tool.version.push('x'),
+                3 => record.pins.tool.implementation_sha256.replace_range(..1, "b"),
+                4 => record.pins.bounds_json.push(' '),
+                5 => record.pins.goal_index = u32::MAX,
+                6 => record.pins.goal_sha256.push('0'),
+                7 => record.pins.challenge_sha256.push('0'),
+                8 => record.challenge_json.push(' '),
+                9 => record.result_sha256.push('0'),
+                _ => record = challenge.record_evidence(&current, "null").expect("joint payload/hash edit"),
+            }
+            prop_assert_eq!(challenge.evidence_identity(&current, &digest, &record), EvidenceIdentity::Unknown, "field {}", field);
+            if (5..=7).contains(&field) {
+                prop_assert!(challenge.record_evidence(&record.pins, "null").is_err(), "field {}", field);
+            }
         }
     }
 
