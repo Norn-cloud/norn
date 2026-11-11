@@ -11,6 +11,9 @@
 //!
 //! - The host-agnostic `CellHost` laws (`norn_testkit::cell_host`, T4-CELL-1)
 //!   hold for [`SqliteCell`] over an in-memory store.
+//! - Under injected crashes and I/O errors ([`FaultEngine`], law 6), commits
+//!   and performs stay atomic and the reopened file refines the model; a
+//!   mutant engine that commits a faulted transaction is caught.
 //! - Deterministic fixtures: commit and enqueue are atomic (a refused commit
 //!   writes nothing); a timer is delivered when due, consumed once, and a
 //!   stale incarnation is refused; a performed result is recorded once and
@@ -25,8 +28,9 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use norn_cell::engine::{
-    DefaultEngine, MAX_PARAMETERS, MAX_SAFE_INTEGER, MAX_STATEMENT_BYTES, NativeEngine, SqlEngine,
-    SqlValue, validate_bindings, validate_value,
+    DefaultEngine, EngineFault, EngineFaultKind, FaultEngine, FaultSwitch, MAX_PARAMETERS,
+    MAX_SAFE_INTEGER, MAX_STATEMENT_BYTES, NativeEngine, SqlEngine, SqlValue, validate_bindings,
+    validate_value,
 };
 use norn_cell::{CellError, CellStore, JournalMode, Model, PerformClaim, SqliteCell, StoreOptions};
 use norn_kernel::cell_host::JsonObject;
@@ -39,8 +43,9 @@ use norn_kernel::{
 };
 use norn_testkit::Settings;
 use norn_testkit::cell_host::{
-    CELL_HOST_LABELS, LawCommand, LawEvent, LawInput, LedgerEntry, SimulatedCell, check_cell_host,
-    check_link_override, law_responder, override_object_types,
+    CELL_FAULT_LABELS, CELL_HOST_LABELS, CellOp, FaultKind, FaultPlan, LawCommand, LawEvent,
+    LawInput, LedgerEntry, SimulatedCell, check_cell_host, check_link_override, law_responder,
+    override_object_types, run_cell_host,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -115,18 +120,111 @@ fn law_cell_responder(command: &Command<LawCommand>) -> WireInput {
     WireInput::from(&law_responder(command))
 }
 
+/// An engine the law driver opens. `faults` is the driver's fault schedule,
+/// shared across reopens; only fault-injecting engines read it.
 trait LawEngine: SqlEngine + Debug + Sized + 'static {
-    fn open_file(path: &Path, options: StoreOptions) -> Result<Self, CellError>;
-    fn open_memory() -> Result<Self, CellError>;
+    /// Whether the engine injects the faults armed on `faults`.
+    const FAULTS: bool = false;
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError>;
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError>;
 }
 
 impl LawEngine for NativeEngine {
-    fn open_file(path: &Path, options: StoreOptions) -> Result<Self, CellError> {
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        _faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
         NativeEngine::open(path, options)
     }
 
-    fn open_memory() -> Result<Self, CellError> {
+    fn open_memory(_faults: &FaultSwitch) -> Result<Self, CellError> {
         NativeEngine::open_in_memory()
+    }
+}
+
+impl<S: LawEngine> LawEngine for FaultEngine<S> {
+    const FAULTS: bool = true;
+
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        S::open_file(path, options, faults).map(|inner| Self::new(inner, faults.clone()))
+    }
+
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
+        S::open_memory(faults).map(|inner| Self::new(inner, faults.clone()))
+    }
+}
+
+/// A mutant engine for the crash law's self-test: once the armed fault has
+/// fired, it commits the transaction anyway, so the writes before the fault
+/// (or, at the commit point, all of them) survive the crash.
+#[derive(Debug)]
+struct CommitsAfterFault<S> {
+    inner: S,
+    faults: FaultSwitch,
+}
+
+impl<S: LawEngine> LawEngine for CommitsAfterFault<S> {
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        S::open_file(path, options, faults).map(|inner| Self {
+            inner,
+            faults: faults.clone(),
+        })
+    }
+
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
+        S::open_memory(faults).map(|inner| Self {
+            inner,
+            faults: faults.clone(),
+        })
+    }
+}
+
+impl<S: SqlEngine> SqlEngine for CommitsAfterFault<S> {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.inner.read_cache_revision()
+    }
+
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)
+    }
+
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.inner.query(sql, params)
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.inner
+            .transaction(|| {
+                let result = f();
+                if result.is_err() && self.faults.fired() {
+                    // The bug: commit what the faulted transaction wrote.
+                    Ok(result)
+                } else {
+                    result.map(Ok)
+                }
+            })
+            .and_then(|result| result)
     }
 }
 
@@ -150,11 +248,15 @@ impl RestrictedEngine {
 }
 
 impl LawEngine for RestrictedEngine {
-    fn open_file(path: &Path, options: StoreOptions) -> Result<Self, CellError> {
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        _faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
         NativeEngine::open(path, options).map(Self::new)
     }
 
-    fn open_memory() -> Result<Self, CellError> {
+    fn open_memory(_faults: &FaultSwitch) -> Result<Self, CellError> {
         NativeEngine::open_in_memory().map(Self::new)
     }
 }
@@ -338,18 +440,29 @@ fn law_cell<S: LawEngine>(engine: S) -> Result<LawCell<S>, CellError> {
 }
 
 /// The SQL driver over the law vocabulary. With `REOPEN`, the store is a file
-/// closed and reopened after every operation that writes, verifying the ledger.
+/// closed and reopened after every operation that writes, verifying the ledger
+/// (which is also how it recovers from an injected crash).
 struct LawSqlite<const REOPEN: bool, S: LawEngine = DefaultEngine> {
     cell: LawCell<S>,
     file: Option<(tempfile::TempDir, PathBuf)>,
+    /// The fault schedule every engine of this driver shares.
+    faults: FaultSwitch,
+    /// Whether the fault armed for the current operation fired.
+    fired: bool,
 }
 
 impl<const REOPEN: bool, S: LawEngine> LawSqlite<REOPEN, S> {
     fn after_write(&mut self) {
+        // The operation is over: its fault must not reach the reopen.
+        if self.faults.disarm() {
+            self.fired = true;
+        }
         if let Some((_, path)) = &self.file {
             let now = self.cell.now();
-            self.cell = law_cell(S::open_file(path, StoreOptions::default()).expect("reopens"))
-                .expect("rebuilds store");
+            self.cell = law_cell(
+                S::open_file(path, StoreOptions::default(), &self.faults).expect("reopens"),
+            )
+            .expect("rebuilds store");
             self.cell.advance_to(now);
         }
     }
@@ -436,13 +549,14 @@ impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
     }
 
     fn perform(&mut self) -> Result<Option<Performed<LawInput>>, CellError> {
-        let performed = self.cell.perform()?.map(|performed| Performed {
+        let performed = self.cell.perform();
+        // Reopen even after a failure: a crashed engine refuses every call.
+        self.after_write();
+        Ok(performed?.map(|performed| Performed {
             command: performed.command,
             generation: performed.generation,
             input: performed.input.into(),
-        });
-        self.after_write();
-        Ok(performed)
+        }))
     }
 
     fn observe(&mut self) -> Result<Option<Observed<LawInput>>, CellError> {
@@ -464,23 +578,57 @@ impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
 
 impl<const REOPEN: bool, S: LawEngine> SimulatedCell for LawSqlite<REOPEN, S> {
     const COMMITS_PERFORM_CLAIMS: bool = true;
+    /// Only a file store survives a crash: it reopens from the file.
+    const FAULT_KINDS: &'static [FaultKind] = if S::FAULTS {
+        if REOPEN {
+            &[FaultKind::IoError, FaultKind::Crash]
+        } else {
+            &[FaultKind::IoError]
+        }
+    } else {
+        &[]
+    };
 
     fn sim_new() -> Self {
+        let faults = FaultSwitch::default();
         if REOPEN {
             let dir = tempfile::tempdir().expect("tempdir");
             let path = dir.path().join("cell.sqlite");
-            let cell = law_cell(S::open_file(&path, StoreOptions::default()).expect("opens"))
-                .expect("opens store");
+            let cell =
+                law_cell(S::open_file(&path, StoreOptions::default(), &faults).expect("opens"))
+                    .expect("opens store");
             Self {
                 cell,
                 file: Some((dir, path)),
+                faults,
+                fired: false,
             }
         } else {
             Self {
-                cell: law_cell(S::open_memory().expect("opens engine")).expect("opens store"),
+                cell: law_cell(S::open_memory(&faults).expect("opens engine"))
+                    .expect("opens store"),
                 file: None,
+                faults,
+                fired: false,
             }
         }
+    }
+
+    fn sim_arm_fault(&mut self, plan: FaultPlan) {
+        self.fired = false;
+        self.faults.arm(EngineFault {
+            kind: match plan.kind {
+                FaultKind::Crash => EngineFaultKind::Crash,
+                FaultKind::IoError => EngineFaultKind::Io,
+            },
+            transaction: u32::from(plan.transaction),
+            at_statement: u32::from(plan.at_statement),
+        });
+    }
+
+    fn sim_disarm_fault(&mut self) -> bool {
+        let fired = self.faults.disarm();
+        std::mem::take(&mut self.fired) || fired
     }
 
     fn sim_advance_to(&mut self, now: LogicalTime) {
@@ -557,6 +705,54 @@ fn cell_host_laws_hold_across_reopen_for_the_restricted_engine() {
     coverage.assert_covered(CELL_HOST_LABELS);
 }
 
+/// Law 6 (D79 D step 1): commits and performs stay atomic when a write
+/// transaction crashes or hits an I/O error at any statement, and the file
+/// reopens to the model's state. 64 cases (swarm mode, faults armed).
+#[test]
+fn cell_host_laws_hold_under_injected_crashes() {
+    let coverage =
+        check_cell_host::<LawSqlite<true, FaultEngine<NativeEngine>>>(&Settings::new(file!()));
+    coverage.assert_covered(CELL_FAULT_LABELS);
+    coverage.assert_covered(&["cell:fault.crash", "cell:fault.io_error"]);
+}
+
+#[test]
+fn cell_host_laws_hold_under_injected_crashes_for_the_restricted_engine() {
+    let coverage =
+        check_cell_host::<LawSqlite<true, FaultEngine<RestrictedEngine>>>(&Settings::new(file!()));
+    coverage.assert_covered(CELL_FAULT_LABELS);
+    coverage.assert_covered(&["cell:fault.crash", "cell:fault.io_error"]);
+}
+
+/// Law 6 without reopening: after an I/O error rolls a transaction back, the
+/// same connection and store keep serving the model's state.
+#[test]
+fn cell_host_laws_hold_under_injected_io_errors_without_reopen() {
+    let coverage =
+        check_cell_host::<LawSqlite<false, FaultEngine<NativeEngine>>>(&Settings::new(file!()));
+    coverage.assert_covered(CELL_FAULT_LABELS);
+    coverage.assert_covered(&["cell:fault.io_error"]);
+}
+
+/// The crash law can fail: an engine that commits a faulted transaction lets
+/// a partial (or whole) write survive the crash, and the law machine finds a
+/// counterexample that arms a fault.
+#[test]
+fn cell_host_mutant_committing_after_a_fault_is_caught() {
+    let failure = run_cell_host::<LawSqlite<true, FaultEngine<CommitsAfterFault<NativeEngine>>>>(
+        &Settings::new(file!()).without_persistence(),
+    )
+    .expect_err("an engine that commits a faulted transaction must fail the crash law");
+    assert!(
+        failure
+            .transitions
+            .iter()
+            .any(|op| matches!(op, CellOp::ArmFault(_))),
+        "{failure}"
+    );
+    assert!(failure.reason.contains("swarm:"), "{failure}");
+}
+
 #[test]
 fn restricted_sql_rejects_forbidden_tokens_and_reserved_identifiers() {
     for sql in [
@@ -587,7 +783,7 @@ fn restricted_sql_rejects_forbidden_tokens_and_reserved_identifiers() {
 
 #[test]
 fn restricted_engine_enforces_sql_limits_and_nested_transaction_rules() {
-    let engine = RestrictedEngine::open_memory().expect("opens");
+    let engine = RestrictedEngine::open_memory(&FaultSwitch::default()).expect("opens");
     assert!(validate_do_sql(&" ".repeat(MAX_STATEMENT_BYTES.saturating_add(1)), &[]).is_err());
     let params = vec![SqlValue::Null; MAX_PARAMETERS.saturating_add(1)];
     assert!(validate_do_sql("SELECT 1", &params).is_err());
@@ -1928,7 +2124,7 @@ fn link_overrides_bind_through_a_supertype_name() {
 
 #[test]
 fn link_overrides_bind_through_a_supertype_name_on_restricted_engine() {
-    let engine = RestrictedEngine::open_memory().expect("opens engine");
+    let engine = RestrictedEngine::open_memory(&FaultSwitch::default()).expect("opens engine");
     let store = CellStore::from_engine(engine, common::model_of(&override_object_types()))
         .expect("opens store");
     let mut cell: SqliteCell<OrderEvent, Charge, OrderInput, RestrictedEngine> =

@@ -34,6 +34,22 @@
 //!    link's committed state, the full ledger (positions, consumption, written versions, events), the
 //!    pending commands and timers, the next due timer, the next
 //!    observation, and the execution count equal the model's.
+//! 6. **Crash and I/O atomicity.** For a host that lists
+//!    [`SimulatedCell::FAULT_KINDS`], a generated [`CellOp::ArmFault`] fails
+//!    one write transaction of the next commit or perform ([`FaultPlan`]).
+//!    A commit is one write transaction: faulted, it fails with a host error
+//!    and changes nothing observable (a refused commit may report its refusal
+//!    instead). A fresh perform is two: a faulted claim changes nothing and
+//!    executes nothing; a faulted result record keeps the claim but no
+//!    result, so the command is never executed again for that generation
+//!    (every later perform fails until a newer generation replaces it). A
+//!    fault past an operation's last write transaction never fires. After a
+//!    [`FaultKind::Crash`] the host reopens from durable state, and
+//!    refinement (law 5) then holds against the unchanged model.
+//!
+//! Hosts that inject faults also run in swarm mode: each case first draws
+//! which operation kinds it uses and how often, and a failure report prints
+//! that mix with the seed.
 //!
 //! A host driver (for example `norn-cell`'s SQLite driver) implements
 //! [`SimulatedCell`] and calls [`check_cell_host`] to run the same laws.
@@ -57,6 +73,7 @@ use norn_kernel::{
     check_commit_owned_rows,
 };
 use proptest::prelude::*;
+use proptest::strategy::Union;
 use proptest::test_runner::{TestError, TestRunner};
 use proptest_state_machine::{ReferenceStateMachine, StateMachineTest};
 
@@ -954,6 +971,38 @@ pub fn law_responder(command: &Command<LawCommand>) -> LawInput {
     LawInput::Result(command.payload)
 }
 
+/// What an injected storage fault does to a host that lists it in
+/// [`SimulatedCell::FAULT_KINDS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FaultKind {
+    /// The host dies at the faulted statement: its transaction never
+    /// commits, and the host reopens from durable state before the faulted
+    /// operation returns. Only file-backed hosts survive it.
+    Crash,
+    /// The faulted statement fails with an I/O error: its transaction rolls
+    /// back and the host keeps its connection.
+    IoError,
+}
+
+/// One storage fault, armed by [`CellOp::ArmFault`] for the next operation.
+///
+/// The fault fails statement `at_statement` (counting from 0) of the
+/// operation's write transaction `transaction` (counting from 0). A faulted
+/// transaction never commits: one that would commit with fewer statements
+/// fails at its commit point instead. An operation that runs fewer write
+/// transactions is not faulted. Only commits and performs are armed; the
+/// fault is dropped before any other operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FaultPlan {
+    /// What the fault does.
+    pub kind: FaultKind,
+    /// Which write transaction of the operation fails: a commit runs one, a
+    /// fresh perform two (its claim, then its result).
+    pub transaction: u8,
+    /// Which SQL statement of that transaction fails.
+    pub at_statement: u8,
+}
+
 /// A host the law machine can drive: a [`CellHost`] over the law vocabulary
 /// plus the test controls a real host gets from its environment.
 pub trait SimulatedCell:
@@ -963,6 +1012,23 @@ pub trait SimulatedCell:
     /// dispatch. The reference model keeps receipt sequences exact for hosts
     /// that expose this stronger native durability behavior.
     const COMMITS_PERFORM_CLAIMS: bool = false;
+
+    /// The storage faults this host survives (none by default). When any are
+    /// listed, the law machine arms them ([`CellOp::ArmFault`]) and runs in
+    /// swarm mode. Such a host must also declare
+    /// [`Self::COMMITS_PERFORM_CLAIMS`], and its execution count
+    /// ([`Self::sim_executions`]) counts durably recorded results.
+    const FAULT_KINDS: &'static [FaultKind] = &[];
+
+    /// Arms `plan` for the next operation's write transactions. Called only
+    /// on hosts that list [`Self::FAULT_KINDS`].
+    fn sim_arm_fault(&mut self, _plan: FaultPlan) {}
+
+    /// Disarms the fault armed by [`Self::sim_arm_fault`] and returns whether
+    /// it fired. A host that crashed has already reopened.
+    fn sim_disarm_fault(&mut self) -> bool {
+        false
+    }
 
     /// A fresh, empty cell at the epoch whose outside world answers every
     /// command with [`law_responder`].
@@ -1033,6 +1099,9 @@ pub enum CellOp {
         /// Its payload.
         payload: u8,
     },
+    /// Arm a storage fault for the next operation (hosts that list
+    /// [`SimulatedCell::FAULT_KINDS`] only).
+    ArmFault(FaultPlan),
 }
 
 /// What the model expects of the last applied operation.
@@ -1045,7 +1114,29 @@ enum Expect {
     },
     Observe(Option<Observed<LawInput>>),
     Clock(Option<DueTimer<LawInput>>),
+    /// The operation fails with a host error, executes nothing, and changes
+    /// nothing the model does not.
+    Failed,
     Nothing,
+}
+
+/// Whether an armed fault reaches a write transaction of the operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Firing {
+    /// The operation runs the faulted transaction and would commit it.
+    Fires,
+    /// The operation runs no such transaction.
+    Never,
+    /// A refused commit: the host may refuse before the faulted statement.
+    Either,
+}
+
+/// The fault armed for the last applied operation, and the model's
+/// prediction of whether it fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ArmedFault {
+    plan: FaultPlan,
+    firing: Firing,
 }
 
 /// Everything about a cell the laws compare after each operation.
@@ -1075,6 +1166,9 @@ pub struct CellModel {
     links: BTreeMap<LinkKey, LinkState>,
     outbox: Vec<Command<LawCommand>>,
     head_performed: bool,
+    /// The head was claimed but its result never recorded (a fault hit the
+    /// result record): it is never executed again at this generation.
+    head_unknown: bool,
     generations: BTreeMap<CommandId, Generation>,
     timers: BTreeMap<TimerId, DueTimer<LawInput>>,
     inbox: Vec<Observed<LawInput>>,
@@ -1095,6 +1189,7 @@ impl Default for CellModel {
             links: BTreeMap::new(),
             outbox: Vec::new(),
             head_performed: false,
+            head_unknown: false,
             generations: BTreeMap::new(),
             timers: BTreeMap::new(),
             inbox: Vec::new(),
@@ -1569,6 +1664,7 @@ impl CellModel {
                     let position = self.outbox.iter().position(|slot| slot.id == command.id);
                     if position == Some(0) {
                         self.head_performed = false;
+                        self.head_unknown = false;
                     }
                     match position.and_then(|ix| self.outbox.get_mut(ix)) {
                         Some(slot) => *slot = command.clone(),
@@ -1598,6 +1694,9 @@ impl CellModel {
                 executed: false,
             };
         };
+        if self.head_unknown {
+            return Expect::Failed;
+        }
         let delivered = Performed {
             command: head.id.clone(),
             generation: head.generation,
@@ -1606,14 +1705,7 @@ impl CellModel {
         let executed = !self.head_performed;
         if executed {
             if self.commits_perform_claims {
-                self.seq = self.seq.saturating_add(1);
-                self.ledger.push(LedgerEntry {
-                    seq: LedgerSeq(self.seq),
-                    consumed: None,
-                    written: Vec::new(),
-                    linked: Vec::new(),
-                    events: Vec::new(),
-                });
+                self.claim();
             }
             self.executions = self.executions.saturating_add(1);
             self.head_performed = true;
@@ -1621,6 +1713,54 @@ impl CellModel {
         Expect::Perform {
             delivered: Some(delivered),
             executed,
+        }
+    }
+
+    /// The empty claim commit a claim-committing host records before a
+    /// fresh execution.
+    fn claim(&mut self) {
+        self.seq = self.seq.saturating_add(1);
+        self.ledger.push(LedgerEntry {
+            seq: LedgerSeq(self.seq),
+            consumed: None,
+            written: Vec::new(),
+            linked: Vec::new(),
+            events: Vec::new(),
+        });
+    }
+
+    /// The expectation for `op` under the armed `plan`, applying to the
+    /// model only what survives the fault (law 6).
+    fn faulted(&mut self, op: &CellOp, plan: FaultPlan) -> Option<(Expect, Firing)> {
+        match op {
+            CellOp::Commit(commit) => Some(if plan.transaction == 0 {
+                // A trial copy: a faulted commit applies nothing.
+                match self.clone().commit(commit) {
+                    Ok(_) => (Expect::Failed, Firing::Fires),
+                    Err(refusal) => (Expect::Commit(Err(refusal)), Firing::Either),
+                }
+            } else {
+                (Expect::Commit(self.commit(commit)), Firing::Never)
+            }),
+            CellOp::Perform => {
+                let fresh = !self.outbox.is_empty() && !self.head_performed && !self.head_unknown;
+                Some(match plan.transaction {
+                    0 if fresh => (Expect::Failed, Firing::Fires),
+                    1 if fresh => {
+                        // The claim is durable and the outside world ran, but
+                        // no result was recorded.
+                        self.claim();
+                        self.head_unknown = true;
+                        (Expect::Failed, Firing::Fires)
+                    }
+                    _ => (self.perform(), Firing::Never),
+                })
+            }
+            CellOp::Observe
+            | CellOp::Clock
+            | CellOp::Advance(_)
+            | CellOp::Inject { .. }
+            | CellOp::ArmFault(_) => None,
         }
     }
 
@@ -1912,12 +2052,152 @@ impl CellModel {
     }
 }
 
+/// One case's transition mix (swarm testing): the relative weight of each
+/// operation kind, 0 when the case never generates it. Drawn once per case
+/// for hosts that inject faults, never shrunk, and printed with a failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Swarm {
+    commit: u32,
+    admissible_commit: u32,
+    perform: u32,
+    observe: u32,
+    clock: u32,
+    advance: u32,
+    inject: u32,
+    io_error: u32,
+    crash: u32,
+}
+
+impl Swarm {
+    /// Each kind is enabled with probability 3/4 at weight 1 to 4; faults the
+    /// host does not list stay disabled, and at least one cell operation
+    /// is enabled.
+    fn strategy(kinds: &'static [FaultKind]) -> BoxedStrategy<Self> {
+        let weight =
+            || proptest::option::weighted(0.75, 1_u32..5).prop_map(Option::unwrap_or_default);
+        let operations = (
+            weight(),
+            weight(),
+            weight(),
+            weight(),
+            weight(),
+            weight(),
+            weight(),
+        );
+        let faults = (weight(), weight());
+        (operations, faults)
+            .prop_map(move |(operations, (io_error, crash))| {
+                let (commit, admissible_commit, perform, observe, clock, advance, inject) =
+                    operations;
+                let enabled = |kind: FaultKind, weight: u32| {
+                    if kinds.contains(&kind) { weight } else { 0 }
+                };
+                let operating = [
+                    commit,
+                    admissible_commit,
+                    perform,
+                    observe,
+                    clock,
+                    advance,
+                    inject,
+                ]
+                .iter()
+                .any(|weight| *weight > 0);
+                Self {
+                    commit: if operating { commit } else { 1 },
+                    admissible_commit,
+                    perform,
+                    observe,
+                    clock,
+                    advance,
+                    inject,
+                    io_error: enabled(FaultKind::IoError, io_error),
+                    crash: enabled(FaultKind::Crash, crash),
+                }
+            })
+            .no_shrink()
+            .boxed()
+    }
+
+    fn transitions(&self, model: &CellModel) -> BoxedStrategy<CellOp> {
+        let mut options: Vec<(u32, BoxedStrategy<CellOp>)> = Vec::new();
+        if self.commit > 0 {
+            options.push((
+                self.commit,
+                model.commit_strategy().prop_map(CellOp::Commit).boxed(),
+            ));
+        }
+        if self.admissible_commit > 0 {
+            options.push((
+                self.admissible_commit,
+                model
+                    .admissible_commit_strategy()
+                    .prop_map(CellOp::Commit)
+                    .boxed(),
+            ));
+        }
+        if self.perform > 0 {
+            options.push((self.perform, Just(CellOp::Perform).boxed()));
+        }
+        if self.observe > 0 {
+            options.push((self.observe, Just(CellOp::Observe).boxed()));
+        }
+        if self.clock > 0 {
+            options.push((self.clock, Just(CellOp::Clock).boxed()));
+        }
+        if self.advance > 0 {
+            options.push((self.advance, (0_u64..12).prop_map(CellOp::Advance).boxed()));
+        }
+        if self.inject > 0 {
+            options.push((
+                self.inject,
+                (0..=LAW_UNIVERSE, any::<u8>())
+                    .prop_map(|(id, payload)| CellOp::Inject { id, payload })
+                    .boxed(),
+            ));
+        }
+        for (weight, kind) in [
+            (self.io_error, FaultKind::IoError),
+            (self.crash, FaultKind::Crash),
+        ] {
+            if weight > 0 {
+                options.push((weight, fault_strategy(kind)));
+            }
+        }
+        Union::new_weighted(options).boxed()
+    }
+}
+
+/// A fault of `kind`: mostly in the first or second write transaction (the
+/// third is never reached), mostly at an early statement, sometimes past the
+/// last (the commit point).
+fn fault_strategy(kind: FaultKind) -> BoxedStrategy<CellOp> {
+    (
+        prop_oneof![4 => Just(0_u8), 3 => Just(1_u8), 1 => Just(2_u8)],
+        prop_oneof![3 => 0_u8..16, 1 => any::<u8>()],
+    )
+        .prop_map(move |(transaction, at_statement)| {
+            CellOp::ArmFault(FaultPlan {
+                kind,
+                transaction,
+                at_statement,
+            })
+        })
+        .boxed()
+}
+
 /// Reference-machine state: the model plus the expectation for the most
 /// recently applied operation.
 #[derive(Debug, Clone, Default)]
 pub struct CellReference {
     model: CellModel,
     expected: Option<Expect>,
+    /// The fault armed for the next operation.
+    armed: Option<FaultPlan>,
+    /// The fault the most recently applied operation ran under.
+    fault: Option<ArmedFault>,
+    /// The case's transition mix; `None` keeps the fixed mix.
+    swarm: Option<Swarm>,
 }
 
 /// The reference and concrete `proptest-state-machine` for host `H`.
@@ -1928,17 +2208,30 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
     type Transition = CellOp;
 
     fn init_state() -> BoxedStrategy<CellReference> {
-        Just(CellReference {
-            model: CellModel {
-                commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
-                ..CellModel::default()
-            },
-            expected: None,
-        })
-        .boxed()
+        let model = CellModel {
+            commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
+            ..CellModel::default()
+        };
+        if H::FAULT_KINDS.is_empty() {
+            return Just(CellReference {
+                model,
+                ..CellReference::default()
+            })
+            .boxed();
+        }
+        Swarm::strategy(H::FAULT_KINDS)
+            .prop_map(move |swarm| CellReference {
+                model: model.clone(),
+                swarm: Some(swarm),
+                ..CellReference::default()
+            })
+            .boxed()
     }
 
     fn transitions(state: &CellReference) -> BoxedStrategy<CellOp> {
+        if let Some(swarm) = &state.swarm {
+            return swarm.transitions(&state.model);
+        }
         prop_oneof![
             5 => state.model.commit_strategy().prop_map(CellOp::Commit),
             2 => state.model.admissible_commit_strategy().prop_map(CellOp::Commit),
@@ -1952,6 +2245,15 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
     }
 
     fn apply(mut state: CellReference, op: &CellOp) -> CellReference {
+        let armed = state.armed.take();
+        state.fault = None;
+        if let Some(plan) = armed
+            && let Some((expected, firing)) = state.model.faulted(op, plan)
+        {
+            state.fault = Some(ArmedFault { plan, firing });
+            state.expected = Some(expected);
+            return state;
+        }
         let model = &mut state.model;
         let expected = match op {
             CellOp::Commit(commit) => Expect::Commit(model.commit(commit)),
@@ -1967,6 +2269,10 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 if model.seen.insert(observed.id.clone()) {
                     model.inbox.push(observed);
                 }
+                Expect::Nothing
+            }
+            CellOp::ArmFault(plan) => {
+                state.armed = Some(*plan);
                 Expect::Nothing
             }
         };
@@ -2040,8 +2346,45 @@ fn consumed_label(consumed: Option<&Consumed>) -> &'static str {
     }
 }
 
-fn apply_commit<H: SimulatedCell>(host: &mut H, commit: &LawCommit, expected: &Expect) {
+/// Disarms the host's fault and checks it fired exactly when the model says
+/// the operation runs the faulted write transaction (law 6).
+fn fault_fired<H: SimulatedCell>(host: &mut H, fault: ArmedFault) -> bool {
+    let fired = host.sim_disarm_fault();
+    match fault.firing {
+        Firing::Fires => assert!(
+            fired,
+            "law violated: a fault armed for a write transaction the operation runs did not fire\nfault: {:?}",
+            fault.plan
+        ),
+        Firing::Never => assert!(
+            !fired,
+            "law violated: a fault fired in a write transaction the operation must not run (a commit is one transaction, a fresh perform two)\nfault: {:?}",
+            fault.plan
+        ),
+        Firing::Either => {}
+    }
+    let label = if fired {
+        match fault.plan.kind {
+            FaultKind::Crash => "fault.crash",
+            FaultKind::IoError => "fault.io_error",
+        }
+    } else {
+        "fault.unfired"
+    };
+    coverage::hit_prefixed("cell", label);
+    fired
+}
+
+fn apply_commit<H: SimulatedCell>(
+    host: &mut H,
+    commit: &LawCommit,
+    expected: &Expect,
+    fault: Option<ArmedFault>,
+) {
     let before = snapshot(host);
+    if let Some(fault) = fault {
+        host.sim_arm_fault(fault.plan);
+    }
     // A host failure is reported as its message and can never equal the
     // model's expectation.
     let actual = match host.commit(commit.clone()) {
@@ -2050,6 +2393,15 @@ fn apply_commit<H: SimulatedCell>(host: &mut H, commit: &LawCommit, expected: &E
             .map(Err)
             .map_err(|error| error.to_string()),
     };
+    if fault.is_some_and(|fault| fault_fired(host, fault)) {
+        coverage::hit_prefixed("cell", "fault.commit");
+        // Refinement against the unchanged model follows.
+        assert!(
+            actual.is_err(),
+            "law violated: a faulted commit did not fail with a host error\ncommit: {commit:?}\noutcome: {actual:?}"
+        );
+        return;
+    }
     assert_eq!(
         actual.clone().map(Expect::Commit),
         Ok(expected.clone()),
@@ -2086,12 +2438,32 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
 
     fn apply(mut host: H, reference: &CellReference, op: CellOp) -> H {
         let expected = reference.expected.clone().unwrap_or(Expect::Nothing);
+        let fault = reference.fault;
         match op {
-            CellOp::Commit(commit) => apply_commit(&mut host, &commit, &expected),
+            CellOp::Commit(commit) => apply_commit(&mut host, &commit, &expected, fault),
             CellOp::Perform => {
                 let executions = host.sim_executions();
+                if let Some(fault) = fault {
+                    host.sim_arm_fault(fault.plan);
+                }
                 let delivered = host.perform().map_err(|error| error.to_string());
+                let fired = fault.is_some_and(|fault| fault_fired(&mut host, fault));
                 let executed = host.sim_executions() != executions;
+                if expected == Expect::Failed {
+                    let label = match fault {
+                        Some(fault) if fired && fault.plan.transaction == 0 => {
+                            "fault.perform.claim"
+                        }
+                        Some(_) if fired => "fault.perform.result",
+                        Some(_) | None => "perform.outcome_unknown",
+                    };
+                    coverage::hit_prefixed("cell", label);
+                    assert!(
+                        delivered.is_err() && !executed,
+                        "law violated: a perform whose claim or result is lost delivered or executed\noutcome: {delivered:?}, executed: {executed}"
+                    );
+                    return Self::refines(host, reference);
+                }
                 let label = match (&delivered, executed) {
                     (Ok(None), _) => "perform.empty",
                     (_, true) => "perform.executed",
@@ -2133,7 +2505,15 @@ impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
                 host.sim_advance_to(LogicalTime::from_millis(reference.model.now));
             }
             CellOp::Inject { id, payload } => host.sim_inject(law_observed(id, payload)),
+            CellOp::ArmFault(_) => {}
         }
+        Self::refines(host, reference)
+    }
+}
+
+impl<H: SimulatedCell> CellHostMachine<H> {
+    /// Law 5: the host's state equals the model's.
+    fn refines(mut host: H, reference: &CellReference) -> H {
         assert_eq!(
             snapshot(&mut host),
             reference.model.snapshot(),
@@ -2290,13 +2670,32 @@ pub const CELL_HOST_LABELS: &[&str] = &[
     "cell:clock.due",
 ];
 
+/// Coverage labels a healthy run with injected faults hits (law 6): a fault
+/// fired in a commit, in a perform's claim, and in its result record; a
+/// fault the operation never reached; and a perform refused after its result
+/// was lost. Per-kind labels are `cell:fault.io_error` and `cell:fault.crash`.
+pub const CELL_FAULT_LABELS: &[&str] = &[
+    "cell:fault.commit",
+    "cell:fault.perform.claim",
+    "cell:fault.perform.result",
+    "cell:fault.unfired",
+    "cell:perform.outcome_unknown",
+];
+
 /// Runs the `CellHost` laws against host `H` and returns the coverage, or the
-/// minimal counterexample.
+/// minimal counterexample. For a host that injects faults, the failure
+/// reason also names the case's transition mix and the run's seed.
 ///
 /// # Errors
 ///
 /// Returns the shrunk [`Failure`] if any law fails.
 pub fn run_cell_host<H: SimulatedCell>(settings: &Settings) -> Result<Coverage, Failure<CellOp>> {
+    const {
+        assert!(
+            H::FAULT_KINDS.is_empty() || H::COMMITS_PERFORM_CLAIMS,
+            "a host that injects faults must commit perform claims (law 6)"
+        );
+    }
     let config = settings.config();
     let mut runner = TestRunner::new(config.clone());
     let strategy = CellHostMachine::<H>::sequential_strategy(settings.transition_range());
@@ -2308,8 +2707,16 @@ pub fn run_cell_host<H: SimulatedCell>(settings: &Settings) -> Result<Coverage, 
     let counts = coverage::take();
     match result {
         Ok(()) => Ok(counts),
-        Err(TestError::Fail(reason, (_, transitions, _))) => Err(Failure {
-            reason: reason.to_string(),
+        Err(TestError::Fail(reason, (initial, transitions, _))) => Err(Failure {
+            reason: match &initial.swarm {
+                None => reason.to_string(),
+                Some(swarm) => {
+                    let seed = config.rng_seed;
+                    format!(
+                        "{reason}\nswarm: {swarm:?}\nseed: {seed} (replay the run with PROPTEST_RNG_SEED={seed})"
+                    )
+                }
+            },
             transitions,
         }),
         Err(TestError::Abort(reason)) => Err(Failure {
