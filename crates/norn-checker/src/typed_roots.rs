@@ -3728,6 +3728,10 @@ mod tests {
     /// Every malformed command list is refused at each listed path; the patch
     /// sets the input environment the commands are checked against.
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table row per refused command shape"
+    )]
     fn action_commands_refuse_at_their_paths() {
         const INVALID: &str = "action.validation.invalid_payload";
         const UNDERIVABLE: &str = codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE;

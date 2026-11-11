@@ -791,7 +791,7 @@ fn lifecycle_transition_fails_closed_without_an_explicit_record_binding() {
 }
 
 /// A lifecycle target maps its id only from `input.recordKey`, the runtime
-/// ObjectRecord id, which WidgetIR's record properties do not include: never
+/// `ObjectRecord` id, which `WidgetIR`'s record properties do not include: never
 /// from a business id that differs from it, another single-property identity
 /// key, or an unrelated constant.
 #[test]
