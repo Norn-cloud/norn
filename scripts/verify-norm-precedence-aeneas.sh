@@ -54,6 +54,21 @@ charon_toolchain="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$aeneas_root/charon/ru
 test "$charon_toolchain" = nightly-2026-08-18
 export RUSTUP_HOME="$tool_root/rustup" CARGO_HOME="$tool_root/cargo" CARGO_INCREMENTAL=0
 rm -rf "$result/baseline" "$result/common" "$result/mutants"
+
+# pin_statements <search> <module> <audit output>: record the full statement
+# (`#check @name`) of every theorem the audit names. The record must equal the
+# committed one, so no audited statement changes unseen.
+statements="$result/statements.txt"
+mkdir -p "$result"
+: > "$statements"
+pin_statements() {
+  local search="$1" module="$2" names
+  names="$(sed -n "s/^'\([^']*\)' .*/#check @\1/p" <<< "$3")"
+  test -n "$names" || return 0
+  printf 'import %s\n%s\n' "$module" "$names" |
+    (cd "$lean_root" && LEAN_PATH="$search:$result/common" lake env lean \
+      -DwarningAsError=true --stdin) >> "$statements"
+}
 mkdir -p "$result/common"
 
 # extract <tree> <out>: translate the decision core from <tree>. The file
@@ -233,6 +248,8 @@ test "$proof_output" = "$(printf '%s\n' \
   "'Norn.Sem.Norm.protected_survives' does not depend on any axioms" \
   "'Norn.Sem.Norm.permission_respects_invariants' depends on axioms: [propext]" \
   "'Norn.Sem.Norm.overlay_preserves_upstream' depends on axioms: [propext, Classical.choice, Quot.sound]")"
+pin_statements "$baseline" Checker.NormPrecedence.DecisionProof "$proof_output"
+diff -u "$proof_root/Checker/NormPrecedence/statements.txt" "$statements"
 # Check the exact propositions, not only the theorem names or an exit code.
 cat > "$baseline/Propositions.lean" <<'LEAN'
 import Checker.NormPrecedence.DecisionProof

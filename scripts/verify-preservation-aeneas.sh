@@ -34,6 +34,21 @@ export RUSTUP_HOME="$tool_root/rustup" CARGO_HOME="$tool_root/cargo" CARGO_INCRE
 rm -rf "$result"
 mkdir -p "$result/common"
 
+# pin_statements <search> <module> <audit output>: record the full statement
+# (`#check @name`) of every theorem the audit names. The record must equal the
+# committed one, so no audited statement changes unseen.
+statements="$result/statements.txt"
+mkdir -p "$result"
+: > "$statements"
+pin_statements() {
+  local search="$1" module="$2" names
+  names="$(sed -n "s/^'\([^']*\)' .*/#check @\1/p" <<< "$3")"
+  test -n "$names" || return 0
+  printf 'import %s\n%s\n' "$module" "$names" |
+    (cd "$lean_root" && LEAN_PATH="$search:$result/common" lake env lean \
+      -DwarningAsError=true --stdin) >> "$statements"
+}
+
 # extract <tree> <out>: translate the production file from <tree>.
 extract() {
   local tree="$1" out="$2"
@@ -123,6 +138,8 @@ expected_axioms="$(printf '%s\n' \
   "'Norn.Checker.Preservation.check_correct' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Checker.Preservation.check_sound' depends on axioms: [propext, Classical.choice, Quot.sound]")"
 test "$proof_output" = "$expected_axioms"
+pin_statements "$baseline" Checker.Preservation.Proof "$proof_output"
+diff -u "$proof_root/statements.txt" "$statements"
 # Check the exact propositions, not only the theorem names or an exit code.
 printf '%s\n' \
   'import Checker.Preservation.Proof' \

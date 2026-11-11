@@ -1,0 +1,84 @@
+Norn.Checker.NormPrecedence.admits_sound : ∀ (norms : Norn.Checker.NormPrecedence.Norms)
+  (edges : Norn.Checker.NormPrecedence.Edges) (reach : Norn.Checker.NormPrecedence.Reach) (contexts : Aeneas.Std.Usize),
+  ∃ b,
+    norn_checker_norm_decision.decision.admits norms edges reach contexts = Aeneas.Std.Result.ok b ∧
+      (b = true →
+        Norn.Sem.Norm.Admissible (Norn.Checker.NormPrecedence.catalog norms edges contexts) ∧
+          ∀ (i j : ℕ),
+            Norn.Checker.NormPrecedence.R reach i j = true ↔
+              Norn.Sem.Norm.Prec (Norn.Checker.NormPrecedence.catalog norms edges contexts) i j)
+Norn.Checker.NormPrecedence.resolution_sound : ∀ (norms : Norn.Checker.NormPrecedence.Norms)
+  (edges : Norn.Checker.NormPrecedence.Edges) (reach : Norn.Checker.NormPrecedence.Reach) (contexts : Aeneas.Std.Usize),
+  norn_checker_norm_decision.decision.admits norms edges reach contexts = Aeneas.Std.Result.ok true →
+    ∀ (c : Aeneas.Std.Usize) (survivors obligations : Aeneas.Std.Slice Aeneas.Std.Usize) (conflicts : Aeneas.Std.Usize)
+      (defeats : Aeneas.Std.Slice (Aeneas.Std.Usize × Aeneas.Std.Usize)),
+      ∃ b,
+        norn_checker_norm_decision.decision.resolution_holds norms reach c survivors obligations conflicts defeats =
+            Aeneas.Std.Result.ok b ∧
+          (b = true →
+            have C := Norn.Checker.NormPrecedence.catalog norms edges contexts;
+            have S := Norn.Checker.NormPrecedence.survivorSet survivors;
+            ↑conflicts = 0 ∧
+              Norn.Sem.Norm.Stable C (↑c) S ∧
+                (∀ (S' : ℕ → Prop), Norn.Sem.Norm.Stable C (↑c) S' → ∀ (i : ℕ), S' i ↔ S i) ∧
+                  (∀ (i j : ℕ), S i → S j → ¬(C.modality i).opposed (C.modality j)) ∧
+                    (∀ (i : ℕ),
+                        Norn.Checker.NormPrecedence.Mem obligations i ↔
+                          S i ∧ C.modality i = Norn.Sem.Norm.Modality.obligation) ∧
+                      (∀ d ∈ ↑defeats, S ↑d.1 ∧ C.active ↑d.2 ↑c = true ∧ Norn.Sem.Norm.Defeats C ↑d.1 ↑d.2) ∧
+                        ∀ i < C.size, C.active i ↑c = true → S i ∨ ∃ d ∈ ↑defeats, ↑d.2 = i)
+Norn.Checker.NormPrecedence.admitted_meta : ∀ (norms : Norn.Checker.NormPrecedence.Norms)
+  (edges : Norn.Checker.NormPrecedence.Edges) (reach : Norn.Checker.NormPrecedence.Reach) (contexts : Aeneas.Std.Usize),
+  norn_checker_norm_decision.decision.admits norms edges reach contexts = Aeneas.Std.Result.ok true →
+    have C := Norn.Checker.NormPrecedence.catalog norms edges contexts;
+    (∀ (w l : ℕ), Norn.Sem.Norm.Prec C w l → C.layer w ≤ C.layer l ∧ C.isProtected l = false) ∧
+      (∀ (c : ℕ) (S : ℕ → Prop),
+          c < C.contexts →
+            Norn.Sem.Norm.Stable C c S →
+              ∀ (q : ℕ),
+                S q →
+                  C.modality q = Norn.Sem.Norm.Modality.permission →
+                    ∀ p < C.size,
+                      C.active p c = true →
+                        C.modality p = Norn.Sem.Norm.Modality.prohibition →
+                          C.isProtected p = false ∧ C.layer q ≤ C.layer p) ∧
+        ∀ (L c : ℕ) (S S' : ℕ → Prop),
+          Norn.Sem.Norm.Stable C c S → Norn.Sem.Norm.Stable (C.upTo L) c S' → ∀ (i : ℕ), C.layer i ≤ L → (S i ↔ S' i)
+@Norn.Sem.Norm.stable_unique : ∀ {C : Norn.Sem.Norm.Catalog},
+  Norn.Sem.Norm.Admissible C →
+    ∀ {c : ℕ} {S S' : ℕ → Prop}, Norn.Sem.Norm.Stable C c S → Norn.Sem.Norm.Stable C c S' → ∀ (i : ℕ), S i ↔ S' i
+@Norn.Sem.Norm.stable_no_conflict : ∀ {C : Norn.Sem.Norm.Catalog},
+  Norn.Sem.Norm.Admissible C →
+    ∀ {c : ℕ},
+      c < C.contexts →
+        ∀ {S : ℕ → Prop}, Norn.Sem.Norm.Stable C c S → ∀ {i j : ℕ}, S i → S j → ¬(C.modality i).opposed (C.modality j)
+@Norn.Sem.Norm.uncovered_not_permits : ∀ {C : Norn.Sem.Norm.Catalog} {S : ℕ → Prop},
+  Norn.Sem.Norm.Uncovered S → ¬Norn.Sem.Norm.Permits C S
+@Norn.Sem.Norm.downstream_cannot_defeat_upstream : ∀ {C : Norn.Sem.Norm.Catalog},
+  Norn.Sem.Norm.Admissible C → ∀ {w l : ℕ}, Norn.Sem.Norm.Prec C w l → C.layer w ≤ C.layer l ∧ C.isProtected l = false
+@Norn.Sem.Norm.defeat_same_layer : ∀ {C : Norn.Sem.Norm.Catalog},
+  Norn.Sem.Norm.Admissible C →
+    ∀ {c w l : ℕ},
+      c < C.contexts → C.active w c = true → C.active l c = true → Norn.Sem.Norm.Defeats C w l → C.layer w = C.layer l
+@Norn.Sem.Norm.protected_survives : ∀ {C : Norn.Sem.Norm.Catalog},
+  Norn.Sem.Norm.Admissible C →
+    ∀ {c : ℕ} {S : ℕ → Prop},
+      Norn.Sem.Norm.Stable C c S → ∀ {p : ℕ}, p < C.size → C.active p c = true → C.isProtected p = true → S p
+@Norn.Sem.Norm.permission_respects_invariants : ∀ {C : Norn.Sem.Norm.Catalog},
+  Norn.Sem.Norm.Admissible C →
+    ∀ {c : ℕ},
+      c < C.contexts →
+        ∀ {S : ℕ → Prop},
+          Norn.Sem.Norm.Stable C c S →
+            ∀ {q : ℕ},
+              S q →
+                C.modality q = Norn.Sem.Norm.Modality.permission →
+                  ∀ {p : ℕ},
+                    p < C.size →
+                      C.active p c = true →
+                        C.modality p = Norn.Sem.Norm.Modality.prohibition →
+                          C.isProtected p = false ∧ C.layer q ≤ C.layer p
+@Norn.Sem.Norm.overlay_preserves_upstream : ∀ {C : Norn.Sem.Norm.Catalog},
+  Norn.Sem.Norm.Admissible C →
+    ∀ {L c : ℕ} {S S' : ℕ → Prop},
+      Norn.Sem.Norm.Stable C c S → Norn.Sem.Norm.Stable (C.upTo L) c S' → ∀ (i : ℕ), C.layer i ≤ L → (S i ↔ S' i)

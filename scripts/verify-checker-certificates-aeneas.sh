@@ -54,6 +54,21 @@ lean_root="$aeneas_root/backends/lean"
 test "$(tr -d '\r\n' < "$lean_root/lean-toolchain")" = leanprover/lean4:v4.31.0
 export RUSTUP_HOME="$tool_root/rustup" CARGO_HOME="$tool_root/cargo" CARGO_INCREMENTAL=0
 rm -rf "$result/baseline" "$result/common" "$result/mutants"
+
+# pin_statements <search> <module> <audit output>: record the full statement
+# (`#check @name`) of every theorem the audit names. The record must equal the
+# committed one, so no audited statement changes unseen.
+statements="$result/statements.txt"
+mkdir -p "$result"
+: > "$statements"
+pin_statements() {
+  local search="$1" module="$2" names
+  names="$(sed -n "s/^'\([^']*\)' .*/#check @\1/p" <<< "$3")"
+  test -n "$names" || return 0
+  printf 'import %s\n%s\n' "$module" "$names" |
+    (cd "$lean_root" && LEAN_PATH="$search:$result/common" lake env lean \
+      -DwarningAsError=true --stdin) >> "$statements"
+}
 mkdir -p "$result/common"
 
 # fragment <name>: "<crate> <source> <start-from>..." for one extracted core.
@@ -112,6 +127,7 @@ expect_output() {
     exit "$status"
   fi
   test "$output" = "$expected"
+  pin_statements "$search" "${module//\//.}" "$output"
 }
 
 (cd "$lean_root" && lake build Aeneas)
@@ -223,6 +239,7 @@ expect_output Checker/Obligations/FrameProof "$common/Checker/Obligations/FrameP
   "'Norn.Checker.Obligations.discharges_sound' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Checker.Obligations.frame_witnesses' depends on axioms: [propext, Classical.choice, Quot.sound]")"
 
+diff -u "$proof_root/Checker/Certificates/statements.txt" "$statements"
 # Check the exact propositions, not only the theorem names or an exit code. The
 # extractions share generated instance names, so each family is checked alone.
 check_props() {

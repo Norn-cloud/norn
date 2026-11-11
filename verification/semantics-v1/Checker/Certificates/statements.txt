@@ -1,0 +1,168 @@
+@Norn.Checker.Certificates.Lens.Lens.comp_wellBehaved : ∀ {S V W : Type} {l : Norn.Checker.Certificates.Lens.Lens S V}
+  {m : Norn.Checker.Certificates.Lens.Lens V W}, l.WellBehaved → m.WellBehaved → (l.comp m).WellBehaved
+@Norn.Checker.Certificates.Lens.LawsOn.toLens_wellBehaved : ∀ {S : Type} {dom : List S} {get : S → Option Bool}
+  {put : S → Bool → Option S} (h : Norn.Checker.Certificates.Lens.LawsOn dom get put), h.toLens.WellBehaved
+@Norn.Checker.Certificates.Algebra.incremental_sound : ∀ {V : Type} [inst : AddCommMonoid V]
+  (I : Norn.Checker.Certificates.Algebra.Interp V) {ops : List Norn.Checker.Certificates.Algebra.Op} {signed : Bool},
+  I.Lawful signed →
+    ∀ (inp dinp : ℕ → V) (i : ℕ),
+      Norn.Checker.Certificates.Algebra.verdictAt ops signed i = Norn.Checker.Certificates.Algebra.Verdict.proved →
+        Norn.Checker.Certificates.Algebra.evalAt I ops (fun k => inp k + dinp k) i =
+          Norn.Checker.Certificates.Algebra.evalAt I ops inp i +
+            Norn.Checker.Certificates.Algebra.deltaAt I ops inp dinp i
+@Norn.Checker.Certificates.Algebra.join_refuted_witness : ∀ {c0 c1 c2 : ℤ},
+  ¬(c0 = 1 ∧ c1 = 1 ∧ c2 = 1) →
+    ∃ L R dL dR, (L + dL) * (R + dR) - L * R ≠ c0 * (dL * R) + c1 * (L * dR) + c2 * (dL * dR)
+@Norn.Checker.Certificates.Conservation.step_conserves : ∀ {n columns : ℕ} {part : ℕ → ℕ} {w : ℕ → ℚ}
+  {rows : ℕ → ℕ → ℚ},
+  Norn.Checker.Certificates.Conservation.Balanced n columns part w rows →
+    ∀ (x σ : ℕ → ℚ) (l : ℕ),
+      Norn.Checker.Certificates.Conservation.classSum n part w l
+          (Norn.Checker.Certificates.Conservation.step columns rows x σ) =
+        Norn.Checker.Certificates.Conservation.classSum n part w l σ
+@Norn.Checker.Certificates.Conservation.run_conserves : ∀ {n : ℕ} {part : ℕ → ℕ} {w : ℕ → ℚ}
+  (steps : List (Norn.Checker.Certificates.Conservation.Writer × (ℕ → ℚ))),
+  (∀ s ∈ steps, Norn.Checker.Certificates.Conservation.Balanced n s.1.columns part w s.1.rows) →
+    ∀ (σ : ℕ → ℚ) (l : ℕ),
+      Norn.Checker.Certificates.Conservation.classSum n part w l (Norn.Checker.Certificates.Conservation.run steps σ) =
+        Norn.Checker.Certificates.Conservation.classSum n part w l σ
+@Norn.Checker.Obligations.inductive_safety : ∀ {S : Type} {init : S → Prop} {step : S → S → Prop} {I : S → Prop},
+  (∀ (s : S), init s → I s) →
+    (∀ (s t : S), I s → step s t → I t) → ∀ (s : S), Norn.Checker.Obligations.Reachable init step s → I s
+@Norn.Checker.Obligations.inductive_safety_writers : ∀ {S W : Type} {init : S → Prop} (writers : List W)
+  (rel : W → S → S → Prop) {I : S → Prop},
+  (∀ (s : S), init s → I s) →
+    (∀ w ∈ writers, ∀ (s t : S), I s → rel w s t → I t) →
+      ∀ (s : S), Norn.Checker.Obligations.Reachable init (fun s t => ∃ w ∈ writers, rel w s t) s → I s
+@Norn.Checker.Obligations.frame_preserves : ∀ {F V : Type} {law : (F → V) → Prop} {reads : List F} {written : F},
+  Norn.Checker.Obligations.DependsOnly law reads →
+    written ∉ reads → ∀ {pre post : F → V}, Norn.Checker.Obligations.Frames written pre post → law pre → law post
+@Norn.Checker.Obligations.exhaustive_finite : ∀ {bs : List (ℤ × ℤ)} {P : List ℤ → Prop},
+  (∀ xs ∈ Norn.Checker.Obligations.enumerate bs, P xs) → ∀ (xs : List ℤ), Norn.Checker.Obligations.InBounds bs xs → P xs
+@Norn.Checker.Certificates.Lens.get_correct : ∀ {S : Type} {inst : Aeneas.Std.core.cmp.PartialEq S S},
+  Norn.Checker.Certificates.Lens.LawfulEq inst →
+    ∀ (sources : Aeneas.Std.Slice S) (gets : Aeneas.Std.Slice Bool) (s : S),
+      ∃ res,
+        norn_checker_lens.get inst sources gets s = Aeneas.Std.Result.ok res ∧
+          Norn.Checker.Certificates.Lens.TableGet (↑sources) (↑gets) s
+            (Norn.Checker.Certificates.Lens.okPart (Aeneas.Std.Result.ok res))
+@Norn.Checker.Certificates.Lens.put_correct : ∀ {S : Type} {inst : Aeneas.Std.core.cmp.PartialEq S S},
+  Norn.Checker.Certificates.Lens.LawfulEq inst →
+    ∀ (sources : Aeneas.Std.Slice S) (puts : Aeneas.Std.Slice (Aeneas.Std.Array Aeneas.Std.Usize 2#usize)) (s : S)
+      (v : Bool),
+      ∃ res,
+        norn_checker_lens.put inst sources puts s v = Aeneas.Std.Result.ok res ∧
+          Norn.Checker.Certificates.Lens.TablePut (↑sources) (List.map Norn.Checker.Certificates.Lens.pairOf ↑puts) s v
+            (Norn.Checker.Certificates.Lens.okPart (Aeneas.Std.Result.ok res))
+@Norn.Checker.Certificates.Lens.check_laws_sound : ∀ {S : Type} {inst : Aeneas.Std.core.cmp.PartialEq S S},
+  Norn.Checker.Certificates.Lens.LawfulEq inst →
+    ∀ {sources : Aeneas.Std.Slice S} {gets : Aeneas.Std.Slice Bool}
+      {puts : Aeneas.Std.Slice (Aeneas.Std.Array Aeneas.Std.Usize 2#usize)},
+      norn_checker_lens.check_laws inst sources gets puts = Aeneas.Std.Result.ok (Aeneas.Std.core.result.Result.Ok ()) →
+        Norn.Checker.Certificates.Lens.LawsOn (↑sources) (Norn.Checker.Certificates.Lens.prodGet inst sources gets)
+          (Norn.Checker.Certificates.Lens.prodPut inst sources puts)
+@Norn.Checker.Certificates.Lens.check_laws_wellBehaved : ∀ {S : Type} {inst : Aeneas.Std.core.cmp.PartialEq S S}
+  (hEq : Norn.Checker.Certificates.Lens.LawfulEq inst) {sources : Aeneas.Std.Slice S} {gets : Aeneas.Std.Slice Bool}
+  {puts : Aeneas.Std.Slice (Aeneas.Std.Array Aeneas.Std.Usize 2#usize)}
+  (h :
+    norn_checker_lens.check_laws inst sources gets puts = Aeneas.Std.Result.ok (Aeneas.Std.core.result.Result.Ok ())),
+  ⋯.toLens.WellBehaved
+Norn.Checker.Certificates.Algebra.check_correct : ∀ (operators : Aeneas.Std.Slice norn_checker_algebra.Operator)
+  (signed : Bool),
+  ∃ v,
+    norn_checker_algebra.check operators signed = Aeneas.Std.Result.ok v ∧
+      List.map Norn.Checker.Certificates.Algebra.verdictOf ↑v =
+        Norn.Checker.Certificates.Algebra.verdicts (List.map Norn.Checker.Certificates.Algebra.opOf ↑operators) signed
+@Norn.Checker.Certificates.Algebra.check_sound : ∀ {V : Type} [inst : AddCommMonoid V]
+  {operators : Aeneas.Std.Slice norn_checker_algebra.Operator} {signed : Bool}
+  {v : Aeneas.Std.alloc.vec.Vec norn_checker_algebra.Verdict},
+  norn_checker_algebra.check operators signed = Aeneas.Std.Result.ok v →
+    ∀ (I : Norn.Checker.Certificates.Algebra.Interp V),
+      I.Lawful signed →
+        ∀ (inp dinp : ℕ → V) (i : ℕ),
+          (↑v)[i]? = some norn_checker_algebra.Verdict.Proved →
+            Norn.Checker.Certificates.Algebra.evalAt I (List.map Norn.Checker.Certificates.Algebra.opOf ↑operators)
+                (fun k => inp k + dinp k) i =
+              Norn.Checker.Certificates.Algebra.evalAt I (List.map Norn.Checker.Certificates.Algebra.opOf ↑operators)
+                  inp i +
+                Norn.Checker.Certificates.Algebra.deltaAt I (List.map Norn.Checker.Certificates.Algebra.opOf ↑operators)
+                  inp dinp i
+Norn.Checker.Certificates.Algebra.algebra_witnesses : (match
+      norn_checker_algebra.join ⟨[1#i8, 1#i8, 0#i8], Norn.Checker.Certificates.Algebra.algebra_witnesses._proof_18⟩ with
+    | Aeneas.Std.Result.ok (norn_checker_algebra.Verdict.Refuted t) => ↑t == 2
+    | x => false) =
+    true ∧
+  (match
+        norn_checker_algebra.join
+          ⟨[1#i8, 1#i8, 1#i8], Norn.Checker.Certificates.Algebra.algebra_witnesses._proof_19⟩ with
+      | Aeneas.Std.Result.ok norn_checker_algebra.Verdict.Proved => true
+      | x => false) =
+      true ∧
+    (match norn_checker_algebra.homomorphism (some norn_checker_algebra.Homomorphism.MonoidSum) true with
+        | Aeneas.Std.Result.ok norn_checker_algebra.Verdict.MonoidUnderDeletions => true
+        | x => false) =
+        true ∧
+      (match norn_checker_algebra.homomorphism (some norn_checker_algebra.Homomorphism.MonoidSum) false with
+          | Aeneas.Std.Result.ok norn_checker_algebra.Verdict.Proved => true
+          | x => false) =
+          true ∧
+        (match norn_checker_algebra.homomorphism none false with
+            | Aeneas.Std.Result.ok norn_checker_algebra.Verdict.UndeclaredFold => true
+            | x => false) =
+            true ∧
+          (match
+              norn_checker_algebra.proved_before ⟨[], Norn.Checker.Certificates.Algebra.algebra_witnesses._proof_20⟩
+                0#usize with
+            | Aeneas.Std.Result.ok false => true
+            | x => false) =
+            true
+@Norn.Checker.Certificates.Conservation.check_writer_sound : ∀ {N : Type}
+  {inst : norn_checker_conservation.ExactArithmetic N} {val : N → ℚ},
+  Norn.Checker.Certificates.Conservation.Lawful inst val →
+    ∀ {partition : Aeneas.Std.Slice Aeneas.Std.Usize} {weights : Aeneas.Std.Slice N}
+      {rows : Aeneas.Std.Slice (Aeneas.Std.alloc.vec.Vec N)} {columns : Aeneas.Std.Usize},
+      norn_checker_conservation.check_writer inst partition weights rows columns =
+          Aeneas.Std.Result.ok (Aeneas.Std.core.result.Result.Ok ()) →
+        Norn.Checker.Certificates.Conservation.Balanced partition.length (↑columns)
+          (fun i => ↑((↑partition).getD i 0#usize))
+          (fun i => Norn.Checker.Certificates.Conservation.entry val (↑weights) i) fun i c =>
+          Norn.Checker.Certificates.Conservation.cell val (↑rows) i c
+@Norn.Checker.Certificates.Conservation.check_writer_conserves : ∀ {N : Type}
+  {inst : norn_checker_conservation.ExactArithmetic N} {val : N → ℚ},
+  Norn.Checker.Certificates.Conservation.Lawful inst val →
+    ∀ {partition : Aeneas.Std.Slice Aeneas.Std.Usize} {weights : Aeneas.Std.Slice N}
+      {rows : Aeneas.Std.Slice (Aeneas.Std.alloc.vec.Vec N)} {columns : Aeneas.Std.Usize},
+      norn_checker_conservation.check_writer inst partition weights rows columns =
+          Aeneas.Std.Result.ok (Aeneas.Std.core.result.Result.Ok ()) →
+        ∀ (x σ : ℕ → ℚ) (l : ℕ),
+          Norn.Checker.Certificates.Conservation.classSum partition.length (fun i => ↑((↑partition).getD i 0#usize))
+              (fun i => Norn.Checker.Certificates.Conservation.entry val (↑weights) i) l
+              (Norn.Checker.Certificates.Conservation.step (↑columns)
+                (fun i c => Norn.Checker.Certificates.Conservation.cell val (↑rows) i c) x σ) =
+            Norn.Checker.Certificates.Conservation.classSum partition.length (fun i => ↑((↑partition).getD i 0#usize))
+              (fun i => Norn.Checker.Certificates.Conservation.entry val (↑weights) i) l σ
+@Norn.Checker.Obligations.discharges_correct : ∀ {F : Type} {inst : Aeneas.Std.core.cmp.PartialEq F F},
+  Norn.Checker.Obligations.LawfulEq inst →
+    ∀ (subject object written : F) (reads : Option (Aeneas.Std.Slice F)),
+      ∃ b,
+        norn_checker_frame.discharges inst subject object written reads = Aeneas.Std.Result.ok b ∧
+          (b = true ↔ ∃ fs, reads = some fs ∧ object = subject ∧ written ∉ ↑fs)
+@Norn.Checker.Obligations.discharges_sound : ∀ {F : Type} {inst : Aeneas.Std.core.cmp.PartialEq F F},
+  Norn.Checker.Obligations.LawfulEq inst →
+    ∀ {subject object written : F} {reads : Option (Aeneas.Std.Slice F)},
+      norn_checker_frame.discharges inst subject object written reads = Aeneas.Std.Result.ok true →
+        ∃ fs,
+          reads = some fs ∧
+            object = subject ∧
+              ∀ {V : Type} (law : (F → V) → Prop) (pre post : F → V),
+                Norn.Checker.Obligations.DependsOnly law ↑fs →
+                  Norn.Checker.Obligations.Frames written pre post → law pre → law post
+Norn.Checker.Obligations.frame_witnesses : (match
+      norn_checker_frame.discharges Aeneas.Std.core.cmp.PartialEqBool true true true none with
+    | Aeneas.Std.Result.ok false => true
+    | x => false) =
+    true ∧
+  (match norn_checker_frame.discharges Aeneas.Std.core.cmp.PartialEqBool true false true none with
+    | Aeneas.Std.Result.ok false => true
+    | x => false) =
+    true
