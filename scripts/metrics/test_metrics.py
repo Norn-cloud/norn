@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import os
 import subprocess
@@ -274,6 +276,48 @@ class CollectCi(unittest.TestCase):
         schema = record.load_schema()
         for row in rows:
             self.assertEqual(record.record_errors(row, schema), [])
+
+
+class Probes(unittest.TestCase):
+    def test_probe_output_becomes_valid_records(self):
+        import boat_nightly
+        import run_probes
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "present").write_text("")
+            probes = [
+                {"name": "absent", "requires": ["missing"], "run": "true", "caveats": "c"},
+                {"name": "gates", "requires": ["present"], "run": "echo '[pass] Kani.Ledger/A (12s)'; echo "
+                 "'METRIC {\"metric\": \"fork.cow.create.f20.p50\", \"value\": 0.4, \"unit\": \"ms\", "
+                 "\"statistic\": \"p50\", \"workload\": {\"forks\": 20}}'",
+                 "timed": {"metric": "proof.gate.all.s", "unit": "s", "statistic": "single"},
+                 "parse": {"regex": r"^\[pass\] (?P<name>\S+) \((?P<value>\d+)s\)$", "metric": "proof.gate.{name}.s",
+                           "unit": "s", "statistic": "single"},
+                 "workload": {"bench": "b"}, "caveats": "one run"},
+                {"name": "broken", "requires": [], "run": "exit 3", "caveats": "c"},
+            ]
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                results = [run_probes.run_probe(probe, Path(root)) for probe in probes]
+        self.assertEqual(results, [True, True, False])
+        lines = out.getvalue()
+        self.assertIn("SKIP absent missing missing", lines)
+        self.assertIn("FAIL broken run exited 3", lines)
+        lines = 'ENV {"vcpu": 4, "cpu_model": "x"}\n' + lines
+
+        class Args:
+            snapshot, type = "snap", "default"
+        rows, notes = boat_nightly.records_from(lines, SHA, "2026-11-11T12:23:59Z", "bx_abcdefgh", Args)
+        rows.append(boat_nightly.starts_record({"starts": {"day": {"used": 410, "limit": 840}}}, "2026-11-11T15:28:26Z"))
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(sorted(r["metric"] for r in rows), ["boat.starts.used_24h", "fork.cow.create.f20.p50",
+                                                            "proof.gate.all.s", "proof.gate.kani_ledger_a.s"])
+        schema = record.load_schema()
+        for row in rows:
+            row = record.complete(row, "2026-11-11T16:00:00Z")
+            self.assertEqual(record.record_errors(row, schema), [], row["metric"])
+        fork = next(r for r in rows if r["metric"].startswith("fork."))
+        self.assertEqual(fork["workload"], {"bench": "b", "forks": 20, "boat_snapshot": "snap", "boat_sandbox": "bx_abcdefgh"})
+        self.assertEqual((fork["env"]["runner"], fork["env"]["vcpu"]), ("boat", 4))
 
 
 if __name__ == "__main__":

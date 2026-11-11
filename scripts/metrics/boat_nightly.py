@@ -99,6 +99,20 @@ def records_from(output: str, sha: str, date: str, sandbox: str | None, args) ->
     return records, notes
 
 
+def starts_record(limits: dict, at: str) -> dict:
+    """Boat starts used in the rolling 24 h window, read before this run's own start."""
+    day = limits["starts"]["day"]
+    return {
+        "id": f"boat.starts.used_24h/{at}", "metric": "boat.starts.used_24h", "value": day["used"], "unit": "count",
+        "statistic": "single", "commit": {"sha": None, "date": None}, "measured_at": at,
+        "measured_by": {"name": "metrics-nightly-boat"}, "env": {"runner": "local"},
+        "workload": {"limit": day["limit"], "window": "rolling 24 h"},
+        "caveats": "Account-wide: every project on this Boat account, not only Norn. Rolling 24-hour window from "
+                   "`boat limits --json`, read before this run's own start. Not tied to a commit.",
+        "estimate": False, "source": {"url": f"https://github.com/{REPOSITORY}/blob/main/scripts/metrics/boat_nightly.py"},
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
@@ -122,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     workflow = record.git(repo, "show", f"{sha}:.github/workflows/ci-policy.yml").stdout.decode()
     rust = re.search(r"^\s*toolchain:\s*([0-9][0-9.]*)\s*$", workflow, re.M).group(1)
     limits = json.loads(boat(args, "limits", "--json", capture_output=True, check=True).stdout)
+    starts_at = record.now_utc()
     if not limits.get("canStart") or limits["starts"]["day"]["remaining"] < 1:
         print(f"boat cannot start a VM now: {limits.get('startBlockedReason') or 'no starts left'}", file=sys.stderr)
         return 1
@@ -155,8 +170,8 @@ def main(argv: list[str] | None = None) -> int:
     for note in notes:
         print(note, file=sys.stderr)
     if not records:
-        print(f"no measurements (boat run exited {ran.returncode})", file=sys.stderr)
-        return 1
+        print(f"no probe measured anything (boat run exited {ran.returncode})", file=sys.stderr)
+    records.append(starts_record(limits, starts_at))
     if args.dry_run:
         for item in records:
             print(json.dumps(item, sort_keys=True))
