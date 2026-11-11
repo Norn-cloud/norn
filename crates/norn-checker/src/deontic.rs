@@ -638,6 +638,14 @@ fn upgrade_legacy_exceptions(slot: &mut serde_json::Value) {
     }
 }
 
+/// Decode one normative slot, upgrading flat legacy exceptions first.
+fn decode_slot(slot: &serde_json::Value) -> Result<Vec<DeonticRule>, String> {
+    let mut value = slot.clone();
+    upgrade_legacy_exceptions(&mut value);
+    serde_json::from_slice(&norn_canonical::canonical_json_of(&value).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
 /// Customer-authored declarations in the existing `EntityIR` extension map.
 pub const NORMATIVE_SLOT: &str = "norn.normative/1.0.0";
 /// One whole-admission query ceiling; unknown always refuses admission.
@@ -735,15 +743,11 @@ fn admission_order(
         if !matches!(*root, norn_ir::EntityRoot::V2(_)) {
             return Err("normative carrier kind is unsupported".into());
         }
-        let mut value = extensions
-            .get(NORMATIVE_SLOT)
-            .ok_or("missing normative declaration slot")?
-            .clone();
-        upgrade_legacy_exceptions(&mut value);
-        let declared: Vec<DeonticRule> = serde_json::from_slice(
-            &norn_canonical::canonical_json_of(&value).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
+        let declared = decode_slot(
+            extensions
+                .get(NORMATIVE_SLOT)
+                .ok_or("missing normative declaration slot")?,
+        )?;
         if rules.len().saturating_add(declared.len())
             > crate::consistency::diagnosis::MAX_DECLARATIONS
         {

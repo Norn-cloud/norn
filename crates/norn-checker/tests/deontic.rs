@@ -1707,7 +1707,11 @@ fn ordinary_admission_upgrades_flat_legacy_exceptions() {
     // Lifted everywhere: no clash, exactly as the tree form with the law as parent.
     assert!(run(legacy("true")).is_empty());
     // Never lifted: the clash stays.
-    assert!(run(legacy("false")).iter().any(norn_checker::Diagnostic::is_error));
+    assert!(
+        run(legacy("false"))
+            .iter()
+            .any(norn_checker::Diagnostic::is_error)
+    );
     // A partial new shape is not upgraded and refuses.
     let mut partial = legacy("true");
     partial[0]["exceptions"][0]["overrides"] = json!(low.law.id.clone());
