@@ -4,7 +4,10 @@
   "leanCompositeGates": {
     "verification/kernel-l1/Reference.lean": "scripts/verify-kernel-l1-lean.sh",
     "verification/kernel-l1/Audit.lean": "scripts/verify-kernel-l1-lean.sh",
-    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh"
+    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh",
+    "verification/kernel-proof-v1/Binding/BindingReference.lean": "scripts/verify-kernel-binding-aeneas.sh",
+    "verification/kernel-proof-v1/Binding/ReceiptProof.lean": "scripts/verify-kernel-binding-aeneas.sh",
+    "verification/kernel-proof-v1/Binding/ReplayProof.lean": "scripts/verify-kernel-binding-aeneas.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [

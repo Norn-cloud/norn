@@ -40,6 +40,14 @@
       "justification": "Current formal artifacts model transition semantics and selected predicates; they do not prove the storage engine, OS, hardware, or SHA implementation.",
       "blastRadius": "Corruption or unsound durability beneath the checked kernel can break replay and canonical-state claims.",
       "falsificationTest": "Run crash/reopen and corruption campaigns, independently verify backups and receipt hashes, and retain SQLite compatibility recovery tests."
+    },
+    {
+      "id": "TRUST-KERNEL-BINDING-GLUE",
+      "owner": "Norn verification maintainers",
+      "boundary": "The glue around the proved kernel binding cores (crates/norn-kernel/src/replay_decision.rs, receipt_decision.rs): ActionCallRecord::from_values decoding, the RecordedCall impl and ActionCallRecord::call_identity in action_commit.rs, every replay call site returning a Replayed or IdempotencyConflict outcome before any commit, bind_receipt's store resolution, content_digest/result_identity, pin projection and summary decoding, ReceiptBinding::check_commit's refusal mapping, and the derived PartialEq of String, Digest, FactKey, JsonObject and Option<String> deciding equality; plus the Charon/Aeneas translation, its Lean models and rustc/LLVM below MIR (as for the other Aeneas gates).",
+      "justification": "scripts/verify-kernel-binding-aeneas.sh proves the extracted decision cores for every input and every equality implementation, and under equality instances that decide equality. The glue only moves values in and maps the decision back; it is kept to one-line projections and is exercised by the kernel and cell tests.",
+      "blastRadius": "A projection that passes the wrong field, a call site that commits after a replay, or a non-structural equality would let a receipt bind, or a key replay, where the proved decision would refuse.",
+      "falsificationTest": "Run the kernel's action_commit, receipt_effect and result_reconciliation tests and the cell receipt_consume tests; run the 16 seeded mutants in scripts/verify-kernel-binding-aeneas.sh and require each to fail the proof; re-extract with a newer pinned Charon/Aeneas and require the same theorems to check."
     }
   ]
 }
