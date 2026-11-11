@@ -23,6 +23,12 @@ if "exc_type" in d or "exception" in d:
 else:
     print(json.dumps(d.get("message", d), sort_keys=True)[:1500])'
 
+cellget() { # GET a cell route from inside the container: status and body
+  docker exec $C python3 -c 'import sys,urllib.request,urllib.error
+try:
+    r=urllib.request.urlopen(sys.argv[1],timeout=5); print(r.status, r.read().decode()[:300])
+except urllib.error.HTTPError as e: print(e.code, e.read().decode()[:300])' "$CELL_URL$1"
+}
 login() { # login USER PASSWORD -> cookie jar path
   local jar=/tmp/rs.$1; rm -f "$jar"
   curl -s -H "Host: $SITE" -c "$jar" -X POST http://127.0.0.1:8000/api/method/login -d "usr=$1" -d "pwd=$2" > /dev/null
@@ -54,7 +60,7 @@ config["vars"] = {
 json.dump(config, open(path, "w"))
 PY
   docker exec -d -u frappe -w /home/frappe/cell $C bash -lc 'celld dev --port 9877 > /home/frappe/cell/celld.log 2>&1'
-  for _ in $(seq 120); do docker exec $C curl -s -o /dev/null "$CELL_URL/v1/definitions" && break; sleep 1; done
+  for _ in $(seq 120); do cellget /v1/definitions > /dev/null 2>&1 && break; sleep 1; done
   docker exec $C sh -c 'celld --version 2>/dev/null | head -1'
   echo "cell build: $(docker exec $C sha256sum /home/frappe/cell/pkg/norn_cell_do_bg.wasm | cut -c1-16)"
   ;;
@@ -74,7 +80,7 @@ users)
 show)
   admin=$(login Administrator admin)
   step "the cell refuses a caller without a host token"
-  docker exec $C curl -s "$CELL_URL/v1/objects/canon.Item?orgId=org_demo&environmentId=dev"; echo
+  cellget "/v1/objects/canon.Item?orgId=org_demo&environmentId=dev"
   step "generated DocType meta (fields Frappe shows for Canon Item)"
   api "$admin" frappe.desk.form.load.getdoctype --data-urlencode doctype="Canon Item" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d) if "docs" not in d else [(f["fieldname"], f["fieldtype"]) for f in d["docs"][0]["fields"]])'
   step "generated Workflow for Core Analytics Restatement"
