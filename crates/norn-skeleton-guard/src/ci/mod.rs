@@ -786,10 +786,6 @@ mod tests {
         let parsed = super::yaml::parse(source);
         assert_eq!(parsed.as_ref().err(), None, "{path}: fixture did not parse");
         let document = parsed.unwrap_or(super::yaml::Value::Map(Vec::new()));
-        assert!(
-            document.get("jobs").is_some(),
-            "{path}: fixture has no jobs"
-        );
         super::concurrency_error(path, &document)
     }
 
@@ -814,126 +810,62 @@ mod tests {
         }
     }
 
+    /// The verdicts `validate.py`'s `validate_pull_request_concurrency` must also reach
+    /// (`negative_canaries.py --workflow-contract` checks that side).
+    const CONCURRENCY_CASES: &str =
+        include_str!("../../../../verification/coverage-v1/fixtures/pull-request-concurrency.json");
+
     #[test]
-    fn pull_request_concurrency_rejects_codeql_mutations() {
-        let source = workflow("codeql.yml");
-        let group = "  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n";
-        let cancel = "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n";
-        assert!(
-            source.contains(group) && source.contains(cancel),
-            "codeql.yml drifted"
+    fn pull_request_concurrency_matches_the_shared_parity_fixture() {
+        let parsed = serde_json::from_str::<Value>(CONCURRENCY_CASES);
+        assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
+        let fixture = parsed.unwrap_or_default();
+        let cases = fixture["cases"].as_array().cloned().unwrap_or_default();
+        let mut verdicts = std::collections::BTreeSet::new();
+        for case in &cases {
+            let text = |key: &str| case[key].as_str().unwrap_or_default().to_owned();
+            let name = text("name");
+            assert!(
+                case.as_object()
+                    .is_some_and(|object| object.keys().all(|key| matches!(
+                        key.as_str(),
+                        "name" | "on" | "concurrency" | "expect" | "source"
+                    )))
+                    && !name.is_empty()
+                    && case["on"].is_string()
+                    && (case["concurrency"].is_string() || case["concurrency"].is_null()),
+                "malformed parity case {case}"
+            );
+            let source = format!("{}{}", text("on"), text("concurrency"));
+            if case.get("source").is_some() {
+                let checked_in = workflow(
+                    text("source")
+                        .strip_prefix(".github/workflows/")
+                        .unwrap_or_default(),
+                );
+                assert!(
+                    checked_in.contains(&text("on")) && checked_in.contains(&text("concurrency")),
+                    "{name}: drifted from {}",
+                    text("source")
+                );
+            }
+            let verdict = if concurrency(&name, &source).is_some() {
+                "reject"
+            } else {
+                "accept"
+            };
+            assert!(
+                matches!(text("expect").as_str(), "accept" | "reject"),
+                "{name}: expect must be accept or reject"
+            );
+            assert_eq!(verdict, text("expect"), "{name}");
+            verdicts.insert(verdict);
+        }
+        assert_eq!(
+            verdicts.len(),
+            2,
+            "the fixture needs accepted and rejected cases"
         );
-        for (label, before, after) in [
-            (
-                "no concurrency",
-                format!("concurrency:\n{group}{cancel}"),
-                String::new(),
-            ),
-            (
-                "no PR number in the group",
-                "github.event.pull_request.number".to_owned(),
-                "github.ref".to_owned(),
-            ),
-            (
-                "one shared group",
-                group.to_owned(),
-                "  group: ${{ github.workflow }}\n".to_owned(),
-            ),
-            (
-                "other events share a group",
-                "format('run-{0}', github.run_id)".to_owned(),
-                "github.event_name".to_owned(),
-            ),
-            (
-                "unconditional cancel",
-                cancel.to_owned(),
-                "  cancel-in-progress: true\n".to_owned(),
-            ),
-            (
-                "main pushes cancelled without the main-push group",
-                "${{ github.event_name == 'pull_request' }}".to_owned(),
-                "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}"
-                    .to_owned(),
-            ),
-            ("no cancel-in-progress", cancel.to_owned(), String::new()),
-            (
-                "cancel disabled",
-                cancel.to_owned(),
-                "  cancel-in-progress: false\n".to_owned(),
-            ),
-            (
-                "group only",
-                format!("concurrency:\n{group}{cancel}"),
-                "concurrency: codeql\n".to_owned(),
-            ),
-        ] {
-            let mutated = source.replacen(&before, &after, 1);
-            assert_ne!(mutated, source, "{label}: no-op mutation");
-            assert!(
-                concurrency("codeql.yml", &mutated).is_some(),
-                "{label} was admitted"
-            );
-        }
-    }
-
-    #[test]
-    fn pull_request_concurrency_bounds_the_main_push_supersede() {
-        let source = workflow("ci-policy.yml");
-        for (label, before, after) in [
-            (
-                "every push branch superseded",
-                "  push:\n    branches: [main]\n",
-                "  push:\n",
-            ),
-            (
-                "release pushes superseded",
-                "branches: [main]",
-                "branches: [main, release]",
-            ),
-            (
-                "main-push cancel without its own group",
-                " || github.event_name == 'push' && 'main-push'",
-                "",
-            ),
-            (
-                "merge groups cancelled",
-                "github.event_name == 'pull_request' || github.event_name == 'push' }}",
-                "github.event_name != 'workflow_dispatch' }}",
-            ),
-        ] {
-            let mutated = source.replacen(before, after, 1);
-            assert_ne!(mutated, source, "{label}: no-op mutation");
-            assert!(
-                concurrency("ci-policy.yml", &mutated).is_some(),
-                "{label} was admitted"
-            );
-        }
-    }
-
-    #[test]
-    fn pull_request_concurrency_scopes_to_pull_request_triggers() {
-        let jobs = "jobs:\n  a:\n    runs-on: ubuntu-24.04\n";
-        for on in [
-            "on: pull_request\n",
-            "on: [push, pull_request]\n",
-            "on:\n  pull_request:\n",
-        ] {
-            assert!(
-                concurrency("x.yml", &format!("{on}{jobs}")).is_some(),
-                "{on}"
-            );
-        }
-        for on in [
-            "on: pull_request_target\n",
-            "on: [push, workflow_run]\n",
-            "on:\n  workflow_run:\n    workflows: [Public core]\n",
-        ] {
-            assert_eq!(concurrency("x.yml", &format!("{on}{jobs}")), None, "{on}");
-        }
-        let squashed = "on: pull_request\nconcurrency:\n  group: >-\n    ${{ github.workflow }}-${{ github.event_name == 'pull_request' &&\n    format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n";
-        assert_eq!(concurrency("x.yml", &format!("{squashed}{jobs}")), None);
-        let extra = squashed.replace("concurrency:\n", "concurrency:\n  queue: max\n");
-        assert!(concurrency("x.yml", &format!("{extra}{jobs}")).is_some());
     }
 
     fn pinned_steps(source: &str) -> Vec<String> {

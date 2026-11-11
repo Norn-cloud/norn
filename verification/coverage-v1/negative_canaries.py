@@ -25,6 +25,7 @@ COVERAGE = Path(__file__).with_name("manifest")
 VALIDATOR = Path(__file__).with_name("validate.py")
 WRITER = ROOT / "scripts/write-verification-result.py"
 RESULT_VALIDATOR = Path(__file__).with_name("validate_result.py")
+CONCURRENCY_CASES = Path(__file__).with_name("fixtures") / "pull-request-concurrency.json"
 PROOF_HOLE_CHECKER = ROOT / "scripts/check-proof-holes.py"
 ATTESTATION_HELPER = ROOT / "scripts/verification_attestation.py"
 CENTRAL_OBLIGATIONS = (
@@ -765,24 +766,38 @@ def workflow_concurrency_canaries() -> None:
     # Every checked-in workflow passes, including the out-of-scope pull_request_target
     # (cla.yml) and workflow_run (trusted-merge-group.yml) lanes.
     validator.validate_pull_request_concurrency(sources)
-    path = ".github/workflows/codeql.yml"
-    codeql = sources[path]
-    group = ("  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && "
-             "format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n")
-    cancel = "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n"
-    for label, before, after in (
-            ("no concurrency", "concurrency:\n" + group + cancel, ""),
-            ("no PR number in the group", "format('pr-{0}', github.event.pull_request.number)", "'pr'"),
-            # Unconditional: a main push, the weekly schedule or a manual run would cancel too.
-            ("unconditional cancel", cancel, "  cancel-in-progress: true\n"),
-            ("no cancel-in-progress", cancel, "")):
-        if codeql.count(before) != 1:
-            raise AssertionError(f"concurrency canary target drifted: {label}")
+
+
+def workflow_concurrency_parity() -> None:
+    """validate.py reaches the shared verdicts the skeleton guard's own test asserts.
+
+    crates/norn-skeleton-guard/src/ci/mod.rs checks `concurrency_error` against the same
+    file, so the two implementations of the rule cannot drift apart unnoticed.
+    """
+    validator = load_module("norn_workflow_concurrency_parity", VALIDATOR)
+    cases = json.loads(CONCURRENCY_CASES.read_text(encoding="utf-8"))["cases"]
+    verdicts = set()
+    for case in cases:
+        if (not isinstance(case, dict) or not set(case) <= {"name", "on", "concurrency", "expect", "source"}
+                or not case.get("name") or not isinstance(case.get("on"), str)
+                or not isinstance(case.get("concurrency", ""), (str, type(None)))
+                or case.get("expect") not in ("accept", "reject")):
+            raise AssertionError(f"malformed parity case: {case!r}")
+        concurrency = case.get("concurrency") or ""
+        if "source" in case:
+            checked_in = (ROOT / case["source"]).read_text(encoding="utf-8")
+            if case["on"] not in checked_in or concurrency not in checked_in:
+                raise AssertionError(f"{case['name']}: drifted from {case['source']}")
         try:
-            validator.validate_pull_request_concurrency({path: codeql.replace(before, after)})
+            validator.validate_pull_request_concurrency({case["name"]: case["on"] + concurrency})
+            verdict = "accept"
         except validator.InvalidCoverage:
-            continue
-        raise AssertionError(f"concurrency mutation passed: codeql.yml {label}")
+            verdict = "reject"
+        if verdict != case["expect"]:
+            raise AssertionError(f"concurrency parity: {case['name']} was {verdict}ed, expected {case['expect']}")
+        verdicts.add(verdict)
+    if verdicts != {"accept", "reject"}:
+        raise AssertionError("the concurrency parity fixture needs accepted and rejected cases")
 
 
 def workflow_trusted_policy_canaries(source: str) -> None:
@@ -1224,6 +1239,7 @@ def workflow_canaries() -> None:
     workflow_context_canaries(source)
     workflow_cleanup_canaries(source)
     workflow_concurrency_canaries()
+    workflow_concurrency_parity()
     workflow_trusted_policy_canaries(source)
     workflow_merge_group_policy_canaries(source)
     workflow_cache_canaries()
@@ -1912,6 +1928,7 @@ def main() -> int:
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
         workflow_concurrency_canaries()
+        workflow_concurrency_parity()
         studio_browser_phase_canaries()
         studio_browser_pin_canaries()
         workflow_trusted_policy_canaries(source)
