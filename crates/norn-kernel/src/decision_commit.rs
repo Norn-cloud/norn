@@ -84,7 +84,7 @@ pub struct TypeCatalog<'a> {
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
     property_types: Option<&'a [PropertyTypeDef]>,
-    effective_model: OnceLock<EffectiveModel>,
+    effective_model: OnceLock<Result<EffectiveModel, norn_checker::EffectiveViewRefused>>,
 }
 
 /// The checker-derived effective object and link contracts for one catalog.
@@ -201,7 +201,7 @@ impl<'a> TypeCatalog<'a> {
         submitted: &JsonObject,
     ) -> Result<JsonObject, EffectiveValuesError> {
         let mut values = submitted.clone();
-        let Some(effective) = self.effective_model().object_types.get(object_type) else {
+        let Some(effective) = self.effective_model()?.object_types.get(object_type) else {
             return Ok(values);
         };
         for property in &effective.properties {
@@ -274,7 +274,7 @@ impl<'a> TypeCatalog<'a> {
         submitted: &JsonObject,
     ) -> Result<JsonObject, EffectiveValuesError> {
         let mut values = submitted.clone();
-        let Some(effective) = self.effective_model().object_types.get(object_type) else {
+        let Some(effective) = self.effective_model()?.object_types.get(object_type) else {
             return Ok(values);
         };
         for property in &effective.properties {
@@ -319,7 +319,7 @@ impl<'a> TypeCatalog<'a> {
         submitted: &JsonObject,
     ) -> Result<JsonObject, EffectiveValuesError> {
         let Some(effective_link) = self
-            .effective_model()
+            .effective_model()?
             .links
             .get(source)
             .and_then(|links| links.iter().find(|candidate| candidate.id.as_str() == link))
@@ -418,53 +418,73 @@ impl<'a> TypeCatalog<'a> {
     }
 
     /// The effective object type in this catalog, if it resolves.
+    ///
+    /// A catalog whose effective view was refused (see
+    /// [`Self::effective_refusal`]) resolves no type, so every caller fails
+    /// closed; the cell never builds such a catalog because its model
+    /// admission refuses the same input first.
     pub(crate) fn effective_type(
         &self,
         object_type: &ObjectTypeName,
     ) -> Option<&EffectiveObjectType> {
-        self.effective_model().object_types.get(object_type)
+        self.effective_model().ok()?.object_types.get(object_type)
     }
 
-    fn effective_model(&self) -> &EffectiveModel {
-        self.effective_model.get_or_init(|| {
-            let object_types: Vec<_> = self
-                .types
-                .values()
-                .map(|object_type| (**object_type).clone())
-                .collect();
-            let interfaces: Vec<_> = self
-                .interfaces
-                .values()
-                .map(|interface| (**interface).clone())
-                .collect();
-            let extensions: Vec<_> = self
-                .extensions
-                .iter()
-                .map(|extension| (**extension).clone())
-                .collect();
-            let property_types = self.property_types.unwrap_or_default().to_vec();
-            let registry = BTreeSet::new();
-            let model = EntityModel {
-                interfaces: &interfaces,
-                object_types: &object_types,
-                extensions: &extensions,
-            };
-            let context = EntityContext {
-                catalog: &property_types,
-                registry: &registry,
-                base: EntityModel::EMPTY,
-                tenant: None,
-            };
-            let mut effective_model = EffectiveModel::default();
-            for (_, (object_type, links)) in effective_object_types(&model, &context) {
-                let name = object_type.name.clone();
-                effective_model
-                    .object_types
-                    .insert(name.clone(), object_type);
-                effective_model.links.insert(name, links);
-            }
+    /// Why this catalog has no effective view: the bounded inheritance
+    /// classification was exhausted (for example more than 4,096 object
+    /// types). `None` when the view derives. A refused catalog must be
+    /// treated as unusable: effective reads fail with
+    /// [`EffectiveValuesError::ViewRefused`] and resolve no effective type.
+    #[must_use]
+    pub fn effective_refusal(&self) -> Option<norn_checker::EffectiveViewRefused> {
+        self.effective_model().err()
+    }
+
+    fn effective_model(&self) -> Result<&EffectiveModel, norn_checker::EffectiveViewRefused> {
+        self.effective_model
+            .get_or_init(|| self.derive_effective_model())
+            .as_ref()
+            .map_err(|refusal| *refusal)
+    }
+
+    fn derive_effective_model(&self) -> Result<EffectiveModel, norn_checker::EffectiveViewRefused> {
+        let object_types: Vec<_> = self
+            .types
+            .values()
+            .map(|object_type| (**object_type).clone())
+            .collect();
+        let interfaces: Vec<_> = self
+            .interfaces
+            .values()
+            .map(|interface| (**interface).clone())
+            .collect();
+        let extensions: Vec<_> = self
+            .extensions
+            .iter()
+            .map(|extension| (**extension).clone())
+            .collect();
+        let property_types = self.property_types.unwrap_or_default().to_vec();
+        let registry = BTreeSet::new();
+        let model = EntityModel {
+            interfaces: &interfaces,
+            object_types: &object_types,
+            extensions: &extensions,
+        };
+        let context = EntityContext {
+            catalog: &property_types,
+            registry: &registry,
+            base: EntityModel::EMPTY,
+            tenant: None,
+        };
+        let mut effective_model = EffectiveModel::default();
+        for (_, (object_type, links)) in effective_object_types(&model, &context)? {
+            let name = object_type.name.clone();
             effective_model
-        })
+                .object_types
+                .insert(name.clone(), object_type);
+            effective_model.links.insert(name, links);
+        }
+        Ok(effective_model)
     }
 
     /// Canonicalize one present temporal property value while preserving
@@ -1600,6 +1620,10 @@ pub enum EffectiveValuesError {
         /// The expected scalar encoding.
         expected: &'static str,
     },
+    /// The catalog has no effective view: the bounded inheritance
+    /// classification was exhausted. No value is materialized.
+    #[error(transparent)]
+    ViewRefused(#[from] norn_checker::EffectiveViewRefused),
 }
 
 fn is_temporal_property(property: &EffectiveProperty) -> bool {

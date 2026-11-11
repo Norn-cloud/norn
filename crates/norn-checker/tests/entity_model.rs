@@ -707,7 +707,7 @@ fn inherited_owned_collection_ids_cannot_be_redeclared_and_effective_views_are_n
         base: base_model,
         tenant: None,
     };
-    let effective = effective_object_types(&model, &context);
+    let effective = effective_object_types(&model, &context).expect("effective view derives");
     let collections = &effective[&1].0.owned_collections;
     assert_eq!(collections.len(), 1);
     assert_eq!(collections[0].max_rows.0, 2);
@@ -1989,7 +1989,7 @@ proptest::proptest! {
         let registry = BTreeSet::new();
         let context = EntityContext { catalog: &[], registry: &registry, base: base.model(), tenant: None };
         proptest::prop_assert!(check_entity_model(&layer.model(), &context).is_empty());
-        let effective = effective_object_types(&layer.model(), &context);
+        let effective = effective_object_types(&layer.model(), &context).expect("effective view derives");
         for index in 0..flags.len() {
             let protected = effective[&index].0.property("system").expect("effective property").protected();
             proptest::prop_assert_eq!(protected, flags[..=index].iter().any(|flag| *flag));

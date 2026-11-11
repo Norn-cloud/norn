@@ -13,8 +13,14 @@ pub mod scope;
 
 pub use clock::{Clock, ManualClock};
 
+/// The `binding` retained-definition kind (CONNECT's tool bindings).
+pub mod binding_definitions;
+/// Retained (non-kernel) definitions: admit, install, retire, list, get.
+pub mod definition_routes;
 /// Shared cell and definition epoch.
 pub mod host;
+/// RFC 8785 JSON canonicalization for connector manifest digests.
+pub mod jcs;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
 /// HOST-READ-4: an object's link neighbourhood and its source lineage.
