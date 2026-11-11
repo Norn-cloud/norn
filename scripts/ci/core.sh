@@ -178,10 +178,12 @@ PY
       ;;
     integration)
       cargo build --locked -p norn-cli
+      cargo build --locked -p norn-cell-do --bin norn-dev-host
       cargo install --locked wasm-bindgen-cli --version 0.2.129
       crates/norn-checker-wasm/scripts/build-pkg.sh
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
+      export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
       export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
