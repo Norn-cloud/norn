@@ -543,7 +543,8 @@ fn windows_and_dedupes_need_a_total_order() {
         "orderBy": [{"column": "placed_at", "direction": "asc"}, {"column": "id", "direction": "asc"}],
         "columns": [{"name": "n", "fn": "row_number"},
             {"name": "running", "fn": "running_sum", "column": "amount"},
-            {"name": "previous", "fn": "lag", "column": "amount"}]}}),
+            {"name": "previous", "fn": "lag", "column": "amount"},
+            {"name": "after_next", "fn": "lead", "column": "amount", "offset": 2}]}}),
         ),
         "w",
     );
@@ -575,6 +576,11 @@ fn windows_and_dedupes_need_a_total_order() {
         RuntimeValue::Null
     );
     assert_eq!(by_id[&format!("{:?}", s("o3"))].values["n"], num("1"));
+    // A numeric offset decodes as an IR whole number.
+    assert_eq!(
+        by_id[&format!("{:?}", s("o1"))].values["after_next"],
+        RuntimeValue::Null
+    );
     // A running sum of money partitions by its currency.
     refuses(
         with(
