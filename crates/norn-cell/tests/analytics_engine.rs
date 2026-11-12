@@ -996,7 +996,7 @@ mod snapshot {
             .commit(&CommitBatch {
                 world: WORLD.into(),
                 scope: "synthetic".into(),
-                logical_time: CLOCK + tick,
+                logical_time: CLOCK.checked_add(tick).expect("clock"),
                 writes: vec![FactWriteRow::Put {
                     object_type: TYPE.into(),
                     key: key.into(),
