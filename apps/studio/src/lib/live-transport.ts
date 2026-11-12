@@ -3,6 +3,7 @@
  * the recording when no cell is connected) and the live reads themselves. Kept
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
+import { useQuery } from "@tanstack/react-query"
 import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
@@ -103,3 +104,28 @@ export function currentMode(fetcher: Fetch = browserFetch): Promise<Mode> {
   mode ??= readMode(fetcher).catch((error: unknown) => { mode = undefined; throw error })
   return mode
 }
+
+/** A refusal the cell sent for a read: its code and message, shown as they are. */
+export class CellRefusal extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) { super(message) }
+}
+
+/**
+ * One scoped read of a cell route, with every number's exact text. A route this cell does not
+ * serve (a 404 `route.not_found`, or a 503) is {@link NotServed} under `what`; any other refusal
+ * is the cell's {@link CellRefusal}.
+ */
+export async function cellRead<T>(path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch): Promise<Read<T>> {
+  const call = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
+  const response = await call(path, { ...init, headers: { accept: "application/json", ...init.body === undefined ? {} : { "content-type": "application/json" }, ...init.headers } })
+  const text = await response.text()
+  if (response.ok) return readDocument<T>(text, "live")
+  let refusal: { code?: unknown; message?: unknown } | null = null
+  try { refusal = JSON.parse(text) as { code?: unknown; message?: unknown } } catch { /* not a refusal document */ }
+  if (response.status === 503 || (response.status === 404 && (refusal?.code === "route.not_found" || refusal?.code === undefined))) throw new NotServed(what)
+  if (typeof refusal?.code === "string") throw new CellRefusal(response.status, refusal.code, typeof refusal.message === "string" ? refusal.message : refusal.code)
+  throw new CellUnavailable(response.status)
+}
+
+/** Where this page load reads from, for a page that shows something only a connected cell has. */
+export const useMode = () => useQuery({ queryKey: ["studio-mode"], queryFn: () => currentMode(), retry: false, staleTime: Infinity })

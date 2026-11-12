@@ -39,7 +39,8 @@ export function ObjectPage() {
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
-  const [tab, setTab] = useState("overview")
+  // `#lineage` (a traced number's record) opens on where it came from.
+  const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
   const data = reads.data
   const lineage = data?.source?.document
@@ -179,6 +180,7 @@ function Lineage({ lineage }: { readonly lineage: SourceLineage | undefined }) {
             </TableRow>
           ))}
         </DenseTable>
+        <p className="text-meta text-muted-foreground">The source record's own field values are not served yet.{lineage.documentDigest ? <> The cell keeps its digest, <CopyId value={lineage.documentDigest} short={16} />, so a copy of the row can be checked against it.</> : null}</p>
       </>}
     </Well></Panel>
   )

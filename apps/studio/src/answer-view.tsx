@@ -18,6 +18,7 @@ import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from 
 import type { Read } from "./lib/exact.ts"
 import type { QuestionAnswer } from "./lib/transport.ts"
 import { CopyId } from "@/components/copy-id"
+import { systemName } from "./lib/catalog.ts"
 
 /**
  * The answer view: how one answer reads, whether the question is published or
@@ -48,12 +49,18 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace }: { read
   const read = data.read
   return (
     <TableCard><Table>
-      <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
+      <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead><TableHead>Source record</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
       <TableBody>
         {read.document.contributions.map((contribution, index) => (
           <TableRow key={`${contribution.fact.key}@${contribution.fact.version}`}>
-            <TableCell className="font-mono">{contribution.fact.key}{contribution.restricted && <Badge variant="outline" className="ms-2 font-sans" title="The server withheld this record's values from your role.">Values withheld</Badge>}</TableCell>
+            <TableCell className="font-mono">
+              <Link to="/sources/$concept/$" params={{ concept: contribution.fact.objectType, _splat: contribution.fact.key }} hash="lineage" className="underline-offset-4 hover:underline" title="Open this record and where it came from">{contribution.fact.key}</Link>
+              {contribution.restricted && <Badge variant="outline" className="ms-2 font-sans" title="The server withheld this record's values from your role.">Values withheld</Badge>}
+            </TableCell>
             <TableCell className="text-right tabular-nums">{amounts(read, index)}</TableCell>
+            <TableCell>{contribution.source.status === "resolved"
+              ? <><div className="font-medium">{systemName(contribution.source.provenance.sourceRecordRef.system)}</div><div className="font-mono text-xs text-muted-foreground">{contribution.source.provenance.sourceRecordRef.record}</div></>
+              : <span className="text-muted-foreground" title={contribution.source.status === "restricted" ? "Your role may not see where this record came from." : "The cell retains no source record for it."}>{contribution.source.status === "restricted" ? "Withheld" : "None retained"}</span>}</TableCell>
             <TableCell>{contribution.receiptHash === null ? <span className="text-muted-foreground" title="The server withheld this receipt hash with the bucket's values: it commits to them.">Receipt withheld</span> : <CopyId value={contribution.receiptHash} short={10} />}<div className="text-xs text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
           </TableRow>
         ))}
@@ -93,7 +100,7 @@ function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefi
               </TableBody>
               <TableFooter><TableRow><TableCell>Total</TableCell><TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell></TableRow></TableFooter>
             </Table></TableCard>
-            <p className="pt-4 text-xs text-muted-foreground">The source rows behind each record are not available yet.</p>
+            <p className="pt-4 text-xs text-muted-foreground">The cell traces a number only when it answers it live; open a record for where it came from.</p>
             </>}
           </div>
         </>}

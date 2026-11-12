@@ -54,6 +54,8 @@ export interface Feed {
   readonly dataset: string
   /** Declared sources per fact or relationship id (a link may be declared more than once); one missing here is not mapped by this system. */
   readonly facts: ReadonlyMap<string, readonly Source[]>
+  /** Source fields the mapping leaves out on purpose, each with the reason it declares. */
+  readonly ignored: readonly { readonly field: string; readonly reason: string }[]
 }
 
 /** Read one declared mapping expression: `input.code`, `'on_hand'`, `null` or anything else. */
@@ -86,9 +88,23 @@ export interface Concept {
   readonly fields: readonly Field[]
   readonly relationships: readonly Relationship[]
   readonly rules: readonly string[]
+  /** The admitted laws scoped to this type, as declared. */
+  readonly laws: readonly Law[]
   readonly feeds: readonly Feed[]
   /** The lifecycles an object type declares; interfaces declare none. */
   readonly lifecycles: readonly Lifecycle[]
+}
+
+/** One admitted law, as its LawIR declares it. */
+export interface Law {
+  readonly id: string
+  readonly subject: string
+  readonly rationale: string
+  readonly severity: "error" | "warning"
+  /** The temporal wrapper (`always`, `never`, …) and the response kind (`predicate`, `invariant`, …). */
+  readonly modality: string
+  readonly response: string
+  readonly owner: string
 }
 
 export interface SourceSystem {
@@ -96,6 +112,8 @@ export interface SourceSystem {
   readonly name: string
   readonly datasets: readonly string[]
   readonly feeds: readonly string[]
+  /** The source schema this mapping reads, as its schema declares it: the instance, schema version and when it was observed. */
+  readonly schema: { readonly id: string; readonly instance: string | undefined; readonly version: string | undefined; readonly observedAt: string | undefined } | undefined
 }
 
 export interface Catalog {
@@ -104,7 +122,7 @@ export interface Catalog {
   readonly byName: ReadonlyMap<string, Concept>
 }
 
-const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify" }
+const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo" }
 
 /** `synthetic-erpnext` → `ERPNext`; an unknown system keeps the name the server sent. */
 export function systemName(system: string): string {
@@ -164,9 +182,11 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
   const labels = labelIndex(artifacts)
   const types = new Map<string, PropertyTypeDef>()
   const rules = new Map<string, string[]>()
+  const laws = new Map<string, Law[]>()
   const feeds = new Map<string, Feed[]>()
   const systems: SourceSystem[] = []
   const sourceSystem = new Map<string, string>()
+  const sourceSchema = new Map<string, NonNullable<SourceSystem["schema"]>>()
   const entityName = new Map<string, string>()
   for (const artifact of artifacts) {
     if (artifact.kind === "entity" && "propertyTypes" in artifact.payload) for (const def of artifact.payload.propertyTypes) types.set(def.name, def)
@@ -175,10 +195,16 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       const name = "objectType" in payload ? payload.objectType.name : "interface" in payload ? payload.interface.name : undefined
       if (name) entityName.set(artifact.artifactId, name)
     }
-    if (artifact.kind === "source_schema") sourceSystem.set(artifact.artifactId, artifact.payload.source.system)
+    if (artifact.kind === "source_schema") {
+      const { source, observedAt } = artifact.payload as { source: { system: string; instance?: string; version?: string }; observedAt?: string }
+      sourceSystem.set(artifact.artifactId, source.system)
+      sourceSchema.set(artifact.artifactId, { id: artifact.artifactId, instance: source.instance, version: source.version, observedAt })
+    }
     if (artifact.kind === "law") {
       const law = artifact.payload
       for (const target of law.scope.objectTypes) rules.set(target, [...rules.get(target) ?? [], law.rationale])
+      const declared: Law = { id: law.id, subject: law.subject, rationale: law.rationale, severity: law.severity, modality: String((law.modality as { kind?: unknown }).kind ?? ""), response: String((law.response as { kind?: unknown }).kind ?? ""), owner: law.owner }
+      for (const target of new Set([law.subject, ...law.scope.objectTypes])) laws.set(target, [...laws.get(target) ?? [], declared])
     }
   }
   for (const artifact of artifacts) {
@@ -200,10 +226,11 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
         else if (transition !== undefined) add(property, { kind: "transition", expression: transition })
       }
       for (const { member, note, reason } of map.gaps ?? []) facts.set(member, [{ kind: "gap", reason, note }])
-      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts }])
+      const ignored = (map.ignoredFields ?? []).map(({ field, reason }) => ({ field, reason }))
+      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts, ignored }])
     }
     const datasets = [...new Set(artifact.payload.maps.map(({ source }) => source.dataset))]
-    systems.push({ id: artifact.artifactId, name: system, datasets, feeds: [...targets] })
+    systems.push({ id: artifact.artifactId, name: system, datasets, feeds: [...targets], schema: sourceSchema.get(artifact.payload.source.schemaId) })
   }
   const concepts: Concept[] = []
   for (const artifact of artifacts) {
@@ -245,6 +272,7 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       }),
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],
+      laws: laws.get(def.name) ?? [],
       feeds: fed,
       lifecycles: "lifecycles" in def ? def.lifecycles ?? [] : [],
     })
