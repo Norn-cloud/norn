@@ -8,4 +8,6 @@
 
 [alias]
 # Typed CI gate runner (#3472): `cargo xtask ci <gate>`.
-xtask = "run --locked --quiet -p norn-skeleton-guard --bin xtask --"
+# The guard is its own workspace (D95): build it from its own gated manifest and lockfile.
+# The manifest path is relative, so run `cargo xtask` from the repository root.
+xtask = "run --locked --quiet --manifest-path crates/norn-skeleton-guard/Cargo.toml --bin xtask --"

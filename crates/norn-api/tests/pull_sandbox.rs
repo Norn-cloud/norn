@@ -60,6 +60,7 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         "source.Synced.interface",
         "source.Connection.entity",
         "source.SyncRun.entity",
+        "source.Upload.entity",
         "norn.connect.source",
         "norn.connect.mapping",
     ] {
@@ -702,4 +703,162 @@ fn configuration_refuses_the_cells_own_instance_and_a_public_http_base() {
     assert!(refused(one("cell", "https://erp.example.test")).contains("the cell's own"));
     assert!(refused(one("sandbox", "http://erp.example.test")).contains("base URL"));
     assert!(Sources::new(&one("sandbox", "https://erp.example.test"), BTreeMap::new()).is_ok());
+}
+
+/// The scanned-document extractor as a pull source: its recorded page
+/// (`POST /extractions`) pulls through `docs.scans.connector` into Scanned
+/// Document rows carrying exactly the fields `docs.scans.source` declares,
+/// lines and evidence nested, and a later sync asks for rows after the
+/// recorded (version, id).
+#[test]
+fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
+    let connector = artifact("registry/packs/documents-pull/artifacts/docs.scans.connector.json");
+    let payload = serde_json::to_value(connector.payload.to_json_value()).expect("payload");
+    let profile = PullProfile::from_connector(&payload)
+        .expect("valid profile")
+        .expect("a pull profile");
+    assert_eq!(profile.source, "synthetic-scans");
+    let schema = artifact("registry/packs/documents/artifacts/docs.scans.source.json");
+    let schema = serde_json::to_value(schema.payload.to_json_value()).expect("schema");
+    assert_eq!(schema["source"]["system"], "synthetic-scans");
+    let declared: BTreeSet<&str> = schema["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .filter(|f| f["dataset"] == "Scanned Document")
+        .map(|f| f["name"].as_str().expect("name"))
+        .collect();
+    let feed = &profile.feeds[0];
+    assert_eq!(
+        feed.fields
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        declared
+    );
+
+    let page = std::fs::read(root().join("fixtures/connectors/scans/extractions.page.json"))
+        .expect("recorded page");
+    let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
+    let first = pull.next_request().expect("a first request");
+    assert_eq!(
+        (first.method, first.path.as_str()),
+        ("POST", "/extractions")
+    );
+    let body: Value = serde_json::from_str(first.body.as_deref().expect("a body")).expect("JSON");
+    assert_eq!(body, json!({"after": ["", ""], "limit": 100}));
+    let rows = pull
+        .accept(200, &page)
+        .expect("a page in the declared shape");
+    assert_eq!(rows.len(), 10);
+    let nested = |row: &norn_api::pull::Row, field: &str| {
+        row.payload
+            .get(field)
+            .and_then(RuntimeValue::as_array)
+            .map_or_else(
+                || panic!("{} has no {field} array", row.source_id),
+                Vec::len,
+            )
+    };
+    for row in &rows {
+        assert_eq!(row.dataset, "Scanned Document");
+        assert!(row.source_id.starts_with("SCAN-"), "{}", row.source_id);
+    }
+    // Lines and evidence stay nested arrays (a report may print no lines).
+    assert!(rows.iter().map(|r| nested(r, "lines")).sum::<usize>() > 0);
+    assert!(rows.iter().all(|r| nested(r, "evidence") > 0));
+    // A short page ends the feed; the next sync resumes after its last row.
+    assert!(pull.next_request().is_none());
+    let mut resumed = Pull::new(profile, pull.watermarks().clone(), Limits::default());
+    let next = resumed.next_request().expect("a resumed request");
+    let body: Value = serde_json::from_str(next.body.as_deref().expect("a body")).expect("JSON");
+    let last = rows.last().expect("rows");
+    assert_eq!(
+        body,
+        json!({"after": [last.version, last.source_id], "limit": 100})
+    );
+}
+
+/// UPLOAD-RECORD-1: a completed upload is kept in the cell through its own
+/// mapping and read back as kept; the same bytes kept again change nothing,
+/// new bytes are the upload's next version, and an unknown id is not kept.
+#[test]
+fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
+    use norn_api::sources::{KeptUpload, keep_upload, kept_upload};
+    use norn_api::uploads::{Store, parse_csv, sha256_hex};
+    let host = host();
+    let csv = "Region,Units\nnorth,3\n";
+    let kept = KeptUpload {
+        upload_id: "u7570.0123456789abcdef0123456789abcdef".into(),
+        store: Store::Uploads,
+        uri: "s3://uploads/uploads/org/dev/sales.csv".into(),
+        sha256: sha256_hex(csv.as_bytes()),
+        size: 21,
+        content_type: "text/csv".into(),
+        file_name: "sales.csv".into(),
+        csv: true,
+        columns: parse_csv(csv).expect("parsed").columns,
+        owner: "user:owner".into(),
+        // The cell keeps an instant in its canonical RFC 3339 form.
+        completed_at: "2026-11-12T12:00:05Z".into(),
+    };
+    assert_eq!(kept_upload(&host, &kept.upload_id).expect("read"), None);
+    keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept");
+    let mut read = kept_upload(&host, &kept.upload_id)
+        .expect("read")
+        .expect("the record");
+    // The profile's scale is not part of the record; the load re-profiles.
+    for column in &mut read.columns {
+        column.scale = 0;
+    }
+    let mut expected = kept.clone();
+    for column in &mut expected.columns {
+        column.scale = 0;
+    }
+    assert_eq!(read, expected);
+    keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept again");
+    let replaced = KeptUpload {
+        sha256: sha256_hex(b"other bytes"),
+        size: 11,
+        ..kept.clone()
+    };
+    keep_upload(&host, &replaced, EXTRACTED_AT_MS + 1).expect("next version");
+    assert_eq!(
+        kept_upload(&host, &kept.upload_id)
+            .expect("read")
+            .expect("the record")
+            .sha256,
+        replaced.sha256
+    );
+    assert_eq!(kept_upload(&host, "u00.ffff").expect("read"), None);
+}
+
+/// SYNC-LEASE-1: a claimed run the host stops stepping (its fetch loop died)
+/// holds its connection only for the lease; then a claim takes it over.
+#[test]
+fn an_abandoned_run_releases_its_connection_after_the_lease() {
+    use norn_api::sources::RUN_LEASE_MS;
+    let mut sources = sources();
+    let first = sources
+        .claim("odoo.sandbox", Trigger::Manual, "user:a", 1_000)
+        .expect("claimed");
+    assert!(matches!(
+        sources.claim(
+            "odoo.sandbox",
+            Trigger::Manual,
+            "user:b",
+            1_000 + RUN_LEASE_MS - 1
+        ),
+        Err(ClaimError::Running)
+    ));
+    let second = sources
+        .claim(
+            "odoo.sandbox",
+            Trigger::Manual,
+            "user:b",
+            1_000 + RUN_LEASE_MS,
+        )
+        .expect("taken over");
+    assert_ne!(first, second);
+    assert!(sources.running("odoo.sandbox"));
 }

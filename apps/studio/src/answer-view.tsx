@@ -162,7 +162,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
     <section className="space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          {heading === "h1" ? <h1 className="text-title font-medium">{headline(question)}</h1>
+          {heading === "h1" ? <h1 className="text-title font-semibold tracking-tight">{headline(question)}</h1>
             : heading === "h3" ? <h3 className="font-medium">{headline(question)}</h3>
             : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{headline(question)}</Link> : headline(question)}</h2>}
           <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
@@ -202,8 +202,8 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
           ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
         </Well>
       </Panel>
-      <Panel icon={Rows3} label="Every week" action="Select a week to see its records">
-        <TableCard><Table>
+      <Panel icon={Rows3} label="Every week" action={rows.length === 0 ? undefined : "Select a week to see its records"}>
+        {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
           <TableHeader><TableRow><TableHead>Period</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Exactly</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((bucket) => (
@@ -219,7 +219,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
               </TableRow>
             ))}
           </TableBody>
-        </Table></TableCard>
+        </Table></TableCard>}
       </Panel>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
     </section>

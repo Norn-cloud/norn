@@ -277,9 +277,31 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         actor: manifest.dev.actor.clone(),
     };
     let questions = DevMetrics::new(token.handle_key, scope.clone());
+    // D102: a build with `duckdb` answers questions and profiles on the
+    // project's own analytics engine, under `.norn/analytics`.
+    #[cfg(feature = "duckdb")]
+    let engine =
+        norn_cell::analytics::engine::Engine::new(norn_cell::analytics::engine::Settings {
+            root: root.join(".norn/analytics"),
+            memory_limit: "1GB".to_owned(),
+            threads: 2,
+        })
+        .map(crate::olap::InProcess)
+        .map_err(|error| {
+            Failure::setup(
+                "norn.dev.io",
+                format!("cannot open the analytics engine: {error}"),
+            )
+        })?;
     {
         let serving = Arc::clone(&serving);
-        std::thread::spawn(move || http::serve(&listener, &serving, &principals, &questions));
+        std::thread::spawn(move || {
+            #[cfg(feature = "duckdb")]
+            let engine: Option<&dyn norn_api::analytics_routes::Transport> = Some(&engine);
+            #[cfg(not(feature = "duckdb"))]
+            let engine: Option<&dyn norn_api::analytics_routes::Transport> = None;
+            http::serve(&listener, &serving, &principals, &questions, engine);
+        });
     }
     let session = Session {
         loads: &loads,

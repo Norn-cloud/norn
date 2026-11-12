@@ -1,0 +1,7 @@
+{
+  "code": "model.admission.unknown_input",
+  "message": "a model's input object type is not declared by the artifact set or the installed base",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

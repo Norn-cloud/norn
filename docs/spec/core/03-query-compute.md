@@ -190,6 +190,96 @@ Named scenario **typed_question_lowering** covers positive lowering, refusal,
 symbol identity, object references and bounded construction. This slice adds
 neither natural-language rendering nor ambiguity interpretation.
 
+## Typed transforms (ViewIR v1, #341)
+
+A transform is a `derived` artifact whose `calc` is `relational`: a closed DAG of typed operators over declared inputs (`scan`, `filter`, `project`, `join`, `aggregate`, `window`, `union`, `dedupe`). SQL and dataframe surfaces are authoring syntax that compiles to this plan; nothing in it is executed raw, and there is no function node. The wire kind stays `derived` and ViewIR v0's `field_projection` is unchanged (D84). Admission is `norn_checker::transform::admit` over the same artifact pool as every other check; it grants no read authority.
+
+**VIEW-TYPE-1:** every node has a closed row schema: each column's type (nullable as `Optional`), additivity, the object type its ids name (if any), the stored property it is an unchanged copy of (if any), its column lineage (every stored property it derives from), its effective markings and whether a join repeats it. Expressions are ZEN over `input.<column>` under the input-only environment, checked with the `norn-zen` profile: a `filter` predicate is Boolean (null is not a value a predicate may return), a computed column is a scalar, and `input.c` alone passes column `c` through with its full contract. An unknown input, node, column or output, a cycle, a node that does not feed the output and an input scanned twice refuse (`derived.validation.invalid_plan`, `unknown_column`, `type_mismatch`). v1 admits entity inputs, `recompute_on_read` and the current temporal scope only; `outputSchema` is `{}` because the plan infers it (`output_schema_mismatch`).
+
+**VIEW-GRAIN-1:** every node has a row identity. A scan's is the object `id`; a projection must pass every grain column through unchanged (`grain_dropped`); a to-one join keeps the left grain and a to-many join appends the right id; an aggregate's is its group keys (none means exactly one row); a union's is its branch column then the shared input grain; a dedupe's is its key. Output rows are ordered by grain, nulls last, and no two share one identity.
+
+**VIEW-JOIN-1:** a join's right side is one object type's rows at their identity grain, and rows pair only (a) along a forward link the left column's object type declares, whose target admits the right type, or (b) on a declared key equivalence: the left columns, in component order, equal a key the right type declares (or its `id`) under that key's own normalization, with exactly the component types. The right side is unique on its key, so (b) is many-to-one. Anything else is `derived.validation.join_undeclared`. A value is marked repeated when the join can pair it with more than one row: the left side through a to-many link, the right side through a link whose inverse is to-many or through any key join. Right columns carry the join's `prefix`; output names stay unique (`column_conflict`); a left join makes right columns nullable.
+
+**VIEW-AGG-1:** aggregates reuse METRIC-ADDITIVITY-1 through column lineage. Any aggregate of a numeric column with undeclared additivity refuses `metric.validation.undeclared_additivity`, counts and extrema included; `sum` and `running_sum` need `additive`: a stored ratio refuses `metric.validation.ratio_aggregation`, a semi-additive balance `question.validation.snapshot_aggregation` (stocks are never summed across time), a non-additive value `metric.validation.invalid_additivity`. A computed column's additivity is undeclared unless it passes a column through. Summing a repeated value refuses `core.compute.ambiguous_grain` (QUERY-FANOUT: one holding worth 80 linked to two tags is 80, not 160; aggregate before joining). A money value with a per-row currency is summed only when the group keys (or a running sum's partition) include that currency (`metric.validation.mixed_currency`). Calendar grains bucket dates and timestamps in ISO/UTC (weeks start Monday) and produce dates. `sum` skips nulls and is null when nothing was summed.
+
+**VIEW-ORDER-1:** a window's partition and order, and a dedupe's key and order, must cover the input grain (`derived.validation.order_not_total`), so ranks, offsets, running totals and the kept row are deterministic. Nulls sort last in both directions.
+
+**VIEW-UNION-1:** union inputs have the same columns in the same order with the same types, additivity, currency and grain (`derived.validation.union_shape`); the branch column names each row's input node and is part of the union's identity, since ids of different types name different objects.
+
+**VIEW-READ-1:** reading a transform needs the transform grant and the HOST-READ-1 collection gate on every object type it reads, transitively, decided before evaluation with one opaque refusal (the QUESTION-ADHOC-1 union rule).
+
+**VIEW-ROWS-1:** v1 evaluates over the reader's readable rows only (Population and Values, HOST-READ-2), so a transform never shows a value its reader may not read. Rows the reader may count but not read are excluded, counted per input, and make the result incomplete. An aggregate is therefore never more disclosing than a question over the same rows; counting Population-only members with DATA-VALUES-1 withholding is a later, separate law.
+
+**VIEW-MARK-1:** an output column's markings are the union of the markings in its lineage. They describe the column; no read path applies masks yet.
+
+**VIEW-LINEAGE-1:** column lineage is static and part of the admitted plan. Each output row lists the input rows it derives from (alias, id, version): one for a scan, filter, projection or dedupe, both sides for a join, every member for an aggregate; a window row lists its own members (its value is a function of its partition up to that row in the declared order).
+
+**VIEW-ENGINE-1 (QUERY-ENGINE-1 extended):** `norn_checker::transform::eval` is the exact reference interpreter. It refuses the whole result on any bound (100,000 rows per node), overflow or runtime expression error. Other engines lower the same admitted plan and must return canonically equal rows and lineage at the same snapshot; operators they cannot lower exactly refuse `core.compute.unsupported_engine`.
+
+Named scenarios (`crates/norn-checker/tests/transform.rs`): `link_and_key_joins_are_the_only_joins`, `fanned_sums_refuse_and_aggregating_first_counts_once`, `aggregates_follow_the_metric_additivity_law`, `windows_and_dedupes_need_a_total_order`, `unions_need_one_shape`, `projections_keep_the_grain`, `evaluation_is_deterministic_under_input_order`, `calendar_buckets_follow_iso_utc`.
+
+## The tenant analytics engine (D102)
+
+A hosted cell answers analytical questions, profiles and exports on its
+tenant's analytics engine (DuckDB in a native sidecar next to the cell host),
+never by an analytics scan of the cell's own store. The cell keeps ledger,
+laws, decisions and authorization: it admits and authorizes every request,
+decides the row gates, lowers the admitted plan to a typed engine question and
+verifies every answer. The engine executes only typed operations
+(`norn_cell::analytics`); no request carries SQL, a table or a column
+expression (#733). The exact in-cell engine is the oracle: the equivalence
+property tests run both at the same frontier.
+
+- **ANALYTICS-TENANT-1:** a tenant's database is named by the SHA-256 of the
+  scope key the cell verified; the engine never reads claims and never opens
+  another tenant's file for a request.
+- **ANALYTICS-FRONTIER-1:** the governed-fact mirror keeps every committed
+  object version with its commit interval, synced by the cell in whole
+  commits; an answer at frontier `F` reads exactly the versions current at
+  `F`. A batch that does not continue the mirror's frontier refuses whole.
+- **HOST-READ-5 (engine):** `:profile` on a host with an engine is computed
+  by it over the snapshot an export reads, in the exact profile's shape and
+  semantics (named scenario
+  `the_engine_profile_equals_the_exact_profile_of_every_demo_type`).
+- **QUERY-ENGINE-1 (engine):** within the plan's bound the engine's envelope
+  equals the exact engine's, normalizing only `engine`; the same Core 03
+  refusals apply. Past the bound the engine answers where the exact engine
+  refuses: each bucket carries `memberCount` and `membershipDigest` instead
+  of listing members, and the trace pages them.
+- **MEMBERSHIP-DIGEST-1:** a bucket's digest is SHA-256 over its members in
+  identity (byte) order, each written `<identity bytes>:<identity>,<version>`,
+  then `,<coefficient>` per operand (empty when absent), then `;`.
+  Recomputing it over the paged members gives the same digest.
+- **BULK-LOAD-1:** a dataset loads from the object store at bulk speed into
+  its admitted object type's table. The file's SHA-256 must be the one the
+  cell recorded. Every row is typed exactly by its column: no value is
+  rounded, and a timestamp is admitted exactly when the cell reads it as one,
+  with the cell's own ordering key. A row that cannot be typed, or misses a
+  required value, is quarantined with its first reason (`bulk.*`).
+- **BULK-LINEAGE-1:** a dataset's current load names its file `(uri,
+  sha256)`; every row is numbered from its file, so each number traces to
+  `(uri, sha256, row)`, and an answer over the dataset is exact at its load.
+
+Laws on loaded datasets, honestly: pointwise laws are checked at load (the
+value types, required values, enum values, numeric bounds and text lengths);
+a property with a constraint the engine does not evaluate (a pattern) refuses
+the load (`bulk.unsupported_law`) rather than admitting unchecked rows. Laws
+that relate rows (uniqueness, conservation, sums, lifecycles, links) and
+invariants that the checker has not lowered to a row predicate are **not**
+enforced on a dataset. A dataset is
+analytical evidence, not governed facts: a fact that must hold under those laws
+goes through the kernel's governed path.
+
+Named scenarios (`crates/norn-cell/tests/analytics_engine.rs`):
+`query_three_scrap_yield_engine_matches_exact_after_correction_and_retraction`,
+`generated_histories_match_exact_envelopes`,
+`an_answer_at_an_earlier_frontier_reads_only_versions_current_then`,
+`a_population_past_the_bound_answers_with_digests_that_paging_recomputes`,
+`a_row_of_another_scope_refuses_as_stale`, `a_sync_that_skips_commits_is_refused`,
+`a_load_types_rows_and_quarantines_refused_ones_with_reasons`,
+`a_loaded_dataset_answers_as_the_same_rows_in_a_cell` and
+`loaded_timestamps_order_exactly_as_the_cell_reads_them`.
+
 ## Evaluation and obligation semantics
 
 1. Resolve the pinned graph and read scope. Materialize bounded complete dependencies, including empty partitions and memberships; pagination cannot stand for a universal domain. Sort by the declared total order before each fold; missing/duplicate final IDs refuse.

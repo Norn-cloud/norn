@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { catalogOf, conceptTitle, systemName } from "../src/lib/catalog.ts"
+import { catalogOf, cellOwned, conceptTitle, systemName, type SourceSystem } from "../src/lib/catalog.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import type { Artifact } from "../src/lib/transport.ts"
+import { watermarkText } from "../src/lib/format.ts"
 
 // The cell's installed three-systems definitions (crates/norn-cell/tests/explorer_documents.rs).
 const source = readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8")
@@ -85,4 +86,22 @@ test("an object type no system feeds is still an object type, not a shared inter
   expect(restatement?.kind).toBe("core idea")
   expect(catalog.byName.get("core.Agent")?.definition).toBe("interface")
   expect(catalog.byName.get("canon.Holding")?.definition).toBe("object type")
+})
+
+test("a source the cell itself writes is Norn's own, not a connected system", () => {
+  const system = (instance: string | undefined): SourceSystem => ({ id: "m", name: "x", datasets: [], feeds: [], schema: { id: "s", instance, version: undefined, observedAt: undefined } })
+  // SYNC-INSTANCE-1: only schemas the cell writes carry the instance `cell`; uploads name `s3`.
+  expect(cellOwned(system("cell"))).toBe(true)
+  expect(cellOwned(system("s3"))).toBe(false)
+  expect(cellOwned(system("demo"))).toBe(false)
+  expect(cellOwned({ ...system(undefined), schema: undefined })).toBe(false)
+  expect(systemName("norn-connect")).toBe("Norn")
+  expect(catalog.systems.some(cellOwned)).toBe(false)
+})
+
+test("a connection's watermark reads as its latest version and how many kinds of record it covers", () => {
+  expect(watermarkText('{"Item":{"version":"2026-11-12 17:13:17.728478","id":"GOLD"},"Party":{"version":"2026-11-12 17:08:16.219463","id":"C-1"}}')).toBe("2026-11-12 17:13 · 2 kinds of record")
+  expect(watermarkText('{"stock.quant":{"version":"2026-11-12 15:14:32","id":8}}')).toBe("2026-11-12 15:14 · 1 kind of record")
+  expect(watermarkText("2026-11-12T10:00:00Z")).toBe("2026-11-12T10:00:00Z")
+  expect(watermarkText(null)).toBe("—")
 })

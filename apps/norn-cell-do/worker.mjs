@@ -35,6 +35,10 @@ const isDemo = ([org, e]) => org === DEMO[0] && (e === "dev" || e === "analytics
 // minute, not one per cell. The cell is told the document's real fetch time, so its age and stale
 // bounds count from the fetch, and every refresh fetches anew.
 let lastJwks = null;
+// D102: engine steps one request may take (frontier, sync batches, the question).
+const ENGINE_STEPS = 64;
+// A hung engine call must not hold the object.
+const ENGINE_TIMEOUT_MS = 120_000;
 
 export class Cell {
   constructor(ctx, env) {
@@ -83,6 +87,8 @@ export class Cell {
       } catch (error) {
         console.error(`source connections not configured: ${error}`);
       }
+      // D102: questions are answered on the tenant analytics engine when the Worker has one.
+      if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -94,6 +100,66 @@ export class Cell {
   serve(request, body) {
     const url = new URL(request.url);
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
+  }
+  /**
+   * D102: perform one engine call the cell asked for. The engine trusts only
+   * this Worker's token; the cell decided the call and checks the answer.
+   */
+  async engine(call) {
+    try {
+      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        body: call.body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      });
+      return { status: response.status, body: await response.text() };
+    } catch (error) {
+      console.error(`analytics engine call failed: ${error}`);
+      return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+    }
+  }
+  /** The engine's file for a streamed call, or its refusal for the cell to map. */
+  async stream(call) {
+    try {
+      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        body: call.body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      });
+      if (response.status !== 200) return { status: response.status, body: await response.text() };
+      const headers = { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", ...call.stream };
+      return new Response(response.body, { status: 200, headers });
+    } catch (error) {
+      console.error(`analytics engine stream failed: ${error}`);
+      return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+    }
+  }
+  /**
+   * Run the cell's engine calls until it answers; each re-entry is decided afresh.
+   * A call marked `stream` (an export the cell authorized) is answered by
+   * streaming the engine's file to the caller with the cell's headers.
+   */
+  async settle(request, body, reply) {
+    const url = new URL(request.url);
+    for (let step = 0; reply.engine !== undefined && step < ENGINE_STEPS; step++) {
+      const call = JSON.parse(reply.engine);
+      if (call.stream !== undefined) {
+        const streamed = await this.stream(call);
+        if (streamed instanceof Response) return streamed;
+        reply = this.cell.resumeEngine(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, streamed.status, streamed.body);
+        continue;
+      }
+      const answer = await this.engine(call);
+      reply = this.cell.resumeEngine(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, answer.status, answer.body);
+    }
+    if (reply.engine !== undefined) {
+      return { status: 503, body: JSON.stringify({ format: "norn/refusal@2", retryable: true, reason: null, code: "analytics.unsettled", category: "host", message: "the analytics engine did not settle", explanation: "retry the request" }) };
+    }
+    return reply;
   }
   /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
   async refreshJwks() {
@@ -129,33 +195,53 @@ export class Cell {
     // SYNC-ONE-1: the due-check and its claim are one synchronous cell call, so two requests never start one connection twice.
     const due = this.cell.syncDue(Date.now());
     if (due) this.keep(this.runSync(due));
+    reply = await this.settle(request, body, reply);
+    if (reply instanceof Response) return reply;
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
   async runSync(id) {
+    // The runtime's clock stands still inside a synchronous call, so each step
+    // is timed across a timer turn: cellMs is the cell's own work (mapping and
+    // the commit's statements); fetchMs is each request, including any wait for
+    // the previous step's writes to become durable before the request may leave.
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     const started = Date.now();
+    let cellMs = 0;
     let fetchMs = 0;
+    let maxCellMs = 0;
+    let maxFetchMs = 0;
     let fetches = 0;
-    let yields = 0;
-    let step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
+    let steps = 0;
+    const timed = async (response) => {
+      const before = Date.now();
+      const next = JSON.parse(this.cell.syncStep(id, response?.status, response?.bytes, before));
+      // SYNC-YIELD-1: the timer turn also lets requests waiting on this cell run between pages.
+      await tick();
+      const spent = Date.now() - before;
+      cellMs += spent;
+      maxCellMs = Math.max(maxCellMs, spent);
+      steps += 1;
+      return next;
+    };
+    let step = await timed(undefined);
     while (step.request || step.continue) {
       if (step.continue) {
-        // SYNC-YIELD-1: let the requests waiting on this cell run between mapped pages.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        yields += 1;
-        step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
+        step = await timed(undefined);
         continue;
       }
       const sent = Date.now();
-      const { status, bytes } = await perform(step.request);
-      fetchMs += Date.now() - sent;
+      const response = await perform(step.request);
+      const spent = Date.now() - sent;
+      fetchMs += spent;
+      maxFetchMs = Math.max(maxFetchMs, spent);
       fetches += 1;
-      step = JSON.parse(this.cell.syncStep(id, status, bytes, Date.now()));
+      step = await timed(response);
     }
     // Counts and times only: what a run cost, never what it read or carried.
     const done = step.done ?? {};
     const wallMs = Date.now() - started;
-    console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, fetches, yields, wallMs, fetchMs, cellMs: wallMs - fetchMs }));
+    console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs }));
   }
   /** Keep background work alive past the reply where the runtime offers it. */
   keep(promise) {

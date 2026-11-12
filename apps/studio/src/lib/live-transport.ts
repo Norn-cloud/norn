@@ -14,7 +14,7 @@ export class NotServed extends Error {
   constructor(what: string) { super(`${what} not served by this cell yet.`) }
 }
 
-type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+export type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 
 /** The documents under `prefix` (an RFC 6901 pointer) of one read, with their exact numbers. */
 export function subRead<T>(read: Read<unknown>, prefix: string, document: T): Read<T> {

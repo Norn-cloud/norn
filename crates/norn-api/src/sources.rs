@@ -133,6 +133,17 @@ pub struct RunSummary {
 /// reports), reserved: no configured connection uses it (SYNC-INSTANCE-1).
 pub const CELL_INSTANCE: &str = "cell";
 
+/// SYNC-LEASE-1: a run the host has not stepped for this long was abandoned
+/// (its fetch loop died: an exception, an evicted instance), and a claim or
+/// the schedule may take its connection over; a live run steps at least
+/// once per fetch (bounded at 30 s) or page commit.
+pub const RUN_LEASE_MS: u64 = 10 * 60 * 1000;
+
+/// Whether `run` still holds its connection at `now_ms` (SYNC-LEASE-1).
+fn held(run: &Run, now_ms: u64) -> bool {
+    now_ms.saturating_sub(run.stepped_ms) < RUN_LEASE_MS
+}
+
 /// The host's next move.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
@@ -169,6 +180,8 @@ struct Run {
     trigger: Trigger,
     actor: String,
     started_ms: u64,
+    /// When the host last stepped the run (SYNC-LEASE-1).
+    stepped_ms: u64,
     pull: Option<Pull>,
     auth: Vec<(String, String)>,
     /// The first data request, held while an access token is fetched.
@@ -269,7 +282,7 @@ impl Sources {
             return Err(ClaimError::Unknown);
         }
         let state = self.state.entry(id.to_owned()).or_default();
-        if state.run.is_some() {
+        if state.run.as_ref().is_some_and(|run| held(run, now_ms)) {
             return Err(ClaimError::Running);
         }
         let run = format!("{id}/{now_ms}");
@@ -278,6 +291,7 @@ impl Sources {
             trigger,
             actor: actor.to_owned(),
             started_ms: now_ms,
+            stepped_ms: now_ms,
             pull: None,
             auth: Vec::new(),
             held: None,
@@ -297,7 +311,9 @@ impl Sources {
     pub fn due(&mut self, now_ms: u64) -> Option<String> {
         let id = self.connections.iter().find_map(|c| {
             let state = self.state.get(&c.id);
-            if c.every_minutes == 0 || state.is_some_and(|s| s.run.is_some()) {
+            if c.every_minutes == 0
+                || state.is_some_and(|s| s.run.as_ref().is_some_and(|run| held(run, now_ms)))
+            {
                 return None;
             }
             let every = u64::from(c.every_minutes).saturating_mul(60_000);
@@ -330,6 +346,7 @@ impl Sources {
                 "no sync is running",
             ));
         };
+        run.stepped_ms = now_ms;
         let outcome = match response {
             None if run.pull.is_some() => drain(host, run),
             None => begin(host, &config, &self.secrets, run, watermarks_known)
@@ -792,6 +809,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         trigger: Trigger::Upload,
         actor: upload.actor.to_owned(),
         started_ms: upload.started_ms,
+        stepped_ms: upload.ended_ms,
         pull: None,
         auth: Vec::new(),
         held: None,
@@ -914,6 +932,148 @@ fn report<E: SqlEngine>(
         .collect();
     // A cell without the report definitions refuses these; the run still ends.
     let _reported = host.ingest(&batch);
+}
+
+/// The object type of a completed upload's durable record.
+pub const UPLOAD_TYPE: &str = "source.Upload";
+
+/// UPLOAD-RECORD-1: a completed upload as the cell keeps it, written through
+/// its own `norn-connect` mapping when `:complete` reads the object back, so
+/// it outlives the host. Every value is what the cell read or decided,
+/// never what a client claimed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptUpload {
+    /// The sealed upload id.
+    pub upload_id: String,
+    /// The store the object is in.
+    pub store: crate::uploads::Store,
+    /// The object's URI.
+    pub uri: String,
+    /// The SHA-256 of the bytes the cell read.
+    pub sha256: String,
+    /// Their size.
+    pub size: u64,
+    /// The content type the upload began with.
+    pub content_type: String,
+    /// The file name the upload began with.
+    pub file_name: String,
+    /// Whether the bytes are CSV the cell profiled.
+    pub csv: bool,
+    /// The profile's columns.
+    pub columns: Vec<crate::uploads::Column>,
+    /// Who completed it.
+    pub owner: String,
+    /// When, as RFC 3339.
+    pub completed_at: String,
+}
+
+/// The record key of the upload `upload_id`: its SHA-256.
+#[must_use]
+pub fn kept_upload_key(upload_id: &str) -> String {
+    crate::uploads::sha256_hex(upload_id.as_bytes())
+}
+
+/// Keep `upload` in the cell (UPLOAD-RECORD-1). The same bytes kept again
+/// are already kept; new bytes for the same upload are its next version.
+///
+/// # Errors
+/// The cell has no `source.Upload` definitions, or refused the record.
+pub fn keep_upload<E: SqlEngine>(
+    host: &DevHost<E>,
+    upload: &KeptUpload,
+    now_ms: u64,
+) -> Result<(), String> {
+    let key = kept_upload_key(&upload.upload_id);
+    let columns = serde_json::to_string(&upload.columns).map_err(|e| e.to_string())?;
+    let store = match upload.store {
+        crate::uploads::Store::Uploads => "uploads",
+        crate::uploads::Store::Documents => "documents",
+    };
+    let payload = norn_ir::runtime_object! {
+        "id" => key.as_str(), "upload_id" => upload.upload_id.as_str(), "store" => store,
+        "uri" => upload.uri.as_str(), "sha256" => upload.sha256.as_str(), "size" => upload.size,
+        "content_type" => upload.content_type.as_str(), "file_name" => upload.file_name.as_str(),
+        "format" => if upload.csv { "csv" } else { "other" }, "columns" => columns.as_str(),
+        "owner" => upload.owner.as_str(), "completed_at" => upload.completed_at.as_str(),
+    };
+    let profile = PullProfile {
+        source: REPORT_SOURCE.to_owned(),
+        pipeline: "norn-connect/1".to_owned(),
+        feeds: Vec::new(),
+        token: None,
+    };
+    let row = crate::pull::Row {
+        dataset: "upload".to_owned(),
+        source_id: key,
+        version: upload.sha256.clone(),
+        payload,
+    };
+    let raw = observation(&profile, &row, now_ms)?;
+    let input = MappingInput {
+        mapping: REPORT_MAPPING.to_owned(),
+        dataset: "upload".to_owned(),
+        connector_instance: CELL_INSTANCE.to_owned(),
+        partition: "upload".to_owned(),
+        recorded_at: norn_ir::provenance::UtcTimestamp(rfc3339(now_ms)),
+    };
+    let ingested = host
+        .ingest(&[(raw, input)])
+        .map_err(|refusal| refusal.message)?;
+    match ingested.first().map(|i| &i.outcome) {
+        Some(MappingOutcome::Landed | MappingOutcome::AlreadyLanded) => Ok(()),
+        Some(MappingOutcome::Quarantined(reasons)) => Err(format!(
+            "the cell refused the upload record: {}",
+            reasons.join(", ")
+        )),
+        None => Err("the cell captured no upload record".to_owned()),
+    }
+}
+
+/// The kept record of the upload `upload_id`, if the cell completed it.
+///
+/// # Errors
+/// A store failure, or a kept record the cell cannot read back.
+pub fn kept_upload<E: SqlEngine>(
+    host: &DevHost<E>,
+    upload_id: &str,
+) -> Result<Option<KeptUpload>, String> {
+    let Some(object) = host
+        .host_object(UPLOAD_TYPE, &kept_upload_key(upload_id))
+        .map_err(|refusal| refusal.message)?
+    else {
+        return Ok(None);
+    };
+    let text = |name: &str| {
+        object
+            .get(name)
+            .and_then(RuntimeValue::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("a kept upload has no {name}"))
+    };
+    if text("upload_id")? != upload_id {
+        return Ok(None);
+    }
+    let store = match text("store")?.as_str() {
+        "documents" => crate::uploads::Store::Documents,
+        _ => crate::uploads::Store::Uploads,
+    };
+    Ok(Some(KeptUpload {
+        upload_id: upload_id.to_owned(),
+        store,
+        uri: text("uri")?,
+        sha256: text("sha256")?,
+        size: object
+            .get("size")
+            .and_then(RuntimeValue::as_i64)
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or("a kept upload has no size")?,
+        content_type: text("content_type")?,
+        file_name: text("file_name")?,
+        csv: text("format")? == "csv",
+        columns: serde_json::from_str(&text("columns")?).map_err(|e| e.to_string())?,
+        owner: text("owner")?,
+        completed_at: text("completed_at").unwrap_or_default(),
+    }))
 }
 
 #[cfg(test)]
