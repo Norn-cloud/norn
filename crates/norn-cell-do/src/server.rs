@@ -119,6 +119,8 @@ routes! {
     DefinitionRetire => ("POST", "/v1/definitions/{id}:retire"),
     /// `GET /v1/objects/{type}`.
     Objects => ("GET", "/v1/objects/{type}"),
+    /// `GET /v1/objects/{type}:profile`.
+    ObjectProfile => ("GET", "/v1/objects/{type}:profile"),
     /// `GET /v1/objects/{type}/{id}`.
     Object => ("GET", "/v1/objects/{type}/{id}"),
     /// `GET /v1/objects/{type}/{id}/links`.
@@ -133,6 +135,8 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `GET /v1/questions:metrics`.
+    QuestionsMetrics => ("GET", "/v1/questions:metrics"),
 }
 
 impl Route {
@@ -144,6 +148,7 @@ impl Route {
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            "/v1/questions:metrics" => return Some(Self::QuestionsMetrics),
             _ => {}
         }
         if let Some(route) = definitions_route(path) {
@@ -162,8 +167,9 @@ impl Route {
                 _ => None,
             };
         }
-        if let Some((_, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
+        if let Some((kind, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
             return Some(match (id, leaf) {
+                (None, _) if kind.ends_with(":profile") => Self::ObjectProfile,
                 (None, _) => Self::Objects,
                 (Some(_), None) => Self::Object,
                 (Some(_), Some("links")) => Self::ObjectLinks,
