@@ -390,6 +390,8 @@ fn sync(
     loop {
         match step {
             Step::Done(summary) => return (summary, sent),
+            // SYNC-YIELD-1: rows map a few at a time between the host's turns.
+            Step::Continue => step = sources.step(host, id, None, now_ms),
             Step::Request(request) => {
                 let feed = profile
                     .feeds
@@ -606,6 +608,7 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
     let request = LoadRequest {
         type_name: "Sales".into(),
         columns: vec![],
+        sha256: None,
     };
     let generated =
         generate(&table, &request, uri, &sha, "2026-11-12T12:00:00.000Z").expect("generated");

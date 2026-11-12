@@ -313,6 +313,30 @@ impl<E: SqlEngine> AdHocQuestions<E> for DerivedRuntime<'_> {
     fn definitions(&self) -> &[MetricDefinition] {
         &self.derived.definitions
     }
+    fn unit_partition(&self, metric: &str) -> Vec<String> {
+        let Some(space) = &self.derived.space else {
+            return Vec::new();
+        };
+        space
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.definition.name == metric)
+            .map(|candidate| {
+                candidate
+                    .unit_partition
+                    .iter()
+                    .map(|path| {
+                        path.links
+                            .iter()
+                            .map(|link| link.0.as_str())
+                            .chain(std::iter::once(path.property.0.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(".")
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
     fn catalog(&self) -> &EffectiveCatalog {
         &self.derived.catalog
     }
