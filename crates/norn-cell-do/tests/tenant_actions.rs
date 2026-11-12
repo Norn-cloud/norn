@@ -233,19 +233,19 @@ fn the_scopes_policy_decides_a_call() {
         );
         assert_eq!(response, denied, "{who}");
     }
-    assert_eq!(cell.melts()["items"].as_array().map(Vec::len), Some(0));
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(0));
     let admin = cell.melt(MELT_ACTION, Some(&user("admin")), "m1");
     assert_eq!(admin.status, 200, "{}", admin.body);
     let receipt: Value = serde_json::from_str(&admin.body).unwrap();
     assert_eq!(receipt["outcome"], "committed", "{receipt}");
-    assert_eq!(cell.melts()["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
     // The same call replays; nobody else's attempt commits anything.
     let again = cell.melt(MELT_ACTION, Some(&user("admin")), "m1");
     assert_eq!(
         serde_json::from_str::<Value>(&again.body).unwrap()["outcome"],
         "replayed"
     );
-    assert_eq!(cell.melts()["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
 }
 
 /// A service principal holds only service roles (`member`, `viewer`); a
@@ -306,7 +306,7 @@ fn an_action_is_callable_only_through_its_own_policy() {
             "{case}"
         );
         assert_eq!(
-            cell.melts()["items"].as_array().map(Vec::len),
+            cell.melts()["records"].as_array().map(Vec::len),
             Some(0),
             "{case}"
         );
