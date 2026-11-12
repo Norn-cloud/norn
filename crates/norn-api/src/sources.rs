@@ -129,6 +129,10 @@ pub struct RunSummary {
     pub error: Option<(String, String)>,
 }
 
+/// The connector instance of the schemas the cell writes itself (its sync
+/// reports), reserved: no configured connection uses it (SYNC-INSTANCE-1).
+pub const CELL_INSTANCE: &str = "cell";
+
 /// The host's next move.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
@@ -215,6 +219,14 @@ impl Sources {
         for connection in &connections {
             if !ids.insert(connection.id.as_str()) {
                 return Err(format!("source configuration: {} twice", connection.id));
+            }
+            // SYNC-INSTANCE-1: `cell` names the schemas the cell writes itself
+            // (its sync reports); no connected system may claim it.
+            if connection.instance == CELL_INSTANCE {
+                return Err(format!(
+                    "source configuration: {} may not use the instance {CELL_INSTANCE}, which is the cell's own",
+                    connection.id
+                ));
             }
             if !allowed_base(&connection.base_url) {
                 return Err(format!(
@@ -892,7 +904,7 @@ fn report<E: SqlEngine>(
                     MappingInput {
                         mapping: REPORT_MAPPING.to_owned(),
                         dataset: dataset.to_owned(),
-                        connector_instance: "cell".to_owned(),
+                        connector_instance: CELL_INSTANCE.to_owned(),
                         partition: dataset.to_owned(),
                         recorded_at: norn_ir::provenance::UtcTimestamp(rfc3339(now)),
                     },
