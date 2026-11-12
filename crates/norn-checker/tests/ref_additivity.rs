@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 const CLASSES: [&str; 4] = ["undeclared", "additive", "semi_additive", "non_additive"];
 
-fn envelope(id: &str, payload: Value) -> ArtifactEnvelope {
+fn envelope(id: &str, payload: &Value) -> ArtifactEnvelope {
     serde_json::from_value(json!({
         "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "demo",
         "name": id, "version": "0.1.0", "lifecycle": "active", "scope": {},
@@ -70,10 +70,10 @@ fn model(required: &str, delivered: &Value, held: &Value) -> Vec<ArtifactEnvelop
         ],
     }});
     vec![
-        envelope("demo.value_types.entity", types),
-        envelope("demo.Event.interface", event),
-        envelope("demo.Delivery.entity", delivery),
-        envelope("demo.Holding.entity", holding),
+        envelope("demo.value_types.entity", &types),
+        envelope("demo.Event.interface", &event),
+        envelope("demo.Delivery.entity", &delivery),
+        envelope("demo.Holding.entity", &holding),
     ]
 }
 
