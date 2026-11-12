@@ -69,11 +69,13 @@ fn artifact(path: &str) -> Value {
     serde_json::from_str(&std::fs::read_to_string(root().join(path)).expect(path)).expect(path)
 }
 
-/// The core evidence interface and every artifact of the documents pack.
+/// The core artifacts the pack needs (the evidence interface, and the
+/// observed link claims mapped links record) and every artifact of the pack.
 fn documents() -> Vec<Value> {
-    let mut documents = vec![artifact(
-        "registry/core/artifacts/norn.SourceEvidence.interface.json",
-    )];
+    let mut documents = vec![
+        artifact("registry/core/artifacts/norn.SourceEvidence.interface.json"),
+        artifact("registry/core/artifacts/norn.ObservedLinkClaim.entity.json"),
+    ];
     let directory = root().join("registry/packs/documents/artifacts");
     let mut paths: Vec<_> = std::fs::read_dir(&directory)
         .expect("pack artifacts")
