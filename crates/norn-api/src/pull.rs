@@ -838,7 +838,7 @@ mod tests {
     #[test]
     fn templates_keep_lone_token_types_and_splice_text() {
         let profile = keyset_profile(2);
-        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
+        let mut pull = Pull::new(profile, BTreeMap::new(), Limits::default());
         let request = pull.next_request().expect("request");
         let body: Value =
             serde_json::from_str(request.body.as_deref().expect("body")).expect("json");
@@ -861,7 +861,7 @@ mod tests {
             }]
         }))
         .expect("profile");
-        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
+        let mut pull = Pull::new(profile, BTreeMap::new(), Limits::default());
         let request = pull.next_request().expect("request");
         assert_eq!(
             request.path,
@@ -879,7 +879,7 @@ mod tests {
                 id: Value::from(3),
             },
         )]);
-        let mut pull = Pull::new(profile.clone(), stored.clone(), Limits::default());
+        let mut pull = Pull::new(profile, stored.clone(), Limits::default());
         let _request = pull.next_request().expect("request");
         assert!(matches!(
             pull.accept(401, b"{}"),
@@ -891,7 +891,7 @@ mod tests {
     #[test]
     fn projection_keeps_exact_decimals_and_nulls_absent_fields() {
         let profile = keyset_profile(5);
-        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
+        let mut pull = Pull::new(profile, BTreeMap::new(), Limits::default());
         let _request = pull.next_request().expect("request");
         let rows = pull
             .accept(200, br#"{"data":[{"id":7,"v":"1","code":9000.10}]}"#)
@@ -933,7 +933,7 @@ mod tests {
             }]
         }))
         .expect("profile");
-        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
+        let mut pull = Pull::new(profile, BTreeMap::new(), Limits::default());
         let first = pull.next_request().expect("first");
         let body: Value = serde_json::from_str(first.body.as_deref().expect("body")).expect("json");
         assert_eq!(body["variables"]["after"], Value::Null);
@@ -993,7 +993,7 @@ mod tests {
             for (version, id) in &rows {
                 prop_assert!(seen.contains(&(version.clone(), id.to_string())), "missed {id}@{version}");
             }
-            let mut again = Pull::new(profile.clone(), pull.watermarks().clone(), Limits::default());
+            let mut again = Pull::new(profile, pull.watermarks().clone(), Limits::default());
             let request = again.next_request().expect("request");
             prop_assert!(again.accept(200, &serve(&rows, &request)).expect("page").is_empty());
         }
