@@ -8704,7 +8704,7 @@ export interface components {
             /** @enum {string} */
             kind: "read";
         };
-        /** @description Call a host operation by its OpenAPI operation id. */
+        /** @description Call a host operation by its `OpenAPI` operation id. */
         NornIrWidgetMachineCallOneOf2: {
             /** @enum {string} */
             kind: "operation";
@@ -8715,8 +8715,16 @@ export interface components {
         /** @description Start the call or read; its outcome arrives as an `outcome` event. */
         NornIrWidgetMachineEffectOneOf0: {
             call: components["schemas"]["NornIrWidgetMachineCall"];
+            input?: components["schemas"]["NornIrWidgetMachineEffectOneOf0PropertyInput"];
             /** @enum {string} */
             kind: "start";
+        };
+        /**
+         * @description Request members, each a ZEN expression over `input.fields` and
+         *     `input.event`. An action binding maps its own inputs and takes none.
+         */
+        NornIrWidgetMachineEffectOneOf0PropertyInput: {
+            [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /** @description Cancel the awaited call; its outcome arrives as `cancelled`. */
         NornIrWidgetMachineEffectOneOf1: {

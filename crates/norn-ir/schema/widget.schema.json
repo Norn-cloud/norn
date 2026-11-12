@@ -1734,7 +1734,7 @@
           ]
         },
         {
-          "description": "Call a host operation by its OpenAPI operation id.",
+          "description": "Call a host operation by its `OpenAPI` operation id.",
           "type": "object",
           "properties": {
             "kind": {
@@ -1762,6 +1762,13 @@
           "properties": {
             "call": {
               "$ref": "#/$defs/WidgetMachineCall"
+            },
+            "input": {
+              "description": "Request members, each a ZEN expression over `input.fields` and\n`input.event`. An action binding maps its own inputs and takes none.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ZenExpression"
+              }
             },
             "kind": {
               "type": "string",

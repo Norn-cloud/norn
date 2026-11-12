@@ -23761,7 +23761,7 @@
       },
       "NornIrWidgetMachineCallOneOf2": {
         "type": "object",
-        "description": "Call a host operation by its OpenAPI operation id.",
+        "description": "Call a host operation by its `OpenAPI` operation id.",
         "required": [
           "kind",
           "operationId"
@@ -23804,6 +23804,9 @@
           "call": {
             "$ref": "#/components/schemas/NornIrWidgetMachineCall"
           },
+          "input": {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEffectOneOf0PropertyInput"
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -23812,6 +23815,13 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrWidgetMachineEffectOneOf0PropertyInput": {
+        "type": "object",
+        "description": "Request members, each a ZEN expression over `input.fields` and\n`input.event`. An action binding maps its own inputs and takes none.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrZenExpression"
+        }
       },
       "NornIrWidgetMachineEffectOneOf1": {
         "type": "object",
