@@ -504,27 +504,28 @@ export interface components {
          *     listed here: `tools/list` returns it, projected from what the cell declares.
          */
         McpMessage: {
-            /** @description A string or number; absent for a notification, which is answered 202. */
-            id?: Record<string, never>;
+            /** @description A string or number; absent for a notification. */
+            id?: string | number;
             /** @description Always `2.0`. */
             jsonrpc: string;
             /** @description `initialize`, `ping`, `tools/list`, `tools/call` or a notification. */
             method: string;
             /** @description The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`. */
-            params?: Record<string, never>;
+            params?: {
+                [key: string]: unknown;
+            };
         };
         /** @description The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id. */
         McpReply: {
             error?: components["schemas"]["McpError"] | null;
-            /** @description The request's id. */
-            id: Record<string, never>;
+            /** @description A string or number; absent for a notification. */
+            id: string | number;
             /** @description Always `2.0`. */
             jsonrpc: string;
-            /**
-             * @description The method's result. A tool's refusal is a result with `isError: true`
-             *     whose `structuredContent` is the route's own refusal.
-             */
-            result?: Record<string, never>;
+            /** @description The method's result. A tool's refusal is a result with `isError: true` whose `structuredContent` is the route's own refusal. */
+            result?: {
+                [key: string]: unknown;
+            };
         };
         /** @description One field produced by an ordered action input derivation. */
         NornActionActionDerivedValue: {

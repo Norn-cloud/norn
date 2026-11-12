@@ -1840,8 +1840,11 @@
         ],
         "properties": {
           "id": {
-            "type": "object",
-            "description": "A string or number; absent for a notification, which is answered 202."
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "A string or number; absent for a notification."
           },
           "jsonrpc": {
             "type": "string",
@@ -1853,7 +1856,8 @@
           },
           "params": {
             "type": "object",
-            "description": "The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`."
+            "description": "The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.",
+            "additionalProperties": true
           }
         }
       },
@@ -1877,8 +1881,11 @@
             ]
           },
           "id": {
-            "type": "object",
-            "description": "The request's id."
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "A string or number; absent for a notification."
           },
           "jsonrpc": {
             "type": "string",
@@ -1886,7 +1893,8 @@
           },
           "result": {
             "type": "object",
-            "description": "The method's result. A tool's refusal is a result with `isError: true`\nwhose `structuredContent` is the route's own refusal."
+            "description": "The method's result. A tool's refusal is a result with `isError: true` whose `structuredContent` is the route's own refusal.",
+            "additionalProperties": true
           }
         }
       },
