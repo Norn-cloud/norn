@@ -778,6 +778,10 @@ impl Builder<'_, '_> {
         admitted
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one scan contract: every stored property's column, read top to bottom"
+    )]
     fn scan(&mut self, alias: &str, at: &str) -> Option<AdmittedNode> {
         let Some(input) = self.inputs.get(alias) else {
             self.fail(
@@ -1655,6 +1659,10 @@ impl Builder<'_, '_> {
         Some(keys)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one closed window law, read top to bottom"
+    )]
     fn window(&mut self, window: &norn_ir::WindowNode, at: &str) -> Option<AdmittedNode> {
         let schema = self.schema(&window.input)?.clone();
         for (index, column) in window.partition_by.iter().enumerate() {
