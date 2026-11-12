@@ -156,12 +156,11 @@ pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
         Law, Mapping, Model, Policy, Relation, Rule, Setting, SourceSchema, Widget,
     };
     match from {
-        Entity => matches!(to, Entity),
+        // A model reads object types; nothing references a model yet.
+        Entity | Model => matches!(to, Entity),
         DefinedConcept => matches!(to, Entity | DefinedConcept),
         // A catalog labels definitions; nothing references a catalog.
         Labels => matches!(to, Entity | Action | Rule | Law | Widget),
-        // A model reads object types; nothing references a model yet.
-        Model => matches!(to, Entity),
         Relation => matches!(to, Entity | Relation),
         Derived => matches!(to, Entity | Relation | Derived),
         Setting => matches!(to, Entity | Relation | Setting),

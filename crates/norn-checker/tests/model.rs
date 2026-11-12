@@ -1,4 +1,4 @@
-//! ModelIR (#1171 M1): a model is admitted only when its payload is
+//! `ModelIR` (#1171 M1): a model is admitted only when its payload is
 //! well-formed, its trust is backed by contracts that fit its outputs, and its
 //! input type and features resolve in the set or the installed base.
 #![allow(
