@@ -135,15 +135,14 @@ pub enum Step {
     /// Send this and call [`Sources::step`](crate::sources::Sources::step) with the response.
     Request(HttpRequest),
     /// Rows are still being mapped: yield, then call `step` again with no
-    /// response. SYNC-YIELD-1: a step maps at most [`INGEST_CHUNK`] rows, so a
-    /// sync never holds the cell for a whole page.
+    /// response. SYNC-YIELD-1: a step maps one OBS-PAGE-1 page (at most
+    /// [`PAGE_ROWS`](crate::host::PAGE_ROWS) rows of one dataset, within the
+    /// cell's page byte bound), so a sync holds the cell for one page commit
+    /// at a time, however much a response carried.
     Continue,
     /// The run is over.
     Done(RunSummary),
 }
-
-/// The most rows one step maps before yielding back to the host.
-pub const INGEST_CHUNK: usize = 5;
 
 /// What the run does next.
 enum Next {
@@ -550,10 +549,20 @@ fn advance(
         .map(|request| http(config, &run.auth, request)))
 }
 
-/// SYNC-YIELD-1: map up to [`INGEST_CHUNK`] queued rows; continue while
-/// rows remain, then send what follows the page.
+/// SYNC-YIELD-1: map the next page of queued rows (one mapping input, at
+/// most [`PAGE_ROWS`](crate::host::PAGE_ROWS), no source record twice);
+/// continue while rows remain, then send what follows them.
 fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure> {
-    let take = run.queue.len().min(INGEST_CHUNK);
+    let mut seen = std::collections::BTreeSet::new();
+    let first = run.queue.front().map(|(_, input)| input.clone());
+    let take = run
+        .queue
+        .iter()
+        .take(crate::host::PAGE_ROWS)
+        .take_while(|(raw, input)| {
+            Some(input) == first.as_ref() && seen.insert(raw.provenance.source_id.clone())
+        })
+        .count();
     let chunk: Vec<_> = run.queue.drain(..take).collect();
     if !chunk.is_empty() {
         let outcomes = host
