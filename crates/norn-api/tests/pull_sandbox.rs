@@ -316,7 +316,11 @@ fn sandbox_mappings_pin_their_source_schemas() {
             "erpnext.sandbox",
             "registry/packs/erpnext-sandbox/sandbox.ts",
         ),
-        ("odoo-sandbox", "odoo.sandbox", "registry/packs/odoo-sandbox/sandbox.ts"),
+        (
+            "odoo-sandbox",
+            "odoo.sandbox",
+            "registry/packs/odoo-sandbox/sandbox.ts",
+        ),
         (
             "sources",
             "norn.connect",
