@@ -142,7 +142,7 @@ export const Mapping = Norn.mapping({
       properties: [
         { property: "id", value: "input.name" }, { property: "doc_number", value: "input.doc_number" },
         { property: "kind", value: "input.kind" }, { property: "vendor", value: "input.vendor" },
-        { property: "issued_on", value: "input.issued_on == null ? null : date(input.issued_on)" }, { property: "currency", value: "input.currency" },
+        { property: "issued_on", value: "input.issued_on" }, { property: "currency", value: "input.currency" },
         { property: "total", value: "input.total" },
         { property: "lines_total", value: "input.line_count == 0 ? null : sum(map(input.lines, #.amount))" },
         { property: "line_count", value: "input.line_count" },
