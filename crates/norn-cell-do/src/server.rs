@@ -447,7 +447,9 @@ fn route<E: SqlEngine>(
                 })
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => trace_query(query)
-                .and_then(|query| get_numeric_trace(cell(host)?, &query, actor, name, named(runtime)))
+                .and_then(|query| {
+                    get_numeric_trace(cell(host)?, &query, actor, name, named(runtime))
+                })
                 .and_then(|document| document_json(&document)),
             (Some(_), None) => Err(Refusal::new(
                 StatusCode::NOT_FOUND,
