@@ -1227,6 +1227,10 @@ fn append<E: SqlEngine>(
                 ) => return Err(version_conflict()),
                 Err(error) => return Err(Refusal::host(error)),
             };
+        if flow.is_some() {
+            // A flow added or replaced its Run type in the model.
+            host.model_changed(&cell);
+        }
         RetainedDefinitionRecord {
             definition: change.definition,
             definitions_version: installed.version,
