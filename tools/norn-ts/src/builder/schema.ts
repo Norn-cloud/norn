@@ -54,7 +54,11 @@ export interface ObjectSchema extends Labels {
   readonly "x-norn"?: { readonly groups: ReadonlyArray<InputGroup> }
 }
 
-/** RuleIR-only nullable shape; other closed-schema profiles reject it. */
+/**
+ * A nullable closed schema. RuleIR admits every shape; ActionIR inputs and
+ * outputs admit only a nullable scalar (`["string" | "integer" | "number" | "boolean", "null"]`,
+ * with a string `enum` or a decimal `nornType` beside it), which the compiler enforces.
+ */
 export type NullableSchema =
   | (Omit<StringSchema, "type"> & { readonly type: readonly ["string", "null"] })
   | { readonly type: readonly ["integer" | "number" | "boolean", "null"] }
