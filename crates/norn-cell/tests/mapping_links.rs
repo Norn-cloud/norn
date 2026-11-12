@@ -1296,7 +1296,8 @@ fn obs_page_members_trace_under_the_default_budget() {
     }
     let mut raws = Vec::new();
     let mut input = None;
-    for n in 1..=300 {
+    // A host page (norn_api's PAGE_ROWS, 64): its receipt fits the budget.
+    for n in 1..=64 {
         let mut line = order.clone();
         line["record"]["name"] = json!(format!("SYN-ERPNEXT-order-{n:05}"));
         line["record"]["custom_norn_ref"] = json!(format!("demo/order/{n:05}/line/1"));
@@ -1314,7 +1315,7 @@ fn obs_page_members_trace_under_the_default_budget() {
     }
     let reader = cell.store().read();
     let object = reader
-        .object(MAIN_WORLD, "canon.OrderLine", "demo/order/00123/line/1")
+        .object(MAIN_WORLD, "canon.OrderLine", "demo/order/00042/line/1")
         .expect("read")
         .expect("landed");
     let fact = norn_ir::FactRef::new("canon.OrderLine", &object.id, object.version);
@@ -1327,7 +1328,7 @@ fn obs_page_members_trace_under_the_default_budget() {
         .expect("traced")
         .expect("source lineage");
     assert!(
-        format!("{traced:?}").contains("SYN-ERPNEXT-order-00123"),
+        format!("{traced:?}").contains("SYN-ERPNEXT-order-00042"),
         "{traced:?}"
     );
 }
