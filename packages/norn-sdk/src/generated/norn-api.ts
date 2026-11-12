@@ -716,8 +716,19 @@ export interface components {
         AdHocTraceRequest: {
             /** @description Canonical bucket key from that answer. */
             bucket: string;
+            /**
+             * Format: int64
+             * @description The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+             *     given, even after the cell has committed since.
+             */
+            knownAsOf?: number | null;
             /** @description The `lineageRef` handle that answer returned. */
             lineageRef: string;
+            /**
+             * Format: int64
+             * @description The answer's `nowMs`, with `knownAsOf`.
+             */
+            nowMs?: number | null;
             /** @description The same `QuestionIR` the answer was evaluated from. */
             question: {
                 [key: string]: unknown;
@@ -7239,6 +7250,12 @@ export interface components {
          */
         NornIrQuestionLimits: {
             /**
+             * Format: uint64
+             * @description Maximum stored bytes those records may decode to: the scan's memory
+             *     bound.
+             */
+            max_scanned_bytes: number;
+            /**
              * Format: uint32
              * @description Maximum source records one evaluation of a question may scan.
              */
@@ -10253,7 +10270,7 @@ export interface components {
         };
         /** @description One output bucket, with its exact sums beside its value. */
         NornQueryRow: {
-            /** @description Scalar grouping value. */
+            /** @description Grouping value: null without a group-by, the value for one, and for several an array of their values in the question's order (a null member is its own group). */
             bucket: unknown;
             /** @description Exact aggregate membership: contributing object identity → its contribution. */
             members: {
@@ -12369,6 +12386,14 @@ export interface operations {
                 lineageRef: string;
                 /** @description Canonical bucket key from that result. */
                 bucket: string;
+                /**
+                 * @description The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+                 *     given, even after the cell has committed since. Without them the
+                 *     trace is of the cell's current answer.
+                 */
+                knownAsOf?: number;
+                /** @description The answer's `nowMs`, with `knownAsOf`. */
+                nowMs?: number;
             };
             header?: never;
             path: {

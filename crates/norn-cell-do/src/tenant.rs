@@ -167,6 +167,16 @@ impl<E: SqlEngine> Tenant<E> {
         &self.scope
     }
 
+    /// The served cell's host when the scope is provisioned, for the host's
+    /// own background work (a source sync); requests go through [`Self::handle`].
+    #[must_use]
+    pub fn serving_host(&self) -> Option<&DevHost<E>> {
+        match &self.state {
+            State::Serving(serving) => Some(&serving.host),
+            State::Vacant => None,
+        }
+    }
+
     /// Whether the scope has a cell.
     #[must_use]
     pub const fn is_provisioned(&self) -> bool {

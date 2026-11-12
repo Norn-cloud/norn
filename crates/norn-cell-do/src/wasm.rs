@@ -50,6 +50,8 @@ impl Principals {
 pub struct NornCell {
     tenant: Tenant<WorkersEngine>,
     principals: Principals,
+    /// The cell's source connections and uploads, once configured (#921).
+    connect: Option<crate::connect::Connect>,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -67,6 +69,16 @@ pub struct Reply {
     /// retry interval has passed); the host refetches, then retries once.
     #[wasm_bindgen(js_name = refreshJwks)]
     pub refresh_jwks: bool,
+    /// A sync to run in the background; the host drives it with `syncStep`.
+    #[wasm_bindgen(js_name = startSync)]
+    pub start_sync: Option<String>,
+    /// A continuation: the host fetches `thenRequest` exactly as planned and
+    /// calls `resume` with this token; that reply replaces this one.
+    #[wasm_bindgen(js_name = thenToken)]
+    pub then_token: Option<String>,
+    /// The request to fetch, as JSON `{method, url, headers, body}`.
+    #[wasm_bindgen(js_name = thenRequest)]
+    pub then_request: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -137,7 +149,11 @@ impl NornCell {
                 ));
             }
         };
-        Ok(Self { tenant, principals })
+        Ok(Self {
+            tenant,
+            principals,
+            connect: None,
+        })
     }
 
     /// Install a refetched JWKS from the pinned location, fetched at `now_ms`.
@@ -194,6 +210,28 @@ impl NornCell {
             now: seconds(now_ms),
             body: body.as_deref().unwrap_or_default(),
         };
+        // #921: the cell's source and upload routes, decided by its own policy.
+        if let Some(connect) = self.connect.as_mut()
+            && let Some(routed) = connect.route(
+                self.tenant.serving_host(),
+                self.principals.resolver(),
+                &request,
+                millis(now_ms),
+            )
+        {
+            let (then_token, then_request) =
+                routed.then.map_or((None, None), |(token, planned)| {
+                    (Some(token), serde_json::to_string(&planned).ok())
+                });
+            return Reply {
+                status: routed.response.status,
+                body: routed.response.body,
+                refresh_jwks: false,
+                start_sync: routed.start_sync,
+                then_token,
+                then_request,
+            };
+        }
         let response = self.tenant.handle(self.principals.resolver(), &request);
         let refresh_jwks = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
@@ -204,8 +242,94 @@ impl NornCell {
             status: response.status,
             body: response.body,
             refresh_jwks,
+            start_sync: None,
+            then_token: None,
+            then_request: None,
         }
     }
+
+    /// Configure the cell's source connections (`NORN_SOURCES`, a JSON
+    /// array) and the server variables they read (`NORN_SECRET_*` and
+    /// `NORN_S3_*`, as one JSON object). The values stay in the cell.
+    ///
+    /// # Errors
+    /// Malformed configuration; the cell then serves without connections.
+    #[wasm_bindgen(js_name = configureConnect)]
+    pub fn configure_connect(&mut self, config: &str, vars: &str) -> Result<(), JsValue> {
+        self.connect = Some(crate::connect::Connect::new(config, vars).map_err(rejected)?);
+        Ok(())
+    }
+
+    /// SYNC-ONE-1: claim the next connection due on its schedule at `now_ms`
+    /// (checked and marked in this one call), as its own principal.
+    #[wasm_bindgen(js_name = syncDue)]
+    pub fn sync_due(&mut self, now_ms: f64) -> Option<String> {
+        self.tenant.serving_host()?;
+        self.connect.as_mut()?.due(millis(now_ms))
+    }
+
+    /// Advance the running sync of `id`; `status` and `body` answer the
+    /// request the previous step planned. Returns `{"request": …}` or
+    /// `{"done": …}`.
+    #[wasm_bindgen(js_name = syncStep)]
+    #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "wasm-bindgen passes owned optional values"
+    )]
+    pub fn sync_step(
+        &mut self,
+        id: &str,
+        status: Option<u16>,
+        body: Option<Vec<u8>>,
+        now_ms: f64,
+    ) -> String {
+        let response = status.map(|status| (status, body.as_deref().unwrap_or_default()));
+        match self.connect.as_mut() {
+            Some(connect) => connect.step(self.tenant.serving_host(), id, response, millis(now_ms)),
+            None => String::from(r#"{"done":{"outcome":"failed"}}"#),
+        }
+    }
+
+    /// Continue a request after the host fetched what the cell planned.
+    #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "wasm-bindgen passes owned bytes"
+    )]
+    pub fn resume(&mut self, token: &str, status: u16, body: Vec<u8>, now_ms: f64) -> Reply {
+        let response = match self.connect.as_mut() {
+            Some(connect) => connect.resume(
+                self.tenant.serving_host(),
+                token,
+                status,
+                &body,
+                millis(now_ms),
+            ),
+            None => server::Response {
+                status: 404,
+                body: String::from("{}"),
+            },
+        };
+        Reply {
+            status: response.status,
+            body: response.body,
+            refresh_jwks: false,
+            start_sync: None,
+            then_token: None,
+            then_request: None,
+        }
+    }
+}
+
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a host clock in milliseconds since the epoch, clamped to non-negative"
+)]
+fn millis(now_ms: f64) -> u64 {
+    now_ms.max(0.0) as u64
 }
 
 #[allow(
