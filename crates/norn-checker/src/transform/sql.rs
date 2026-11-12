@@ -1681,7 +1681,7 @@ mod properties {
                     vec(inner.clone(), 0..3),
                     any::<bool>(),
                     any::<bool>(),
-                    option::of(over(inner.clone().boxed()))
+                    option::of(over(inner))
                 )
                     .prop_map(|(name, args, star, distinct, over)| {
                         let star = star && args.is_empty();
