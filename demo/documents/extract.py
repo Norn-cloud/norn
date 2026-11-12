@@ -14,6 +14,7 @@ cell or decides anything about the values.
     extract.py serve --store DIR [--port 8080]             # POST /extractions for the cell's pull connector
     extract.py upload DIR [--prefix synthetic/scans/<seed>]  # put generated scans through the cell's upload route
     extract.py audit --store DIR TRUTH.json MANIFEST.json  # which extracted values differ from what is printed, and why
+    extract.py export --store DIR OUT.json                 # the rows as a recorded snapshot for `norn dev --load`
 
 `run` reads S3-compatible settings from the environment: NORN_SCANS_ENDPOINT
 (https://<account>.r2.cloudflarestorage.com), NORN_SCANS_BUCKET,
@@ -439,6 +440,16 @@ def command_audit(args) -> None:
     print(json.dumps({"rows": exact + len({d["document"] for d in differences}), "exact": exact, "differences": differences}, indent=1))
 
 
+def command_export(args) -> None:
+    """The stored rows as a recorded snapshot in the shape `norn dev --load`
+    reads, for a cell without a pull connector (a laptop demo)."""
+    rows = [line for line in Store(Path(args.store)).path.read_text().splitlines() if line.strip()]
+    records = ",".join('{"dataset":"Scanned Document","record":' + line + "}" for line in rows)
+    Path(args.out).write_text('{"profile":"synthetic-scans/1","source":"synthetic-scans","mapping":"docs.scans.mapping",'
+                              '"connectorInstance":"demo","snapshot":[' + records + "]}\n")
+    print(json.dumps({"exported": len(rows)}))
+
+
 def command_serve(args) -> None:
     store = Store(Path(args.store))
 
@@ -489,11 +500,14 @@ def main() -> None:
     audit.add_argument("--store", required=True)
     audit.add_argument("truth")
     audit.add_argument("manifest")
+    export = sub.add_parser("export")
+    export.add_argument("--store", required=True)
+    export.add_argument("out")
     serve = sub.add_parser("serve")
     serve.add_argument("--store", required=True)
     serve.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
-    {"files": command_files, "seed": command_seed, "run": command_run, "serve": command_serve, "upload": command_upload, "audit": command_audit}[args.command](args)
+    {"files": command_files, "seed": command_seed, "run": command_run, "serve": command_serve, "upload": command_upload, "audit": command_audit, "export": command_export}[args.command](args)
 
 
 if __name__ == "__main__":
