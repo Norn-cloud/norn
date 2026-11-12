@@ -1117,9 +1117,14 @@ proptest::proptest! {
         };
         proptest::prop_assert!(
             single == paged,
-            "one by one only: {:#?}\npaged only: {:#?}",
+            "one by one only: {:#?}\npaged only: {:#?}\nfirst order difference: {:#?}",
             only(&single, &paged),
-            only(&paged, &single)
+            only(&paged, &single),
+            single
+                .iter()
+                .zip(&paged)
+                .position(|(a, b)| a != b)
+                .map(|at| (&single[at..(at + 3).min(single.len())], &paged[at..(at + 3).min(paged.len())]))
         );
     }
 }
