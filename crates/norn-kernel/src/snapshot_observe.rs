@@ -1597,12 +1597,19 @@ fn findings_for(
     for failure in
         crate::governing_laws::evaluate_linked(catalog, key, values, links, &mut remaining)?
     {
-        findings.push(build(
+        let finding = build(
             failure.rule_ref,
             failure.severity,
             failure.message,
             failure.outcome,
-        )?);
+        )?;
+        findings.push(if failure.links.is_empty() {
+            finding
+        } else {
+            finding
+                .with_links(failure.links)
+                .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
+        });
     }
     Ok(findings)
 }

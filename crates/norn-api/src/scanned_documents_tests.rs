@@ -499,17 +499,15 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
         .expect("findings");
     assert_eq!(law_pins(&findings), [LAW_B], "{findings:#?}");
-    match &findings[0].outcome {
-        norn_ir::DataQualityOutcome::Linked { links, outcome } => {
-            assert_eq!(
-                links.get("ledger_entry"),
-                Some(&FactRef::new("docs.LedgerEntry", "demo/ledger/JE-0043", 1)),
-                "the finding pins the exact entry version it read"
-            );
-            assert_eq!(**outcome, norn_ir::DataQualityOutcome::NotSatisfied);
-        }
-        other => panic!("a link law's finding pins its targets: {other:?}"),
-    }
+    assert_eq!(
+        findings[0].links.get("ledger_entry"),
+        Some(&FactRef::new("docs.LedgerEntry", "demo/ledger/JE-0043", 1)),
+        "the finding pins the exact entry version it read"
+    );
+    assert_eq!(
+        findings[0].outcome,
+        norn_ir::DataQualityOutcome::NotSatisfied
+    );
 
     // Where the total was read survives the quarantine of the document.
     let evidence = reader
