@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { FileSearch, ScanText } from "lucide-react"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { cn } from "@/lib/utils"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
@@ -21,7 +21,7 @@ function pageProblem(error: unknown): string {
  * text the extractor read there. The page comes from a short-lived read the
  * cell issues after its policy decides; the box is the evidence's own.
  */
-export function EvidenceCrop({ evidence, className }: { readonly evidence: Evidence; readonly className?: string }) {
+export function EvidenceCrop({ evidence, className, actionFor }: { readonly evidence: Evidence; readonly className?: string; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   // An object-store URI is read only through the cell's short-lived, policy-checked read; a plain
   // web URI the evidence names (a local `norn dev` serving synthetic scans) is shown as it is.
   const direct = /^https?:\/\//.test(evidence.documentUri)
@@ -70,18 +70,19 @@ export function EvidenceCrop({ evidence, className }: { readonly evidence: Evide
         </div>
         <div>{evidence.extractor} {evidence.extractorVersion} · page {evidence.page} · {confidence}</div>
         <div className="flex flex-wrap items-center gap-x-1">Document <CopyId value={evidence.documentDigest} short={12} /> <span className="truncate font-mono">{evidence.documentUri}</span></div>
+        {actionFor?.(evidence)}
       </figcaption>
     </figure>
   )
 }
 
 /** The evidence objects of one value, each with its crop. */
-export function EvidenceList({ refs, filter }: { readonly refs: readonly EvidenceRef[]; readonly filter?: (evidence: Evidence) => boolean }) {
+export function EvidenceList({ refs, filter, actionFor }: { readonly refs: readonly EvidenceRef[]; readonly filter?: (evidence: Evidence) => boolean; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   const evidence = useQuery({ queryKey: ["evidence", refs.map((ref) => `${ref.objectType}/${ref.id}`)], queryFn: () => Promise.all(refs.map(readEvidence)), enabled: refs.length > 0 })
   if (refs.length === 0) return null
   if (evidence.isPending) return <p className="text-meta text-muted-foreground">Reading the evidence…</p>
   if (evidence.isError) return <p className="text-meta text-muted-foreground">The evidence could not be read.</p>
   const shown = filter ? evidence.data.filter(filter) : evidence.data
   if (shown.length === 0) return <p className="text-meta text-muted-foreground">No evidence was recorded for this value.</p>
-  return <div className="grid gap-3 sm:grid-cols-2">{shown.map((item) => <EvidenceCrop key={`${item.ref.objectType}/${item.ref.id}`} evidence={item} />)}</div>
+  return <div className="grid gap-3 sm:grid-cols-2">{shown.map((item) => <EvidenceCrop key={`${item.ref.objectType}/${item.ref.id}`} evidence={item} {...actionFor ? { actionFor } : {}} />)}</div>
 }

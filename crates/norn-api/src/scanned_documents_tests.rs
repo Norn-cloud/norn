@@ -537,6 +537,45 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
         r#"{"idempotencyKey":"forged","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-0117~total","actor":"user:someone-else"}}"#,
     );
     assert!(forged.is_err(), "a caller-supplied actor is refused");
+    // Nor can it offer the actor-derived field itself (ACTION-ACTOR-1)...
+    let offered = correct(
+        &host,
+        STEWARD,
+        r#"{"idempotencyKey":"offered","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-0117~total","corrected_by":"user:someone-else"}}"#,
+    )
+    .expect_err("a caller-supplied corrected_by is refused");
+    assert!((400..500).contains(&offered.status), "{offered:?}");
+    // ...and the form the catalog publishes never shows it.
+    let catalog = crate::action_catalog::list_actions(
+        &host,
+        &crate::action_catalog::ActionCatalogQuery {
+            org_id: Some("org_demo".into()),
+            environment_id: Some("dev".into()),
+            object_kind: None,
+        },
+        Some(STEWARD),
+    )
+    .expect("catalog");
+    let form = catalog
+        .items
+        .iter()
+        .find(|item| item.action_id == CORRECT)
+        .expect("the steward may correct");
+    let fields = form.input_schema["properties"]
+        .as_object()
+        .expect("properties");
+    assert!(!fields.contains_key("corrected_by"), "{fields:?}");
+    assert!(fields.contains_key("correction_evidence"));
+    // The cited evidence must exist: it is read in the same commit.
+    let uncited = correct(
+        &host,
+        STEWARD,
+        r#"{"idempotencyKey":"uncited","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-0117~nowhere"}}"#,
+    );
+    assert!(
+        uncited.is_err(),
+        "a correction citing no evidence object is refused"
+    );
 
     // A reason is required.
     let unexplained = correct(

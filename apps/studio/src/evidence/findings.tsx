@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query"
+import type { ReactNode } from "react"
 import { ShieldAlert, ShieldCheck } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
 import { EvidenceList } from "./evidence-crop.tsx"
-import { readFindings, type Finding, type RuleRef } from "./review.ts"
+import { readFindings, type Evidence, type Finding, type RuleRef } from "./review.ts"
 
 /** The rule a finding records, by its stable id. */
 function ruleName(rule: RuleRef): string {
@@ -25,7 +26,7 @@ const STATUS: Record<Finding["status"], { readonly label: string; readonly varia
  * each finding records, whether the object is held out of authoritative reads,
  * and the evidence of where its values were read.
  */
-export function Findings({ objectType, id }: { readonly objectType: string; readonly id: string }) {
+export function Findings({ objectType, id, actionFor }: { readonly objectType: string; readonly id: string; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   const read = useQuery({ queryKey: ["findings", objectType, id], queryFn: () => readFindings(objectType, id), retry: false })
   if (read.isPending) return <Panel icon={ShieldAlert} label="Findings"><Well className="p-3 text-meta text-muted-foreground">Reading the findings…</Well></Panel>
   if (read.isError) {
@@ -48,7 +49,7 @@ export function Findings({ objectType, id }: { readonly objectType: string; read
             <p className="text-sm">{finding.message}</p>
           </article>
         ))}
-        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} /></div>}
+        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} {...actionFor ? { actionFor } : {}} /></div>}
       </Well>
     </Panel>
   )

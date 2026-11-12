@@ -20,7 +20,7 @@ export interface Field {
   readonly type: string
   readonly optional: boolean
   /** Declared exact-decimal facts, with the unit or currency fact their type names. */
-  readonly decimal: { readonly unit: string | undefined; readonly perUnit: string | undefined; readonly currencyFrom: string | undefined } | undefined
+  readonly decimal: { readonly unit: string | undefined; readonly perUnit: string | undefined; readonly currencyFrom: string | undefined; readonly scale?: number } | undefined
   /** The declared value kind after resolving named property types; `enum` carries its declared values in order. */
   readonly scalar: Scalar
 }
@@ -171,7 +171,9 @@ function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDe
     const def = types.get(type.name)
     return def ? decimalOf(def.type, types) : undefined
   }
-  return type.kind === "decimal" ? { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property } : undefined
+  if (type.kind !== "decimal") return undefined
+  const scale = (type as { scale?: unknown }).scale
+  return { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property, ...typeof scale === "number" ? { scale } : {} }
 }
 
 /**

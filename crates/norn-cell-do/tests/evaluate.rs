@@ -477,3 +477,57 @@ fn an_undeclared_metric_is_a_diagnostic_only_for_a_caller_who_reads_every_metric
     recovered["aggregate"] = json!([{"metric": "demo.recovered"}]);
     assert_eq!(evaluate(&cell, ADMIN, &recovered).status, 200);
 }
+
+/// D67: the question catalog lists only what the caller may read the
+/// population of, and a ratio only with both its operands; the engine's
+/// grains and operators are the ones `:evaluate` admits. Anonymous is the
+/// one denial; the catalog is read with GET.
+#[test]
+fn the_question_catalog_lists_only_what_the_caller_may_read() {
+    let mut cell = cell();
+    let names = |document: &Value| {
+        document["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|metric| metric["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let read = call(&cell, "GET", "/v1/questions:catalog", ADMIN, "");
+    assert_eq!(read.status, 200, "{}", read.body);
+    let catalog = json_of(&read);
+    assert_eq!(
+        names(&catalog),
+        ["demo.input", "demo.recovered", "demo.yield"]
+    );
+    assert_eq!(catalog["objectTypes"][0]["name"], analytics::TYPE);
+    let properties = catalog["objectTypes"][0]["properties"].as_array().unwrap();
+    assert!(
+        properties.iter().any(|p| p["id"] == "metal"),
+        "{properties:?}"
+    );
+    assert!(
+        properties
+            .iter()
+            .any(|p| p["id"] == "recovered" && p["type"]["unit"]["code"] == "g"),
+        "{properties:?}"
+    );
+    assert_eq!(catalog["grains"], json!(["week"]));
+    assert_eq!(catalog["operators"], json!(["eq", "ne"]));
+    assert_eq!(catalog["maxGroupBy"], json!(1));
+    assert_eq!(catalog["maxBuckets"], json!(analytics::AD_HOC_MAX_BUCKETS));
+    // An ungranted operand is not listed, nor is any ratio over it.
+    cell.runtime.ungranted = Some("demo.recovered");
+    let narrowed = call(&cell, "GET", "/v1/questions:catalog", ADMIN, "");
+    assert_eq!(names(&json_of(&narrowed)), ["demo.input"]);
+    let anonymous = call(&cell, "GET", "/v1/questions:catalog", None, "");
+    assert_eq!(anonymous.status, 403);
+    assert_eq!(
+        anonymous.body,
+        evaluate(&cell, None, &question("gold")).body
+    );
+    assert_eq!(
+        call(&cell, "POST", "/v1/questions:catalog", ADMIN, "").status,
+        405
+    );
+}

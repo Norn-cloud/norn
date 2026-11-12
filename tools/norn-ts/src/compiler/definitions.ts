@@ -28,6 +28,7 @@ import * as LB from "../builder/labels.ts"
 import * as R from "../builder/rule.ts"
 import * as X from "../builder/expr.ts"
 import * as Q from "../builder/question.ts"
+import * as DB from "../builder/dashboard.ts"
 import * as S from "../builder/schema.ts"
 import type { EnvelopeOptions } from "../builder/envelope.ts"
 import type { SourceLocation } from "../builder/diagnostics.ts"
@@ -119,6 +120,7 @@ const LAW = "@norn/authoring#Norn.law"
 const LABELS = "@norn/authoring#Norn.labels"
 const FLOW = "@norn/authoring#Norn.flow"
 const QUESTION = "@norn/authoring#Norn.question"
+const DASHBOARD = "@norn/authoring#Norn.dashboard"
 const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
@@ -249,6 +251,14 @@ export function compileQuestions(file: string, limits: Partial<CompilerLimits> =
   return result.ok ? { ok: true, questions: result.value } : result
 }
 
+/** Compile dashboards: the cell's `dashboard` definitions, each admitted by the cell like one saved from Studio. */
+export function compileDashboards(file: string, limits: Partial<CompilerLimits> = {}):
+  | { readonly ok: true; readonly dashboards: ReadonlyArray<Json> }
+  | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> } {
+  const result = lowerEach<ReadonlyArray<Json>>([file], limits, (compiler, source) => ({ ok: true, value: compiler.dashboards(source) }))[0]!
+  return result.ok ? { ok: true, dashboards: result.value } : result
+}
+
 export type ValueSchemasResult =
   | { readonly ok: true; readonly schemas: Readonly<Record<string, S.ValueSchema>> }
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
@@ -327,6 +337,7 @@ class DefinitionCompiler {
       if (ts.isExportAssignment(statement)) {
         const e = this.unwrap(statement.expression)
         if (ts.isCallExpression(e) && this.id(e) === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "questions require named const bindings and the question compiler", e)
+        if (ts.isCallExpression(e) && this.id(e) === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards require named const bindings and the dashboard compiler", e)
         if (ts.isCallExpression(e) && this.id(e) === FLOW) flows++
         continue
       }
@@ -339,6 +350,7 @@ class DefinitionCompiler {
         const init = d.initializer && this.unwrap(d.initializer)
         const id = init && ts.isCallExpression(init) ? this.id(init) : undefined
         if (init && id === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "standalone questions use the question compiler; they are not installable artifacts", init)
+        if (init && id === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards use the dashboard compiler; the cell admits them as definitions, not artifacts", init)
         if (!init || !ts.isCallExpression(init) || id === undefined || !DEFINITION_CALLS.has(id)) continue
         const def =
           id === SOURCE_SCHEMA ? this.sourceSchema(init)
@@ -363,7 +375,14 @@ class DefinitionCompiler {
   }
 
   questions(source: ts.SourceFile): Json[] {
-    const questions: Json[] = []
+    const questions = [...this.questionBindings(source).values()]
+    if (questions.length === 0) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.question", source)
+    return questions
+  }
+
+  /** Each named Norn.question in the module, lowered, by its binding name. */
+  private questionBindings(source: ts.SourceFile): Map<string, Json> {
+    const questions = new Map<string, Json>()
     const names = new Set<string>()
     for (const statement of source.statements) {
       if (ts.isExportAssignment(statement)) {
@@ -419,11 +438,43 @@ class DefinitionCompiler {
           population: { kind: "authorized_objects" },
         })
         this.expansion.assert(question)
-        questions.push(question)
+        questions.set(declaration.name.getText(source), question)
       }
     }
-    if (questions.length === 0) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.question", source)
     return questions
+  }
+
+  /** DASHBOARD-LOWER-1: each named Norn.dashboard, its tiles' questions resolved from the module's own Norn.question bindings. */
+  dashboards(source: ts.SourceFile): Json[] {
+    const questions = this.questionBindings(source)
+    const dashboards: Json[] = []
+    for (const statement of source.statements) {
+      if (ts.isExportAssignment(statement)) {
+        const call = this.unwrap(statement.expression)
+        if (ts.isCallExpression(call) && this.id(call) === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards require named const bindings", call)
+      }
+      if (!ts.isVariableStatement(statement)) continue
+      for (const declaration of statement.declarationList.declarations) {
+        const call = declaration.initializer && this.unwrap(declaration.initializer)
+        if (!call || !ts.isCallExpression(call) || this.id(call) !== DASHBOARD) continue
+        const input = this.meta(call, ["title", "tiles"])
+        const tiles = this.list(this.member(input, "tiles", call)).map(node => {
+          const tile = this.closedRecord(node, ["title", "question", "view", "width"], ["title", "question", "view"])
+          const ref = tile.get("question")!
+          const question = ts.isIdentifier(ref) ? questions.get(ref.text) : undefined
+          if (question === undefined) throw new CompileError("NORN-FLOW-LITERAL", "a tile's question names a Norn.question declared in this module", ref)
+          const view = this.string(tile.get("view")!)
+          if (!["number", "line", "area", "bar", "pie", "table"].includes(view)) throw new CompileError("NORN-FLOW-LITERAL", "a view is number, line, area, bar, pie or table", tile.get("view")!)
+          const widthNode = tile.get("width")
+          const width = widthNode === undefined ? undefined : this.string(widthNode)
+          if (width !== undefined && width !== "half" && width !== "full") throw new CompileError("NORN-FLOW-LITERAL", "a width is half or full", widthNode!)
+          return { title: this.string(tile.get("title")!), question, view: view as DB.DashboardView, ...width === undefined ? {} : { width } } satisfies DB.DashboardTileSpec
+        })
+        dashboards.push(DB.lowerDashboard({ title: this.string(this.member(input, "title", call)), tiles }))
+      }
+    }
+    if (dashboards.length === 0) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.dashboard", source)
+    return dashboards
   }
 
   valueSchemas(source: ts.SourceFile): Record<string, S.ValueSchema> {
@@ -1361,7 +1412,7 @@ class DefinitionCompiler {
   }
 
   private connector(call: ts.CallExpression): C.ConnectorDef {
-    const members = this.meta(call, ["id", "title", "version", "auth", "resources", "mappings", "cursor", "deadLetterPolicy", "poll"])
+    const members = this.meta(call, ["id", "title", "version", "auth", "resources", "mappings", "cursor", "deadLetterPolicy", "poll", "pull"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     // Close every record even through const aliases: TypeScript excess-property
     // checks alone would allow an alias carrying undeclared credential material.
@@ -1394,7 +1445,19 @@ class DefinitionCompiler {
       if (kind !== "field" && kind !== "external_id") throw new CompileError("NORN-FLOW-LITERAL", "unknown connector mapping kind", mapping)
       this.closedRecord(mapping, ["kind", "resourceId", "sourcePath", "targetObjectKind", kind === "field" ? "targetField" : "externalSource"], ["kind", "resourceId", "sourcePath", "targetObjectKind"])
     }
-    const cursor = members.get("cursor"), deadLetter = members.get("deadLetterPolicy"), poll = members.get("poll")
+    const cursor = members.get("cursor"), deadLetter = members.get("deadLetterPolicy"), poll = members.get("poll"), pull = members.get("pull")
+    if (pull) {
+      const m = this.closedRecord(pull, ["source", "pipeline", "feeds", "token"], ["source", "pipeline", "feeds"])
+      const token = m.get("token")
+      if (token) this.closedRecord(token, ["header", "prefix"], ["header"])
+      for (const feed of this.list(m.get("feeds")!)) {
+        const f = this.closedRecord(feed, ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"], ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"])
+        this.closedRecord(f.get("request")!, ["method", "path", "query", "headers", "body"], ["method", "path"])
+        const paging = this.closedRecord(f.get("paging")!, ["kind", "size", "nextCursorPath", "hasNextPath"], ["kind", "size"])
+        if (this.string(paging.get("kind")!) === "keyset") this.closedRecord(f.get("paging")!, ["kind", "size"], ["kind", "size"])
+        this.closedRecord(f.get("initial")!, ["version", "id"], ["version", "id"])
+      }
+    }
     if (cursor) this.closedRecord(cursor, ["cursorId", "resourceId", "storageKey"], ["cursorId", "resourceId", "storageKey"])
     if (deadLetter) this.closedRecord(deadLetter, ["maxFailures", "route"], ["maxFailures", "route"])
     if (poll) {
@@ -1412,7 +1475,8 @@ class DefinitionCompiler {
       mappings: this.json(need("mappings")) as unknown as C.ConnectorSpec["mappings"],
       ...(cursor ? { cursor: this.json(cursor) as unknown as NonNullable<C.ConnectorSpec["cursor"]> } : {}),
       ...(deadLetter ? { deadLetterPolicy: this.json(deadLetter) as unknown as NonNullable<C.ConnectorSpec["deadLetterPolicy"]> } : {}),
-      ...(poll ? { poll: this.json(poll) as unknown as NonNullable<C.ConnectorSpec["poll"]> } : {}), at: this.at(call),
+      ...(poll ? { poll: this.json(poll) as unknown as NonNullable<C.ConnectorSpec["poll"]> } : {}),
+      ...(pull ? { pull: this.json(pull) as unknown as NonNullable<C.ConnectorSpec["pull"]> } : {}), at: this.at(call),
     })
   }
 

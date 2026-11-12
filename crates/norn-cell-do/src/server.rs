@@ -3,8 +3,9 @@
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
 //! `/v1/definitions/{id}:retire`), the one governed action route,
 //! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
-//! `GET /v1/runs/{id}`); and `POST /v1/mcp`, whose tools call these same
-//! routes ([`crate::mcp`]).
+//! `GET /v1/runs/{id}`), the decision routes (`GET /v1/decisions`,
+//! `POST /v1/decisions/{id}:decide`); and `POST /v1/mcp`, whose tools call
+//! these same routes ([`crate::mcp`]).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -31,7 +32,7 @@ use norn_api::object_review::{
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
-    evaluate_question, get_answer, get_numeric_trace, list_metrics, trace_ad_hoc,
+    evaluate_question, get_answer, get_numeric_trace, list_metrics, question_catalog, trace_ad_hoc,
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
@@ -111,6 +112,9 @@ routes! {
     Access => ("GET", "/v1/access"),
     /// `GET /v1/actions`.
     ActionCatalog => ("GET", "/v1/actions"),
+    /// `POST /v1/cell:provision`, dispatched by the tenant before any cell
+    /// route (HOST-PROVISION-1).
+    Provision => ("POST", "/v1/cell:provision"),
     /// `POST /v1/actions/{actionId}`.
     Action => ("POST", "/v1/actions/{actionId}"),
     /// `GET /v1/definitions`.
@@ -157,6 +161,12 @@ routes! {
     RunStart => ("POST", "/v1/runs"),
     /// `GET /v1/runs/{id}` (RUN-ROUTES-1).
     Run => ("GET", "/v1/runs/{id}"),
+    /// `GET /v1/questions:catalog`.
+    QuestionsCatalog => ("GET", "/v1/questions:catalog"),
+    /// `GET /v1/decisions` (DECISIONS-1).
+    Decisions => ("GET", "/v1/decisions"),
+    /// `POST /v1/decisions/{id}:decide` (DECISIONS-1).
+    Decide => ("POST", "/v1/decisions/{id}:decide"),
 }
 
 impl Route {
@@ -166,13 +176,23 @@ impl Route {
         match path {
             "/v1/access" => return Some(Self::Access),
             "/v1/actions" => return Some(Self::ActionCatalog),
+            norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
             crate::mcp::MCP_PATH => return Some(Self::Mcp),
             "/v1/questions:metrics" => return Some(Self::QuestionsMetrics),
             "/v1/runs" => return Some(Self::RunStart),
+            "/v1/questions:catalog" => return Some(Self::QuestionsCatalog),
+            "/v1/decisions" => return Some(Self::Decisions),
             _ => {}
+        }
+        if path
+            .strip_prefix("/v1/decisions/")
+            .and_then(|rest| rest.strip_suffix(":decide"))
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Decide);
         }
         if path
             .strip_prefix("/v1/runs/")
@@ -257,25 +277,72 @@ pub fn handle_all<E: SqlEngine>(
     kinds: &DefinitionKinds,
     request: &Request<'_>,
 ) -> Response {
-    let Request {
-        method,
-        path,
-        query,
-        authorization,
-        now,
-        body,
-    } = *request;
     // MCP resolves its caller per tool call, through these same routes.
-    if path == crate::mcp::MCP_PATH {
+    if request.path == crate::mcp::MCP_PATH {
         return crate::mcp::serve(host, principals, questions, kinds, request);
     }
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
-    let actor = principals.resolve(authorization, now);
-    let actor = actor.as_deref();
-    if let Some(response) = crate::runs::dispatch(host, actor, request) {
+    let actor = principals.resolve(request.authorization, request.now);
+    if let Some(response) = crate::runs::dispatch(host, questions, actor.as_deref(), request) {
         return response;
     }
+    respond(route(
+        Some(host),
+        questions,
+        kinds,
+        actor.as_deref(),
+        request,
+    ))
+}
+
+/// What a caller nobody verified gets from a scope that has no cell: exactly
+/// what [`handle_all`] answers the same request on a provisioned cell that
+/// publishes no questions, so a refusal never tells a provisioned scope from
+/// an unprovisioned one. The same routing code decides both; only the cell
+/// is absent.
+#[must_use]
+pub fn outside<E: SqlEngine>(request: &Request<'_>) -> Response {
+    respond(route::<E>(
+        None,
+        None,
+        &DefinitionKinds::default(),
+        None,
+        request,
+    ))
+}
+
+pub(crate) fn respond(result: Result<String, Refusal>) -> Response {
+    match result {
+        Ok(body) => Response {
+            status: StatusCode::OK.as_u16(),
+            body,
+        },
+        Err(refused) => Response {
+            status: refused.status,
+            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
+        },
+    }
+}
+
+/// Route one request for `actor`. `host` is `None` only for a scope with no
+/// cell, and then `actor` is `None`: every service is reached through
+/// [`cell`], which answers the denial the service itself gives nobody.
+fn route<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    actor: Option<&str>,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    let Request {
+        method,
+        path,
+        query,
+        now,
+        body,
+        ..
+    } = *request;
     let question = question_path(path);
     let ad_hoc = matches!(
         path,
@@ -288,22 +355,27 @@ pub fn handle_all<E: SqlEngine>(
     // `Route` is the one list of what this host serves; a path it does not
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
-    let served = Route::of(path).is_some_and(|route| route != Route::Access);
-    let result = if !served {
+    let route_of = Route::of(path);
+    let served = route_of.is_some_and(|route| route != Route::Access);
+    if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
             "route.not_found",
             "no such route",
             "the host serves only its declared read routes",
         ))
+    } else if route_of == Some(Route::Provision) {
+        provisioned(host, actor, request)
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
     } else if path == "/v1/actions" {
-        action_catalog(host, actor, method, query)
+        action_catalog(host.ok_or_else(action_denied)?, actor, method, query)
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
+    } else if path == "/v1/questions:catalog" {
+        ad_hoc_catalog(cell(host)?, questions, actor, method, query)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -318,7 +390,7 @@ pub fn handle_all<E: SqlEngine>(
                 |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
             ),
             (None, _) => definitions_query(query)
-                .and_then(|query| get_defs(host, &query, actor))
+                .and_then(|query| get_defs(cell(host)?, &query, actor))
                 .and_then(|document| document_json(&document)),
             (Some((name, "answer")), Some(runtime)) => parse(query, &["orgId", "environmentId"])
                 .and_then(|fields| {
@@ -326,7 +398,7 @@ pub fn handle_all<E: SqlEngine>(
                         org_id: fields.get("orgId").cloned(),
                         environment_id: fields.get("environmentId").cloned(),
                     };
-                    get_answer(host, &scope, actor, name, named(runtime))
+                    get_answer(cell(host)?, &scope, actor, name, named(runtime))
                 })
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => {
@@ -338,7 +410,7 @@ pub fn handle_all<E: SqlEngine>(
                             lineage_ref: fields.remove("lineageRef"),
                             bucket: fields.remove("bucket"),
                         };
-                        get_numeric_trace(host, &query, actor, name, named(runtime))
+                        get_numeric_trace(cell(host)?, &query, actor, name, named(runtime))
                     })
                     .and_then(|document| document_json(&document))
             }
@@ -349,23 +421,46 @@ pub fn handle_all<E: SqlEngine>(
                 "this cell admits only its declared questions",
             )),
         }
-    };
-    match result {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
-            body,
-        },
-        Err(refused) => Response {
-            status: refused.status,
-            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
-        },
     }
+}
+
+/// The cell a read service runs on. A scope with no cell answers the one
+/// opaque read denial, as every read service answers a caller nobody
+/// verified.
+fn cell<E: SqlEngine>(host: Option<&DevHost<E>>) -> Result<&DevHost<E>, Refusal> {
+    host.ok_or_else(norn_api::authz::read_denied)
+}
+
+/// `POST /v1/cell:provision` on a cell this dispatch already serves: a
+/// tenant host provisions a vacant scope before any cell route
+/// ([`crate::tenant::Tenant`]); a cell served here exists, so a provisioner
+/// is told so, and anyone else gets the opaque denial.
+fn provisioned<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    actor: Option<&str>,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    if request.method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a cell is provisioned with POST",
+        ));
+    }
+    let mut fields = parse(request.query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    definition_routes::authorize(cell(host)?, &scope, actor, Operation::ProvisionCell)?;
+    Err(norn_api::provision::already_provisioned())
 }
 
 /// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
 /// string and carrying the `QuestionIR` in a JSON body.
 fn ad_hoc_question<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: Option<&str>,
     method: &str,
@@ -391,6 +486,7 @@ fn ad_hoc_question<E: SqlEngine>(
     let (Some(runtime), Some(_)) = (questions, actor) else {
         return Err(norn_api::authz::read_denied());
     };
+    let host = cell(host)?;
     if listing {
         return document_json(&list_metrics(host, &scope, actor, runtime)?);
     }
@@ -406,6 +502,35 @@ fn ad_hoc_question<E: SqlEngine>(
         let request: AdHocTraceRequest = serde_json::from_str(body).map_err(malformed)?;
         document_json(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
     }
+}
+
+/// `GET /v1/questions:catalog`, scoped by the query string: what this caller
+/// may build an ad-hoc question from. A cell without a question runtime
+/// answers the one denial.
+fn ad_hoc_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    method: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    if method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the question catalog is read with GET",
+        ));
+    }
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    let Some(runtime) = questions else {
+        return Err(norn_api::authz::read_denied());
+    };
+    document_json(&question_catalog(host, &scope, actor, runtime)?)
 }
 
 /// HOST-ACTION-1: `POST /v1/actions/{actionId}`, scoped by the query string
@@ -438,7 +563,7 @@ fn action_catalog<E: SqlEngine>(
 }
 
 fn governed_action<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: Option<&str>,
     (method, action, query, body): (&str, &str, &str, &str),
@@ -470,6 +595,7 @@ fn governed_action<E: SqlEngine>(
     let (Some(runtime), Some(_)) = (questions, actor) else {
         return Err(action_denied());
     };
+    let host = host.ok_or_else(action_denied)?;
     let action = percent_encoding::percent_decode_str(action)
         .decode_utf8()
         .map_err(|_invalid| Refusal::invalid("the action path segment is not UTF-8"))?;
@@ -526,7 +652,7 @@ fn profiled<E: SqlEngine>(
 
 /// HOST-READ-6: `GET /v1/objects/{type}:quarantined`, scoped by the query string.
 fn quarantined<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     actor: Option<&str>,
     object_type: &str,
     query: &str,
@@ -537,7 +663,7 @@ fn quarantined<E: SqlEngine>(
         environment_id: fields.get("environmentId").cloned(),
     };
     document_json(&get_quarantined_objects(
-        host,
+        cell(host)?,
         &scope,
         actor,
         object_type,
@@ -549,7 +675,7 @@ fn quarantined<E: SqlEngine>(
 /// `:quarantined` ids, or an object's `/lineage` (optionally `?version=`),
 /// `/findings` and `/history`.
 fn review<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     actor: Option<&str>,
     (object_type, id, leaf): (&str, Option<&str>, Option<&str>),
     query: &str,
@@ -568,7 +694,7 @@ fn review<E: SqlEngine>(
 
 /// One object's review read, scoped by the query string.
 fn reviewed<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     actor: Option<&str>,
     (object_type, id, leaf): (&str, &str, &str),
     query: &str,
@@ -585,7 +711,7 @@ fn reviewed<E: SqlEngine>(
     };
     match (leaf, fields.get("version")) {
         ("findings", _) => document_json(&get_object_findings(
-            host,
+            cell(host)?,
             &scope,
             actor,
             object_type,
@@ -593,7 +719,7 @@ fn reviewed<E: SqlEngine>(
             &CellObjectAccess,
         )?),
         ("history", _) => document_json(&get_object_history(
-            host,
+            cell(host)?,
             &scope,
             actor,
             object_type,
@@ -605,7 +731,7 @@ fn reviewed<E: SqlEngine>(
                 .parse::<u64>()
                 .map_err(|_invalid| Refusal::invalid("version is a positive whole number"))?;
             document_json(&get_object_lineage_at(
-                host,
+                cell(host)?,
                 &scope,
                 actor,
                 (object_type, id, version),
@@ -613,7 +739,7 @@ fn reviewed<E: SqlEngine>(
             )?)
         }
         (_, None) => document_json(&get_object_lineage(
-            host,
+            cell(host)?,
             &scope,
             actor,
             object_type,
@@ -627,7 +753,7 @@ fn reviewed<E: SqlEngine>(
 /// `GET /v1/objects/{type}/{id}` and its `/links` and `/lineage`, scoped by
 /// the query string.
 fn objects<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     actor: Option<&str>,
     (object_type, id, leaf): (&str, Option<&str>, Option<&str>),
     query: &str,
@@ -643,7 +769,7 @@ fn objects<E: SqlEngine>(
     };
     let object_type = decoded(object_type)?;
     if let (None, Some(kind)) = (id, object_type.strip_suffix(":profile")) {
-        return profiled(host, actor, kind, query);
+        return profiled(cell(host)?, actor, kind, query);
     }
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
@@ -667,12 +793,13 @@ fn objects<E: SqlEngine>(
             limit: fields.remove("limit"),
             after: fields.remove("after"),
         };
+        let id = decoded(id)?;
         return document_json(&get_object_links(
-            host,
+            cell(host)?,
             &scope,
             actor,
             &object_type,
-            &decoded(id)?,
+            &id,
             &params,
             &CellObjectAccess,
         )?);
@@ -686,12 +813,13 @@ fn objects<E: SqlEngine>(
             org_id: fields.get("orgId").cloned(),
             environment_id: fields.get("environmentId").cloned(),
         };
+        let id = decoded(id)?;
         let record = get_queried_object(
-            host,
+            cell(host)?,
             &scope,
             actor,
             &object_type,
-            &decoded(id)?,
+            &id,
             &CellObjectAccess,
         )?;
         return document_json(&record);
@@ -718,7 +846,7 @@ fn objects<E: SqlEngine>(
         after: fields.remove("after"),
     };
     document_json(&get_object_query(
-        host,
+        cell(host)?,
         &scope,
         actor,
         &object_type,
@@ -758,7 +886,7 @@ fn definitions_route(path: &str) -> Option<DefinitionsRoute<'_>> {
 /// The retained-definition routes: each is authorized, with its explicit
 /// scope, before its body or other query values are interpreted.
 fn definitions<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     questions: Option<&dyn AdHocQuestions<E>>,
     kinds: &DefinitionKinds,
     actor: Option<&str>,
@@ -800,6 +928,7 @@ fn definitions<E: SqlEngine>(
     } else {
         Operation::ReadDefinitions
     };
+    let host = cell(host)?;
     definition_routes::authorize(host, &scope, actor, operation)?;
     let now_ms = request.now.saturating_mul(1000);
     let number = |name: &str, value: Option<String>| {
@@ -977,20 +1106,33 @@ pub fn access<E: SqlEngine>(
     object_types: &[String],
     request: &Request<'_>,
 ) -> Response {
-    match access_document(host, principals, caller, object_types, request) {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
-            body,
-        },
-        Err(refused) => Response {
-            status: refused.status,
-            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
-        },
-    }
+    respond(access_document(
+        Some(host),
+        principals,
+        caller,
+        object_types,
+        request,
+    ))
+}
+
+/// `GET /v1/access` on a scope that has no cell, for a caller nobody
+/// verified: what [`access`] answers it on a provisioned cell.
+#[must_use]
+pub fn access_outside<E: SqlEngine>(
+    principals: &dyn PrincipalResolver,
+    request: &Request<'_>,
+) -> Response {
+    respond(access_document::<E>(
+        None,
+        principals,
+        &CallerSlot::default(),
+        &[],
+        request,
+    ))
 }
 
 fn access_document<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     principals: &dyn PrincipalResolver,
     caller: &CallerSlot,
     object_types: &[String],
@@ -1009,6 +1151,7 @@ fn access_document<E: SqlEngine>(
         org_id: fields.get("orgId").cloned(),
         environment_id: fields.get("environmentId").cloned(),
     };
+    let host = cell(host)?;
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let subject = principals.resolve(request.authorization, request.now);

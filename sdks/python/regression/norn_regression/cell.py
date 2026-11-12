@@ -63,8 +63,35 @@ class Cell:
     def where(self) -> dict:
         return {"org_id": self.org_id, "environment_id": self.environment_id}
 
-    def rows(self, object_type: str) -> pd.DataFrame:
-        """Every object of the type the caller may read, as a dataframe with `id` and `version`."""
+    def export(self, object_type: str, columns: list[str]) -> pd.DataFrame | None:
+        """The columns through the cell's analytical engine (`:export`, Parquet): every row the
+        caller may read, nulls kept, `id` and `version` included. The answer's snapshot
+        (`Norn-Snapshot`) is in `frame.attrs["snapshot"]`. None when the host has no such
+        engine, so the caller falls back to the paged object route: 404 or 501, or 400 or
+        405 from a host that reads `{type}:export` as an object route. A refusal of the
+        caller's authority (403) is not a fallback: it raises."""
+        import io
+
+        answer = self.client.get_httpx_client().get(
+            f"/v1/objects/{object_type}:export",
+            params={"columns": ",".join(columns), "format": "parquet", "orgId": self.org_id, "environmentId": self.environment_id},
+        )
+        if answer.status_code in (400, 404, 405, 501):
+            return None
+        if answer.status_code != 200:
+            raise Refused(f"exporting {object_type} ({answer.status_code}): {answer.text}")
+        frame = pd.read_parquet(io.BytesIO(answer.content))
+        frame.attrs["snapshot"] = answer.headers.get("Norn-Snapshot")
+        frame.attrs["withheld"] = int(answer.headers.get("Norn-Withheld-Rows", "0"))
+        return frame
+
+    def rows(self, object_type: str, columns: list[str] | None = None) -> pd.DataFrame:
+        """Every object of the type the caller may read, as a dataframe with `id` and `version`.
+        With `columns`, read through the analytical engine when the host has one."""
+        if columns:
+            exported = self.export(object_type, columns)
+            if exported is not None:
+                return exported
         rows, after = [], None
         while True:
             page = query_objects.sync(object_type, client=self.client, limit=200, **self.where, **({"after": after} if after else {}))
@@ -112,11 +139,14 @@ def check_regression(object_type: str, target: str, features: list[str], *, cell
                      request: str | None = None) -> RegressionChecks:
     """Run the assumption suite on one object type and record the results in the cell.
     `request`: the stats.CheckRequest this run answers (the worker passes it); the spec links to it."""
-    rows = cell.rows(object_type)
-    missing = [name for name in [target, *features, *([order] if order else [])] if name not in rows.columns]
+    wanted = [target, *features, *([order] if order else [])]
+    rows = cell.rows(object_type, wanted)
+    missing = [name for name in wanted if name not in rows.columns]
     if missing:
         raise ValueError(f"{object_type} has no field {', '.join(missing)} (fields: {', '.join(c for c in rows.columns if c not in ('id', 'version'))})")
-    dataset = revision(rows)
+    # The engine's snapshot when it answered (the same snapshot re-exports the same rows),
+    # else a hash of every row's id and version.
+    dataset = rows.attrs.get("snapshot") or revision(rows)
     identity = json.dumps([object_type, target, sorted(features), order, SUITE_VERSION, dataset, *([request] if request else [])], separators=(",", ":"))
     spec_id = "ms-" + hashlib.sha256(identity.encode()).hexdigest()[:24]
     checks, plots = assumption_suite(rows, target, list(features), order)
