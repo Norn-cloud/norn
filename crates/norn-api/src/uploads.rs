@@ -137,6 +137,16 @@ impl S3Config {
         }
     }
 
+    /// A seal of `text` under this store's secret (HMAC-SHA256, 128 bits as
+    /// hex): proves the cell issued an upload id, without keeping it.
+    #[must_use]
+    pub fn seal(&self, text: &str) -> String {
+        hex(&hmac(self.secret_access_key.as_bytes(), text.as_bytes()))
+            .chars()
+            .take(32)
+            .collect()
+    }
+
     /// The object's URI as the cell records it.
     #[must_use]
     pub fn uri(&self, key: &str) -> String {
@@ -245,7 +255,9 @@ fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-fn hex(bytes: &[u8]) -> String {
+/// `bytes` as lowercase hex.
+#[must_use]
+pub fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().saturating_mul(2));
     for byte in bytes {
         // Writing to a String cannot fail.
@@ -561,6 +573,10 @@ pub struct LoadRequest {
     /// Each column's accepted kind; a column left out is loaded as inferred.
     #[serde(default)]
     pub columns: Vec<ColumnChoice>,
+    /// The SHA-256 `:complete` returned; a cell that no longer remembers the
+    /// upload checks the object against it (UPLOAD-DIGEST-1).
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 /// One column's accepted kind, or its exclusion.
