@@ -26,7 +26,6 @@ export const PAGES = {
   "/canvas": "/canvas",
   "/guarantees": "/guarantees",
   "/connections": "/connections",
-  "/status": "/status",
 } as const
 
 export type PagePath = keyof typeof PAGES

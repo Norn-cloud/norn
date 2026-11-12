@@ -162,7 +162,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
     <section className="space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          {heading === "h1" ? <h1 className="text-title font-medium">{headline(question)}</h1>
+          {heading === "h1" ? <h1 className="text-title font-semibold tracking-tight">{headline(question)}</h1>
             : heading === "h3" ? <h3 className="font-medium">{headline(question)}</h3>
             : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{headline(question)}</Link> : headline(question)}</h2>}
           <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
