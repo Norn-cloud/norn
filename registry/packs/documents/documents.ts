@@ -26,6 +26,20 @@ export const SourceDocumentLine = Norn.interfaceType({
   properties: Schema.Struct({ id: Schema.String, line_no: Schema.Int, description: Schema.String, currency: Schema.Literals(["USD"]), amount: Money }),
 })
 
+export const BookedEntry = Norn.interfaceType({
+  name: "docs.BookedEntry", title: "Booked journal entry", version: "0.1.0",
+  description: "The journal entry a document was booked to, as the ledger reports it: one signed amount, positive for a debit.",
+  properties: Schema.Struct({ id: Schema.String, entry_number: Schema.String, currency: Schema.Literals(["USD"]), amount: Money }),
+})
+
+export const LedgerEntry = Norn.type({
+  name: "docs.LedgerEntry", title: "Ledger entry", version: "0.1.0", role: "happening",
+  description: "A posted journal entry a scanned document was booked to, as the ledger exports it. It is evidence of the booking, not a posting command.",
+  implements: [BookedEntry],
+  properties: Schema.Struct({ id: Schema.String, entry_number: Schema.String, account_code: Schema.String, currency: Schema.Literals(["USD"]), amount: Money, posted_on: Norn.date() }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+
 export const ScannedDocument = Norn.type({
   name: "docs.ScannedDocument", title: "Scanned document", version: "0.1.0", role: "thing",
   description: "A scanned receipt, invoice or expense report as its extractor read it. `lines_total` is the mapping's sum of the printed line amounts (null when the document prints no lines). A correction is a governed patch that records its reason, its evidence and the verified actor.",
@@ -39,6 +53,7 @@ export const ScannedDocument = Norn.type({
     correction_reason: Schema.NullOr(Schema.String), corrected_by: Schema.NullOr(Schema.String), correction_evidence: Schema.NullOr(Schema.String),
   }),
   identity: [{ name: "primary", properties: ["id"] }],
+  links: [{ id: "ledger_entry", target: LedgerEntry, cardinality: { to: "one", from: "one" } }],
 })
 
 export const DocumentLine = Norn.type({
@@ -70,6 +85,25 @@ export const TotalMatchesLines = Norn.law("total_matches_lines", {
   because: "A document's printed total must equal the sum of its printed lines; when they differ, a digit was usually misread or a decimal point dropped.",
 })
 
+/**
+ * LAW B (LAW-LINK-1): a document booked to a journal entry must carry that
+ * entry's amount. It reads the one entry the document links to, in the same
+ * snapshot; a document with no booked entry is not bound by it.
+ */
+export const TotalMatchesLedger = Norn.law({
+  id: "docs.ScannedDocument.total_matches_ledger.law", title: "A booked document's total equals its journal entry", version: "0.1.0",
+  dependencies: [{ artifactId: "docs.ScannedDocument.entity", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1", id: "docs.ScannedDocument.total_matches_ledger", owner: "docs",
+    severity: "error", rationale: "A document booked to a journal entry must carry that entry's amount; a document that disagrees with its own booking was misread or mis-booked.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/documents/documents.ts" },
+    subject: "docs.ScannedDocument",
+    scope: { root: { kind: "entity", id: "docs.ScannedDocument" }, objectTypes: ["docs.ScannedDocument"] },
+    condition: "self.ledger_entry != null",
+    modality: { kind: "always" }, response: { kind: "predicate", expression: "self.total == self.ledger_entry.amount" },
+  },
+})
+
 export const Source = Norn.sourceSchema({
   id: "docs.scans.source", title: "Synthetic scanned documents, as extracted", version: "0.1.0",
   source: { system: "synthetic-scans", instance: "demo", version: "scans-v1" },
@@ -79,6 +113,7 @@ export const Source = Norn.sourceSchema({
     { id: "Scanned Document", nativeName: "Extracted document", kind: "document" },
     { id: "Document Line", nativeName: "Extracted printed line", kind: "child_document" },
     { id: "Field Evidence", nativeName: "Where one value was read", kind: "child_document" },
+    { id: "Journal Entry", nativeName: "The posted journal entry a document was booked to", kind: "document" },
   ],
   fields: [
     { dataset: "Scanned Document", name: "name", ordinal: 0, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
@@ -117,15 +152,23 @@ export const Source = Norn.sourceSchema({
     { dataset: "Field Evidence", name: "extractor", ordinal: 12, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Field Evidence", name: "extractor_version", ordinal: 13, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Field Evidence", name: "confidence_bp", ordinal: 14, nativeType: "Integer", typeCandidate: { type: "integer", origin: "declared" }, required: false },
+    { dataset: "Journal Entry", name: "name", ordinal: 0, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
+    { dataset: "Journal Entry", name: "entry_number", ordinal: 1, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
+    { dataset: "Journal Entry", name: "account_code", ordinal: 2, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
+    { dataset: "Journal Entry", name: "currency", ordinal: 3, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
+    { dataset: "Journal Entry", name: "amount", ordinal: 4, nativeType: "Decimal", typeCandidate: { type: "decimal", origin: "declared" }, required: true },
+    { dataset: "Journal Entry", name: "posted_on", ordinal: 5, nativeType: "Date", typeCandidate: { type: "date", origin: "declared" }, required: true },
   ],
   codeSets: [
     { id: "kind", dataset: "Scanned Document", field: "kind", origin: "declared", values: [{ value: "receipt" }, { value: "invoice" }, { value: "expense_report" }] },
     { id: "currency", dataset: "Scanned Document", field: "currency", origin: "declared", values: [{ value: "USD" }] },
+    { id: "entry_currency", dataset: "Journal Entry", field: "currency", origin: "declared", values: [{ value: "USD" }] },
   ],
   constraints: [
     { id: "document_identity", kind: "primary_key", dataset: "Scanned Document", fields: ["name"], origin: "declared" },
     { id: "line_identity", kind: "primary_key", dataset: "Document Line", fields: ["name"], origin: "declared" },
     { id: "evidence_identity", kind: "primary_key", dataset: "Field Evidence", fields: ["name"], origin: "declared" },
+    { id: "entry_identity", kind: "primary_key", dataset: "Journal Entry", fields: ["name"], origin: "declared" },
     { id: "lines", kind: "parent_child", dataset: "Document Line", fields: ["parent"], target: { dataset: "Scanned Document", fields: ["name"] }, collection: "lines", origin: "declared" },
     { id: "evidence", kind: "parent_child", dataset: "Field Evidence", fields: ["parent"], target: { dataset: "Scanned Document", fields: ["name"] }, collection: "evidence", origin: "declared" },
   ],
@@ -134,7 +177,7 @@ export const Source = Norn.sourceSchema({
 export const Mapping = Norn.mapping({
   id: "docs.scans.mapping", title: "Extracted documents, lines and field evidence", version: "0.1.0",
   source: { schemaId: "docs.scans.source", version: "0.1.0", sha256: "92a09d31598c15246cdd783553e772a9196c4bc9de9a6bca75751c0bf96c8181" },
-  sourceContract: { kind: "generic" }, interfaces: [SourceDocument, SourceDocumentLine, SourceEvidence],
+  sourceContract: { kind: "generic" }, interfaces: [SourceDocument, SourceDocumentLine, SourceEvidence, BookedEntry],
   maps: [
     {
       id: "document", source: { dataset: "Scanned Document" }, target: { type: ScannedDocument, interface: SourceDocument },
@@ -151,9 +194,18 @@ export const Mapping = Norn.mapping({
         { property: "extractor", value: "input.extractor" }, { property: "extractor_version", value: "input.extractor_version" },
         { property: "correction_reason", value: "null" }, { property: "corrected_by", value: "null" }, { property: "correction_evidence", value: "null" },
       ],
+      links: [{ link: "ledger_entry", targetMap: "ledger_entry", key: "input.ledger_ref" }],
       ignoredFields: [
-        { field: "ledger_ref", reason: "The linked ledger entry is checked by LAW B (#343), a later unit; until then the reference stays in the source document only." },
         { field: "evidence", reason: "Mapped row by row by the evidence map." },
+      ],
+    },
+    {
+      id: "ledger_entry", source: { dataset: "Journal Entry" }, target: { type: LedgerEntry, interface: BookedEntry },
+      subject: "input.name", sourceRecord: "'synthetic-scans/ledger/' + input.entry_number",
+      properties: [
+        { property: "id", value: "input.name" }, { property: "entry_number", value: "input.entry_number" },
+        { property: "account_code", value: "input.account_code" }, { property: "currency", value: "input.currency" },
+        { property: "amount", value: "input.amount" }, { property: "posted_on", value: "input.posted_on" },
       ],
     },
     {
@@ -186,7 +238,7 @@ export const Mapping = Norn.mapping({
 })
 
 const CorrectionInput = Schema.Struct({
-  id: Schema.String, currency: Schema.Literals(["USD"]), total: Money,
+  id: Schema.String, currency: Schema.Literals(["USD"]), total: Money, lines_total: Schema.optionalKey(Money),
   correction_reason: Schema.String, correction_evidence: Schema.String,
   corrected_by: Schema.optionalKey(Schema.String),
 })
@@ -203,7 +255,8 @@ export const CorrectScannedDocument = Norn.action({
   input: CorrectionInput, output: Schema.Struct({ id: Schema.String }),
   inputLabels: {
     id: { title: "Document", description: "The scanned document to correct." },
-    total: { title: "Corrected total", description: "The total as printed on the scanned page. It must still equal the sum of the printed lines." },
+    total: { title: "Corrected total", description: "The total as printed on the scanned page. It must equal the sum of the printed lines and, for a booked document, its journal entry." },
+    lines_total: { title: "Corrected sum of lines", description: "Only when a printed line was misread too: the sum of the lines as printed." },
     correction_reason: { title: "Reason", description: "Why the imported value is wrong, kept with the correction." },
     correction_evidence: { title: "Evidence", description: "The evidence object the correction rests on, for example SCAN-INV-0042~total; copy it from the evidence beside the value." },
   },

@@ -859,6 +859,18 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     if authorization.is_some() {
         return Ok(());
     }
+    let index = crate::governing_laws::link_law_index(model.catalog).map_err(|reason| {
+        CommitError::Law {
+            key: commit.writes.first().map_or_else(
+                || FactKey::new("norn.Commit", ""),
+                |write| write.key.clone(),
+            ),
+            reason,
+        }
+    })?;
+    if index.is_empty() {
+        return Ok(());
+    }
     // A subject whose link changed, and every subject of a written target,
     // is checked against the state the commit leaves.
     let mut subjects = BTreeSet::new();
@@ -874,12 +886,10 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
                 || key.source.clone(),
                 |ty| FactKey::new(ty.as_str(), key.source.key.clone()),
             );
-        if crate::governing_laws::reads_links(model.catalog, &source.object_type).map_err(
-            |reason| CommitError::Law {
-                key: source.clone(),
-                reason,
-            },
-        )? {
+        if index
+            .iter()
+            .any(|(subject, link, _)| *link == key.link && model.is_a(&source.object_type, subject))
+        {
             subjects.insert(source);
         }
     }
@@ -892,11 +902,13 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
             .concrete(&target)
             .map_err(CommitError::Host)?
             .unwrap_or_else(|| write.key.object_type.clone());
-        let readers = crate::governing_laws::laws_reading_target(model.catalog, &concrete)
-            .map_err(|reason| CommitError::Law {
-                key: write.key.clone(),
-                reason,
-            })?;
+        let readers: Vec<_> = index
+            .iter()
+            .filter(|(_, _, declared)| {
+                crate::governing_laws::reaches(model.catalog, &concrete, declared)
+            })
+            .map(|(subject, link, _)| (subject.clone(), link.clone()))
+            .collect();
         if readers.is_empty() {
             continue;
         }

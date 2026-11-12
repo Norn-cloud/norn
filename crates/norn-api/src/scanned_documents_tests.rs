@@ -54,6 +54,7 @@ const DOCUMENT: &str = "docs.ScannedDocument";
 const EVIDENCE: &str = "docs.FieldEvidence";
 const CORRECT: &str = "docs.scanned_document.correct";
 const LAW: &str = "docs.ScannedDocument.total_matches_lines.law";
+const LAW_B: &str = "docs.ScannedDocument.total_matches_ledger.law";
 const STEWARD: &str = "user:steward";
 const EXTRACTED_AT_MS: u64 = 1_793_620_800_000;
 
@@ -420,6 +421,19 @@ fn correct(
 
 /// A stored value as text. Decimals are stored by value (`72.00` is `72`);
 /// the property's declared scale formats them for display.
+/// The law artifacts a set of findings is pinned to, sorted.
+fn law_pins(findings: &[norn_ir::DataQualityFinding]) -> Vec<String> {
+    let mut pins: Vec<String> = findings
+        .iter()
+        .filter_map(|finding| match &finding.rule_ref {
+            DataQualityRuleRef::Law { artifact_id, .. } => Some(artifact_id.clone()),
+            DataQualityRuleRef::Invariant { .. } | DataQualityRuleRef::Builtin { .. } => None,
+        })
+        .collect();
+    pins.sort();
+    pins
+}
+
 fn text(record: &ObjectRecord, property: &str) -> String {
     match record.values.get(property) {
         Some(RuntimeValue::String(text)) => text.clone(),
@@ -462,14 +476,39 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
     let findings = reader
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("findings");
-    assert_eq!(findings.len(), 1, "{findings:#?}");
-    let finding = &findings[0];
-    assert_eq!(finding.status, DataQualityFindingStatus::Open);
-    match &finding.rule_ref {
-        DataQualityRuleRef::Law { artifact_id, .. } => assert_eq!(artifact_id, LAW),
-        other @ (DataQualityRuleRef::Invariant { .. } | DataQualityRuleRef::Builtin { .. }) => {
-            panic!("the finding is pinned to LAW A, not {other:?}")
+    // 720 breaks both laws: its lines sum to 72 and its booked entry is 72.00.
+    assert_eq!(law_pins(&findings), [LAW, LAW_B], "{findings:#?}");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.status == DataQualityFindingStatus::Open)
+    );
+
+    // LAW B alone: INV-0043's one line and its total were both read as 720, so
+    // its lines agree with its total; only its booked entry (72.00) does not.
+    let both_misread = reader
+        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .expect("read")
+        .expect("raw read");
+    assert!(
+        reader
+            .observation_is_quarantined(MAIN_WORLD, &both_misread)
+            .expect("quality")
+    );
+    let findings = reader
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .expect("findings");
+    assert_eq!(law_pins(&findings), [LAW_B], "{findings:#?}");
+    match &findings[0].outcome {
+        norn_ir::DataQualityOutcome::Linked { links, outcome } => {
+            assert_eq!(
+                links.get("ledger_entry"),
+                Some(&FactRef::new("docs.LedgerEntry", "demo/ledger/JE-0043", 1)),
+                "the finding pins the exact entry version it read"
+            );
+            assert_eq!(**outcome, norn_ir::DataQualityOutcome::NotSatisfied);
         }
+        other => panic!("a link law's finding pins its targets: {other:?}"),
     }
 
     // Where the total was read survives the quarantine of the document.
@@ -656,7 +695,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     )
     .expect("a reviewer reads the findings of a quarantined document");
     assert!(findings.quarantined);
-    assert_eq!(findings.findings.len(), 1);
+    assert_eq!(findings.findings.len(), 2);
     assert!(
         findings.evidence.iter().any(
             |evidence| evidence.object_type == EVIDENCE && evidence.id == "SCAN-INV-0042~total"
@@ -690,7 +729,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
             .iter()
             .map(|item| (item.id.as_str(), item.open_findings))
             .collect::<Vec<_>>(),
-        [("SCAN-INV-0042", 1)]
+        [("SCAN-INV-0042", 2), ("SCAN-INV-0043", 1)]
     );
     let before = host
         .cell()
@@ -733,6 +772,50 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     let findings = reader
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("findings");
-    assert_eq!(findings.len(), 1, "the original finding is retained");
+    assert_eq!(findings.len(), 2, "the original findings are retained");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.status == DataQualityFindingStatus::Resolved),
+        "both laws hold again: {findings:#?}"
+    );
+    drop(reader);
+    drop(cell);
+    corrections_under_the_ledger_law(&host);
+}
+
+/// LAW-LINK-1 on a native write: INV-0043 printed one line of 72.00 and a
+/// total of 72.00, booked as JE-0043 (72.00); the import read 720 for both.
+fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
+    let refused = |key: &str, total: &str, lines: &str| {
+        let body = format!(
+            r#"{{"idempotencyKey":"{key}","input":{{"id":"SCAN-INV-0043","currency":"USD","total":"{total}","lines_total":"{lines}","correction_reason":"r","correction_evidence":"SCAN-INV-0043~total"}}}}"#
+        );
+        correct(host, STEWARD, &body).expect_err("refused")
+    };
+    // Fixing the total alone breaks LAW A: the line still reads 720.
+    assert_eq!(refused("only-total", "72.00", "720").status, 422);
+    // Agreeing with the lines but not the booked entry breaks LAW B, through the link.
+    let ledger = refused("off-ledger", "70.00", "70.00");
+    assert_eq!(ledger.status, 422, "{ledger:?}");
+    correct(
+        host,
+        STEWARD,
+        r#"{"idempotencyKey":"inv-0043","input":{"id":"SCAN-INV-0043","currency":"USD","total":"72.00","lines_total":"72.00","correction_reason":"Line and total both read 720; the scan and journal entry JE-0043 say 72.00.","correction_evidence":"SCAN-INV-0043~total"}}"#,
+    )
+    .expect("a correction that agrees with the lines and the booked entry commits");
+    let cell = host.cell().expect("cell");
+    let reader = cell.store().read();
+    let findings = reader
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .expect("findings");
+    assert_eq!(law_pins(&findings), [LAW_B]);
     assert_eq!(findings[0].status, DataQualityFindingStatus::Resolved);
+    assert!(
+        reader
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+            .expect("read")
+            .is_some(),
+        "released from quarantine"
+    );
 }

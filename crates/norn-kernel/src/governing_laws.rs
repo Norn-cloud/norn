@@ -182,16 +182,19 @@ pub fn reads_links(
     Ok(false)
 }
 
-/// The laws (artifact and declaration) whose subject may be `subject` and that
-/// read a link to a type `target` is (LAW-LINK-1's other side).
+/// LAW-LINK-1: every (subject type, link, declared target type) a governing
+/// law reads, once per catalog. Empty for a catalog without link laws, which
+/// then pays nothing for them.
 ///
 /// # Errors
 /// As [`law_link_reads`].
-pub fn laws_reading_target<'a>(
-    catalog: &TypeCatalog<'a>,
-    target: &ObjectTypeName,
-) -> Result<Vec<(ObjectTypeName, String)>, LawEvaluationError> {
-    let mut found = Vec::new();
+pub fn link_law_index(
+    catalog: &TypeCatalog<'_>,
+) -> Result<Vec<(ObjectTypeName, String, ObjectTypeName)>, LawEvaluationError> {
+    let mut index = Vec::new();
+    if catalog.law_artifacts.is_empty() {
+        return Ok(index);
+    }
     for subject in &catalog.object_type_names() {
         for artifact in catalog.governing_laws(subject)? {
             let law = decode(artifact)?;
@@ -205,21 +208,31 @@ pub fn laws_reading_target<'a>(
                             .into_iter()
                             .find(|declared| declared.id.as_str() == link)
                     });
-                let reaches = declared.is_some_and(|declared| {
-                    declared.target == *target
-                        || catalog
-                            .ancestry(target)
-                            .iter()
-                            .any(|ty| ty.name == declared.target)
-                        || catalog.implements(target, declared.target.as_str())
-                });
-                if reaches && !found.contains(&(subject.clone(), link.clone())) {
-                    found.push((subject.clone(), link));
+                if let Some(declared) = declared {
+                    let entry = (subject.clone(), link, declared.target.clone());
+                    if !index.contains(&entry) {
+                        index.push(entry);
+                    }
                 }
             }
         }
     }
-    Ok(found)
+    Ok(index)
+}
+
+/// Whether `target` is (or extends, or implements) a link's declared target.
+#[must_use]
+pub fn reaches(
+    catalog: &TypeCatalog<'_>,
+    target: &ObjectTypeName,
+    declared: &ObjectTypeName,
+) -> bool {
+    target == declared
+        || catalog
+            .ancestry(target)
+            .iter()
+            .any(|ty| ty.name == *declared)
+        || catalog.implements(target, declared.as_str())
 }
 
 /// The expression object of stored values.
