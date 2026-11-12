@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_checker::transform::eval::{InputRow, TransformInput, evaluate};
 use norn_checker::transform::{admit, codes};
 use norn_checker::{Diagnostic, EntityArtifactSetContext, check_artifact_set};
-use norn_ir::{ArtifactEnvelope, Decimal, RuntimeValue, TimeGrain};
+use norn_ir::metric::TimeGrain;
+use norn_ir::{ArtifactEnvelope, Decimal, RuntimeValue};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 
@@ -557,16 +558,22 @@ fn windows_and_dedupes_need_a_total_order() {
         links: BTreeMap::new(),
     };
     let out = evaluate(&plan, &input).expect("evaluated");
-    let by_id: BTreeMap<_, _> = out
+    let by_id: BTreeMap<String, _> = out
         .rows
         .iter()
-        .map(|r| (r.values["id"].clone(), r))
+        .map(|r| (format!("{:?}", r.values["id"]), r))
         .collect();
-    assert_eq!(by_id[&s("o2")].values["n"], num("2"));
-    assert_eq!(by_id[&s("o2")].values["running"], num("3"));
-    assert_eq!(by_id[&s("o2")].values["previous"], num("1"));
-    assert_eq!(by_id[&s("o1")].values["previous"], RuntimeValue::Null);
-    assert_eq!(by_id[&s("o3")].values["n"], num("1"));
+    assert_eq!(by_id[&format!("{:?}", s("o2"))].values["n"], num("2"));
+    assert_eq!(by_id[&format!("{:?}", s("o2"))].values["running"], num("3"));
+    assert_eq!(
+        by_id[&format!("{:?}", s("o2"))].values["previous"],
+        num("1")
+    );
+    assert_eq!(
+        by_id[&format!("{:?}", s("o1"))].values["previous"],
+        RuntimeValue::Null
+    );
+    assert_eq!(by_id[&format!("{:?}", s("o3"))].values["n"], num("1"));
     // A running sum of money partitions by its currency.
     refuses(
         with(
