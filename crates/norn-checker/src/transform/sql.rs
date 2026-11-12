@@ -39,14 +39,30 @@ pub struct SqlPlan {
     pub output: String,
 }
 
-fn refusal(message: impl Into<String>, at: usize) -> Diagnostic {
-    Diagnostic {
-        code: DiagnosticCode::new(SQL_UNSUPPORTED),
-        severity: DiagnosticSeverity::Error,
+/// Why and where the dialect refuses; a diagnostic only at the boundary.
+#[derive(Debug)]
+struct Refusal {
+    message: String,
+    at: usize,
+}
+
+impl Refusal {
+    fn into_diagnostic(self) -> Diagnostic {
+        Diagnostic {
+            code: DiagnosticCode::new(SQL_UNSUPPORTED),
+            severity: DiagnosticSeverity::Error,
+            message: self.message,
+            span: Some(Span::pointer(format!("/sql/{}", self.at))),
+            artifact_id: None,
+            remediation: Some(DiagnosticRemediation::FixDefinition),
+        }
+    }
+}
+
+fn refusal(message: impl Into<String>, at: usize) -> Refusal {
+    Refusal {
         message: message.into(),
-        span: Some(Span::pointer(format!("/sql/{at}"))),
-        artifact_id: None,
-        remediation: Some(DiagnosticRemediation::FixDefinition),
+        at,
     }
 }
 
@@ -60,7 +76,7 @@ enum Token {
 }
 
 /// Tokens with their byte offsets.
-fn tokenize(source: &str) -> Result<Vec<(Token, usize)>, Diagnostic> {
+fn tokenize(source: &str) -> Result<Vec<(Token, usize)>, Refusal> {
     const SYMBOLS: [&str; 15] = [
         "<>", "!=", "<=", ">=", "=", "<", ">", "+", "-", "*", "/", "(", ")", ",", ".",
     ];
@@ -234,7 +250,7 @@ impl Parser {
         found
     }
 
-    fn expect_keyword(&mut self, word: &str) -> Result<(), Diagnostic> {
+    fn expect_keyword(&mut self, word: &str) -> Result<(), Refusal> {
         if self.eat_keyword(word) {
             Ok(())
         } else {
@@ -254,7 +270,7 @@ impl Parser {
         found
     }
 
-    fn expect_symbol(&mut self, symbol: &str) -> Result<(), Diagnostic> {
+    fn expect_symbol(&mut self, symbol: &str) -> Result<(), Refusal> {
         if self.eat_symbol(symbol) {
             Ok(())
         } else {
@@ -262,7 +278,7 @@ impl Parser {
         }
     }
 
-    fn identifier(&mut self) -> Result<String, Diagnostic> {
+    fn identifier(&mut self) -> Result<String, Refusal> {
         let at = self.at();
         match self.next() {
             Some(Token::Word(word)) if !RESERVED.iter().any(|r| r.eq_ignore_ascii_case(&word)) => {
@@ -273,7 +289,7 @@ impl Parser {
         }
     }
 
-    fn query(&mut self) -> Result<Vec<Select>, Diagnostic> {
+    fn query(&mut self) -> Result<Vec<Select>, Refusal> {
         let mut selects = vec![self.select()?];
         while self.eat_keyword("union") {
             if !self.eat_keyword("all") {
@@ -296,7 +312,7 @@ impl Parser {
         Ok(selects)
     }
 
-    fn source(&mut self) -> Result<Source, Diagnostic> {
+    fn source(&mut self) -> Result<Source, Refusal> {
         let name = self.identifier()?;
         let name = if self.eat_symbol(".") {
             format!("{name}.{}", self.identifier()?)
@@ -317,7 +333,7 @@ impl Parser {
         Ok(Source { name, alias })
     }
 
-    fn select(&mut self) -> Result<Select, Diagnostic> {
+    fn select(&mut self) -> Result<Select, Refusal> {
         self.expect_keyword("select")?;
         if self.keyword("distinct") {
             return Err(refusal(
@@ -412,7 +428,7 @@ impl Parser {
         })
     }
 
-    fn expression(&mut self) -> Result<Ex, Diagnostic> {
+    fn expression(&mut self) -> Result<Ex, Refusal> {
         let mut left = self.conjunction()?;
         while self.eat_keyword("or") {
             left = Ex::Binary("or", Box::new(left), Box::new(self.conjunction()?));
@@ -420,7 +436,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn conjunction(&mut self) -> Result<Ex, Diagnostic> {
+    fn conjunction(&mut self) -> Result<Ex, Refusal> {
         let mut left = self.negation()?;
         while self.eat_keyword("and") {
             left = Ex::Binary("and", Box::new(left), Box::new(self.negation()?));
@@ -428,14 +444,14 @@ impl Parser {
         Ok(left)
     }
 
-    fn negation(&mut self) -> Result<Ex, Diagnostic> {
+    fn negation(&mut self) -> Result<Ex, Refusal> {
         if self.eat_keyword("not") {
             return Ok(Ex::Not(Box::new(self.negation()?)));
         }
         self.comparison()
     }
 
-    fn comparison(&mut self) -> Result<Ex, Diagnostic> {
+    fn comparison(&mut self) -> Result<Ex, Refusal> {
         let left = self.sum()?;
         if self.eat_keyword("is") {
             let negated = self.eat_keyword("not");
@@ -464,7 +480,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn sum(&mut self) -> Result<Ex, Diagnostic> {
+    fn sum(&mut self) -> Result<Ex, Refusal> {
         let mut left = self.product()?;
         loop {
             if self.eat_symbol("+") {
@@ -477,7 +493,7 @@ impl Parser {
         }
     }
 
-    fn product(&mut self) -> Result<Ex, Diagnostic> {
+    fn product(&mut self) -> Result<Ex, Refusal> {
         let mut left = self.unary()?;
         loop {
             if self.eat_symbol("*") {
@@ -490,7 +506,7 @@ impl Parser {
         }
     }
 
-    fn unary(&mut self) -> Result<Ex, Diagnostic> {
+    fn unary(&mut self) -> Result<Ex, Refusal> {
         if self.eat_symbol("-") {
             return Ok(Ex::Negate(Box::new(self.unary()?)));
         }
@@ -501,7 +517,7 @@ impl Parser {
         clippy::too_many_lines,
         reason = "one primary-expression grammar, read top to bottom"
     )]
-    fn primary(&mut self) -> Result<Ex, Diagnostic> {
+    fn primary(&mut self) -> Result<Ex, Refusal> {
         let at = self.at();
         if self.eat_symbol("(") {
             let inner = self.expression()?;
@@ -553,7 +569,7 @@ impl Parser {
             Some(Token::Word(_) | Token::Quoted(_)) => {
                 let first = self.identifier()?;
                 if self.eat_symbol("(") {
-                    return self.call(first, at);
+                    return self.call(&first, at);
                 }
                 if self.eat_symbol(".") {
                     let column = self.identifier()?;
@@ -565,7 +581,7 @@ impl Parser {
         }
     }
 
-    fn call(&mut self, name: String, at: usize) -> Result<Ex, Diagnostic> {
+    fn call(&mut self, name: &str, at: usize) -> Result<Ex, Refusal> {
         let lower = name.to_ascii_lowercase();
         let mut call = Call {
             name: lower.clone(),
@@ -674,13 +690,15 @@ const RESERVED: [&str; 31] = [
 /// `derived.validation.sql_unsupported` at the first construct without a
 /// typed operator, an unknown type, alias or column, or an undeclared join.
 pub fn lower_sql(source: &str, catalog: &EffectiveCatalog) -> Result<SqlPlan, Vec<Diagnostic>> {
-    let tokens = tokenize(source).map_err(|d| vec![d])?;
+    let tokens = tokenize(source).map_err(|refused| vec![refused.into_diagnostic()])?;
     let mut parser = Parser {
         tokens,
         position: 0,
         end: source.len(),
     };
-    let selects = parser.query().map_err(|d| vec![d])?;
+    let selects = parser
+        .query()
+        .map_err(|refused| vec![refused.into_diagnostic()])?;
     let mut lowering = Lowering {
         catalog,
         nodes: Map::new(),
@@ -689,7 +707,11 @@ pub fn lower_sql(source: &str, catalog: &EffectiveCatalog) -> Result<SqlPlan, Ve
     };
     let mut outputs = Vec::new();
     for select in &selects {
-        outputs.push(lowering.select(select).map_err(|d| vec![d])?);
+        outputs.push(
+            lowering
+                .select(select)
+                .map_err(|refused| vec![refused.into_diagnostic()])?,
+        );
     }
     let output = if let [only] = outputs.as_slice() {
         only.clone()
@@ -715,13 +737,58 @@ struct Scope {
 }
 
 impl Scope {
-    fn column(&self, alias: Option<&str>, column: &str, at: usize) -> Result<String, Diagnostic> {
+    fn column(&self, alias: Option<&str>, column: &str, at: usize) -> Result<String, Refusal> {
         let alias = alias.unwrap_or(&self.base);
         let (_, prefix) = self
             .aliases
             .get(alias)
             .ok_or_else(|| refusal(format!("no source is named {alias:?}"), at))?;
         Ok(format!("{prefix}{column}"))
+    }
+
+    /// ZEN over `input.<column>` for a row expression; aggregates and windows refuse.
+    fn zen(&self, ex: &Ex, at: usize) -> Result<String, Refusal> {
+        Ok(match ex {
+            Ex::Column(alias, column) => {
+                format!("input.{}", self.column(alias.as_deref(), column, at)?)
+            }
+            Ex::Number(number) => number.clone(),
+            Ex::Text(text) => zen_text(text),
+            Ex::Bool(flag) => flag.to_string(),
+            Ex::Null => "null".to_owned(),
+            Ex::Not(inner) => format!("not ({})", self.zen(inner, at)?),
+            Ex::Negate(inner) => format!("-({})", self.zen(inner, at)?),
+            Ex::Binary(op, left, right) => {
+                format!("({} {op} {})", self.zen(left, at)?, self.zen(right, at)?)
+            }
+            Ex::IsNull(inner, negated) => format!(
+                "({} {} null)",
+                self.zen(inner, at)?,
+                if *negated { "!=" } else { "==" }
+            ),
+            Ex::Case(condition, then, otherwise) => format!(
+                "({} ? {} : {})",
+                self.zen(condition, at)?,
+                self.zen(then, at)?,
+                self.zen(otherwise, at)?
+            ),
+            Ex::Coalesce(args) => {
+                if args.len() < 2 {
+                    return Err(refusal("COALESCE takes two or more values", at));
+                }
+                let parts = args
+                    .iter()
+                    .map(|arg| self.zen(arg, at))
+                    .collect::<Result<Vec<_>, _>>()?;
+                format!("({})", parts.join(" ?? "))
+            }
+            Ex::Call(call) => {
+                return Err(refusal(
+                    format!("{} is not a row expression here", call.name.to_uppercase()),
+                    call.at,
+                ));
+            }
+        })
     }
 }
 
@@ -742,7 +809,7 @@ impl Lowering<'_> {
         format!("{stem}_{}", self.counter)
     }
 
-    fn scan(&mut self, source: &Source, at: usize) -> Result<String, Diagnostic> {
+    fn scan(&mut self, source: &Source, at: usize) -> Result<String, Refusal> {
         if !matches!(self.catalog.object_type_named(&source.name), Some(Ok(_))) {
             return Err(refusal(
                 format!("no object type is named {:?}", source.name),
@@ -766,59 +833,12 @@ impl Lowering<'_> {
         Ok(id)
     }
 
-    /// ZEN over `input.<column>` for a row expression; aggregates and windows refuse.
-    fn zen(&self, ex: &Ex, scope: &Scope, at: usize) -> Result<String, Diagnostic> {
-        Ok(match ex {
-            Ex::Column(alias, column) => {
-                format!("input.{}", scope.column(alias.as_deref(), column, at)?)
-            }
-            Ex::Number(number) => number.clone(),
-            Ex::Text(text) => zen_text(text),
-            Ex::Bool(flag) => flag.to_string(),
-            Ex::Null => "null".to_owned(),
-            Ex::Not(inner) => format!("not ({})", self.zen(inner, scope, at)?),
-            Ex::Negate(inner) => format!("-({})", self.zen(inner, scope, at)?),
-            Ex::Binary(op, left, right) => format!(
-                "({} {op} {})",
-                self.zen(left, scope, at)?,
-                self.zen(right, scope, at)?
-            ),
-            Ex::IsNull(inner, negated) => format!(
-                "({} {} null)",
-                self.zen(inner, scope, at)?,
-                if *negated { "!=" } else { "==" }
-            ),
-            Ex::Case(condition, then, otherwise) => format!(
-                "({} ? {} : {})",
-                self.zen(condition, scope, at)?,
-                self.zen(then, scope, at)?,
-                self.zen(otherwise, scope, at)?
-            ),
-            Ex::Coalesce(args) => {
-                if args.len() < 2 {
-                    return Err(refusal("COALESCE takes two or more values", at));
-                }
-                let parts = args
-                    .iter()
-                    .map(|arg| self.zen(arg, scope, at))
-                    .collect::<Result<Vec<_>, _>>()?;
-                format!("({})", parts.join(" ?? "))
-            }
-            Ex::Call(call) => {
-                return Err(refusal(
-                    format!("{} is not a row expression here", call.name.to_uppercase()),
-                    call.at,
-                ));
-            }
-        })
-    }
-
     fn join(
         &mut self,
-        left_node: String,
+        left_node: &str,
         scope: &mut Scope,
         join: &JoinClause,
-    ) -> Result<String, Diagnostic> {
+    ) -> Result<String, Refusal> {
         let right_node = self.scan(&join.source, join.at)?;
         let alias = join.source.alias.clone();
         let prefix = format!("{alias}_");
@@ -900,7 +920,7 @@ impl Lowering<'_> {
         clippy::too_many_lines,
         reason = "one SELECT lowering, read top to bottom"
     )]
-    fn select(&mut self, select: &Select) -> Result<String, Diagnostic> {
+    fn select(&mut self, select: &Select) -> Result<String, Refusal> {
         let mut node = self.scan(&select.from, 0)?;
         let mut scope = Scope {
             aliases: BTreeMap::from([(
@@ -910,13 +930,13 @@ impl Lowering<'_> {
             base: select.from.alias.clone(),
         };
         for join in &select.joins {
-            node = self.join(node, &mut scope, join)?;
+            node = self.join(&node, &mut scope, join)?;
         }
         if let Some(filter) = &select.filter {
             let id = self.fresh("filter");
             self.nodes.insert(
                 id.clone(),
-                json!({"op": "filter", "input": node, "predicate": self.zen(filter, &scope, 0)?}),
+                json!({"op": "filter", "input": node, "predicate": scope.zen(filter, 0)?}),
             );
             node = id;
         }
@@ -931,13 +951,18 @@ impl Lowering<'_> {
         let grouped =
             !select.group_by.is_empty() || select.items.iter().any(|item| aggregate(&item.ex));
         let name_of = |item: &Item, index: usize| -> String {
-            item.alias.clone().unwrap_or_else(|| match &item.ex {
-                Ex::Column(_, column) => column.clone(),
-                Ex::Call(call) => match call.args.first() {
-                    Some(Ex::Column(_, column)) => format!("{}_{column}", call.name),
-                    _ => call.name.clone(),
-                },
-                _ => format!("column_{index}"),
+            item.alias.clone().unwrap_or_else(|| {
+                if let Ex::Column(_, column) = &item.ex {
+                    return column.clone();
+                }
+                let Ex::Call(call) = &item.ex else {
+                    return format!("column_{index}");
+                };
+                if let Some(Ex::Column(_, column)) = call.args.first() {
+                    format!("{}_{column}", call.name)
+                } else {
+                    call.name.clone()
+                }
             })
         };
         // Columns computed before grouping or windowing: grain passthroughs plus each needed value.
@@ -953,12 +978,15 @@ impl Lowering<'_> {
             let mut measures = Vec::new();
             let mut keys: Vec<(Ex, String)> = Vec::new();
             for (ex, at) in &select.group_by {
-                let (value, grain_unit) = match ex {
-                    Ex::Call(call) if call.name == "date_trunc" => match call.args.as_slice() {
-                        [Ex::Text(unit), value] => (value.clone(), Some(unit.to_ascii_lowercase())),
-                        _ => return Err(refusal("DATE_TRUNC('week', column)", call.at)),
-                    },
-                    other => (other.clone(), None),
+                let (value, grain_unit) = if let Ex::Call(call) = ex
+                    && call.name == "date_trunc"
+                {
+                    let [Ex::Text(unit), value] = call.args.as_slice() else {
+                        return Err(refusal("DATE_TRUNC('week', column)", call.at));
+                    };
+                    (value.clone(), Some(unit.to_ascii_lowercase()))
+                } else {
+                    (ex.clone(), None)
                 };
                 let name = select
                     .items
@@ -966,13 +994,16 @@ impl Lowering<'_> {
                     .enumerate()
                     .find(|(_, item)| item.ex == *ex)
                     .map_or_else(
-                        || match &value {
-                            Ex::Column(_, column) => column.clone(),
-                            _ => format!("key_{}", keys.len()),
+                        || {
+                            if let Ex::Column(_, column) = &value {
+                                column.clone()
+                            } else {
+                                format!("key_{}", keys.len())
+                            }
                         },
                         |(index, item)| name_of(item, index),
                     );
-                prepared.push((name.clone(), self.zen(&value, &scope, *at)?));
+                prepared.push((name.clone(), scope.zen(&value, *at)?));
                 if let Some(unit) = &grain_unit {
                     if !["day", "week", "month", "quarter", "year"].contains(&unit.as_str()) {
                         return Err(refusal(
@@ -992,43 +1023,41 @@ impl Lowering<'_> {
                 if keys.iter().any(|(ex, _)| *ex == item.ex) {
                     continue;
                 }
-                match &item.ex {
-                    Ex::Call(call) if aggregate(&item.ex) => {
-                        let function = match (call.name.as_str(), call.distinct) {
-                            ("count", true) => "count_distinct",
-                            ("count", false) => "count",
-                            ("sum", false) => "sum",
-                            ("min", false) => "min",
-                            ("max", false) => "max",
-                            _ => {
-                                return Err(refusal(
-                                    format!(
-                                        "{}(DISTINCT …) has no typed operator",
-                                        call.name.to_uppercase()
-                                    ),
-                                    call.at,
-                                ));
-                            }
-                        };
-                        if call.star {
-                            measures.push(json!({"name": name, "fn": function}));
-                        } else {
-                            let [arg] = call.args.as_slice() else {
-                                return Err(refusal("an aggregate takes one column", call.at));
-                            };
-                            let measured = format!("{name}_value");
-                            prepared.push((measured.clone(), self.zen(arg, &scope, call.at)?));
-                            measures
-                                .push(json!({"name": name, "fn": function, "column": measured}));
-                        }
-                    }
-                    ex if windowed(ex) => windows.push((name, ex.clone(), item.at)),
+                if windowed(&item.ex) {
+                    windows.push((name, item.ex.clone(), item.at));
+                    continue;
+                }
+                let (Ex::Call(call), true) = (&item.ex, aggregate(&item.ex)) else {
+                    return Err(refusal(
+                        "in a grouped query every column is a group key or an aggregate",
+                        item.at,
+                    ));
+                };
+                let function = match (call.name.as_str(), call.distinct) {
+                    ("count", true) => "count_distinct",
+                    ("count", false) => "count",
+                    ("sum", false) => "sum",
+                    ("min", false) => "min",
+                    ("max", false) => "max",
                     _ => {
                         return Err(refusal(
-                            "in a grouped query every column is a group key or an aggregate",
-                            item.at,
+                            format!(
+                                "{}(DISTINCT …) has no typed operator",
+                                call.name.to_uppercase()
+                            ),
+                            call.at,
                         ));
                     }
+                };
+                if call.star {
+                    measures.push(json!({"name": name, "fn": function}));
+                } else {
+                    let [arg] = call.args.as_slice() else {
+                        return Err(refusal("an aggregate takes one column", call.at));
+                    };
+                    let value_column = format!("{name}_value");
+                    prepared.push((value_column.clone(), scope.zen(arg, call.at)?));
+                    measures.push(json!({"name": name, "fn": function, "column": value_column}));
                 }
             }
             let projected = self.fresh("prepared");
@@ -1058,7 +1087,7 @@ impl Lowering<'_> {
                     .enumerate()
                     .map(|(index, item)| (format!("{:?}", item.ex), name_of(item, index)))
                     .collect();
-                node = self.window(node, &windows, &names)?;
+                node = self.window(&node, &windows, &names)?;
             }
             return Ok(node);
         }
@@ -1073,7 +1102,7 @@ impl Lowering<'_> {
                 continue;
             }
             seen.insert(name.clone());
-            columns.push(json!({"name": name, "expression": self.zen(&item.ex, &scope, item.at)?}));
+            columns.push(json!({"name": name, "expression": scope.zen(&item.ex, item.at)?}));
         }
         for column in &grain_columns {
             if !seen.contains(column) {
@@ -1096,7 +1125,7 @@ impl Lowering<'_> {
                 .enumerate()
                 .map(|(index, item)| (format!("{:?}", item.ex), name_of(item, index)))
                 .collect();
-            node = self.window(node, &windows, &names)?;
+            node = self.window(&node, &windows, &names)?;
         }
         Ok(node)
     }
@@ -1104,20 +1133,16 @@ impl Lowering<'_> {
     /// One window node over output columns named by the select list.
     fn window(
         &mut self,
-        input: String,
+        input: &str,
         windows: &[(String, Ex, usize)],
         names: &BTreeMap<String, String>,
-    ) -> Result<String, Diagnostic> {
-        let column_of = |ex: &Ex, at: usize| -> Result<String, Diagnostic> {
-            match ex {
-                Ex::Column(_, column) => Ok(names
-                    .get(&format!("{ex:?}"))
-                    .cloned()
-                    .unwrap_or_else(|| column.clone())),
-                other => names
-                    .get(&format!("{other:?}"))
-                    .cloned()
-                    .ok_or_else(|| refusal("a window reads a selected column", at)),
+    ) -> Result<String, Refusal> {
+        let column_of = |ex: &Ex, at: usize| -> Result<String, Refusal> {
+            let selected = names.get(&format!("{ex:?}")).cloned();
+            if let Ex::Column(_, column) = ex {
+                Ok(selected.unwrap_or_else(|| column.clone()))
+            } else {
+                selected.ok_or_else(|| refusal("a window reads a selected column", at))
             }
         };
         let mut over: Option<&Over> = None;
@@ -1168,7 +1193,7 @@ impl Lowering<'_> {
             .order
             .iter()
             .map(|(ex, descending)| Ok(json!({"column": column_of(ex, 0)?, "direction": if *descending { "desc" } else { "asc" }})))
-            .collect::<Result<Vec<_>, Diagnostic>>()?;
+            .collect::<Result<Vec<_>, Refusal>>()?;
         let id = self.fresh("windowed");
         self.nodes.insert(
             id.clone(),
@@ -1213,10 +1238,10 @@ pub fn sql_artifact(
             .artifact_of(object_type)
             .and_then(|id| pool.iter().find(|a| a.artifact_id == id))
             .ok_or_else(|| {
-                vec![refusal(
-                    format!("no installed artifact declares {object_type:?}"),
-                    0,
-                )]
+                vec![
+                    refusal(format!("no installed artifact declares {object_type:?}"), 0)
+                        .into_diagnostic(),
+                ]
             })?;
         inputs.push(json!({"artifactId": artifact.artifact_id, "kind": "entity", "version": artifact.version, "alias": alias}));
         let pin = json!({"artifactId": artifact.artifact_id, "kind": "entity", "version": artifact.version, "required": true});
@@ -1245,10 +1270,7 @@ pub fn sql_artifact(
         }
     });
     let envelope: ArtifactEnvelope = serde_json::from_value(artifact.clone()).map_err(|error| {
-        vec![refusal(
-            format!("the lowered artifact does not decode: {error}"),
-            0,
-        )]
+        vec![refusal(format!("the lowered artifact does not decode: {error}"), 0).into_diagnostic()]
     })?;
     let mut admitted_pool = pool.to_vec();
     admitted_pool.push(envelope.clone());
