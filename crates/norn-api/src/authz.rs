@@ -13,6 +13,10 @@ pub enum Operation {
     CallAction(String),
     /// Admit, install or retire a retained (non-kernel) definition.
     WriteDefinitions,
+    /// Create the cell for the request's scope from a submitted definition
+    /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
+    /// the cell's own policy.
+    ProvisionCell,
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -180,6 +184,7 @@ mod tests {
                 Operation::ReadDefinitions,
                 Operation::CallAction("demo.action".into()),
                 Operation::WriteDefinitions,
+                Operation::ProvisionCell,
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

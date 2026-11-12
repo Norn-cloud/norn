@@ -3,10 +3,56 @@
 The Workers/Durable Objects host: one Norn tenant cell per Durable Object
 (#728, #819). It runs unchanged on self-hosted celld, workerd and Cloudflare.
 
-- `worker.mjs`: the router picks the cell's object by its `CellScope` key; the
-  `Cell` object holds one Rust `NornCell` over its own DO SQLite storage.
+- `worker.mjs`: the router picks the cell's object by its `CellScope` key
+  (every well-formed scope has its own object); the `Cell` object holds one
+  Rust `NornCell` over its own DO SQLite storage.
 - The Rust side is `crates/norn-cell-do`: provisioning, principal resolution,
   authorization and every route live there and run natively in its tests.
+
+## Tenants
+
+A scope has no cell until its organization's owner provisions it
+(HOST-PROVISION-1, `norn_api::provision`; the contract is host-neutral, this
+host mounts it):
+
+```
+POST /v1/cell:provision?orgId=<org>&environmentId=<environment>
+{ "baseSha256": "<the host's trusted base digest>", "artifacts": [ <artifact envelope>, ... ] }
+```
+
+- **Who:** a verified host token whose organization is the scope's and whose
+  role is a provisioner in the declared grant table (`norn-cell-do-grants/3`:
+  `owner`). A cell that does not exist has no definitions, so this one
+  authority is the host's; everything after it is the cell's own policy.
+  Anyone else gets the opaque 403, and nothing is written.
+- **What is submitted:** the tenant's own artifacts, at most 1 MiB. None may be
+  in a reserved namespace (`core.`, `std.`): the host prepends the trusted base
+  it was built with (`registry/core/artifacts`) and admits the tenant's
+  artifacts as candidates against it with the shared checker. `baseSha256`
+  names the base the set was authored against; another digest is refused with
+  `cell.base_mismatch`, which states the host's.
+- **What is written, atomically** (HOST-PROVISION-ATOMIC): the store schema,
+  the scope binding, a fresh cell identity, the definitions as version 1, their
+  admission receipt and the ledger commit, in one storage transaction. A
+  failure or a crash leaves the scope with no cell.
+- **Retry:** the same submission replays (`"outcome": "replayed"`) without
+  writing, also after a restart; a different one is refused with
+  `cell.provision_conflict`. Definitions change afterwards through the
+  definition routes.
+- **A scope with no cell** answers a caller nobody verified exactly as a
+  provisioned cell would (the opaque denials), so its existence is not
+  disclosed. A verified member of its organization gets 404
+  `cell.not_provisioned`.
+
+Refusal codes this adds: `cell.not_provisioned` (404), `cell.provision_conflict`
+(409), `cell.base_mismatch` (409), `cell.reserved_artifact` (400),
+`cell.provision_refused` (422, with the checker's findings).
+
+Known limit: any caller can make the router instantiate the object of a scope
+it names. A vacant object writes nothing and holds no store; opening it costs
+one JWKS document, and cold opens in one isolate share a document for a
+minute. The cost an attacker can impose is object instantiations; rate
+limiting them belongs at the edge.
 
 Build into a directory outside the checkout, then smoke it:
 
@@ -31,16 +77,18 @@ A deployed cell accepts only the Studio Worker's signed host token (#817):
 `Authorization: Bearer <EdDSA JWT>`, audience `norn-host`, at most five
 minutes, its `norn.org` equal to the cell's organization, its role mapped
 through `studio-roles/1` and then the declared grant table
-`norn-cell-do-grants/2` (viewer: Population; member: + Values; admin and
+`norn-cell-do-grants/3` (viewer: Population; member: + Values; admin and
 owner: + Sources, and they alone write retained definitions: dashboards and
-agents through `/v1/definitions:admit`, `:install` and `/{id}:retire`).
+agents through `/v1/definitions:admit`, `:install` and `/{id}:retire`; an
+owner alone provisions the cell).
 Two Worker settings are pinned configuration, never taken
 from a token:
 
 - `NORN_HOST_ISSUER`: the token issuer (Studio's base URL);
 - `NORN_HOST_JWKS_URL`: its JWKS document (Studio's `/api/auth/jwks`).
 
-The cell fetches the JWKS when it opens and refetches it every five minutes
+The cell takes the JWKS when it opens (a document this isolate fetched within
+the last minute is reused, with its real fetch time) and refetches it every five minutes
 whatever tokens arrive, so a key the issuer removes stops verifying within that
 time. A token naming an unknown key id also triggers a refetch, then the
 request is retried once. Refetch attempts are at most one per minute, and so is a cold open: a failed

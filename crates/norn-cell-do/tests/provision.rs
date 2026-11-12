@@ -1,0 +1,946 @@
+//! HOST-PROVISION-1: tenant provisioning on the network host, through the
+//! same [`Tenant`] the Durable Object binding drives.
+//!
+//! - Only the declared provisioner (an owner of the scope's organization)
+//!   creates a cell; everyone else gets the one opaque denial and nothing is
+//!   written.
+//! - A submission carries no reserved-namespace artifact and names the host's
+//!   trusted base; the host supplies the base itself.
+//! - Provisioning is atomic under storage faults, replays an identical retry
+//!   (also after a restart) and refuses a different one.
+//! - A scope with no cell is indistinguishable from a provisioned one to a
+//!   caller nobody verified; a verified member is told `cell.not_provisioned`.
+//! - Two scopes are isolated: one's owner is nobody at the other.
+//!
+//! These are refusal-path and isolation pins on a new authority (D79: each
+//! names one decision of the server's permission system, which no existing
+//! property covers); the storage-fault law is a sweep over every statement
+//! of the provisioning transaction.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "provisioning correspondence"
+)]
+
+use std::path::{Path, PathBuf};
+
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use ed25519_dalek::{Signer, SigningKey};
+use norn_api::provision::{self, MAX_PROVISION_BYTES, PROVISION_PATH, TrustedBase};
+use norn_api::scope::CellScope;
+use norn_cell::StoreOptions;
+use norn_cell::engine::{
+    DoEngine, DoStorageEmulator, EngineFault, EngineFaultKind, FaultEngine, FaultSwitch,
+    NativeEngine, SqlEngine,
+};
+use norn_cell_do::policy::DEMO_GRANTS;
+use norn_cell_do::principal::TokenPrincipals;
+use norn_cell_do::server::{Request, Response};
+use norn_cell_do::tenant::Tenant;
+use norn_cell_do::{base, seed};
+use serde_json::{Value, json};
+
+const ISSUER: &str = "https://studio-preview.example";
+const NOW: u64 = 1_800_000_000;
+/// The recorded three-systems set: its artifacts outside the reserved
+/// namespaces are a tenant's submission.
+const RECORDED: &str =
+    include_str!("../../../fixtures/demo/explorer/three-systems.definitions.json");
+
+/// A tenant's artifact envelopes, with or without the label catalog (two
+/// admissible sets that differ).
+fn tenant_set(labels: bool) -> Vec<String> {
+    let artifacts: Vec<Value> = serde_json::from_str(RECORDED).unwrap();
+    let set: Vec<String> = artifacts
+        .iter()
+        .filter(|artifact| {
+            !norn_api::kernel_set::is_reserved(artifact["artifactId"].as_str().unwrap())
+        })
+        .filter(|artifact| labels || artifact["kind"] != "labels")
+        .map(Value::to_string)
+        .collect();
+    assert!(set.len() > 5);
+    set
+}
+
+fn full() -> Vec<String> {
+    tenant_set(true)
+}
+
+fn plain() -> Vec<String> {
+    let plain = tenant_set(false);
+    assert!(
+        plain.len() < full().len(),
+        "the recording carries a label catalog"
+    );
+    plain
+}
+
+// ------------------------------------------------------------------ tokens
+
+fn key() -> SigningKey {
+    SigningKey::from_bytes(&[1; 32])
+}
+
+fn jwks() -> String {
+    json!({ "keys": [{ "kty": "OKP", "crv": "Ed25519", "alg": "EdDSA", "kid": "k1",
+                       "x": URL_SAFE_NO_PAD.encode(key().verifying_key().as_bytes()) }] })
+    .to_string()
+}
+
+/// A host token for `role` in `org`, signed by the pinned issuer.
+fn token(kind: &str, org: &str, role: &str) -> String {
+    let amr = if kind == "service" {
+        "api_key"
+    } else {
+        "password"
+    };
+    let claims = json!({ "iss": ISSUER, "aud": "norn-host", "sub": format!("{role}-of-{org}"),
+            "iat": NOW - 10, "exp": NOW + 290,
+            "norn": { "kind": kind, "org": org, "role": role, "amr": amr } });
+    let head = URL_SAFE_NO_PAD.encode(json!({ "alg": "EdDSA", "kid": "k1" }).to_string());
+    let body = URL_SAFE_NO_PAD.encode(claims.to_string());
+    let signature = key().sign(format!("{head}.{body}").as_bytes());
+    format!(
+        "Bearer {head}.{body}.{}",
+        URL_SAFE_NO_PAD.encode(signature.to_bytes())
+    )
+}
+
+fn user(org: &str, role: &str) -> String {
+    token("user", org, role)
+}
+
+// ------------------------------------------------------------------- cells
+
+/// One scope's cell over a file, with its token resolver.
+struct Cell<E: SqlEngine> {
+    tenant: Tenant<E>,
+    tokens: TokenPrincipals,
+}
+
+fn scope(org: &str, environment: &str) -> CellScope {
+    CellScope {
+        org_id: org.into(),
+        environment_id: environment.into(),
+    }
+}
+
+fn query(scope: &CellScope) -> String {
+    format!(
+        "orgId={}&environmentId={}",
+        scope.org_id, scope.environment_id
+    )
+}
+
+fn with_engine<E: SqlEngine + 'static>(
+    scope: &CellScope,
+    open: impl Fn() -> Result<E, String> + 'static,
+) -> Result<Cell<E>, String> {
+    let tenant = Tenant::open(scope.clone(), &DEMO_GRANTS, Box::new(open))
+        .map_err(|error| error.to_string())?;
+    let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW)
+        .map_err(|refusal| refusal.code)?;
+    Ok(Cell { tenant, tokens })
+}
+
+/// Open (or reopen, as a restarted host does) the cell of `scope` at `path`.
+fn open(path: &Path, scope: &CellScope) -> Cell<NativeEngine> {
+    try_open(path, scope).unwrap()
+}
+
+fn try_open(path: &Path, scope: &CellScope) -> Result<Cell<NativeEngine>, String> {
+    let path = path.to_owned();
+    with_engine(scope, move || {
+        NativeEngine::open(&path, StoreOptions::default()).map_err(|error| error.to_string())
+    })
+}
+
+fn call<E: SqlEngine>(
+    cell: &mut Cell<E>,
+    method: &str,
+    path: &str,
+    query: &str,
+    authorization: Option<&str>,
+    body: &str,
+) -> Response {
+    cell.tenant.handle(
+        &cell.tokens,
+        &Request {
+            method,
+            path,
+            query,
+            authorization,
+            now: NOW,
+            body,
+        },
+    )
+}
+
+fn json_of(response: &Response) -> Value {
+    serde_json::from_str(&response.body).unwrap()
+}
+
+fn code(response: &Response) -> String {
+    json_of(response)["code"].as_str().unwrap().to_owned()
+}
+
+/// A submission of `artifacts` (envelope texts) against the host's base.
+fn submission(artifacts: &[String]) -> String {
+    submission_on(base::trusted_base().unwrap().sha256(), artifacts)
+}
+
+fn submission_on(base_sha256: &str, artifacts: &[String]) -> String {
+    let artifacts: Vec<Value> = artifacts
+        .iter()
+        .map(|text| serde_json::from_str(text).unwrap())
+        .collect();
+    json!({ "baseSha256": base_sha256, "artifacts": artifacts }).to_string()
+}
+
+fn provision<E: SqlEngine>(
+    cell: &mut Cell<E>,
+    authorization: Option<&str>,
+    body: &str,
+) -> Response {
+    let query = query(cell.tenant.scope());
+    call(cell, "POST", PROVISION_PATH, &query, authorization, body)
+}
+
+/// Provision the cell of `scope` at `path` as its owner, with `artifacts`.
+fn provisioned(path: &Path, scope: &CellScope, artifacts: &[String]) -> Cell<NativeEngine> {
+    let mut cell = open(path, scope);
+    let owner = user(&scope.org_id, "owner");
+    let response = provision(&mut cell, Some(&owner), &submission(artifacts));
+    assert_eq!(response.status, 200, "{}", response.body);
+    cell
+}
+
+fn definitions<E: SqlEngine>(cell: &mut Cell<E>, authorization: Option<&str>) -> Response {
+    let query = query(cell.tenant.scope());
+    call(cell, "GET", "/v1/definitions", &query, authorization, "")
+}
+
+fn file(directory: &tempfile::TempDir, name: &str) -> PathBuf {
+    directory.path().join(format!("{name}.sqlite"))
+}
+
+// -------------------------------------------------------------------- base
+
+/// The compiled-in base is exactly the reserved-namespace artifacts of
+/// `registry/core/artifacts`: a new or changed base artifact cannot be
+/// missed by the list.
+#[test]
+fn the_compiled_in_base_is_every_reserved_registry_artifact() {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry/core/artifacts");
+    let mut reserved = Vec::new();
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        let artifact: Value = serde_json::from_str(&text).unwrap();
+        let id = artifact["artifactId"].as_str().unwrap();
+        if norn_api::kernel_set::is_reserved(id) {
+            reserved.push(text);
+        }
+    }
+    reserved.sort();
+    let mut compiled: Vec<String> = base::SOURCES
+        .iter()
+        .map(|text| (*text).to_owned())
+        .collect();
+    compiled.sort();
+    assert_eq!(compiled, reserved);
+    let trusted = base::trusted_base().unwrap();
+    assert_eq!(trusted.ids().len(), base::SOURCES.len());
+    assert!(
+        trusted
+            .ids()
+            .iter()
+            .all(|id| norn_api::kernel_set::is_reserved(id))
+    );
+}
+
+// --------------------------------------------------------------- authority
+
+/// Only an owner of the scope's organization provisions it. Every other
+/// caller gets the one opaque denial, whatever the body says, and the scope
+/// stays vacant with nothing written: the owner then provisions a fresh cell.
+#[test]
+fn only_the_owner_of_the_scopes_organization_provisions_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let scope = scope("org_a", "prod");
+    let mut cell = open(&path, &scope);
+    let body = submission(&full());
+    let anonymous = provision(&mut cell, None, &body);
+    assert_eq!(
+        (anonymous.status, code(&anonymous).as_str()),
+        (403, "authz.denied")
+    );
+    let refused: Vec<(&str, String)> = vec![
+        ("admin", user("org_a", "admin")),
+        ("member", user("org_a", "member")),
+        ("viewer", user("org_a", "viewer")),
+        ("undeclared role", user("org_a", "analyst")),
+        ("another organization's owner", user("org_b", "owner")),
+        ("service viewer", token("service", "org_a", "viewer")),
+        ("service member", token("service", "org_a", "member")),
+        ("service admin", token("service", "org_a", "admin")),
+        ("service owner", token("service", "org_a", "owner")),
+        ("not a token", "Bearer nonsense".to_owned()),
+    ];
+    for (who, authorization) in &refused {
+        for body in [body.as_str(), "", "not json"] {
+            let response = provision(&mut cell, Some(authorization), body);
+            assert_eq!(response, anonymous, "{who}");
+        }
+        assert!(!cell.tenant.is_provisioned(), "{who}");
+    }
+    // The owner's own token, naming another scope, is denied the same way.
+    let owner = user("org_a", "owner");
+    for other in [
+        "orgId=org_b&environmentId=prod",
+        "orgId=org_a&environmentId=dev",
+        "orgId=org_a",
+        "",
+    ] {
+        let response = call(
+            &mut cell,
+            "POST",
+            PROVISION_PATH,
+            other,
+            Some(&owner),
+            &body,
+        );
+        assert_eq!(response, anonymous, "{other}");
+    }
+    // An expired owner token is nobody.
+    let late = cell.tenant.handle(
+        &cell.tokens,
+        &Request {
+            method: "POST",
+            path: PROVISION_PATH,
+            query: &query(&scope),
+            authorization: Some(&owner),
+            now: NOW + 400,
+            body: &body,
+        },
+    );
+    assert_eq!(late, anonymous);
+    drop(cell);
+    // Nothing was written: a restarted host finds the scope vacant, and the
+    // owner's provisioning creates the cell (residue would refuse).
+    let mut cell = open(&path, &scope);
+    assert!(!cell.tenant.is_provisioned());
+    let created = provision(&mut cell, Some(&owner), &body);
+    assert_eq!(created.status, 200, "{}", created.body);
+    let receipt = json_of(&created);
+    assert_eq!(receipt["outcome"], "provisioned");
+    assert_eq!(receipt["definitionsVersion"], 1);
+    assert_eq!(receipt["baseSha256"], cell.tenant.base_sha256());
+    assert!(!receipt["cellId"].as_str().unwrap().is_empty());
+    assert_eq!(receipt["receiptSha256"].as_str().unwrap().len(), 64);
+    assert!(cell.tenant.is_provisioned());
+    // The cell serves its organization's roles through the declared tables.
+    for role in ["owner", "admin", "member", "viewer"] {
+        assert_eq!(
+            definitions(&mut cell, Some(&user("org_a", role))).status,
+            200,
+            "{role}"
+        );
+    }
+    let page = call(
+        &mut cell,
+        "GET",
+        "/v1/objects/canon.Item",
+        &query(&scope),
+        Some(&user("org_a", "admin")),
+        "",
+    );
+    assert_eq!(page.status, 200, "{}", page.body);
+    // Provisioning stays the owner's on the provisioned cell too.
+    for (who, authorization) in &refused {
+        assert_eq!(
+            provision(&mut cell, Some(authorization), &body),
+            anonymous,
+            "{who}"
+        );
+    }
+}
+
+// ------------------------------------------------------------- submissions
+
+/// Every refused submission is typed, and leaves the scope vacant.
+#[test]
+fn a_refused_submission_is_typed_and_writes_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let scope = scope("org_a", "prod");
+    let mut cell = open(&path, &scope);
+    let owner = user("org_a", "owner");
+    let host_base = cell.tenant.base_sha256().to_owned();
+
+    // A reserved id refuses before admission, even a byte-exact base artifact.
+    let first = full().remove(0);
+    let mut forged: Value = serde_json::from_str(&first).unwrap();
+    forged["artifactId"] = json!("core.Forged.entity");
+    for reserved in [forged.to_string(), base::SOURCES[0].to_owned()] {
+        let response = provision(
+            &mut cell,
+            Some(&owner),
+            &submission(&[first.clone(), reserved]),
+        );
+        assert_eq!(
+            (response.status, code(&response).as_str()),
+            (400, provision::codes::RESERVED_ARTIFACT)
+        );
+        assert_eq!(
+            json_of(&response)["diagnostics"][0]["span"]["pointer"],
+            "/artifacts/1/artifactId"
+        );
+    }
+    // Another base digest refuses and states the host's.
+    let response = provision(
+        &mut cell,
+        Some(&owner),
+        &submission_on(&"0".repeat(64), &full()),
+    );
+    assert_eq!(
+        (response.status, code(&response).as_str()),
+        (409, provision::codes::BASE_MISMATCH)
+    );
+    assert!(
+        json_of(&response)["explanation"]
+            .as_str()
+            .unwrap()
+            .contains(&host_base)
+    );
+    // A set the checker does not admit refuses with its findings.
+    let mut dangling: Value = serde_json::from_str(&first).unwrap();
+    dangling["dependencies"] = json!([{ "artifactId": "tenant.Missing.entity", "kind": "entity",
+                                        "required": true, "version": "0.1.0" }]);
+    let mut inadmissible = full();
+    inadmissible[0] = dangling.to_string();
+    let response = provision(&mut cell, Some(&owner), &submission(&inadmissible));
+    assert_eq!(
+        (response.status, code(&response).as_str()),
+        (422, provision::codes::PROVISION_REFUSED),
+        "{}",
+        response.body
+    );
+    assert!(
+        !json_of(&response)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // Shape, bound, method and query.
+    let large = format!("{}{}", submission(&full()), " ".repeat(MAX_PROVISION_BYTES));
+    for (body, status) in [
+        ("", 400),
+        ("{}", 400),
+        ("[]", 400),
+        (r#"{"baseSha256":"x","artifacts":[1]}"#, 409),
+        (large.as_str(), 413),
+    ] {
+        assert_eq!(
+            provision(&mut cell, Some(&owner), body).status,
+            status,
+            "{}",
+            &body[..body.len().min(40)]
+        );
+    }
+    let not_an_envelope =
+        json!({ "baseSha256": host_base, "artifacts": [{ "artifactId": "tenant.x" }, 7] })
+            .to_string();
+    assert_eq!(
+        provision(&mut cell, Some(&owner), &not_an_envelope).status,
+        400
+    );
+    let scoped = query(&scope);
+    assert_eq!(
+        call(&mut cell, "GET", PROVISION_PATH, &scoped, Some(&owner), "").status,
+        405
+    );
+    assert_eq!(
+        call(
+            &mut cell,
+            "POST",
+            PROVISION_PATH,
+            &format!("{scoped}&force=1"),
+            Some(&owner),
+            &submission(&full())
+        )
+        .status,
+        400
+    );
+    assert!(!cell.tenant.is_provisioned());
+    drop(cell);
+    let mut cell = open(&path, &scope);
+    assert!(!cell.tenant.is_provisioned());
+    assert_eq!(
+        json_of(&provision(&mut cell, Some(&owner), &submission(&full())))["outcome"],
+        "provisioned"
+    );
+}
+
+// ------------------------------------------------------------------- retry
+
+/// An identical retry replays without writing, on the live cell and after a
+/// restart (a reply lost after the commit); a different submission refuses;
+/// the store itself refuses a second provisioning of a non-fresh engine.
+#[test]
+fn an_identical_retry_replays_and_a_different_one_refuses() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let scope = scope("org_a", "prod");
+    let owner = user("org_a", "owner");
+    let body = submission(&full());
+    let mut cell = open(&path, &scope);
+    let first = json_of(&provision(&mut cell, Some(&owner), &body));
+    assert_eq!(first["outcome"], "provisioned");
+    let installed = definitions(&mut cell, Some(&owner));
+    let replayed = |cell: &mut Cell<NativeEngine>, now: u64| {
+        let response = cell.tenant.handle(
+            &cell.tokens,
+            &Request {
+                method: "POST",
+                path: PROVISION_PATH,
+                query: &query(&scope),
+                authorization: Some(&owner),
+                now,
+                body: &body,
+            },
+        );
+        assert_eq!(response.status, 200, "{}", response.body);
+        let mut receipt = json_of(&response);
+        assert_eq!(receipt["outcome"], "replayed");
+        receipt["outcome"] = json!("provisioned");
+        assert_eq!(receipt, first);
+    };
+    // Later on the host clock: the recorded install time is the cell's.
+    replayed(&mut cell, NOW + 60);
+    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+    // The reply was lost and the host restarted: the retry meets a non-fresh
+    // engine, serves it and replays.
+    drop(cell);
+    let mut cell = open(&path, &scope);
+    assert!(cell.tenant.is_provisioned());
+    replayed(&mut cell, NOW + 120);
+    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+    // A different submission never replaces the cell.
+    let other = provision(&mut cell, Some(&owner), &submission(&plain()));
+    assert_eq!(
+        (other.status, code(&other).as_str()),
+        (409, provision::codes::PROVISION_CONFLICT)
+    );
+    let empty = provision(&mut cell, Some(&owner), &submission(&[]));
+    assert_eq!(empty.status, 409);
+    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+    drop(cell);
+    // The store-level contract under it: provisioning a non-fresh engine
+    // again (another install time, or other definitions) refuses.
+    let trusted: TrustedBase = base::trusted_base().unwrap();
+    for body in [body.clone(), submission(&plain())] {
+        let admitted = provision::admit_submission(&trusted, &body).unwrap();
+        let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
+        let refusal =
+            provision::provision_cell(engine, &scope, &trusted, admitted, (NOW + 5) * 1000)
+                .map(|(_, receipt)| receipt)
+                .expect_err("a cell is provisioned once");
+        assert_eq!(refusal.code, provision::codes::PROVISION_CONFLICT);
+    }
+    let mut cell = open(&path, &scope);
+    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+}
+
+// ------------------------------------------------------------ unprovisioned
+
+/// Requests no verified principal makes, across the host's routes.
+fn outsider_requests(scope: &CellScope) -> Vec<(&'static str, String, String, &'static str)> {
+    let scoped = query(scope);
+    let mut requests = Vec::new();
+    for query in [
+        scoped.clone(),
+        String::new(),
+        "orgId=org_z&environmentId=prod".to_owned(),
+        format!("{scoped}&unknown=1"),
+        format!("{scoped}&limit=zz"),
+        format!("{scoped}&version=x"),
+    ] {
+        for (method, path, body) in [
+            ("GET", "/v1/definitions", ""),
+            ("DELETE", "/v1/definitions", ""),
+            ("GET", "/v1/definitions:list", ""),
+            ("GET", "/v1/definitions/studio.dashboard.d1", ""),
+            ("POST", "/v1/definitions:install", "{}"),
+            ("POST", "/v1/definitions:admit", "not json"),
+            ("POST", "/v1/definitions/studio.dashboard.d1:retire", "{}"),
+            ("GET", "/v1/objects/canon.Item", ""),
+            ("GET", "/v1/objects/tenant.Unknown", ""),
+            ("GET", "/v1/objects/canon.Item/b1", ""),
+            ("GET", "/v1/objects/canon.Item/b1/links", ""),
+            ("GET", "/v1/objects/canon.Item/b1/lineage", ""),
+            ("GET", "/v1/objects/canon.Item/%FF", ""),
+            ("POST", "/v1/objects/canon.Item", ""),
+            ("POST", "/v1/actions/canon.rename", "{}"),
+            ("GET", "/v1/actions/canon.rename", ""),
+            ("POST", "/v1/questions:evaluate", "{}"),
+            ("GET", "/v1/questions:trace", ""),
+            ("GET", "/v1/questions/q/answer", ""),
+            ("GET", "/v1/questions/q/trace", ""),
+            ("GET", "/v1/access", ""),
+            ("POST", "/v1/access", ""),
+            ("GET", "/v1/nothing", ""),
+            ("GET", "/", ""),
+            ("POST", PROVISION_PATH, "{}"),
+            ("GET", PROVISION_PATH, ""),
+        ] {
+            requests.push((method, path.to_owned(), query.clone(), body));
+        }
+    }
+    requests
+}
+
+/// A caller nobody verified cannot tell a scope with no cell from a
+/// provisioned one: every route answers the same status and the same bytes.
+/// A verified member of the scope's organization, and nobody else, is told
+/// the scope has no cell, in a refusal of the same shape.
+#[test]
+fn an_unprovisioned_scope_is_told_only_to_a_verified_member() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let mut vacant = open(&file(&directory, "vacant"), &scope);
+    let mut served = provisioned(&file(&directory, "served"), &scope, &full());
+    let outsiders: Vec<Option<String>> = vec![
+        None,
+        Some(user("org_b", "owner")),
+        Some(user("org_a", "analyst")),
+        Some(token("service", "org_a", "owner")),
+        Some("Bearer nonsense".to_owned()),
+        Some("Basic b3duZXI6b3duZXI=".to_owned()),
+    ];
+    let mut compared = 0;
+    for (method, path, query, body) in outsider_requests(&scope) {
+        for outsider in &outsiders {
+            let at_vacant = call(
+                &mut vacant,
+                method,
+                &path,
+                &query,
+                outsider.as_deref(),
+                body,
+            );
+            let at_served = call(
+                &mut served,
+                method,
+                &path,
+                &query,
+                outsider.as_deref(),
+                body,
+            );
+            assert_eq!(
+                at_vacant, at_served,
+                "{method} {path}?{query} as {outsider:?}"
+            );
+            assert_ne!(at_vacant.status, 200);
+            assert!(!at_vacant.body.contains(provision::codes::NOT_PROVISIONED));
+            compared += 1;
+        }
+    }
+    assert!(compared > 500, "{compared}");
+    assert!(!vacant.tenant.is_provisioned());
+
+    // A verified member is told, on every route but provisioning itself.
+    let denial = json_of(&definitions(&mut vacant, None));
+    for role in ["owner", "admin", "member", "viewer"] {
+        let member = user("org_a", role);
+        for (method, path) in [
+            ("GET", "/v1/definitions"),
+            ("GET", "/v1/objects/canon.Item"),
+            ("GET", "/v1/access"),
+            ("POST", "/v1/actions/canon.rename"),
+        ] {
+            let response = call(
+                &mut vacant,
+                method,
+                path,
+                &query(&scope),
+                Some(&member),
+                "{}",
+            );
+            assert_eq!(
+                (response.status, code(&response).as_str()),
+                (404, provision::codes::NOT_PROVISIONED),
+                "{role} {path}"
+            );
+            // The same refusal document shape as the opaque denial.
+            let keys = |value: &Value| {
+                value
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(keys(&json_of(&response)), keys(&denial));
+        }
+        // Naming another scope, the member learns nothing about this one.
+        for other in [
+            "orgId=org_a&environmentId=dev",
+            "orgId=org_b&environmentId=prod",
+            "orgId=org_a",
+            "",
+        ] {
+            let at_vacant = call(
+                &mut vacant,
+                "GET",
+                "/v1/definitions",
+                other,
+                Some(&member),
+                "",
+            );
+            assert_eq!(
+                at_vacant,
+                call(&mut vacant, "GET", "/v1/definitions", other, None, ""),
+                "{role} {other}"
+            );
+        }
+    }
+    // A service principal with a declared role is a member too.
+    let service = token("service", "org_a", "viewer");
+    assert_eq!(definitions(&mut vacant, Some(&service)).status, 404);
+}
+
+// --------------------------------------------------------------- isolation
+
+/// Two scopes side by side. Scope A's owner is nobody at scope B: it reads
+/// nothing, writes nothing and cannot provision or re-provision B; B's
+/// storage never opens under A's scope.
+#[test]
+fn two_scopes_are_isolated_from_each_other() {
+    let directory = tempfile::tempdir().unwrap();
+    let (scope_a, scope_b) = (scope("org_a", "prod"), scope("org_b", "prod"));
+    let (path_a, path_b) = (file(&directory, "a"), file(&directory, "b"));
+    let mut a = provisioned(&path_a, &scope_a, &full());
+    let mut b = provisioned(&path_b, &scope_b, &plain());
+    let (owner_a, owner_b) = (user("org_a", "owner"), user("org_b", "owner"));
+
+    let own = |cell: &mut Cell<NativeEngine>, owner: &str| json_of(&definitions(cell, Some(owner)));
+    let (defs_a, defs_b) = (own(&mut a, &owner_a), own(&mut b, &owner_b));
+    assert_ne!(defs_a, defs_b);
+    // Each cell has its own identity.
+    let replay = |cell: &mut Cell<NativeEngine>, owner: &str, artifacts: &[String]| {
+        json_of(&provision(cell, Some(owner), &submission(artifacts)))
+    };
+    let (id_a, id_b) = (
+        replay(&mut a, &owner_a, &full())["cellId"].clone(),
+        replay(&mut b, &owner_b, &plain())["cellId"].clone(),
+    );
+    assert!(id_a.is_string() && id_b.is_string());
+    assert_ne!(id_a, id_b);
+
+    // A's owner at B, naming B's scope or its own: exactly what nobody gets.
+    for (method, path, query_text, body) in outsider_requests(&scope_b)
+        .into_iter()
+        .chain(outsider_requests(&scope_a))
+    {
+        let as_a = call(&mut b, method, &path, &query_text, Some(&owner_a), body);
+        let as_nobody = call(&mut b, method, &path, &query_text, None, body);
+        assert_eq!(as_a, as_nobody, "{method} {path}?{query_text}");
+        assert_ne!(as_a.status, 200);
+    }
+    // Provisioning B with A's authority, with B's own set or another.
+    for artifacts in [plain(), full()] {
+        let response = provision(&mut b, Some(&owner_a), &submission(&artifacts));
+        assert_eq!(
+            (response.status, code(&response).as_str()),
+            (403, "authz.denied")
+        );
+    }
+    // A object read by A's admin at B is denied; at A it is served.
+    let admin_a = user("org_a", "admin");
+    assert_eq!(
+        call(
+            &mut b,
+            "GET",
+            "/v1/objects/canon.Item",
+            &query(&scope_b),
+            Some(&admin_a),
+            ""
+        )
+        .status,
+        403
+    );
+    assert_eq!(
+        call(
+            &mut a,
+            "GET",
+            "/v1/objects/canon.Item",
+            &query(&scope_a),
+            Some(&admin_a),
+            ""
+        )
+        .status,
+        200
+    );
+    // B is exactly as it was.
+    assert_eq!(own(&mut b, &owner_b), defs_b);
+    assert_eq!(own(&mut a, &owner_a), defs_a);
+    drop((a, b));
+
+    // B's storage under A's scope does not open: the scope binding refuses,
+    // so a mis-routed request can never be served another tenant's cell.
+    let misbound = try_open(&path_b, &scope_a)
+        .err()
+        .expect("another scope's store");
+    assert!(misbound.contains("scope"), "{misbound}");
+    // And B still opens as B, unchanged.
+    let mut b = open(&path_b, &scope_b);
+    assert_eq!(own(&mut b, &owner_b), defs_b);
+
+    // The same organization's other environment is its own vacant cell.
+    let scope_dev = scope("org_a", "dev");
+    let mut dev = open(&file(&directory, "a-dev"), &scope_dev);
+    let response = definitions(&mut dev, Some(&owner_a));
+    assert_eq!(
+        (response.status, code(&response).as_str()),
+        (404, provision::codes::NOT_PROVISIONED)
+    );
+    assert_eq!(
+        definitions(&mut dev, Some(&owner_b)),
+        definitions(&mut dev, None)
+    );
+}
+
+// ------------------------------------------------------------------ faults
+
+type Faulted = FaultEngine<DoEngine<DoStorageEmulator>>;
+
+fn open_faulted(
+    path: &Path,
+    scope: &CellScope,
+    faults: &FaultSwitch,
+) -> Result<Cell<Faulted>, String> {
+    let (path, faults) = (path.to_owned(), faults.clone());
+    with_engine(scope, move || {
+        let native = NativeEngine::open_unsynced(&path, StoreOptions::default())
+            .map_err(|error| error.to_string())?;
+        Ok(FaultEngine::new(
+            DoEngine::new(DoStorageEmulator::new(native).with_faults(faults.clone())),
+            faults.clone(),
+        ))
+    })
+}
+
+/// HOST-PROVISION-ATOMIC through the request layer, on the Durable Object
+/// transaction glue: a crash, an I/O error or a failed storage commit at
+/// every statement of the provisioning request leaves the scope vacant with
+/// nothing half-made (the restarted host finds no cell, and the retry
+/// creates one), and a fault that does not fire leaves a served cell.
+#[test]
+fn a_fault_anywhere_in_provisioning_leaves_nothing_half_made() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let owner = user("org_a", "owner");
+    let body = submission(&full());
+    // Crashes and I/O errors: every statement of the request's first
+    // transaction and its commit point, and the start and commit point of
+    // the next two; a failed storage commit: each of the first three.
+    let sweep = (0..4_000_u32).chain([u32::MAX]);
+    let mut plans: Vec<(EngineFaultKind, u32, Vec<u32>)> = Vec::new();
+    for kind in [EngineFaultKind::Crash, EngineFaultKind::Io] {
+        plans.push((kind, 0, sweep.clone().collect()));
+        plans.push((kind, 1, vec![0, 1, u32::MAX]));
+        plans.push((kind, 2, vec![0, 1, u32::MAX]));
+    }
+    for transaction in 0..3 {
+        plans.push((EngineFaultKind::Commit, transaction, vec![u32::MAX]));
+    }
+    let (mut vacant_after, mut whole_after, mut case) = (0_u32, 0_u32, 0_u32);
+    for (kind, transaction, statements) in plans {
+        // Past the transaction's last statement only its commit point is
+        // left to try.
+        let mut past = false;
+        for at_statement in statements {
+            if past && at_statement != u32::MAX {
+                continue;
+            }
+            case += 1;
+            let at = format!("{kind:?} at transaction {transaction}, statement {at_statement}");
+            let path = file(&directory, &format!("fault-{case}"));
+            let faults = FaultSwitch::default();
+            let mut cell = open_faulted(&path, &scope, &faults).unwrap();
+            faults.arm(EngineFault {
+                kind,
+                transaction,
+                at_statement,
+            });
+            let response = provision(&mut cell, Some(&owner), &body);
+            let hit = faults.disarm();
+            drop(cell);
+            // The platform restarts the object; no fault is armed.
+            let mut cell = open_faulted(&path, &scope, &faults)
+                .unwrap_or_else(|error| panic!("{at}: recovery refused: {error}"));
+            if hit {
+                assert!(response.status >= 400, "{at}: {}", response.body);
+                assert!(json_of(&response)["code"].is_string(), "{at}");
+                // Nothing, or the whole cell (the fault fell after the
+                // commit, so only the reply was lost): never a part.
+                let whole = cell.tenant.is_provisioned();
+                let retry = provision(&mut cell, Some(&owner), &body);
+                assert_eq!(retry.status, 200, "{at}: {}", retry.body);
+                let expected = if whole { "replayed" } else { "provisioned" };
+                assert_eq!(json_of(&retry)["outcome"], expected, "{at}");
+                if whole {
+                    whole_after += 1;
+                } else {
+                    vacant_after += 1;
+                }
+            } else {
+                assert_eq!(response.status, 200, "{at}: {}", response.body);
+                assert!(cell.tenant.is_provisioned(), "{at}");
+            }
+            assert_eq!(definitions(&mut cell, Some(&owner)).status, 200, "{at}");
+            past = !hit;
+        }
+    }
+    assert!(
+        vacant_after >= 30,
+        "the sweep must reach the provisioning transaction: {vacant_after} faults left a vacant scope, {whole_after} a whole cell"
+    );
+}
+
+// ------------------------------------------------------------- seeded cells
+
+/// A cell this build seeds is never provisioned over: its organization's
+/// owner is refused, and everyone else as everywhere.
+#[test]
+fn a_seeded_cell_is_not_provisioned_over() {
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let tenant = Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None).unwrap();
+    let tokens =
+        TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW).unwrap();
+    let mut cell = Cell { tenant, tokens };
+    let owner = user(&scope.org_id, "owner");
+    let before = definitions(&mut cell, Some(&owner));
+    assert_eq!(before.status, 200);
+    let response = provision(&mut cell, Some(&owner), &submission(&full()));
+    assert_eq!(
+        (response.status, code(&response).as_str()),
+        (409, provision::codes::PROVISION_CONFLICT)
+    );
+    assert_eq!(
+        provision(
+            &mut cell,
+            Some(&user(&scope.org_id, "admin")),
+            &submission(&full())
+        )
+        .status,
+        403
+    );
+    assert_eq!(definitions(&mut cell, Some(&owner)), before);
+}
