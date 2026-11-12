@@ -87,6 +87,13 @@ pub struct TransformResult {
     pub lineage_pin: String,
 }
 
+/// One snapshot's readable rows, withheld counts and quarantine exclusions.
+type Inputs = (
+    TransformInput,
+    BTreeMap<String, u64>,
+    BTreeMap<String, String>,
+);
+
 /// The exact engine's read bounds: rows across all inputs and decoded bytes.
 fn limits() -> ReactiveLimits {
     let rows = u32::try_from(MAX_ROWS).unwrap_or(u32::MAX);
@@ -128,94 +135,8 @@ impl<E: SqlEngine> CellStore<E> {
         self.conn.transaction(|| {
             self.check_question_scope(scope)?;
             let revision = self.verified_head()?;
-            let reader = self.read();
-            let mut budget = DecodeBudget::new(&limits());
-            let mut input = TransformInput::default();
-            let mut withheld = BTreeMap::new();
-            let mut exclusions = BTreeMap::new();
-            for step in plan.nodes.values().map(|node| &node.step) {
-                let Step::Scan { alias } = step else {
-                    continue;
-                };
-                let scan = plan
-                    .inputs
-                    .get(alias)
-                    .ok_or_else(|| refused("core.compute.stale_input"))?;
-                self.model()
-                    .query_contract(&scan.object_type)
-                    .map_err(|_unknown| refused("core.compute.stale_input"))?;
-                let (ids, complete) = reader.root_rows_with_budget(
-                    world,
-                    &scan.object_type,
-                    MAX_ROWS,
-                    &mut budget,
-                )?;
-                if !complete {
-                    return Err(refused("core.compute.bound_exceeded"));
-                }
-                let mut rows = Vec::new();
-                for (id, _) in ids {
-                    let record = match reader.object_with_budget(
-                        world,
-                        &scan.object_type,
-                        &id,
-                        &mut budget,
-                    )? {
-                        BudgetedRead::Found(record) => record,
-                        BudgetedRead::Missing => continue,
-                        BudgetedRead::Exhausted => {
-                            return Err(refused("core.compute.bound_exceeded"));
-                        }
-                    };
-                    if record.scope != scope {
-                        return Err(refused("core.compute.stale_input"));
-                    }
-                    // Visibility precedes data quality (HOST-READ-2).
-                    match access(&record)? {
-                        RowAccess::None => continue,
-                        RowAccess::Count => {
-                            let count = withheld.entry(alias.clone()).or_insert(0_u64);
-                            *count = count.saturating_add(1);
-                            continue;
-                        }
-                        RowAccess::Read => {}
-                    }
-                    if let Some(finding) = reader.question_findings(world, &record, None)?.first() {
-                        exclusions.insert(format!("{alias}/{}", record.id), finding.id.clone());
-                        continue;
-                    }
-                    rows.push(InputRow {
-                        id: record.id,
-                        version: record.version,
-                        values: record.values,
-                    });
-                }
-                input.rows.insert(alias.clone(), rows);
-            }
-            for (alias, link) in &plan.links {
-                let scan = plan
-                    .inputs
-                    .get(alias)
-                    .ok_or_else(|| refused("core.compute.stale_input"))?;
-                let mut edges = BTreeMap::new();
-                for row in input.rows.get(alias).into_iter().flatten() {
-                    match reader.link_targets_with_budget(
-                        world,
-                        &scan.object_type,
-                        link,
-                        &row.id,
-                        &mut budget,
-                    )? {
-                        BudgetedLinksRead::Complete(targets) => {
-                            edges.insert(row.id.clone(), targets);
-                        }
-                        BudgetedLinksRead::Exhausted => {
-                            return Err(refused("core.compute.bound_exceeded"));
-                        }
-                    }
-                }
-                input.links.insert((alias.clone(), link.clone()), edges);
-            }
+            let (input, withheld, exclusions) =
+                self.transform_inputs(plan, world, scope, &mut access)?;
             let output =
                 eval::evaluate(plan, &input).map_err(|error| refused(eval_refusal(&error)))?;
             let definition_pin = self.transform_definition_pin()?;
@@ -269,6 +190,98 @@ impl<E: SqlEngine> CellStore<E> {
                 lineage_pin,
             })
         })
+    }
+
+    /// Read every scanned input under `access` and the link edges the plan
+    /// joins along, inside the caller's transaction.
+    fn transform_inputs(
+        &self,
+        plan: &TransformPlan,
+        world: &str,
+        scope: &str,
+        access: &mut impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+    ) -> Result<Inputs, CellError> {
+        let reader = self.read();
+        let mut budget = DecodeBudget::new(&limits());
+        let mut input = TransformInput::default();
+        let mut withheld = BTreeMap::new();
+        let mut exclusions = BTreeMap::new();
+        for step in plan.nodes.values().map(|node| &node.step) {
+            let Step::Scan { alias } = step else {
+                continue;
+            };
+            let scan = plan
+                .inputs
+                .get(alias)
+                .ok_or_else(|| refused("core.compute.stale_input"))?;
+            self.model()
+                .query_contract(&scan.object_type)
+                .map_err(|_unknown| refused("core.compute.stale_input"))?;
+            let (ids, complete) =
+                reader.root_rows_with_budget(world, &scan.object_type, MAX_ROWS, &mut budget)?;
+            if !complete {
+                return Err(refused("core.compute.bound_exceeded"));
+            }
+            let mut rows = Vec::new();
+            for (id, _) in ids {
+                let record =
+                    match reader.object_with_budget(world, &scan.object_type, &id, &mut budget)? {
+                        BudgetedRead::Found(record) => record,
+                        BudgetedRead::Missing => continue,
+                        BudgetedRead::Exhausted => {
+                            return Err(refused("core.compute.bound_exceeded"));
+                        }
+                    };
+                if record.scope != scope {
+                    return Err(refused("core.compute.stale_input"));
+                }
+                // Visibility precedes data quality (HOST-READ-2).
+                match access(&record)? {
+                    RowAccess::None => continue,
+                    RowAccess::Count => {
+                        let count = withheld.entry(alias.clone()).or_insert(0_u64);
+                        *count = count.saturating_add(1);
+                        continue;
+                    }
+                    RowAccess::Read => {}
+                }
+                if let Some(finding) = reader.question_findings(world, &record, None)?.first() {
+                    exclusions.insert(format!("{alias}/{}", record.id), finding.id.clone());
+                    continue;
+                }
+                rows.push(InputRow {
+                    id: record.id,
+                    version: record.version,
+                    values: record.values,
+                });
+            }
+            input.rows.insert(alias.clone(), rows);
+        }
+        for (alias, link) in &plan.links {
+            let scan = plan
+                .inputs
+                .get(alias)
+                .ok_or_else(|| refused("core.compute.stale_input"))?;
+            let mut edges = BTreeMap::new();
+            for row in input.rows.get(alias).into_iter().flatten() {
+                match reader.link_targets_with_budget(
+                    world,
+                    &scan.object_type,
+                    link,
+                    &row.id,
+                    &mut budget,
+                )? {
+                    BudgetedLinksRead::Complete(targets) => {
+                        edges.insert(row.id.clone(), targets);
+                    }
+                    BudgetedLinksRead::Exhausted => {
+                        return Err(refused("core.compute.bound_exceeded"));
+                    }
+                }
+            }
+            input.links.insert((alias.clone(), link.clone()), edges);
+        }
+        Ok((input, withheld, exclusions))
     }
 
     fn transform_definition_pin(&self) -> Result<String, CellError> {

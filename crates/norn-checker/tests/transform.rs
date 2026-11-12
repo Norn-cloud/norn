@@ -5,11 +5,12 @@
     clippy::needless_pass_by_value,
     clippy::panic,
     clippy::string_slice,
+    clippy::too_many_lines,
     missing_docs,
     reason = "integration-test crate"
 )]
 
-//! ViewIR v1 typed transforms: admission laws and the exact interpreter
+//! `ViewIR` v1 typed transforms: admission laws and the exact interpreter
 //! (VIEW-TYPE-1 … VIEW-ENGINE-1, docs/spec/core/03-query-compute.md).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -264,7 +265,7 @@ fn link_and_key_joins_are_the_only_joins() {
     // A declared key equivalence: an uploaded lead's email to the customer's email key.
     let key = json!({"j": {"op": "join", "left": "lead", "right": "customer",
         "on": {"key": {"left": ["email"], "right": "email"}}, "kind": "left", "prefix": "c_"}});
-    let plan = admitted(with(key.clone()), "j");
+    let plan = admitted(with(key), "j");
     let input = TransformInput {
         rows: BTreeMap::from([
             (
@@ -727,12 +728,12 @@ prop_compose! {
 
 fn bucket(date: &str, grain: TimeGrain) -> String {
     let value = norn_expr::Value::String(date.to_owned());
-    match norn_checker::transform::eval::bucket(&value, &norn_expr::Type::Date, grain)
-        .expect("bucket")
-    {
-        norn_expr::Value::String(text) => text,
-        other => panic!("{other:?}"),
-    }
+    let bucketed = norn_checker::transform::eval::bucket(&value, &norn_expr::Type::Date, grain)
+        .expect("bucket");
+    let norn_expr::Value::String(text) = bucketed else {
+        panic!("{bucketed:?}");
+    };
+    text
 }
 
 proptest! {
@@ -763,9 +764,9 @@ proptest! {
         prop_assert_eq!(&forward, &backward);
         // Every positive order is counted exactly once across the buckets.
         let positive = rows.iter().filter(|(_, _, amount, _)| Decimal::parse(amount).expect("d") > Decimal::ZERO).count();
-        let counted: i64 = forward.rows.iter().map(|r| match &r.values["orders"] {
-            RuntimeValue::Number(n) => n.to_i64().expect("count"),
-            _ => 0,
+        let counted: i64 = forward.rows.iter().map(|r| {
+            let RuntimeValue::Number(n) = &r.values["orders"] else { panic!("a count") };
+            n.to_i64().expect("count")
         }).sum();
         prop_assert_eq!(usize::try_from(counted).expect("count"), positive);
         let members: usize = forward.rows.iter().map(|r| r.members.iter().filter(|m| m.alias == "order").count()).sum();
@@ -785,14 +786,14 @@ proptest! {
         let quarter = bucket(&date, TimeGrain::Quarter);
         prop_assert!(matches!(&quarter[5..], "01-01" | "04-01" | "07-01" | "10-01"));
         prop_assert_eq!(bucket(&date, TimeGrain::Year), format!("{}-01-01", &date[..4]));
-        prop_assert_eq!(bucket(&date, TimeGrain::Day), date.clone());
+        prop_assert_eq!(bucket(&date, TimeGrain::Day), date);
     }
 }
 
 const MONTH_DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 fn leap(year: u32) -> bool {
-    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
 fn add_days(start: &str, days: u32) -> String {
