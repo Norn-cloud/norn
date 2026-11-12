@@ -94,7 +94,7 @@ function d1(db: Database): D1Database {
 }
 function stage() {
   const db = new Database(":memory:")
-  db.exec(readFileSync(join(import.meta.dir, "../migrations/0007_dashboard_proposal.sql"), "utf8"))
+  db.exec(readFileSync(join(import.meta.dir, "../migrations/0008_dashboard_proposal.sql"), "utf8"))
   return d1(db)
 }
 const post = (route: string, body: unknown = {}) => new Request(`https://studio.test/api/agent/dashboards${route}`, { method: "POST", body: JSON.stringify(body) })
