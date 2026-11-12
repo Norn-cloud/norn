@@ -292,22 +292,7 @@ pub fn handle_all<E: SqlEngine>(
             "the host serves only its declared read routes",
         ))
     } else if let Some(route) = analytics {
-        // Served by [`analytics`] on a host with an engine; this one has none.
-        Err(if method == route.signature().0 {
-            Refusal::new(
-                StatusCode::NOT_IMPLEMENTED,
-                "analytics.unconfigured",
-                "this host has no analytics engine",
-                "loads and exports run on the tenant analytics engine",
-            )
-        } else {
-            Refusal::new(
-                StatusCode::METHOD_NOT_ALLOWED,
-                "route.method_not_allowed",
-                "the route does not accept this method",
-                "an export takes GET; a load takes POST",
-            )
-        })
+        Err(without_engine(route, method))
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
     } else if path == "/v1/actions" {
@@ -888,6 +873,26 @@ fn submission<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, Refusal> 
 /// The named-question view of the cell's question runtime.
 fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
     runtime
+}
+
+/// An analytics route on a host without an engine: [`analytics`] serves it
+/// where there is one.
+fn without_engine(route: Route, method: &str) -> Refusal {
+    if method == route.signature().0 {
+        Refusal::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "analytics.unconfigured",
+            "this host has no analytics engine",
+            "loads and exports run on the tenant analytics engine",
+        )
+    } else {
+        Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "an export takes GET; a load takes POST",
+        )
+    }
 }
 
 /// D102: the routes of a host whose analytics run on the tenant's engine

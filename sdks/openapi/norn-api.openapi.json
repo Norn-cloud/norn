@@ -242,6 +242,113 @@
         ]
       }
     },
+    "/v1/datasets:load": {
+      "post": {
+        "tags": [
+          "crate::analytics_routes"
+        ],
+        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one; each row\ntraces to `(uri, sha256, row)`. Only an admin or owner may load.",
+        "description": "# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), or an unreachable engine.",
+        "operationId": "load_dataset",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetLoadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The load.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornDatasetLoad"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The file was refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/definitions": {
       "get": {
         "tags": [
@@ -1879,6 +1986,116 @@
         ]
       }
     },
+    "/v1/objects/{type}:export": {
+      "get": {
+        "tags": [
+          "crate::analytics_routes"
+        ],
+        "summary": "D102: every row of `object_type` the caller may read, with the named\nproperties plus `id` and `version`, from the tenant's engine, exact at the\ncell's verified head (or a dataset's current load). The caller needs\nPopulation and Values on the type; quarantined rows are left out, as on a\npage. The host streams the engine's file; the snapshot it is exact at is\nthe `Norn-Snapshot` header (`c<commit>` or `l<load>`).",
+        "description": "# Errors\nA denied gate (one opaque 403), an unknown type (404), an unknown column\nor format (400), or an unreachable engine.",
+        "operationId": "export_objects",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The concept to export.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization scope.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment scope.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "columns",
+            "in": "query",
+            "description": "Comma-separated property ids; each row also carries `id` and `version`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`parquet` (the default) or `jsonl`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rows, as Parquet (`application/vnd.apache.parquet`) or JSON lines (`application/x-ndjson`); `Norn-Snapshot` names the snapshot they are exact at.",
+            "content": {
+              "application/vnd.apache.parquet": {}
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/objects/{type}:profile": {
       "get": {
         "tags": [
@@ -2790,6 +3007,25 @@
             "description": "Lower-case hex SHA-256 of `restatement`; null with it."
           }
         }
+      },
+      "DatasetLoadRequest": {
+        "type": "object",
+        "description": "`POST /v1/datasets:load` body.",
+        "required": [
+          "uploadId",
+          "objectType"
+        ],
+        "properties": {
+          "objectType": {
+            "type": "string",
+            "description": "The admitted object type the rows are typed by."
+          },
+          "uploadId": {
+            "type": "string",
+            "description": "A completed upload of this cell."
+          }
+        },
+        "additionalProperties": false
       },
       "DefinitionDocument": {
         "type": "object",
@@ -4488,6 +4724,75 @@
           "T6",
           "T7"
         ]
+      },
+      "NornDatasetLoad": {
+        "type": "object",
+        "description": "The outcome of `POST /v1/datasets:load`.",
+        "required": [
+          "objectType",
+          "load",
+          "uri",
+          "sha256",
+          "rows",
+          "rejected",
+          "reasons",
+          "bytes",
+          "millis"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "File size in bytes.",
+            "minimum": 0
+          },
+          "load": {
+            "type": "string",
+            "description": "The load identity; answers over the dataset name it."
+          },
+          "millis": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Load time in milliseconds.",
+            "minimum": 0
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The dataset's object type."
+          },
+          "reasons": {
+            "type": "object",
+            "description": "Quarantined rows per reason code (`bulk.*`).",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows quarantined.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows admitted.",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "The file's SHA-256, verified by the engine."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The file's durable URI."
+          }
+        }
       },
       "NornDefinitionsCatalog": {
         "type": "object",
@@ -26966,6 +27271,15 @@
           "bucket": {
             "description": "Scalar grouping value."
           },
+          "memberCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "D102: contributing members, present when `members` is not listed\nbecause the population exceeds the question's bound (the analytics\nengine answered); the trace pages them.",
+            "minimum": 0
+          },
           "members": {
             "type": "object",
             "description": "Exact aggregate membership: contributing object identity → its contribution.",
@@ -26975,6 +27289,13 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "membershipDigest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MEMBERSHIP-DIGEST-1: SHA-256 over the members in identity order, each\nas `<identity bytes>:<identity>,<version>` then `,<coefficient>` per\noperand (empty when absent) and `;`. Present with `memberCount`."
           },
           "nullCounts": {
             "type": "array",
