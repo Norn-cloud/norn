@@ -109,7 +109,7 @@ export default {
     const { pathname } = new URL(request.url)
     if (mcpOn(env) && pathname === MCP_PATH) {
       if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in grant, not a request header.")
-      return serveMcp(request, { auth: auth(env), baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), host: env.NORN_HOST })
+      return serveMcp(request, { auth: auth(env), baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), host: env.NORN_HOST, assets: env.ASSETS })
     }
     if (mcpOn(env) && OAUTH_DISCOVERY.has(pathname)) return auth(env).handler(request)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
