@@ -5,9 +5,19 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-2,181 records across 158 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+2,189 records across 163 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
+
+## analytics
+
+| Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
+|---|---:|---|---|---:|---|---|---|---|
+| `analytics.duckdb.load_csv_1m.s` | 1.374 | s (single) | boat | 2 | 1.374 / 4.838 | █▁ | `9e119a5ce6` | [link](https://github.com/Norn-cloud/norn/issues/678#issuecomment-6837228655) |
+| `analytics.duckdb.load_parquet_1m.s` | 1.532 | s (single) | boat | 2 | 1.532 / 4.851 | █▁ | `9e119a5ce6` | [link](https://github.com/Norn-cloud/norn/issues/678#issuecomment-6837228655) |
+| `analytics.duckdb.mirror_sync_100k.ms` | 641 | ms (single) | boat | 1 | 641 / 641 | ▁ | `9e119a5ce6` | [link](https://github.com/Norn-cloud/norn/issues/678#issuecomment-6837228655) |
+| `analytics.duckdb.profile_1m.ms` | 617 | ms (single) | boat | 1 | 617 / 617 | ▁ | `9e119a5ce6` | [link](https://github.com/Norn-cloud/norn/issues/678#issuecomment-6837228655) |
+| `analytics.duckdb.question_1m.ms` | 474 | ms (p50) | boat | 2 | 474 / 1,437 | █▁ | `9e119a5ce6` | [link](https://github.com/Norn-cloud/norn/issues/678#issuecomment-6837228655) |
 
 ## Boat usage
 
@@ -211,6 +221,11 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 What limits each metric's latest value, in the measurer's words.
 
+- `analytics.duckdb.load_csv_1m.s`: release build; DuckDB 2.0 (duckdb crate 1.20000.1); memory_limit 512MB; synthetic 1M-row conversions, 5 columns (41.5 MB CSV, 15.6 MB Parquet); file already local (no R2 download); CPU-bound on exact per-value typing
+- `analytics.duckdb.load_parquet_1m.s`: release build; DuckDB 2.0 (duckdb crate 1.20000.1); memory_limit 512MB; synthetic 1M-row conversions, 5 columns (41.5 MB CSV, 15.6 MB Parquet); file already local (no R2 download); CPU-bound on exact per-value typing
+- `analytics.duckdb.mirror_sync_100k.ms`: release build; DuckDB 2.0 (duckdb crate 1.20000.1); memory_limit 512MB; synthetic 1M-row conversions, 5 columns (41.5 MB CSV, 15.6 MB Parquet); file already local (no R2 download); CPU-bound on exact per-value typing; 10 sync batches of 10k typed versions
+- `analytics.duckdb.profile_1m.ms`: release build; DuckDB 2.0 (duckdb crate 1.20000.1); memory_limit 512MB; synthetic 1M-row conversions, 5 columns (41.5 MB CSV, 15.6 MB Parquet); file already local (no R2 download); CPU-bound on exact per-value typing
+- `analytics.duckdb.question_1m.ms`: release build; DuckDB 2.0 (duckdb crate 1.20000.1); memory_limit 512MB; synthetic 1M-row conversions, 5 columns (41.5 MB CSV, 15.6 MB Parquet); file already local (no R2 download); CPU-bound on exact per-value typing; ratio of two sums by metal over 1M rows, digests in SQL, 11 runs
 - `boat.libclang_step_s`: one run on a default Boat VM from snapshot norn-ci-main-a8c384a14d-v1; includes apt-get update over the network; reused runners skip it (0 s)
 - `boat.starts.used_24h`: Account-wide: every project on this Boat account, not only Norn. Rolling 24-hour window from `boat limits --json`, read before this run's own start. Not tied to a commit.
 - `checker.test.cut2_four_serial_s`: The four tests cut 2 changed most, run serially on one VM. measured_at is when the PR body stated it. The head sha is #1231's head; the body does not restate it.
