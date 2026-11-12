@@ -4,6 +4,8 @@ use norn_ir::{McpTool, RuntimeObject, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use utoipa::ToSchema;
+use utoipa::openapi::Type;
+use utoipa::openapi::schema::{AdditionalProperties, Object, ObjectBuilder, SchemaType};
 
 /// The backend's unchanged payload and failure classification.
 pub struct CallOutput {
@@ -388,13 +390,42 @@ pub struct McpMessage {
     /// Always `2.0`.
     pub jsonrpc: String,
     /// A string or number; absent for a notification, which is answered 202.
-    #[schema(value_type = Object, required = false)]
+    #[schema(schema_with = request_id_schema, required = false)]
     pub id: Option<RuntimeValue>,
     /// `initialize`, `ping`, `tools/list`, `tools/call` or a notification.
     pub method: String,
     /// The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.
-    #[schema(value_type = Object, required = false)]
+    #[schema(schema_with = params_schema, required = false)]
     pub params: Option<RuntimeValue>,
+}
+
+// `schema_with` replaces a field's schema, doc comment included, so each
+// helper restates it. Parameters and results are JSON-RPC objects whose
+// members depend on the method, so they say so (`additionalProperties`).
+fn request_id_schema() -> Object {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::Array(vec![Type::String, Type::Number]))
+        .description(Some("A string or number; absent for a notification."))
+        .build()
+}
+
+fn free_form(description: &str) -> Object {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::Type(Type::Object))
+        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+        .description(Some(description))
+        .build()
+}
+
+fn params_schema() -> Object {
+    free_form("The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.")
+}
+
+fn result_schema() -> Object {
+    free_form(
+        "The method's result. A tool's refusal is a result with `isError: true` whose \
+         `structuredContent` is the route's own refusal.",
+    )
 }
 
 /// The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id.
@@ -403,11 +434,11 @@ pub struct McpReply {
     /// Always `2.0`.
     pub jsonrpc: String,
     /// The request's id.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = request_id_schema)]
     pub id: RuntimeValue,
     /// The method's result. A tool's refusal is a result with `isError: true`
     /// whose `structuredContent` is the route's own refusal.
-    #[schema(value_type = Object, required = false)]
+    #[schema(schema_with = result_schema, required = false)]
     pub result: Option<RuntimeValue>,
     /// A protocol error: malformed message, unknown method or tool.
     #[schema(required = false)]
