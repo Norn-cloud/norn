@@ -67,11 +67,15 @@ fn repository_of(path: &Path) -> Option<PathBuf> {
 
 fn emit_target(target: &Path, manifest: &Path) -> Result<(), String> {
     if std::fs::symlink_metadata(target).is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err(format!("{}: --emit refuses a symbolic link", target.display()));
+        return Err(format!(
+            "{}: --emit refuses a symbolic link",
+            target.display()
+        ));
     }
     let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
     let parent = parent.unwrap_or_else(|| Path::new("."));
-    let resolved = std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    let resolved =
+        std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     if repository_of(&resolved).is_some()
         || repository_of(manifest).is_some_and(|repo| resolved.starts_with(&repo))
     {
@@ -94,8 +98,17 @@ fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<St
     let mut total = 0_usize;
     let mut bytes = Vec::with_capacity(manifest.files.len());
     for pin in &manifest.files {
-        if pin.path.is_empty() || pin.path.starts_with('/') || pin.path.split('/').any(|step| step.is_empty() || step == "..") {
-            return Err(format!("{} is not a relative path under --originals", pin.path));
+        if pin.path.is_empty()
+            || pin.path.starts_with('/')
+            || pin
+                .path
+                .split('/')
+                .any(|step| step.is_empty() || step == "..")
+        {
+            return Err(format!(
+                "{} is not a relative path under --originals",
+                pin.path
+            ));
         }
         let file = read_bounded(&originals.join(&pin.path))?;
         total = total.saturating_add(file.len());
@@ -108,7 +121,11 @@ fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<St
         .files
         .iter()
         .zip(&bytes)
-        .map(|(pin, bytes)| OfbizFile { path: &pin.path, role: pin.role, bytes })
+        .map(|(pin, bytes)| OfbizFile {
+            path: &pin.path,
+            role: pin.role,
+            bytes,
+        })
         .collect();
     let config = OfbizConfig {
         system: manifest.system.clone(),
@@ -116,7 +133,11 @@ fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<St
         revision: manifest.revision.clone(),
         observed_at: manifest.observed_at.clone(),
         licence: manifest.licence.clone(),
-        pins: manifest.files.iter().map(|pin| (pin.path.clone(), pin.sha256.clone())).collect(),
+        pins: manifest
+            .files
+            .iter()
+            .map(|pin| (pin.path.clone(), pin.sha256.clone()))
+            .collect(),
     };
     let import = OfbizReader.import(&files, &config);
     if let Some(target) = emit {
@@ -196,7 +217,8 @@ fn main() -> ExitCode {
             }
         }
     }
-    let (Some("ofbiz"), Some(manifest), Some(originals)) = (format.as_deref(), manifest, originals) else {
+    let (Some("ofbiz"), Some(manifest), Some(originals)) = (format.as_deref(), manifest, originals)
+    else {
         writeln!(
             std::io::stderr().lock(),
             "usage: norn-import-read ofbiz <manifest.json> --originals <dir> [--emit <file>]"

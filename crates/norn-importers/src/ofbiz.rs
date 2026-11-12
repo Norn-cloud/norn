@@ -23,8 +23,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_formats::codes;
 use norn_formats::contract::{
-    ComponentPin, Disposition, DropReason, Facet, ImportProvenance, InputPin, LossLedger,
-    NornHome, SchemaImport, SchemaImporter, SourceElement, sha256_hex,
+    ComponentPin, Disposition, DropReason, Facet, ImportProvenance, InputPin, LossLedger, NornHome,
+    SchemaImport, SchemaImporter, SourceElement, sha256_hex,
 };
 use norn_ir::source_schema::{
     CodeSet, CodeValue, ConstraintKind, ConstraintTarget, DatasetKind, EvidenceRef, LineageKind,
@@ -51,10 +51,21 @@ const GROUP: &str = "entity_xml.entity_group";
 const SEED: &str = "entity_xml.seed_row";
 const UNKNOWN: &str = "entity_xml.unknown";
 
-const HEADERS: &[&str] = &["title", "description", "copyright", "version", "default-resource-name"];
+const HEADERS: &[&str] = &[
+    "title",
+    "description",
+    "copyright",
+    "version",
+    "default-resource-name",
+];
 const SCHEMA_LOCATION: &[&str] = &["xmlns:xsi", "xsi:noNamespaceSchemaLocation"];
 /// Entity attributes that only steer storage or caching.
-const STORAGE: &[&str] = &["table-name", "never-cache", "sequence-bank-size", "no-auto-stamp"];
+const STORAGE: &[&str] = &[
+    "table-name",
+    "never-cache",
+    "sequence-bank-size",
+    "no-auto-stamp",
+];
 /// Entity attributes kept in provenance.
 const KEPT: &[&str] = &["title", "dependent-on", "default-resource-name"];
 /// The closed grammar of `relation`, `key-map`, `index` and `prim-key`.
@@ -133,7 +144,11 @@ pub struct OfbizConfig {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OfbizReader;
 
-fn deferred(home: NornHome, code: &norn_formats::codes::Code, detail: impl Into<String>) -> Disposition {
+fn deferred(
+    home: NornHome,
+    code: &norn_formats::codes::Code,
+    detail: impl Into<String>,
+) -> Disposition {
     Disposition::Deferred {
         home,
         code: code.code.to_owned(),
@@ -160,7 +175,11 @@ fn key(text: impl Into<String>) -> Facet {
     Facet::Key(text.into())
 }
 
-fn diagnostic(code: &norn_formats::codes::Code, message: impl Into<String>, path: Option<String>) -> Diagnostic {
+fn diagnostic(
+    code: &norn_formats::codes::Code,
+    message: impl Into<String>,
+    path: Option<String>,
+) -> Diagnostic {
     Diagnostic {
         code: code.code.to_owned(),
         severity: code.severity.clone(),
@@ -178,7 +197,13 @@ fn relation_key(path: &str, top: usize, index: usize) -> String {
 }
 
 /// Every element of an `entity` or `extend-entity`, attributed to `dataset`.
-fn entity_inventory(path: &str, top: usize, element: &Element, dataset: &str, out: &mut Vec<SourceElement>) {
+fn entity_inventory(
+    path: &str,
+    top: usize,
+    element: &Element,
+    dataset: &str,
+    out: &mut Vec<SourceElement>,
+) {
     let extend = element.name == "extend-entity";
     for (name, _) in &element.attributes {
         if name == "entity-name" {
@@ -193,11 +218,16 @@ fn entity_inventory(path: &str, top: usize, element: &Element, dataset: &str, ou
     let mut relations = 0_usize;
     for (index, child) in element.children.iter().enumerate() {
         match child.name.as_str() {
-            "description" if !extend => out.push(SourceElement::dataset_facet(dataset, Facet::Description)),
+            "description" if !extend => {
+                out.push(SourceElement::dataset_facet(dataset, Facet::Description))
+            }
             "field" => field_inventory(child, dataset, out),
             "prim-key" => out.push(SourceElement::dataset_facet(
                 dataset,
-                key(format!("prim-key:{}", child.get("field").unwrap_or_default())),
+                key(format!(
+                    "prim-key:{}",
+                    child.get("field").unwrap_or_default()
+                )),
             )),
             "relation" => {
                 let name = relation_key(path, top, relations);
@@ -208,7 +238,10 @@ fn entity_inventory(path: &str, top: usize, element: &Element, dataset: &str, ou
                     match part.name.as_str() {
                         "key-map" => closed(part, KEY_MAP_ATTRIBUTES, &name, dataset, out),
                         "description" => {}
-                        other => out.push(SourceElement::dataset_facet(dataset, key(format!("unknown:{name}/{other}")))),
+                        other => out.push(SourceElement::dataset_facet(
+                            dataset,
+                            key(format!("unknown:{name}/{other}")),
+                        )),
                     }
                 }
             }
@@ -218,7 +251,10 @@ fn entity_inventory(path: &str, top: usize, element: &Element, dataset: &str, ou
                 closed(child, INDEX_ATTRIBUTES, &name, dataset, out);
                 for part in &child.children {
                     if part.name != "index-field" {
-                        out.push(SourceElement::dataset_facet(dataset, key(format!("unknown:{name}/{}", part.name))));
+                        out.push(SourceElement::dataset_facet(
+                            dataset,
+                            key(format!("unknown:{name}/{}", part.name)),
+                        ));
                     }
                 }
             }
@@ -231,7 +267,13 @@ fn entity_inventory(path: &str, top: usize, element: &Element, dataset: &str, ou
 }
 
 /// An unknown attribute of a closed-grammar element is its own element.
-fn closed(element: &Element, allowed: &[&str], owner: &str, dataset: &str, out: &mut Vec<SourceElement>) {
+fn closed(
+    element: &Element,
+    allowed: &[&str],
+    owner: &str,
+    dataset: &str,
+    out: &mut Vec<SourceElement>,
+) {
     for (name, _) in &element.attributes {
         if !allowed.contains(&name.as_str()) {
             out.push(SourceElement::dataset_facet(
@@ -250,7 +292,11 @@ fn field_inventory(field: &Element, dataset: &str, out: &mut Vec<SourceElement>)
             "name" => {}
             "type" => out.push(SourceElement::facet(dataset, name, Facet::Type)),
             "not-null" => out.push(SourceElement::facet(dataset, name, Facet::Required)),
-            other => out.push(SourceElement::facet(dataset, name, key(format!("attr:{other}")))),
+            other => out.push(SourceElement::facet(
+                dataset,
+                name,
+                key(format!("attr:{other}")),
+            )),
         }
     }
     for child in &field.children {
@@ -267,7 +313,10 @@ fn view_inventory(element: &Element, out: &mut Vec<SourceElement>) {
     out.push(SourceElement::dataset(view));
     for (name, _) in &element.attributes {
         if name != "entity-name" {
-            out.push(SourceElement::dataset_facet(view, key(format!("attr:{name}"))));
+            out.push(SourceElement::dataset_facet(
+                view,
+                key(format!("attr:{name}")),
+            ));
         }
     }
     for (index, child) in element.children.iter().enumerate() {
@@ -275,7 +324,10 @@ fn view_inventory(element: &Element, out: &mut Vec<SourceElement>) {
             "description" => SourceElement::dataset_facet(view, Facet::Description),
             "member-entity" => SourceElement::dataset_facet(
                 view,
-                key(format!("member:{}", child.get("entity-alias").unwrap_or_default())),
+                key(format!(
+                    "member:{}",
+                    child.get("entity-alias").unwrap_or_default()
+                )),
             ),
             "alias" | "alias-all" | "view-link" | "entity-condition" | "relation" => {
                 SourceElement::dataset_facet(view, key(format!("{}#{index}", child.name)))
@@ -291,7 +343,10 @@ fn inventory_of(files: &[(OfbizFile<'_>, Element)]) -> Vec<SourceElement> {
     for (file, root) in files {
         let path = file.path;
         for (name, _) in &root.attributes {
-            out.push(SourceElement::definition(ROOT_ATTRIBUTE, &format!("{path}@{name}")));
+            out.push(SourceElement::definition(
+                ROOT_ATTRIBUTE,
+                &format!("{path}@{name}"),
+            ));
         }
         for (top, element) in root.children.iter().enumerate() {
             let tag = element.name.as_str();
@@ -308,13 +363,21 @@ fn inventory_of(files: &[(OfbizFile<'_>, Element)]) -> Vec<SourceElement> {
                 }
                 (Role::Entity, "view-entity") => view_inventory(element, &mut out),
                 (Role::Entity, header) if HEADERS.contains(&header) => {
-                    out.push(SourceElement::definition(HEADER, &format!("{path}#{header}")));
+                    out.push(SourceElement::definition(
+                        HEADER,
+                        &format!("{path}#{header}"),
+                    ));
                 }
                 (Role::Group, "entity-group") => {
                     out.push(SourceElement::definition(GROUP, &format!("{path}#{top}")));
                 }
-                (Role::Seed, _) => out.push(SourceElement::definition(SEED, &format!("{path}#{top}"))),
-                _ => out.push(SourceElement::definition(UNKNOWN, &format!("{path}#{top}:{tag}"))),
+                (Role::Seed, _) => {
+                    out.push(SourceElement::definition(SEED, &format!("{path}#{top}")))
+                }
+                _ => out.push(SourceElement::definition(
+                    UNKNOWN,
+                    &format!("{path}#{top}:{tag}"),
+                )),
             }
         }
     }
@@ -328,8 +391,12 @@ fn inventory_of(files: &[(OfbizFile<'_>, Element)]) -> Vec<SourceElement> {
 fn type_candidate(native: &str) -> TypeCandidate {
     let (normalized, exact) = match native {
         "blob" | "byte-array" | "object" | "binary-very-long" => (NormalizedType::Binary, true),
-        "comment" | "long-varchar" | "very-long" | "text-long" | "text-very-long" => (NormalizedType::Text, true),
-        "currency-amount" | "currency-precise" | "fixed-point" | "number-decimal" => (NormalizedType::Decimal, true),
+        "comment" | "long-varchar" | "very-long" | "text-long" | "text-very-long" => {
+            (NormalizedType::Text, true)
+        }
+        "currency-amount" | "currency-precise" | "fixed-point" | "number-decimal" => {
+            (NormalizedType::Decimal, true)
+        }
         "floating-point" | "number-float" => (NormalizedType::Decimal, false),
         "date" => (NormalizedType::Date, true),
         "date-time" => (NormalizedType::Datetime, true),
@@ -343,7 +410,11 @@ fn type_candidate(native: &str) -> TypeCandidate {
     };
     TypeCandidate {
         normalized,
-        origin: if exact { Origin::Declared } else { Origin::Inferred },
+        origin: if exact {
+            Origin::Declared
+        } else {
+            Origin::Inferred
+        },
     }
 }
 
@@ -391,7 +462,9 @@ impl<'a> Build<'a> {
 
     fn push_kept(&mut self, dataset: &str, member: &str, value: Value) {
         let map = self.dataset_kept(dataset);
-        let list = map.entry(member.to_owned()).or_insert_with(|| Value::Array(Vec::new()));
+        let list = map
+            .entry(member.to_owned())
+            .or_insert_with(|| Value::Array(Vec::new()));
         if let Value::Array(items) = list {
             items.push(value);
         }
@@ -400,24 +473,47 @@ impl<'a> Build<'a> {
     fn collect(&mut self, files: &'a [(OfbizFile<'a>, Element)]) {
         for (file, root) in files {
             for name in root.attributes.iter().map(|(name, _)| name) {
-                let element = SourceElement::definition(ROOT_ATTRIBUTE, &format!("{}@{name}", file.path));
+                let element =
+                    SourceElement::definition(ROOT_ATTRIBUTE, &format!("{}@{name}", file.path));
                 if SCHEMA_LOCATION.contains(&name.as_str()) {
-                    self.ledger.resolve(&element, dropped(DropReason::SchemaPlumbing, "XML schema location"));
+                    self.ledger.resolve(
+                        &element,
+                        dropped(DropReason::SchemaPlumbing, "XML schema location"),
+                    );
                 }
             }
             for (top, element) in root.children.iter().enumerate() {
                 match (file.role, element.name.as_str()) {
                     (Role::Entity, "entity") => {
                         let name = element.get("entity-name").unwrap_or_default().to_owned();
-                        let part = Part { path: file.path, top, element };
-                        if let Some(first) = self.entities.get_mut(&name).and_then(|parts| parts.first_mut()) {
+                        let part = Part {
+                            path: file.path,
+                            top,
+                            element,
+                        };
+                        if let Some(first) = self
+                            .entities
+                            .get_mut(&name)
+                            .and_then(|parts| parts.first_mut())
+                        {
                             // The later definition wins, as in OFBiz; the earlier one is a gap.
                             let earlier = std::mem::replace(first, part);
                             self.unresolved.push(json!({"kind": "duplicate-entity", "target": name, "file": earlier.path}));
                             let mut lost = Vec::new();
-                            entity_inventory(earlier.path, earlier.top, earlier.element, &name, &mut lost);
+                            entity_inventory(
+                                earlier.path,
+                                earlier.top,
+                                earlier.element,
+                                &name,
+                                &mut lost,
+                            );
                             for element in lost {
-                                self.ledger.resolve(&element, unresolved(format!("{name} is defined again later; the later definition wins")));
+                                self.ledger.resolve(
+                                    &element,
+                                    unresolved(format!(
+                                        "{name} is defined again later; the later definition wins"
+                                    )),
+                                );
                             }
                         } else {
                             self.order.push(name.clone());
@@ -442,16 +538,27 @@ impl<'a> Build<'a> {
             for (top, element) in root.children.iter().enumerate() {
                 if file.role == Role::Entity && element.name == "extend-entity" {
                     let name = element.get("entity-name").unwrap_or_default();
-                    let identity = SourceElement::definition(EXTEND, &format!("{}#{top}", file.path));
+                    let identity =
+                        SourceElement::definition(EXTEND, &format!("{}#{top}", file.path));
                     if let Some(parts) = self.entities.get_mut(name) {
-                        parts.push(Part { path: file.path, top, element });
-                        self.ledger.resolve(&identity, only(format!("merged into {name}")));
+                        parts.push(Part {
+                            path: file.path,
+                            top,
+                            element,
+                        });
+                        self.ledger
+                            .resolve(&identity, only(format!("merged into {name}")));
                     } else {
-                        self.unresolved.push(json!({"kind": "extend-entity", "target": name, "file": file.path}));
+                        self.unresolved.push(
+                            json!({"kind": "extend-entity", "target": name, "file": file.path}),
+                        );
                         let mut lost = Vec::new();
                         entity_inventory(file.path, top, element, name, &mut lost);
                         for element in lost.iter().chain([&identity]) {
-                            self.ledger.resolve(element, unresolved(format!("extends {name}, which no pinned file defines")));
+                            self.ledger.resolve(
+                                element,
+                                unresolved(format!("extends {name}, which no pinned file defines")),
+                            );
                         }
                     }
                 }
@@ -463,7 +570,11 @@ impl<'a> Build<'a> {
         for (name, parts) in &self.entities {
             let mut keys = Vec::new();
             for part in parts {
-                for field in part.element.named("prim-key").filter_map(|key| key.get("field")) {
+                for field in part
+                    .element
+                    .named("prim-key")
+                    .filter_map(|key| key.get("field"))
+                {
                     if !keys.iter().any(|known: &String| known == field) {
                         keys.push(field.to_owned());
                     }
@@ -481,10 +592,18 @@ impl<'a> Build<'a> {
             return;
         };
         let element = first.element;
-        self.ledger.resolve(&SourceElement::dataset(name), only("SourceSchemaIR dataset"));
-        let description = element.child_text("description").or_else(|| element.get("title").map(str::to_owned));
+        self.ledger.resolve(
+            &SourceElement::dataset(name),
+            only("SourceSchemaIR dataset"),
+        );
+        let description = element
+            .child_text("description")
+            .or_else(|| element.get("title").map(str::to_owned));
         if element.child_text("description").is_some() {
-            self.ledger.resolve(&SourceElement::dataset_facet(name, Facet::Description), only("dataset description"));
+            self.ledger.resolve(
+                &SourceElement::dataset_facet(name, Facet::Description),
+                only("dataset description"),
+            );
         }
         let mut attributes = Map::new();
         for (attribute, value) in &element.attributes {
@@ -494,7 +613,10 @@ impl<'a> Build<'a> {
                 "package-name" => self.ledger.resolve(&facet, only("dataset namespace")),
                 storage if STORAGE.contains(&storage) => self.ledger.resolve(
                     &facet,
-                    dropped(DropReason::SourceBookkeeping, "a storage or cache setting of the entity engine"),
+                    dropped(
+                        DropReason::SourceBookkeeping,
+                        "a storage or cache setting of the entity engine",
+                    ),
                 ),
                 kept if KEPT.contains(&kept) => {
                     attributes.insert(kept.to_owned(), Value::String(value.clone()));
@@ -551,14 +673,24 @@ impl<'a> Build<'a> {
         }
     }
 
-    fn field(&mut self, dataset: &str, part: &Part<'_>, field: &Element, keys: &[String], seen: &mut BTreeSet<String>) {
+    fn field(
+        &mut self,
+        dataset: &str,
+        part: &Part<'_>,
+        field: &Element,
+        keys: &[String],
+        seen: &mut BTreeSet<String>,
+    ) {
         let name = field.get("name").unwrap_or_default();
         if !seen.insert(name.to_owned()) {
             self.unresolved.push(json!({"kind": "duplicate-field", "target": dataset, "field": name, "file": part.path}));
             let mut lost = Vec::new();
             field_inventory(field, dataset, &mut lost);
             for element in lost {
-                self.ledger.resolve(&element, unresolved(format!("{dataset}.{name} is declared twice")));
+                self.ledger.resolve(
+                    &element,
+                    unresolved(format!("{dataset}.{name} is declared twice")),
+                );
             }
             return;
         }
@@ -571,22 +703,51 @@ impl<'a> Build<'a> {
         } else {
             None
         };
-        self.ledger.resolve(&SourceElement::field(dataset, name), only("SourceSchemaIR field"));
-        self.ledger.resolve_declared(&SourceElement::facet(dataset, name, Facet::Type), only("native type and type candidate"));
-        self.ledger.resolve_declared(&SourceElement::facet(dataset, name, Facet::Required), only("required"));
-        self.ledger.resolve_declared(&SourceElement::facet(dataset, name, Facet::Description), only("field description"));
+        self.ledger.resolve(
+            &SourceElement::field(dataset, name),
+            only("SourceSchemaIR field"),
+        );
+        self.ledger.resolve_declared(
+            &SourceElement::facet(dataset, name, Facet::Type),
+            only("native type and type candidate"),
+        );
+        self.ledger.resolve_declared(
+            &SourceElement::facet(dataset, name, Facet::Required),
+            only("required"),
+        );
+        self.ledger.resolve_declared(
+            &SourceElement::facet(dataset, name, Facet::Description),
+            only("field description"),
+        );
         let mut extra = Map::new();
         for (attribute, value) in &field.attributes {
             let facet = SourceElement::facet(dataset, name, key(format!("attr:{attribute}")));
             match attribute.as_str() {
-                "col-name" => self.ledger.resolve(&facet, dropped(DropReason::SourceBookkeeping, "a physical column name")),
+                "col-name" => self.ledger.resolve(
+                    &facet,
+                    dropped(DropReason::SourceBookkeeping, "a physical column name"),
+                ),
                 "encrypt" => {
                     extra.insert(attribute.clone(), Value::String(value.clone()));
-                    self.ledger.resolve(&facet, deferred(NornHome::AccessIr, &codes::SOURCE_DEFERRED, "encrypted at rest: a storage and access policy"));
+                    self.ledger.resolve(
+                        &facet,
+                        deferred(
+                            NornHome::AccessIr,
+                            &codes::SOURCE_DEFERRED,
+                            "encrypted at rest: a storage and access policy",
+                        ),
+                    );
                 }
                 "enable-audit-log" => {
                     extra.insert(attribute.clone(), Value::String(value.clone()));
-                    self.ledger.resolve(&facet, deferred(NornHome::EntityIr, &codes::SOURCE_DEFERRED, "audit-log setting"));
+                    self.ledger.resolve(
+                        &facet,
+                        deferred(
+                            NornHome::EntityIr,
+                            &codes::SOURCE_DEFERRED,
+                            "audit-log setting",
+                        ),
+                    );
                 }
                 _ => {}
             }
@@ -595,7 +756,9 @@ impl<'a> Build<'a> {
             let mut note = extra;
             note.insert("file".into(), Value::String(part.path.to_owned()));
             let map = self.dataset_kept(dataset);
-            let fields = map.entry("fields").or_insert_with(|| Value::Object(Map::new()));
+            let fields = map
+                .entry("fields")
+                .or_insert_with(|| Value::Object(Map::new()));
             if let Value::Object(fields) = fields {
                 fields.insert(name.to_owned(), Value::Object(note));
             }
@@ -615,20 +778,34 @@ impl<'a> Build<'a> {
 
     fn part_keys(&mut self, dataset: &str, part: &Part<'_>) {
         let declared = self.declared.get(dataset).cloned().unwrap_or_default();
-        for field in part.element.named("prim-key").filter_map(|key| key.get("field")) {
+        for field in part
+            .element
+            .named("prim-key")
+            .filter_map(|key| key.get("field"))
+        {
             let element = SourceElement::dataset_facet(dataset, key(format!("prim-key:{field}")));
             if declared.contains(field) {
                 self.ledger.resolve(&element, only("primary key"));
             } else {
-                self.ledger.resolve(&element, unresolved(format!("primary key names undeclared field {field}")));
+                self.ledger.resolve(
+                    &element,
+                    unresolved(format!("primary key names undeclared field {field}")),
+                );
             }
         }
         for index in part.element.named("index") {
             let name = index.get("name").unwrap_or_default();
             let element = SourceElement::dataset_facet(dataset, key(format!("index:{name}")));
-            let fields: Vec<String> = index.named("index-field").filter_map(|field| field.get("name")).map(str::to_owned).collect();
+            let fields: Vec<String> = index
+                .named("index-field")
+                .filter_map(|field| field.get("name"))
+                .map(str::to_owned)
+                .collect();
             if fields.is_empty() || !fields.iter().all(|field| declared.contains(field)) {
-                self.ledger.resolve(&element, unresolved(format!("index {name} names undeclared fields")));
+                self.ledger.resolve(
+                    &element,
+                    unresolved(format!("index {name} names undeclared fields")),
+                );
             } else if index.get("unique") == Some("true") {
                 self.constraints.push(SourceConstraint {
                     id: format!("{dataset}:unique:{name}"),
@@ -644,32 +821,57 @@ impl<'a> Build<'a> {
                 self.ledger.resolve(&element, only("unique constraint"));
             } else {
                 self.push_kept(dataset, "indexes", json!({"name": name, "fields": fields}));
-                self.ledger.resolve(&element, only("non-unique index, kept in provenance"));
+                self.ledger
+                    .resolve(&element, only("non-unique index, kept in provenance"));
             }
         }
     }
 
-    #[allow(clippy::too_many_lines, reason = "one pass decides every relation's disposition, constraint and kept record")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass decides every relation's disposition, constraint and kept record"
+    )]
     fn relations(&mut self) -> BTreeMap<(String, String), (String, String)> {
         let mut bound = BTreeMap::new();
         let relations = std::mem::take(&mut self.relations);
         let mut counters: BTreeMap<String, usize> = BTreeMap::new();
         for relation in relations {
-            let element = SourceElement::dataset_facet(&relation.dataset, key(relation.key.clone()));
+            let element =
+                SourceElement::dataset_facet(&relation.dataset, key(relation.key.clone()));
             let kind = relation.element.get("type").unwrap_or_default();
             let target = relation.element.get("rel-entity-name").unwrap_or_default();
             let title = relation.element.get("title");
             let maps: Vec<(String, Option<String>)> = relation
                 .element
                 .named("key-map")
-                .map(|map| (map.get("field-name").unwrap_or_default().to_owned(), map.get("rel-field-name").map(str::to_owned)))
+                .map(|map| {
+                    (
+                        map.get("field-name").unwrap_or_default().to_owned(),
+                        map.get("rel-field-name").map(str::to_owned),
+                    )
+                })
                 .collect();
             let known = self.keys.contains_key(target);
             let (local, remote): (Vec<String>, Vec<String>) = if maps.is_empty() {
-                let keys = self.keys.get(if kind == "many" { relation.dataset.as_str() } else { target }).cloned().unwrap_or_default();
+                let keys = self
+                    .keys
+                    .get(if kind == "many" {
+                        relation.dataset.as_str()
+                    } else {
+                        target
+                    })
+                    .cloned()
+                    .unwrap_or_default();
                 (keys.clone(), keys)
             } else {
-                maps.iter().map(|(field, related)| (field.clone(), related.clone().unwrap_or_else(|| field.clone()))).unzip()
+                maps.iter()
+                    .map(|(field, related)| {
+                        (
+                            field.clone(),
+                            related.clone().unwrap_or_else(|| field.clone()),
+                        )
+                    })
+                    .unzip()
             };
             let mut record = Map::new();
             record.insert("type".into(), json!(kind));
@@ -682,11 +884,13 @@ impl<'a> Build<'a> {
             if let Some(description) = relation.element.child_text("description") {
                 record.insert("description".into(), json!(description));
             }
-            let declared_here = self.declared.get(&relation.dataset);
-            let declared_there = self.declared.get(target);
+            let own_fields = self.declared.get(&relation.dataset);
+            let target_fields_declared = self.declared.get(target);
             let fits = !local.is_empty()
-                && declared_here.is_some_and(|fields| local.iter().all(|field| fields.contains(field)))
-                && declared_there.is_some_and(|fields| remote.iter().all(|field| fields.contains(field)));
+                && own_fields
+                    .is_some_and(|fields| local.iter().all(|field| fields.contains(field)))
+                && target_fields_declared
+                    .is_some_and(|fields| remote.iter().all(|field| fields.contains(field)));
             let reference = match kind {
                 "one" => Some(ConstraintKind::ForeignKey),
                 "one-nofk" => Some(ConstraintKind::LogicalReference),
@@ -694,21 +898,35 @@ impl<'a> Build<'a> {
             };
             if kind == "many" {
                 self.push_kept(&relation.dataset, "inverseRelations", Value::Object(record));
-                self.ledger.resolve(&element, only("inverse relation, kept in provenance"));
+                self.ledger
+                    .resolve(&element, only("inverse relation, kept in provenance"));
                 continue;
             }
             let Some(reference) = reference else {
                 record.insert("dataset".into(), json!(relation.dataset));
                 record.insert("kind".into(), json!("relation-type"));
                 self.unresolved.push(Value::Object(record));
-                self.ledger.resolve(&element, unresolved(format!("relation type {kind:?} is not one, one-nofk or many")));
+                self.ledger.resolve(
+                    &element,
+                    unresolved(format!(
+                        "relation type {kind:?} is not one, one-nofk or many"
+                    )),
+                );
                 continue;
             };
             if !known || !fits {
                 record.insert("dataset".into(), json!(relation.dataset));
-                record.insert("kind".into(), json!(if known { "relation-fields" } else { "relation" }));
+                record.insert(
+                    "kind".into(),
+                    json!(if known { "relation-fields" } else { "relation" }),
+                );
                 self.unresolved.push(Value::Object(record));
-                self.ledger.resolve(&element, unresolved(format!("relation to {target} does not resolve to declared fields")));
+                self.ledger.resolve(
+                    &element,
+                    unresolved(format!(
+                        "relation to {target} does not resolve to declared fields"
+                    )),
+                );
                 continue;
             }
             let counter = counters.entry(relation.dataset.clone()).or_default();
@@ -719,13 +937,26 @@ impl<'a> Build<'a> {
                 kind: reference,
                 dataset: relation.dataset.clone(),
                 fields: local.clone(),
-                target: Some(ConstraintTarget { dataset: target.to_owned(), fields: remote.clone() }),
+                target: Some(ConstraintTarget {
+                    dataset: target.to_owned(),
+                    fields: remote.clone(),
+                }),
                 expression: None,
                 collection: None,
                 origin: Origin::Declared,
                 evidence: Vec::new(),
             });
-            self.ledger.resolve(&element, only(format!("{} {id}", if reference == ConstraintKind::ForeignKey { "foreign key" } else { "logical reference" })));
+            self.ledger.resolve(
+                &element,
+                only(format!(
+                    "{} {id}",
+                    if reference == ConstraintKind::ForeignKey {
+                        "foreign key"
+                    } else {
+                        "logical reference"
+                    }
+                )),
+            );
             let mut kept = Map::new();
             for member in ["title", "description"] {
                 if let Some(value) = record.get(member) {
@@ -734,14 +965,20 @@ impl<'a> Build<'a> {
             }
             if !kept.is_empty() {
                 let map = self.dataset_kept(&relation.dataset);
-                let relations = map.entry("relations").or_insert_with(|| Value::Object(Map::new()));
+                let relations = map
+                    .entry("relations")
+                    .or_insert_with(|| Value::Object(Map::new()));
                 if let Value::Object(relations) = relations {
                     relations.insert(id.clone(), Value::Object(kept));
                 }
             }
             if let ([field], [target_field]) = (local.as_slice(), remote.as_slice()) {
                 if target == STATUS || target == ENUMERATION {
-                    let what = if target == STATUS { "status type" } else { "enumeration type" };
+                    let what = if target == STATUS {
+                        "status type"
+                    } else {
+                        "enumeration type"
+                    };
                     self.gaps.push(json!({
                         "kind": if target == STATUS { "status-type-undeclared" } else { "enumeration-type-undeclared" },
                         "dataset": relation.dataset, "field": field, "constraint": id,
@@ -753,14 +990,19 @@ impl<'a> Build<'a> {
                         Some(format!("{}.{field}", relation.dataset)),
                     ));
                 } else {
-                    bound.entry((relation.dataset.clone(), field.clone())).or_insert_with(|| (target.to_owned(), target_field.clone()));
+                    bound
+                        .entry((relation.dataset.clone(), field.clone()))
+                        .or_insert_with(|| (target.to_owned(), target_field.clone()));
                 }
             }
         }
         bound
     }
 
-    fn code_sets(&mut self, bound: &BTreeMap<(String, String), (String, String)>) -> BTreeSet<String> {
+    fn code_sets(
+        &mut self,
+        bound: &BTreeMap<(String, String), (String, String)>,
+    ) -> BTreeSet<String> {
         let mut used = BTreeSet::new();
         for ((dataset, field), (tag, value_key)) in bound {
             let mut values = Vec::new();
@@ -772,7 +1014,10 @@ impl<'a> Build<'a> {
                 {
                     values.push(CodeValue {
                         value: value.to_owned(),
-                        label: row.get("description").filter(|label| !label.is_empty()).map(str::to_owned),
+                        label: row
+                            .get("description")
+                            .filter(|label| !label.is_empty())
+                            .map(str::to_owned),
                     });
                 }
             }
@@ -799,7 +1044,10 @@ impl<'a> Build<'a> {
             let id = row.get("statusTypeId").unwrap_or_default().to_owned();
             let entry = types.entry(id.clone()).or_default();
             entry.insert("statusTypeId".into(), json!(id));
-            for (from, to) in [("description", "description"), ("parentTypeId", "parentTypeId")] {
+            for (from, to) in [
+                ("description", "description"),
+                ("parentTypeId", "parentTypeId"),
+            ] {
                 if let Some(value) = row.get(from) {
                     entry.insert(to.into(), json!(value));
                 }
@@ -818,15 +1066,23 @@ impl<'a> Build<'a> {
                     state.insert(attribute.into(), json!(value));
                 }
             }
-            if let Value::Array(states) = entry.entry("states").or_insert_with(|| Value::Array(Vec::new())) {
+            if let Value::Array(states) = entry
+                .entry("states")
+                .or_insert_with(|| Value::Array(Vec::new()))
+            {
                 states.push(Value::Object(state));
             }
         }
         for (identity, row) in self.rows.get("StatusValidChange").into_iter().flatten() {
-            let (from, to) = (row.get("statusId").unwrap_or_default(), row.get("statusIdTo").unwrap_or_default());
+            let (from, to) = (
+                row.get("statusId").unwrap_or_default(),
+                row.get("statusIdTo").unwrap_or_default(),
+            );
             let Some(kind) = state_type.get(from) else {
                 broken.insert(identity.clone());
-                self.unresolved.push(json!({"kind": "status-change", "from": from, "to": to, "row": identity}));
+                self.unresolved.push(
+                    json!({"kind": "status-change", "from": from, "to": to, "row": identity}),
+                );
                 continue;
             };
             let mut change = Map::new();
@@ -835,13 +1091,18 @@ impl<'a> Build<'a> {
             if state_type.get(to).is_none_or(|other| other != kind) {
                 change.insert("toType".into(), json!(state_type.get(to)));
             }
-            for (attribute, member) in [("transitionName", "name"), ("conditionExpression", "condition")] {
+            for (attribute, member) in [
+                ("transitionName", "name"),
+                ("conditionExpression", "condition"),
+            ] {
                 if let Some(value) = row.get(attribute) {
                     change.insert(member.into(), json!(value));
                 }
             }
             if let Some(entry) = types.get_mut(kind)
-                && let Value::Array(changes) = entry.entry("transitions").or_insert_with(|| Value::Array(Vec::new()))
+                && let Value::Array(changes) = entry
+                    .entry("transitions")
+                    .or_insert_with(|| Value::Array(Vec::new()))
             {
                 changes.push(Value::Object(change));
             }
@@ -858,7 +1119,9 @@ impl<'a> Build<'a> {
                     value.insert(attribute.into(), json!(text));
                 }
             }
-            out.entry(row.get("enumTypeId").unwrap_or_default().to_owned()).or_default().push(Value::Object(value));
+            out.entry(row.get("enumTypeId").unwrap_or_default().to_owned())
+                .or_default()
+                .push(Value::Object(value));
         }
         json!(out)
     }
@@ -877,7 +1140,11 @@ impl<'a> Build<'a> {
                 } else if used.contains(tag) {
                     only("observed code-set value")
                 } else {
-                    deferred(NornHome::MappingIr, &codes::SOURCE_DEFERRED, format!("a {tag} data row, not schema"))
+                    deferred(
+                        NornHome::MappingIr,
+                        &codes::SOURCE_DEFERRED,
+                        format!("a {tag} data row, not schema"),
+                    )
                 };
                 self.ledger.resolve(&element, disposition);
             }
@@ -896,9 +1163,15 @@ impl<'a> Build<'a> {
                 let entity = element.get("entity").unwrap_or_default();
                 if self.declared.contains_key(entity) {
                     groups.insert(entity.to_owned(), json!(element.get("group")));
-                    self.ledger.resolve(&identity, only("entity group, kept in provenance"));
+                    self.ledger
+                        .resolve(&identity, only("entity group, kept in provenance"));
                 } else {
-                    self.ledger.resolve(&identity, unresolved(format!("group entry for {entity}, which no pinned file defines")));
+                    self.ledger.resolve(
+                        &identity,
+                        unresolved(format!(
+                            "group entry for {entity}, which no pinned file defines"
+                        )),
+                    );
                 }
             }
         }
@@ -911,32 +1184,54 @@ impl<'a> Build<'a> {
             .filter(|(file, _)| file.role == Role::Entity)
             .flat_map(|(_, root)| root.named("view-entity"))
             .collect();
-        let names: BTreeSet<&str> = views.iter().filter_map(|view| view.get("entity-name")).collect();
+        let names: BTreeSet<&str> = views
+            .iter()
+            .filter_map(|view| view.get("entity-name"))
+            .collect();
         for view in views {
             let name = view.get("entity-name").unwrap_or_default();
             if self.declared.contains_key(name) {
-                self.unresolved.push(json!({"kind": "view-name", "target": name}));
-                self.ledger.resolve(&SourceElement::dataset(name), unresolved("a view with the name of an entity"));
+                self.unresolved
+                    .push(json!({"kind": "view-name", "target": name}));
+                self.ledger.resolve(
+                    &SourceElement::dataset(name),
+                    unresolved("a view with the name of an entity"),
+                );
                 continue;
             }
-            self.ledger.resolve(&SourceElement::dataset(name), only("SourceSchemaIR view dataset"));
+            self.ledger.resolve(
+                &SourceElement::dataset(name),
+                only("SourceSchemaIR view dataset"),
+            );
             for (attribute, _) in &view.attributes {
                 let facet = SourceElement::dataset_facet(name, key(format!("attr:{attribute}")));
                 match attribute.as_str() {
                     "package-name" => self.ledger.resolve(&facet, only("dataset namespace")),
                     "title" => self.ledger.resolve(&facet, only("dataset description")),
-                    "never-cache" => self.ledger.resolve(&facet, dropped(DropReason::SourceBookkeeping, "a cache setting")),
+                    "never-cache" => self.ledger.resolve(
+                        &facet,
+                        dropped(DropReason::SourceBookkeeping, "a cache setting"),
+                    ),
                     _ => {}
                 }
             }
-            self.ledger.resolve_declared(&SourceElement::dataset_facet(name, Facet::Description), only("dataset description"));
+            self.ledger.resolve_declared(
+                &SourceElement::dataset_facet(name, Facet::Description),
+                only("dataset description"),
+            );
             let mut inputs = Vec::new();
             let mut whole = true;
             for (index, child) in view.children.iter().enumerate() {
                 match child.name.as_str() {
                     "member-entity" => {
                         let member = child.get("entity-name").unwrap_or_default();
-                        let facet = SourceElement::dataset_facet(name, key(format!("member:{}", child.get("entity-alias").unwrap_or_default())));
+                        let facet = SourceElement::dataset_facet(
+                            name,
+                            key(format!(
+                                "member:{}",
+                                child.get("entity-alias").unwrap_or_default()
+                            )),
+                        );
                         if self.declared.contains_key(member) || names.contains(member) {
                             if !inputs.iter().any(|known| known == member) {
                                 inputs.push(member.to_owned());
@@ -944,13 +1239,27 @@ impl<'a> Build<'a> {
                             self.ledger.resolve(&facet, only("lineage input"));
                         } else {
                             whole = false;
-                            self.ledger.resolve(&facet, unresolved(format!("member {member} is not a pinned entity or view")));
+                            self.ledger.resolve(
+                                &facet,
+                                unresolved(format!(
+                                    "member {member} is not a pinned entity or view"
+                                )),
+                            );
                         }
                     }
-                    "alias" | "alias-all" | "view-link" | "entity-condition" | "relation" => self.ledger.resolve(
-                        &SourceElement::dataset_facet(name, key(format!("{}#{index}", child.name))),
-                        deferred(NornHome::MappingIr, &codes::SOURCE_DEFERRED, "view aliases, links and conditions stay in the pinned bytes"),
-                    ),
+                    "alias" | "alias-all" | "view-link" | "entity-condition" | "relation" => {
+                        self.ledger.resolve(
+                            &SourceElement::dataset_facet(
+                                name,
+                                key(format!("{}#{index}", child.name)),
+                            ),
+                            deferred(
+                                NornHome::MappingIr,
+                                &codes::SOURCE_DEFERRED,
+                                "view aliases, links and conditions stay in the pinned bytes",
+                            ),
+                        )
+                    }
                     _ => {}
                 }
             }
@@ -959,7 +1268,9 @@ impl<'a> Build<'a> {
                 native_name: name.to_owned(),
                 namespace: view.get("package-name").map(str::to_owned),
                 kind: DatasetKind::View,
-                description: view.child_text("description").or_else(|| view.get("title").map(str::to_owned)),
+                description: view
+                    .child_text("description")
+                    .or_else(|| view.get("title").map(str::to_owned)),
             });
             if whole && !inputs.is_empty() {
                 self.lineage.push(SourceLineage {
@@ -970,7 +1281,8 @@ impl<'a> Build<'a> {
                     evidence: Vec::new(),
                 });
             } else {
-                self.unresolved.push(json!({"kind": "view-member", "target": name}));
+                self.unresolved
+                    .push(json!({"kind": "view-member", "target": name}));
             }
         }
     }
@@ -982,12 +1294,19 @@ fn admit(files: &[OfbizFile<'_>], config: &OfbizConfig) -> Result<(), String> {
         if !seen.insert(file.path) {
             return Err(format!("{} is supplied twice", file.path));
         }
-        let pin = config.pins.get(file.path).ok_or_else(|| format!("{} has no pin", file.path))?;
+        let pin = config
+            .pins
+            .get(file.path)
+            .ok_or_else(|| format!("{} has no pin", file.path))?;
         if sha256_hex(file.bytes) != *pin {
             return Err(format!("{} does not match its pinned SHA-256", file.path));
         }
     }
-    if let Some(missing) = config.pins.keys().find(|path| !seen.contains(path.as_str())) {
+    if let Some(missing) = config
+        .pins
+        .keys()
+        .find(|path| !seen.contains(path.as_str()))
+    {
         return Err(format!("pinned file {missing} was not supplied"));
     }
     if !files.iter().any(|file| file.role == Role::Entity) {
@@ -1001,9 +1320,13 @@ fn parse_all<'a>(files: &[OfbizFile<'a>]) -> Result<Vec<(OfbizFile<'a>, Element)
         .iter()
         .filter_map(|file| file.role.root().map(|root| (file, root)))
         .map(|(file, root)| {
-            let element = xml::parse(file.bytes).map_err(|error| format!("{}: {error}", file.path))?;
+            let element =
+                xml::parse(file.bytes).map_err(|error| format!("{}: {error}", file.path))?;
             if element.name != root {
-                return Err(format!("{}: root element is {}, not {root}", file.path, element.name));
+                return Err(format!(
+                    "{}: root element is {}, not {root}",
+                    file.path, element.name
+                ));
             }
             Ok((*file, element))
         })
@@ -1020,7 +1343,11 @@ fn copyright(bytes: &[u8]) -> Option<String> {
 }
 
 impl OfbizReader {
-    fn extension(build: &mut Build<'_>, files: &[OfbizFile<'_>], parsed: &[(OfbizFile<'_>, Element)]) -> Map<String, Value> {
+    fn extension(
+        build: &mut Build<'_>,
+        files: &[OfbizFile<'_>],
+        parsed: &[(OfbizFile<'_>, Element)],
+    ) -> Map<String, Value> {
         let mut listing = Vec::new();
         for file in files {
             let mut entry = Map::new();
@@ -1031,7 +1358,9 @@ impl OfbizReader {
                 let header: Map<String, Value> = root
                     .children
                     .iter()
-                    .filter(|child| HEADERS.contains(&child.name.as_str()) && !child.text.is_empty())
+                    .filter(|child| {
+                        HEADERS.contains(&child.name.as_str()) && !child.text.is_empty()
+                    })
                     .map(|child| (child.name.clone(), json!(child.text)))
                     .collect();
                 if !header.is_empty() {
@@ -1042,21 +1371,38 @@ impl OfbizReader {
         }
         let notice = files.iter().find(|file| file.role == Role::Notice);
         let mut out = Map::new();
-        out.insert("licence".into(), json!({
-            "spdx": build.config.licence,
-            "file": files.iter().find(|file| file.role == Role::Licence).map(|file| file.path),
-        }));
-        out.insert("notice".into(), json!({
-            "file": notice.map(|file| file.path),
-            "copyright": notice.and_then(|file| copyright(file.bytes)),
-        }));
+        out.insert(
+            "licence".into(),
+            json!({
+                "spdx": build.config.licence,
+                "file": files.iter().find(|file| file.role == Role::Licence).map(|file| file.path),
+            }),
+        );
+        out.insert(
+            "notice".into(),
+            json!({
+                "file": notice.map(|file| file.path),
+                "copyright": notice.and_then(|file| copyright(file.bytes)),
+            }),
+        );
         out.insert("files".into(), Value::Array(listing));
         out.insert(
             "datasets".into(),
-            Value::Object(std::mem::take(&mut build.kept).into_iter().map(|(name, map)| (name, Value::Object(map))).collect()),
+            Value::Object(
+                std::mem::take(&mut build.kept)
+                    .into_iter()
+                    .map(|(name, map)| (name, Value::Object(map)))
+                    .collect(),
+            ),
         );
-        out.insert("unresolved".into(), Value::Array(std::mem::take(&mut build.unresolved)));
-        out.insert("codeSetGaps".into(), Value::Array(std::mem::take(&mut build.gaps)));
+        out.insert(
+            "unresolved".into(),
+            Value::Array(std::mem::take(&mut build.unresolved)),
+        );
+        out.insert(
+            "codeSetGaps".into(),
+            Value::Array(std::mem::take(&mut build.gaps)),
+        );
         out
     }
 }
@@ -1073,10 +1419,15 @@ impl SchemaImporter for OfbizReader {
     }
 
     fn inventory(&self, files: Self::Source<'_>, _config: &Self::Config) -> Vec<SourceElement> {
-        parse_all(files).map(|parsed| inventory_of(&parsed)).unwrap_or_default()
+        parse_all(files)
+            .map(|parsed| inventory_of(&parsed))
+            .unwrap_or_default()
     }
 
-    #[allow(clippy::too_many_lines, reason = "the import's steps in order, each a call")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the import's steps in order, each a call"
+    )]
     fn import(&self, files: Self::Source<'_>, config: &Self::Config) -> SchemaImport {
         let mut output = SchemaImport {
             provenance: ImportProvenance {
@@ -1087,7 +1438,10 @@ impl SchemaImporter for OfbizReader {
                 }),
                 evaluator: None,
                 tables: Vec::new(),
-                inputs: files.iter().map(|file| InputPin::of(file.path, file.bytes)).collect(),
+                inputs: files
+                    .iter()
+                    .map(|file| InputPin::of(file.path, file.bytes))
+                    .collect(),
             },
             source_schema: None,
             layers: Vec::new(),
@@ -1097,7 +1451,9 @@ impl SchemaImporter for OfbizReader {
         let parsed = match admit(files, config).and_then(|()| parse_all(files)) {
             Ok(parsed) => parsed,
             Err(error) => {
-                output.diagnostics.push(diagnostic(&codes::SOURCE_INVALID, error, None));
+                output
+                    .diagnostics
+                    .push(diagnostic(&codes::SOURCE_INVALID, error, None));
                 return output;
             }
         };
@@ -1155,11 +1511,33 @@ impl SchemaImporter for OfbizReader {
         if !unexplained.is_empty() {
             output.diagnostics.push(diagnostic(
                 &codes::SOURCE_INVALID,
-                format!("{} source elements are not understood: {}", unexplained.len(), unexplained.iter().take(5).cloned().collect::<Vec<_>>().join("; ")),
+                format!(
+                    "{} source elements are not understood: {}",
+                    unexplained.len(),
+                    unexplained
+                        .iter()
+                        .take(5)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
                 None,
             ));
             return output;
         }
+        let mut slots = Map::new();
+        slots.insert(EXTENSION.to_owned(), Value::Object(extension));
+        let extensions = match serde_json::from_value(Value::Object(slots)) {
+            Ok(extensions) => extensions,
+            Err(error) => {
+                output.diagnostics.push(diagnostic(
+                    &codes::SOURCE_INVALID,
+                    format!("the provenance extension does not encode: {error}"),
+                    None,
+                ));
+                return output;
+            }
+        };
         output.source_schema = Some(SourceSchemaIr {
             format: SourceSchemaFormat::V1,
             source: SourceIdentity {
@@ -1170,7 +1548,10 @@ impl SchemaImporter for OfbizReader {
             observed_at: config.observed_at.clone(),
             adapter: self.adapter(),
             raw_metadata: EvidenceRef {
-                uri: format!("https://github.com/{}/tree/{}", config.repository, config.revision),
+                uri: format!(
+                    "https://github.com/{}/tree/{}",
+                    config.repository, config.revision
+                ),
                 sha256: sha256_hex(listing.as_bytes()),
             },
             datasets: build.datasets,
@@ -1179,7 +1560,7 @@ impl SchemaImporter for OfbizReader {
             profiles: Vec::new(),
             code_sets: build.code_sets,
             lineage: build.lineage,
-            extensions: Some(std::iter::once((EXTENSION.to_owned(), Value::Object(extension))).collect()),
+            extensions: Some(extensions),
         });
         output
     }

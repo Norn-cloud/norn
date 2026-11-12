@@ -134,8 +134,9 @@ pub fn parse(bytes: &[u8]) -> Result<Element, String> {
             Event::GeneralRef(reference) => {
                 let name =
                     std::str::from_utf8(reference.as_ref()).map_err(|error| error.to_string())?;
-                let value = quick_xml::escape::unescape(&format!("&{name};"))
-                    .map_err(|error| error.to_string())?;
+                let encoded = format!("&{name};");
+                let value =
+                    quick_xml::escape::unescape(&encoded).map_err(|error| error.to_string())?;
                 append(&mut stack, &value)?;
             }
             Event::Decl(declaration) => {
