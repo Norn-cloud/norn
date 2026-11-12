@@ -69,6 +69,124 @@ pub struct Request<'a> {
     pub body: &'a str,
 }
 
+/// Declares [`Route`], [`Route::ALL`] and [`Route::signature`] from one list,
+/// so a route cannot exist without being in `ALL`.
+macro_rules! routes {
+    ($($(#[$doc:meta])* $name:ident => ($method:literal, $path:literal),)+) => {
+        /// Every route this host serves, and nothing else: [`handle_all`]
+        /// refuses a path that [`Route::of`] does not name. The generated
+        /// `OpenAPI` document is checked against this list (`tests/server.rs`),
+        /// so a served route is either documented or named there as
+        /// undocumented, with the reason.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum Route {
+            $($(#[$doc])* $name,)+
+        }
+
+        impl Route {
+            /// Every route, once, in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$name,)+];
+
+            /// The method the route accepts and its path template, as the
+            /// `OpenAPI` document writes them.
+            #[must_use]
+            pub const fn signature(self) -> (&'static str, &'static str) {
+                match self {
+                    $(Self::$name => ($method, $path),)+
+                }
+            }
+        }
+    };
+}
+
+routes! {
+    /// `GET /v1/access`, dispatched by the published host's entry point.
+    Access => ("GET", "/v1/access"),
+    /// `POST /v1/cell:provision`, dispatched by the tenant before any cell
+    /// route (HOST-PROVISION-1).
+    Provision => ("POST", "/v1/cell:provision"),
+    /// `POST /v1/actions/{actionId}`.
+    Action => ("POST", "/v1/actions/{actionId}"),
+    /// `GET /v1/definitions`.
+    DefinitionsCatalog => ("GET", "/v1/definitions"),
+    /// `POST /v1/definitions:admit`.
+    DefinitionsAdmit => ("POST", "/v1/definitions:admit"),
+    /// `POST /v1/definitions:install`.
+    DefinitionsInstall => ("POST", "/v1/definitions:install"),
+    /// `GET /v1/definitions:list`.
+    DefinitionsList => ("GET", "/v1/definitions:list"),
+    /// `GET /v1/definitions/{id}`.
+    Definition => ("GET", "/v1/definitions/{id}"),
+    /// `POST /v1/definitions/{id}:retire`.
+    DefinitionRetire => ("POST", "/v1/definitions/{id}:retire"),
+    /// `GET /v1/objects/{type}`.
+    Objects => ("GET", "/v1/objects/{type}"),
+    /// `GET /v1/objects/{type}/{id}`.
+    Object => ("GET", "/v1/objects/{type}/{id}"),
+    /// `GET /v1/objects/{type}/{id}/links`.
+    ObjectLinks => ("GET", "/v1/objects/{type}/{id}/links"),
+    /// `GET /v1/objects/{type}/{id}/lineage`.
+    ObjectLineage => ("GET", "/v1/objects/{type}/{id}/lineage"),
+    /// `GET /v1/questions/{question}/answer`.
+    QuestionAnswer => ("GET", "/v1/questions/{question}/answer"),
+    /// `GET /v1/questions/{question}/trace`.
+    QuestionTrace => ("GET", "/v1/questions/{question}/trace"),
+    /// `POST /v1/questions:evaluate`.
+    QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
+    /// `POST /v1/questions:trace`.
+    QuestionsTrace => ("POST", "/v1/questions:trace"),
+}
+
+impl Route {
+    /// The route a request path names, if any.
+    #[must_use]
+    pub fn of(path: &str) -> Option<Self> {
+        match path {
+            "/v1/access" => return Some(Self::Access),
+            norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
+            "/v1/definitions" => return Some(Self::DefinitionsCatalog),
+            "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
+            "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            _ => {}
+        }
+        if let Some(route) = definitions_route(path) {
+            return Some(match route {
+                DefinitionsRoute::Admit => Self::DefinitionsAdmit,
+                DefinitionsRoute::Install => Self::DefinitionsInstall,
+                DefinitionsRoute::List => Self::DefinitionsList,
+                DefinitionsRoute::Retire(_) => Self::DefinitionRetire,
+                DefinitionsRoute::Get(_) => Self::Definition,
+            });
+        }
+        if let Some((_, leaf)) = question_path(path) {
+            return match leaf {
+                "answer" => Some(Self::QuestionAnswer),
+                "trace" => Some(Self::QuestionTrace),
+                _ => None,
+            };
+        }
+        if let Some((_, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
+            return Some(match (id, leaf) {
+                (None, _) => Self::Objects,
+                (Some(_), None) => Self::Object,
+                (Some(_), Some("links")) => Self::ObjectLinks,
+                (Some(_), Some("lineage")) => Self::ObjectLineage,
+                (Some(_), Some(_)) => return None,
+            });
+        }
+        path.strip_prefix("/v1/actions/")
+            .filter(|id| !id.is_empty() && !id.contains('/'))
+            .map(|_| Self::Action)
+    }
+}
+
+/// The question name and leaf of `/v1/questions/{question}/{leaf}`.
+fn question_path(path: &str) -> Option<(&str, &str)> {
+    path.strip_prefix("/v1/questions/")
+        .and_then(|rest| rest.split_once('/'))
+        .filter(|(name, _)| !name.is_empty() && !name.contains('/'))
+}
+
 /// Dispatch one request against the opened cell.
 pub fn handle<E: SqlEngine>(
     host: &DevHost<E>,
@@ -163,29 +281,28 @@ fn route<E: SqlEngine>(
         body,
         ..
     } = *request;
-    let question = path
-        .strip_prefix("/v1/questions/")
-        .and_then(|rest| rest.split_once('/'))
-        .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
+    let question = question_path(path);
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let action = path
         .strip_prefix("/v1/actions/")
         .filter(|id| !id.is_empty() && !id.contains('/'));
-    let known = path == "/v1/definitions"
-        || ad_hoc
-        || action.is_some()
-        || object.is_some()
-        || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
-    if let Some(route) = definitions_route(path) {
-        definitions(host, questions, kinds, actor, route, request)
-    } else if !known {
+    // `Route` is the one list of what this host serves; a path it does not
+    // name is not found. `/v1/access` is dispatched by the published host's
+    // entry point, never here.
+    let route_of = Route::of(path);
+    let served = route_of.is_some_and(|route| route != Route::Access);
+    if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
             "route.not_found",
             "no such route",
             "the host serves only its declared read routes",
         ))
+    } else if route_of == Some(Route::Provision) {
+        provisioned(host, actor, request)
+    } else if let Some(route) = definitions_route(path) {
+        definitions(host, questions, kinds, actor, route, request)
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
@@ -243,6 +360,32 @@ fn route<E: SqlEngine>(
 /// verified.
 fn cell<E: SqlEngine>(host: Option<&DevHost<E>>) -> Result<&DevHost<E>, Refusal> {
     host.ok_or_else(norn_api::authz::read_denied)
+}
+
+/// `POST /v1/cell:provision` on a cell this dispatch already serves: a
+/// tenant host provisions a vacant scope before any cell route
+/// ([`crate::tenant::Tenant`]); a cell served here exists, so a provisioner
+/// is told so, and anyone else gets the opaque denial.
+fn provisioned<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    actor: Option<&str>,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    if request.method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a cell is provisioned with POST",
+        ));
+    }
+    let mut fields = parse(request.query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    definition_routes::authorize(cell(host)?, &scope, actor, Operation::ProvisionCell)?;
+    Err(norn_api::provision::already_provisioned())
 }
 
 /// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
