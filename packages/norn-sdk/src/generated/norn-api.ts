@@ -146,6 +146,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/mcp`: one Model Context Protocol message (JSON-RPC 2.0) over
+         *     stateless Streamable HTTP; `tools/list` is the caller's tool catalog.
+         * @description # Errors
+         *     Serialization failure; protocol and backend refusals stay on the wire.
+         */
+        post: operations["post_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions/{question}/answer": {
         parameters: {
             query?: never;
@@ -463,6 +485,46 @@ export interface components {
              * @enum {string}
              */
             layoutVersion: "0.1";
+        };
+        /** @description A JSON-RPC protocol error, carrying the shared refusal as its data. */
+        McpError: {
+            /**
+             * Format: int32
+             * @description The JSON-RPC error code.
+             */
+            code: number;
+            /** @description The refusal. */
+            data: components["schemas"]["Refusal"];
+            /** @description The refusal's message. */
+            message: string;
+        };
+        /**
+         * @description `POST /v1/mcp`: one JSON-RPC 2.0 message of the Model Context Protocol,
+         *     over its stateless Streamable HTTP transport. The tool catalog is not
+         *     listed here: `tools/list` returns it, projected from what the cell declares.
+         */
+        McpMessage: {
+            /** @description A string or number; absent for a notification, which is answered 202. */
+            id?: Record<string, never>;
+            /** @description Always `2.0`. */
+            jsonrpc: string;
+            /** @description `initialize`, `ping`, `tools/list`, `tools/call` or a notification. */
+            method: string;
+            /** @description The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`. */
+            params?: Record<string, never>;
+        };
+        /** @description The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id. */
+        McpReply: {
+            error?: components["schemas"]["McpError"] | null;
+            /** @description The request's id. */
+            id: Record<string, never>;
+            /** @description Always `2.0`. */
+            jsonrpc: string;
+            /**
+             * @description The method's result. A tool's refusal is a result with `isError: true`
+             *     whose `structuredContent` is the route's own refusal.
+             */
+            result?: Record<string, never>;
         };
         /** @description One field produced by an ordered action input derivation. */
         NornActionActionDerivedValue: {
@@ -9723,6 +9785,78 @@ export interface operations {
             };
             /** @description The request was refused: scope or authority denied. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    post_message: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpMessage"];
+            };
+        };
+        responses: {
+            /** @description The JSON-RPC reply. `tools/list` is the catalog of the caller's tools; a tool call answers with the route's own document or refusal. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpReply"];
+                };
+            };
+            /** @description A notification was accepted; there is no body. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the route takes POST. */
+            405: {
                 headers: {
                     [name: string]: unknown;
                 };

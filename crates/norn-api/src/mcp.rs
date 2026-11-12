@@ -425,8 +425,8 @@ pub struct McpError {
     pub data: Refusal,
 }
 
-/// Answer one MCP message on a stateless session: the transport's single
-/// entry, so the documented route and the served one are the same call.
+/// `POST /v1/mcp`: one Model Context Protocol message (JSON-RPC 2.0) over
+/// stateless Streamable HTTP; `tools/list` is the caller's tool catalog.
 ///
 /// # Errors
 /// Serialization failure; protocol and backend refusals stay on the wire.
