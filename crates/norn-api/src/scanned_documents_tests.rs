@@ -26,10 +26,6 @@
     reason = "end-to-end scenario assertions"
 )]
 
-#[path = "../tests/support/action_cell.rs"]
-#[allow(dead_code, reason = "only the admitted-store helper is shared")]
-mod action_cell;
-
 use std::collections::BTreeMap;
 
 use crate::actions::{ActionQuery, ActionReceipt, call_action, decode_action_request};
@@ -100,6 +96,77 @@ fn documents() -> Vec<Value> {
     documents
 }
 
+/// A provisioned `org_demo/dev` store whose installed, receipt-verified
+/// definitions are `documents`, admitted by the checker, with the kernel's
+/// own action types registered (as `tests/support/action_cell.rs` does for
+/// the route tests; that file is already a module of this crate's tests).
+fn admitted_store(documents: &[Value]) -> CellStore<NativeEngine> {
+    let mut types = Vec::new();
+    let mut properties = Vec::new();
+    let mut interfaces = Vec::new();
+    for document in documents {
+        let payload = &document["payload"];
+        if let Some(object_type) = payload.get("objectType") {
+            types.push(serde_json::from_value(object_type.clone()).unwrap());
+        }
+        if let Some(interface) = payload.get("interface") {
+            interfaces.push(serde_json::from_value(interface.clone()).unwrap());
+        }
+        for property_type in payload
+            .get("propertyTypes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            properties.push(serde_json::from_value(property_type.clone()).unwrap());
+        }
+    }
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_value(Value::Array(documents.to_vec())).unwrap();
+    let model =
+        norn_cell::Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
+            .unwrap()
+            .with_governing_laws(&artifacts)
+            .unwrap();
+    let model = crate::action_admission::prepare_action_model(&model).unwrap();
+    let sources: Vec<RuntimeValue> = documents
+        .iter()
+        .cloned()
+        .map(RuntimeValue::from_json)
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let checked = norn_checker::check_artifact_set_with_receipt(
+        &norn_checker::ReceiptSources::new(&sources, &[]).unwrap(),
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+    )
+    .unwrap();
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+    let input = norn_cell::InstalledDefinitionInput {
+        canonical_set: serde_json::to_string(documents).unwrap(),
+        registry: vec![],
+        receipt_sha256: checked.receipt.content_sha256().unwrap(),
+        admission_receipt: Some(
+            String::from_utf8(checked.receipt.canonical_json().unwrap()).unwrap(),
+        ),
+        readmission: None,
+        diff: serde_json::json!({}),
+        installed_at: 1,
+        layout: None,
+    };
+    CellStore::provision_definitions(
+        NativeEngine::open_in_memory().unwrap(),
+        model,
+        &input,
+        "org_demo/dev",
+    )
+    .unwrap()
+}
+
 /// The snapshot's rows, read exactly (decimals keep their scale).
 fn snapshot_rows() -> Vec<(String, RuntimeValue)> {
     let text = std::fs::read_to_string(root().join("fixtures/documents/scans.snapshot.json"))
@@ -155,8 +222,7 @@ fn raw(record: &RuntimeValue) -> Observed<RuntimeValue> {
 
 /// Install the pack, then capture and map every extracted row.
 fn loaded() -> CellStore<NativeEngine> {
-    let mut store =
-        action_cell::admitted_store(&documents(), crate::action_admission::prepare_action_model);
+    let mut store = admitted_store(&documents());
     let mut captured = Vec::new();
     for (dataset, record) in snapshot_rows() {
         let input = MappingInput {
@@ -374,7 +440,9 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
     assert_eq!(finding.status, DataQualityFindingStatus::Open);
     match &finding.rule_ref {
         DataQualityRuleRef::Law { artifact_id, .. } => assert_eq!(artifact_id, LAW),
-        other => panic!("the finding is pinned to LAW A, not {other:?}"),
+        other @ (DataQualityRuleRef::Invariant { .. } | DataQualityRuleRef::Builtin { .. }) => {
+            panic!("the finding is pinned to LAW A, not {other:?}")
+        }
     }
 
     // Where the total was read survives the quarantine of the document.
