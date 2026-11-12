@@ -5,8 +5,8 @@ import type { Answer } from "../src/lib/transport.ts"
 
 /** A stand-in host frame: what the widget posts, and a way to answer it. */
 function host() {
-  const sent: { id?: number; method?: string; params?: unknown }[] = []
-  const frame = { postMessage: (message: { id?: number; method?: string; params?: unknown }) => { sent.push(message) } } as unknown as Window
+  const sent: Record<string, unknown>[] = []
+  const frame = { postMessage: (message: Record<string, unknown>) => { sent.push(message) } } as unknown as Window
   let deliver: (event: MessageEvent) => void = () => undefined
   const bridge = new Bridge(frame, (handler) => { deliver = handler })
   const from = (source: unknown, data: unknown) => deliver({ source, data } as MessageEvent)
