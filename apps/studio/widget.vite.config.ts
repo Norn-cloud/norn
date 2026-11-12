@@ -32,6 +32,9 @@ function singleFile(): Plugin {
         }
       }
       if (/<script[^>]*\ssrc=|<link[^>]*stylesheet/.test(page)) throw new Error("the widget HTML still references an external script or stylesheet")
+      // However a host loads the page, the browser must read UTF-8 before any text (an ellipsis, ≤).
+      const charset = page.search(/<meta charset="utf-8"/i)
+      if (charset < 0 || new TextEncoder().encode(page.slice(0, charset)).length > 900) throw new Error("the widget HTML must declare UTF-8 first")
       html.source = page
       html.fileName = "norn.html"
     },

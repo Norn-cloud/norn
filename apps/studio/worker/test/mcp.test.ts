@@ -230,7 +230,7 @@ test("only the known assistants' callbacks and metadata documents are accepted",
 
 test("the widget pages are served as ui:// resources, to a granted assistant only", async () => {
   const env = stage()
-  const page = '<!doctype html><html><head><meta name="norn-widget" content="1" /></head><body>widget</body></html>'
+  const page = '<!doctype html><html><head><meta charset="utf-8" /><meta name="norn-widget" content="1" /></head><body>widget …</body></html>'
   const assets = { fetch: async (request: Request) => new Response(new URL(request.url).pathname === "/widgets/norn.html" ? page : "<!doctype html>studio") } as unknown as Fetcher
   const withWidget = { ...env, ASSETS: assets }
   const { cookie } = await person(withWidget, "wi@example.com")
@@ -244,7 +244,8 @@ test("the widget pages are served as ui:// resources, to a granted assistant onl
   const read = (await (await mcp(withWidget, accessToken, { jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "ui://norn/lineage.html" } })).json()) as { result: { contents: { uri: string; text: string; _meta: { ui: { csp: { connectDomains: string[] } } } }[] } }
   const [content] = read.result.contents
   expect(content?.uri).toBe("ui://norn/lineage.html")
-  expect(content?.text).toContain('<meta name="norn-view" content="lineage">')
+  // The charset declaration stays first; the view and origin follow it.
+  expect(content?.text).toStartWith('<!doctype html><html><head><meta charset="utf-8" /><meta name="norn-view" content="lineage">')
   expect(content?.text).toContain(`<meta name="norn-studio" content="${ORIGIN}">`)
   expect(content?._meta.ui.csp.connectDomains).toEqual([])
 
@@ -253,6 +254,10 @@ test("the widget pages are served as ui:// resources, to a granted assistant onl
   // A build without the widget never passes Studio's single-page fallback off as one.
   const none = (await (await mcp(env, accessToken, { jsonrpc: "2.0", id: 5, method: "resources/read", params: { uri: "ui://norn/answer.html" } })).json()) as { error: { code: number } }
   expect(none.error.code).toBe(-32002)
+  // A page that does not declare UTF-8 first is not served as a widget.
+  const undeclared = { ...env, ASSETS: { fetch: async () => new Response('<!doctype html><html><head><meta name="norn-widget" content="1" /></head><body>w</body></html>') } as unknown as Fetcher }
+  const refused = (await (await mcp(undeclared, accessToken, { jsonrpc: "2.0", id: 6, method: "resources/read", params: { uri: "ui://norn/answer.html" } })).json()) as { error: { code: number } }
+  expect(refused.error.code).toBe(-32002)
   // Static pages are the edge's; nothing about them reaches the cell.
   expect(env.forwarded).toHaveLength(0)
 })
