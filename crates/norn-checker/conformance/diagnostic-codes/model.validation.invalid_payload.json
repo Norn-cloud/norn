@@ -1,0 +1,7 @@
+{
+  "code": "model.validation.invalid_payload",
+  "message": "model payload does not match its strict root",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

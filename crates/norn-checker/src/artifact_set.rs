@@ -153,13 +153,15 @@ pub struct ResolvedArtifactSet<'a> {
 pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
     use ArtifactKind::{
         Action, BusinessPack, Connector, Customization, DefinedConcept, Derived, Entity, Labels,
-        Law, Mapping, Policy, Relation, Rule, Setting, SourceSchema, Widget,
+        Law, Mapping, Model, Policy, Relation, Rule, Setting, SourceSchema, Widget,
     };
     match from {
         Entity => matches!(to, Entity),
         DefinedConcept => matches!(to, Entity | DefinedConcept),
         // A catalog labels definitions; nothing references a catalog.
         Labels => matches!(to, Entity | Action | Rule | Law | Widget),
+        // A model reads object types; nothing references a model yet.
+        Model => matches!(to, Entity),
         Relation => matches!(to, Entity | Relation),
         Derived => matches!(to, Entity | Relation | Derived),
         Setting => matches!(to, Entity | Relation | Setting),
@@ -381,6 +383,10 @@ pub(crate) fn check_artifact_set_using(
                     normalized_context.registry,
                 ))
                 .chain(crate::labels::check_label_set(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                .chain(crate::model::check_model_set(
                     &normalized_artifacts,
                     &normalized_base,
                 ))
@@ -682,6 +688,7 @@ pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
         PackArtifactKind::Law => ArtifactKind::Law,
         PackArtifactKind::DefinedConcept => ArtifactKind::DefinedConcept,
         PackArtifactKind::Labels => ArtifactKind::Labels,
+        PackArtifactKind::Model => ArtifactKind::Model,
     }
 }
 
@@ -799,6 +806,7 @@ const fn kind_name(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Law => "law",
         ArtifactKind::DefinedConcept => "defined_concept",
         ArtifactKind::Labels => "labels",
+        ArtifactKind::Model => "model",
     }
 }
 
