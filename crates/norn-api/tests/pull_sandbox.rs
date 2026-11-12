@@ -754,8 +754,10 @@ fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
         row.payload
             .get(field)
             .and_then(RuntimeValue::as_array)
-            .map(Vec::len)
-            .unwrap_or_else(|| panic!("{} has no {field} array", row.source_id))
+            .map_or_else(
+                || panic!("{} has no {field} array", row.source_id),
+                Vec::len,
+            )
     };
     for row in &rows {
         assert_eq!(row.dataset, "Scanned Document");
