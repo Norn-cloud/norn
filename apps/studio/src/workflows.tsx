@@ -12,6 +12,7 @@ import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "
 import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
 import type { MenuEntry } from "./shell.tsx"
 import { Automations } from "./automations.tsx"
+import { useRunTypeTitles } from "./lib/flows.ts"
 
 const state = (name: string) => words(name)
 
@@ -234,7 +235,7 @@ function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly st
   )
 }
 
-function WorkflowCard({ workflow, recorded }: { readonly workflow: Workflow; readonly recorded: boolean }) {
+function WorkflowCard({ workflow, title, recorded }: { readonly workflow: Workflow; readonly title: string; readonly recorded: boolean }) {
   const { lifecycle } = workflow
   const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
   const [pinned, setPinned] = useState<string>()
@@ -246,7 +247,7 @@ function WorkflowCard({ workflow, recorded }: { readonly workflow: Workflow; rea
     <section id={anchor(workflow)} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-section font-medium">{words(workflow.objectType)}: {words(lifecycle.property).toLowerCase()}</h2>
+          <h2 className="text-section font-medium">{title}: {words(lifecycle.property).toLowerCase()}</h2>
           {recorded && <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
         <p className="text-meta text-muted-foreground">
@@ -290,15 +291,20 @@ function StateSummary({ workflow, name }: { readonly workflow: Workflow; readonl
 
 const anchor = (workflow: Workflow) => `workflow-${workflow.objectType}-${workflow.lifecycle.property}`
 
+/** A workflow's name: the title of the flow whose runs it is, or its object type in words. */
+const titleOf = (workflow: Workflow, flows: ReadonlyMap<string, string>) => flows.get(workflow.objectType) ?? words(workflow.objectType)
+
 /** The admitted lifecycles, for the submenu island. */
 export function useWorkflowsMenu(): readonly MenuEntry[] | undefined {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
+  const flows = useRunTypeTitles()
   return definitions.data && workflows(definitions.data.map(({ document }) => document))
-    .map((workflow) => ({ href: `#${anchor(workflow)}`, label: words(workflow.objectType) }))
+    .map((workflow) => ({ href: `#${anchor(workflow)}`, label: titleOf(workflow, flows) }))
 }
 
 export function WorkflowsPage() {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
+  const flows = useRunTypeTitles()
   return (
     <section className="space-y-6">
       <div className="space-y-2">
@@ -309,7 +315,7 @@ export function WorkflowsPage() {
       {definitions.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {definitions.isError && <p className="text-destructive">{definitions.error.message}</p>}
       {definitions.data && workflows(definitions.data.map(({ document }) => document)).map((workflow) => (
-        <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} recorded={definitions.data.some(({ origin }) => origin === "recorded")} />
+        <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} title={titleOf(workflow, flows)} recorded={definitions.data.some(({ origin }) => origin === "recorded")} />
       ))}
     </section>
   )

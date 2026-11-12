@@ -428,6 +428,11 @@ pub struct DefinitionSummary {
     /// With `uses`: the binding version this flow's performs are pinned to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_version: Option<String>,
+    /// For a flow: whether this caller may start a run of it, decided by
+    /// exactly the gate `POST /v1/runs` applies ([`Operation::StartRun`]).
+    /// Absent for other kinds. Starting is decided again at the call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_start: Option<bool>,
 }
 
 /// One page of definitions, ordered by id.
@@ -1700,6 +1705,8 @@ pub fn list_definitions<E: SqlEngine>(
         items: rows
             .into_iter()
             .map(|(row, pinned_version)| DefinitionSummary {
+                can_start: (row.definition.kind == "flow")
+                    .then(|| may_start(host, actor, &row.definition.id)),
                 id: row.definition.id,
                 kind: row.definition.kind,
                 title: row.definition.title,
@@ -1711,6 +1718,22 @@ pub fn list_definitions<E: SqlEngine>(
             .collect(),
         cursor,
     })
+}
+
+/// Whether `actor` may start a run of `flow`: the authorizer's answer to
+/// [`Operation::StartRun`], the gate `POST /v1/runs` applies, with no second
+/// check here.
+fn may_start<E: SqlEngine>(host: &DevHost<E>, actor: Option<&str>, flow: &str) -> bool {
+    let actor = actor.filter(|actor| !actor.trim().is_empty());
+    actor.is_some()
+        && host
+            .authorizer
+            .authorize(&AccessRequest {
+                scope: host.scope(),
+                actor,
+                operation: Operation::StartRun(flow.to_owned()),
+            })
+            .is_ok()
 }
 
 /// `GET /v1/definitions/{id}`: one version of one definition, the current
