@@ -187,6 +187,64 @@ impl<E: SqlEngine> DevHost<E> {
         result.map(|()| out).map_err(Refusal::host)
     }
 
+    /// Install `added` over the active definitions as the next governed
+    /// version: an artifact of the same id is replaced, the whole set is
+    /// re-admitted on the cell's own base, and the model is the one the cell
+    /// reopens under (HOST-REOPEN-1, checked by [`Self::install_definitions`]).
+    /// The trusted host calls this (generated upload types, the cell's own
+    /// packs); no route supplies artifacts to it.
+    /// # Errors
+    /// No active definitions, the checker's refusal (its findings), or the
+    /// install's refusal.
+    pub fn install_artifacts(
+        &self,
+        added: &[norn_ir::ArtifactEnvelope],
+        installed_at: u64,
+    ) -> Result<u64, String> {
+        let active = self
+            .active_definitions()
+            .map_err(|r| r.message)?
+            .ok_or("the cell has no definitions to extend")?;
+        let base = crate::kernel_set::base_ids(active.admission_receipt.as_deref())?;
+        let ours: std::collections::BTreeSet<&str> =
+            added.iter().map(|a| a.artifact_id.as_str()).collect();
+        let mut artifacts: Vec<norn_ir::ArtifactEnvelope> =
+            crate::kernel_set::retained_artifacts(&active.canonical_set)?
+                .into_iter()
+                .filter(|a| !ours.contains(a.artifact_id.as_str()))
+                .collect();
+        artifacts.extend(added.iter().cloned());
+        let admitted = crate::kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(
+            |refusal| match refusal {
+                crate::kernel_set::KernelRefusal::Refused(findings) => findings
+                    .iter()
+                    .map(|f| format!("{}: {}", f.code, f.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
+            },
+        )?;
+        let model = crate::kernel_set::retained_artifacts(&admitted.canonical_set)
+            .and_then(|set| crate::kernel_set::serving_model(&set))?;
+        let installed = self
+            .install_definitions(
+                model,
+                InstalledDefinitionInput {
+                    canonical_set: admitted.canonical_set,
+                    registry: vec![],
+                    receipt_sha256: admitted.receipt_sha256,
+                    admission_receipt: Some(admitted.receipt),
+                    readmission: None,
+                    diff: serde_json::json!({}),
+                    installed_at,
+                    layout: None,
+                },
+                Some(active.version),
+            )
+            .map_err(|r| format!("{}: {}", r.code, r.message))?;
+        Ok(installed.version)
+    }
+
     /// Whether the cell's active model declares the object type `name`.
     /// # Errors
     /// Poisoned synchronization refuses closed.
