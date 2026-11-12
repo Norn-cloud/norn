@@ -49,7 +49,7 @@ fn envelope(object: &ObjectTypeDef) -> ArtifactEnvelope {
     .expect("artifact")
 }
 
-/// The derived "amount by event.occurred_at" question, weekly over five weeks.
+/// The derived "amount by `event.occurred_at`" question, weekly over five weeks.
 fn fixture() -> (CellStore, QuestionPlan) {
     let [event, entry] = types();
     let space = derive_metric_space(
