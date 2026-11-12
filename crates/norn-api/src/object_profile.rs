@@ -323,7 +323,11 @@ pub fn get_object_profile<E: SqlEngine>(
         object_type,
         (None, usize::MAX, MAX_QUERY_SCAN),
     )?;
-    let readable: Vec<_> = scan.listed.iter().filter(|listed| listed.readable).collect();
+    let readable: Vec<_> = scan
+        .listed
+        .iter()
+        .filter(|listed| listed.readable)
+        .collect();
     let withheld = scan.listed.len().saturating_sub(readable.len());
     Ok(NornObjectProfile {
         object_type: object_type.to_owned(),
@@ -353,7 +357,11 @@ pub fn get_object_profile<E: SqlEngine>(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "rank assertions")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "rank assertions"
+)]
 mod tests {
     use super::*;
 

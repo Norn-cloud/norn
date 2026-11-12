@@ -8,7 +8,7 @@
 //! again on the first question after a new revision. Access goes through the
 //! host's own authorizer: this module maps a caller and a resource to the
 //! kernel request and decides nothing. With the `duckdb` feature, a plan
-//! DuckDB lowers is answered there and anything else falls back to the native
+//! `DuckDB` lowers is answered there and anything else falls back to the native
 //! exact engine; the answer's `engine` names which one answered.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,9 +21,9 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 #[cfg(feature = "duckdb")]
 use norn_cell::CellError;
+use norn_cell::compute::QueryContext;
 #[cfg(feature = "duckdb")]
 use norn_cell::compute::QueryResult;
-use norn_cell::compute::QueryContext;
 use norn_cell::engine::SqlEngine;
 use norn_cell::{CellStore, InstalledDefinitionSet, ObjectRecord};
 use norn_checker::EffectiveCatalog;
@@ -126,17 +126,13 @@ fn derive(
         serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
     // The dev checker admits against an empty registry (`admit.rs`); derive
     // against the same, at the cell's own law scope.
-    let space = derive_metric_space(
-        &artifacts,
-        &BTreeSet::new(),
-        &LawRoot::Cell(scope.key()),
-    )
-    .map_err(|findings| {
-        Refusal::host(format!(
-            "the active revision's metric space does not derive: {} finding(s)",
-            findings.len()
-        ))
-    })?;
+    let space = derive_metric_space(&artifacts, &BTreeSet::new(), &LawRoot::Cell(scope.key()))
+        .map_err(|findings| {
+            Refusal::host(format!(
+                "the active revision's metric space does not derive: {} finding(s)",
+                findings.len()
+            ))
+        })?;
     Ok(Derived {
         receipt,
         definitions: space
@@ -244,7 +240,7 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
     fn handle_key(&self) -> &[u8] {
         &self.metrics.handle_key
     }
-    /// With the `duckdb` feature, a plan DuckDB lowers (one keyed sum, or a
+    /// With the `duckdb` feature, a plan `DuckDB` lowers (one keyed sum, or a
     /// ratio of two, over decimals of scale at most 6) is answered there;
     /// anything else falls back to the native exact engine. The answer's
     /// `engine` names which one answered.
@@ -281,4 +277,3 @@ impl<E: SqlEngine> AdHocQuestions<E> for DerivedRuntime<'_> {
         MAX_BUCKETS
     }
 }
-

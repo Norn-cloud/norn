@@ -89,7 +89,7 @@ impl PrincipalResolver for DevPrincipals {
     fn end_request(&self) {}
 }
 
-pub(crate) use crate::questions::{DerivedQuestions as DevMetrics, DerivedRuntime as DevQuestions};
+pub(crate) use crate::questions::DerivedQuestions as DevMetrics;
 
 #[cfg(test)]
 #[allow(
@@ -109,10 +109,10 @@ mod tests {
     use norn_api::scope::CellScope;
     use norn_cell::CellStore;
     use norn_cell::engine::NativeEngine;
-    use std::collections::BTreeMap;
     use norn_cell::{CommitBatch, FactWriteRow, StoreOptions};
     use norn_ir::{Decimal, RuntimeValue};
     use serde_json::{Value, json};
+    use std::collections::BTreeMap;
 
     const ACTOR: &str = "dev@example";
     const BEARER: &str = "test-bearer-0123456789";
@@ -165,11 +165,17 @@ mod tests {
     }
 
     fn host(dir: &std::path::Path) -> DevHost<NativeEngine> {
-        let admitted = super::super::admit::admit(&artifacts(true), 1_000).ok().expect("admitted");
+        let admitted = super::super::admit::admit(&artifacts(true), 1_000)
+            .ok()
+            .expect("admitted");
         let engine = NativeEngine::open(&dir.join("cell.sqlite"), StoreOptions::default()).unwrap();
-        let mut store =
-            CellStore::provision_definitions(engine, admitted.model, &admitted.input, &scope().key())
-                .unwrap();
+        let mut store = CellStore::provision_definitions(
+            engine,
+            admitted.model,
+            &admitted.input,
+            &scope().key(),
+        )
+        .unwrap();
         store
             .commit(&CommitBatch {
                 world: norn_cell::MAIN_WORLD.into(),
@@ -185,12 +191,22 @@ mod tests {
             .unwrap();
         DevHost::from_store(store, scope(), |command| command.payload.clone())
             .expect("host")
-            .with_authorizer(LocalDeveloper { actor: ACTOR.into() })
+            .with_authorizer(LocalDeveloper {
+                actor: ACTOR.into(),
+            })
     }
 
-    fn call(host: &DevHost<NativeEngine>, metrics: &DevMetrics, path: &str, body: &Value) -> (u16, Value) {
+    fn call(
+        host: &DevHost<NativeEngine>,
+        metrics: &DevMetrics,
+        path: &str,
+        body: &Value,
+    ) -> (u16, Value) {
         let questions = metrics.questions(host).expect("runtime");
-        let principals = DevPrincipals { bearer: BEARER.into(), actor: ACTOR.into() };
+        let principals = DevPrincipals {
+            bearer: BEARER.into(),
+            actor: ACTOR.into(),
+        };
         let body = body.to_string();
         let authorization = format!("Bearer {BEARER}");
         let response = handle_with(
@@ -206,12 +222,18 @@ mod tests {
                 body: &body,
             },
         );
-        (response.status, serde_json::from_str(&response.body).unwrap())
+        (
+            response.status,
+            serde_json::from_str(&response.body).unwrap(),
+        )
     }
 
     fn get(host: &DevHost<NativeEngine>, metrics: &DevMetrics, path: &str) -> (u16, Value) {
         let questions = metrics.questions(host).expect("runtime");
-        let principals = DevPrincipals { bearer: BEARER.into(), actor: ACTOR.into() };
+        let principals = DevPrincipals {
+            bearer: BEARER.into(),
+            actor: ACTOR.into(),
+        };
         let authorization = format!("Bearer {BEARER}");
         let response = handle_with(
             host,
@@ -226,7 +248,10 @@ mod tests {
                 body: "",
             },
         );
-        (response.status, serde_json::from_str(&response.body).unwrap())
+        (
+            response.status,
+            serde_json::from_str(&response.body).unwrap(),
+        )
     }
 
     fn question(metric: &str) -> Value {
@@ -240,7 +265,12 @@ mod tests {
         })
     }
 
-    fn metric(metrics: &DevMetrics, host: &DevHost<NativeEngine>, property: &str, ratio: bool) -> String {
+    fn metric(
+        metrics: &DevMetrics,
+        host: &DevHost<NativeEngine>,
+        property: &str,
+        ratio: bool,
+    ) -> String {
         let questions = metrics.questions(host).expect("runtime");
         AdHocQuestions::<NativeEngine>::definitions(&questions)
             .iter()
@@ -255,7 +285,15 @@ mod tests {
                         .is_none_or(|params| params.agg_time_dimension == "occurred_at")
             })
             .map_or_else(
-                || panic!("no derived {property} metric among {:?}", AdHocQuestions::<NativeEngine>::definitions(&questions).iter().map(|d| &d.label).collect::<Vec<_>>()),
+                || {
+                    panic!(
+                        "no derived {property} metric among {:?}",
+                        AdHocQuestions::<NativeEngine>::definitions(&questions)
+                            .iter()
+                            .map(|d| &d.label)
+                            .collect::<Vec<_>>()
+                    )
+                },
                 |definition| definition.name.clone(),
             )
     }
@@ -270,16 +308,33 @@ mod tests {
         let (status, listed) = get(&host, &metrics, "/v1/questions:metrics");
         assert_eq!(status, 200, "{listed}");
         let listed = listed["metrics"].as_array().unwrap();
-        let entry = listed.iter().find(|metric| metric["name"] == amount.as_str()).unwrap();
+        let entry = listed
+            .iter()
+            .find(|metric| metric["name"] == amount.as_str())
+            .unwrap();
         assert_eq!(entry["objectType"], TYPE);
         assert_eq!(entry["timeProperty"], "occurred_at");
-        let (status, answer) = call(&host, &metrics, "/v1/questions:evaluate", &json!({"question": question(&amount)}));
+        let (status, answer) = call(
+            &host,
+            &metrics,
+            "/v1/questions:evaluate",
+            &json!({"question": question(&amount)}),
+        );
         assert_eq!(status, 200, "{answer}");
         let rows = answer["rows"].as_object().unwrap();
         assert_eq!(rows.len(), 2, "{answer}");
-        let totals: Vec<String> = rows.values().map(|row| row["totals"][0].as_str().unwrap_or_default().to_owned()).collect();
-        assert!(totals.iter().any(|total| total.starts_with("15.5")), "{totals:?}");
-        assert!(totals.iter().any(|total| total.starts_with("7.25")), "{totals:?}");
+        let totals: Vec<String> = rows
+            .values()
+            .map(|row| row["totals"][0].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert!(
+            totals.iter().any(|total| total.starts_with("15.5")),
+            "{totals:?}"
+        );
+        assert!(
+            totals.iter().any(|total| total.starts_with("7.25")),
+            "{totals:?}"
+        );
         let engine = answer["engine"].as_str().unwrap();
         if cfg!(feature = "duckdb") {
             assert_eq!(engine, "duckdb");
@@ -287,7 +342,15 @@ mod tests {
             assert_eq!(engine, "cell");
         }
         // The trace of a bucket reaches the objects that contributed to it.
-        let (bucket, _) = rows.iter().find(|(_, row)| row["totals"][0].as_str().unwrap_or_default().starts_with("15.5")).unwrap();
+        let (bucket, _) = rows
+            .iter()
+            .find(|(_, row)| {
+                row["totals"][0]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("15.5")
+            })
+            .unwrap();
         let (status, trace) = call(
             &host,
             &metrics,
@@ -296,7 +359,10 @@ mod tests {
         );
         assert_eq!(status, 200, "{trace}");
         let text = trace.to_string();
-        assert!(text.contains("s1") && text.contains("s2") && !text.contains("\"s3\""), "{trace}");
+        assert!(
+            text.contains("s1") && text.contains("s2") && !text.contains("\"s3\""),
+            "{trace}"
+        );
     }
 
     #[test]
@@ -307,8 +373,16 @@ mod tests {
         let questions = metrics.questions(&host).expect("runtime");
         assert!(!AdHocQuestions::<NativeEngine>::definitions(&questions).is_empty());
         // Every derived sum answers, on whichever engine lowered it.
-        for definition in AdHocQuestions::<NativeEngine>::definitions(&questions).iter().filter(|d| d.type_params.numerator.is_none()) {
-            let (status, answer) = call(&host, &metrics, "/v1/questions:evaluate", &json!({"question": question(&definition.name)}));
+        for definition in AdHocQuestions::<NativeEngine>::definitions(&questions)
+            .iter()
+            .filter(|d| d.type_params.numerator.is_none())
+        {
+            let (status, answer) = call(
+                &host,
+                &metrics,
+                "/v1/questions:evaluate",
+                &json!({"question": question(&definition.name)}),
+            );
             assert_eq!(status, 200, "{} {answer}", definition.name);
             assert!(matches!(answer["engine"].as_str(), Some("cell" | "duckdb")));
         }
@@ -321,12 +395,23 @@ mod tests {
         let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
         let amount = metric(&metrics, &host, "amount", false);
         let active = host.active_definitions().ok().flatten().expect("active");
-        let admitted = super::super::admit::admit(&artifacts(false), 3_000).ok().expect("admitted");
+        let admitted = super::super::admit::admit(&artifacts(false), 3_000)
+            .ok()
+            .expect("admitted");
         host.install_definitions(admitted.model, admitted.input, Some(active.version))
             .expect("installed");
         let questions = metrics.questions(&host).expect("runtime");
-        assert!(AdHocQuestions::<NativeEngine>::definitions(&questions).iter().all(|definition| definition.name != amount));
-        let (status, refused) = call(&host, &metrics, "/v1/questions:evaluate", &json!({"question": question(&amount)}));
+        assert!(
+            AdHocQuestions::<NativeEngine>::definitions(&questions)
+                .iter()
+                .all(|definition| definition.name != amount)
+        );
+        let (status, refused) = call(
+            &host,
+            &metrics,
+            "/v1/questions:evaluate",
+            &json!({"question": question(&amount)}),
+        );
         assert_ne!(status, 200, "{refused}");
     }
 
@@ -356,14 +441,22 @@ mod tests {
         assert_eq!(amount["distinct"], 3);
         assert_eq!(amount["min"].to_string(), "5.50");
         assert_eq!(amount["max"].to_string(), "10.00");
-        let median = amount["quantiles"].as_array().unwrap().iter().find(|q| q["percent"] == 50).unwrap();
+        let median = amount["quantiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|q| q["percent"] == 50)
+            .unwrap();
         assert_eq!(median["value"].to_string(), "7.25");
         let at = property("occurred_at");
         assert_eq!(at["kind"], "temporal");
         assert_eq!(at["histogram"]["kind"], "day");
         assert_eq!(at["histogram"]["bins"].as_array().unwrap().len(), 2);
         let region = property("region");
-        assert_eq!((region["kind"].as_str(), region["distinct"].as_u64()), (Some("text"), Some(2)));
+        assert_eq!(
+            (region["kind"].as_str(), region["distinct"].as_u64()),
+            (Some("text"), Some(2))
+        );
         let (status, _) = get(&host, &metrics, "/v1/objects/shop.Missing:profile");
         assert_ne!(status, 200);
     }

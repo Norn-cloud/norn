@@ -831,8 +831,14 @@ pub fn list_metrics<E: SqlEngine>(
     metrics.retain(|metric| {
         simple.contains(&metric.name)
             || (metric.object_type.is_none()
-                && metric.numerator.as_ref().is_some_and(|name| simple.contains(name))
-                && metric.denominator.as_ref().is_some_and(|name| simple.contains(name)))
+                && metric
+                    .numerator
+                    .as_ref()
+                    .is_some_and(|name| simple.contains(name))
+                && metric
+                    .denominator
+                    .as_ref()
+                    .is_some_and(|name| simple.contains(name)))
     });
     metrics.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(NornMetricList { metrics })
