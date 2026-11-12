@@ -1522,7 +1522,8 @@ define_payload_root!(
         }
         optional {
             target => "target" as PropertyId,
-            contracts => "contracts" as Vec<ModelContract>
+            contracts => "contracts" as Vec<ModelContract>,
+            predictions => "predictions" as ModelPredictions
         }
     }
 );

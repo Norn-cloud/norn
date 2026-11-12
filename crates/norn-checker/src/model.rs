@@ -672,9 +672,9 @@ impl Catalog {
 /// One effective member of an object type.
 #[derive(Debug, Clone, Copy)]
 enum Member<'a> {
-    /// An EntityIR 2.0 property: its declared type and whether it is nullable.
+    /// An `EntityIR` 2.0 property: its declared type and whether it is nullable.
     Property(&'a PropertyType, bool),
-    /// An EntityIR 1.0 field.
+    /// An `EntityIR` 1.0 field.
     Field(&'a EntityFieldV1),
     /// A link.
     Link,
