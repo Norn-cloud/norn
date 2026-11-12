@@ -75,7 +75,7 @@
           },
           {
             "property": "last_sync_ended_at",
-            "value": "input.last_sync_ended_at == null ? null : timestamp(input.last_sync_ended_at)"
+            "value": "input.last_sync_ended_at"
           },
           {
             "property": "last_trigger",
@@ -155,8 +155,8 @@
             "value": "input.trigger"
           },
           {
-            "property": "actor",
-            "value": "input.actor"
+            "property": "run_by",
+            "value": "input.run_by"
           },
           {
             "property": "started_at",
@@ -164,7 +164,7 @@
           },
           {
             "property": "ended_at",
-            "value": "input.ended_at == null ? null : timestamp(input.ended_at)"
+            "value": "input.ended_at"
           },
           {
             "property": "outcome",
@@ -216,7 +216,7 @@
     ],
     "source": {
       "schemaId": "norn.connect.source",
-      "sha256": "bf3e24044948782b5030ea5ed67eb1fcc92c7d7fe9d198678c9b5f5da57cb017",
+      "sha256": "77e210d14cdde9ecfc6844d4a41c23270f55227df4c4257db17788a94b704ae9",
       "version": "0.1.0"
     }
   },

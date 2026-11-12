@@ -785,6 +785,8 @@ declare module "@norn/authoring" {
           readonly fields: Readonly<Record<string, string>>
           readonly initial: { readonly version: string; readonly id: string | number }
         }>
+        /** Where an oauth2 (client credentials) access token is sent. */
+        readonly token?: { readonly header: string; readonly prefix?: string }
       }
     }
     interface ConnectorDefinition { readonly _tag: "NornConnector" }

@@ -22,6 +22,7 @@
 //! single-label (private network) host.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
@@ -153,6 +154,8 @@ struct Run {
     started_ms: u64,
     pull: Option<Pull>,
     auth: Vec<(String, String)>,
+    /// The first data request, held while an access token is fetched.
+    held: Option<Request>,
     watermark_from: String,
     read: u64,
     landed: u64,
@@ -249,6 +252,7 @@ impl Sources {
             started_ms: now_ms,
             pull: None,
             auth: Vec::new(),
+            held: None,
             watermark_from: String::new(),
             read: 0,
             landed: 0,
@@ -395,7 +399,10 @@ fn begin<E: SqlEngine>(
                 format!("{} declares no norn.pull/1 profile", config.connector),
             )
         })?;
-    run.auth = auth_headers(&payload, secrets)?;
+    let token = client_credentials(&payload, secrets, config)?;
+    if token.is_none() {
+        run.auth = auth_headers(&payload, secrets)?;
+    }
     let stored = host
         .host_object(crate::sources::CONNECTION_TYPE, &config.id)
         .ok()
@@ -428,6 +435,10 @@ fn begin<E: SqlEngine>(
         &run.watermark_from,
         None,
     );
+    if let Some(token) = token {
+        run.held = first;
+        return Ok(Some(token));
+    }
     Ok(first.map(|request| http(config, &run.auth, request)))
 }
 
@@ -443,6 +454,41 @@ fn advance<E: SqlEngine>(
         .pull
         .as_mut()
         .ok_or_else(|| fail("source.not_running", "the sync has not begun"))?;
+    if run.auth.is_empty() && pull.profile().token.is_some() {
+        // The answer to the token request: send the held first request with it.
+        let placement =
+            pull.profile()
+                .token
+                .clone()
+                .unwrap_or_else(|| crate::pull::TokenPlacement {
+                    header: "Authorization".into(),
+                    prefix: "Bearer ".into(),
+                });
+        let document: serde_json::Value = (status == 200)
+            .then(|| serde_json::from_slice(body).ok())
+            .flatten()
+            .ok_or_else(|| {
+                fail(
+                    "source.token_refused",
+                    format!("the token endpoint answered HTTP {status}"),
+                )
+            })?;
+        let token = document
+            .get("access_token")
+            .and_then(serde_json::Value::as_str)
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| {
+                fail(
+                    "source.token_refused",
+                    "the token endpoint returned no access token",
+                )
+            })?;
+        run.auth = vec![(placement.header, format!("{}{token}", placement.prefix))];
+        return Ok(run
+            .held
+            .take()
+            .map(|request| http(config, &run.auth, request)));
+    }
     let rows = pull.accept(status, body).map_err(|error| match &error {
         PullError::Status { .. } => fail("source.http_status", error.to_string()),
         PullError::Shape { .. } => fail("source.response_shape", error.to_string()),
@@ -494,6 +540,65 @@ fn advance<E: SqlEngine>(
     Ok(pull
         .next_request()
         .map(|request| http(config, &run.auth, request)))
+}
+
+/// For an `oauth2` connector, the client-credentials token request (RFC 6749
+/// §4.4) to the connector's relative `tokenUrl` on the connection's base URL,
+/// with the client id and secret from the `clientSecretRef` secret
+/// (`<id>:<secret>`).
+fn client_credentials(
+    payload: &serde_json::Value,
+    secrets: &BTreeMap<String, String>,
+    config: &ConnectionConfig,
+) -> Result<Option<HttpRequest>, Failure> {
+    let auth = payload.get("auth").cloned().unwrap_or_default();
+    let field = |name: &str| auth.get(name).and_then(serde_json::Value::as_str);
+    if field("kind") != Some("oauth2") {
+        return Ok(None);
+    }
+    let path = field("tokenUrl")
+        .filter(|p| p.starts_with('/') && !p.contains("://"))
+        .ok_or_else(|| {
+            fail(
+                "source.auth_unsupported",
+                "an oauth2 tokenUrl is a path on the connection",
+            )
+        })?;
+    let name = secret_env(field("clientSecretRef").unwrap_or_default());
+    let (id, secret) = secrets
+        .get(&name)
+        .and_then(|pair| pair.split_once(':'))
+        .ok_or_else(|| {
+            fail(
+                "source.secret_missing",
+                format!("the server has no {name} (<client id>:<client secret>)"),
+            )
+        })?;
+    let form = |text: &str| -> String {
+        let mut out = String::with_capacity(text.len());
+        for b in text.bytes() {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+                out.push(char::from(b));
+            } else {
+                // Writing to a String cannot fail.
+                let _written = write!(out, "%{b:02X}");
+            }
+        }
+        out
+    };
+    Ok(Some(HttpRequest {
+        method: "POST",
+        url: format!("{}{path}", config.base_url.trim_end_matches('/')),
+        headers: vec![(
+            "Content-Type".into(),
+            "application/x-www-form-urlencoded".into(),
+        )],
+        body: Some(format!(
+            "grant_type=client_credentials&client_id={}&client_secret={}",
+            form(id),
+            form(secret)
+        )),
+    }))
 }
 
 /// The connector's declared header auth, resolved from server secrets.
@@ -630,6 +735,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         started_ms: upload.started_ms,
         pull: None,
         auth: Vec::new(),
+        held: None,
         watermark_from: "{}".to_owned(),
         read,
         landed,
@@ -707,7 +813,7 @@ fn report<E: SqlEngine>(
             run.id.clone(),
             norn_ir::runtime_object! {
                 "id" => run.id.as_str(), "connection_id" => config.id.as_str(), "trigger" => run.trigger.as_str(),
-                "actor" => run.actor.as_str(), "started_at" => started.as_str(), "ended_at" => ended,
+                "run_by" => run.actor.as_str(), "started_at" => started.as_str(), "ended_at" => ended,
                 "outcome" => summary.outcome, "watermark_from" => run.watermark_from.as_str(), "watermark_to" => watermark,
                 "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
                 "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
@@ -719,6 +825,7 @@ fn report<E: SqlEngine>(
         source: REPORT_SOURCE.to_owned(),
         pipeline: "norn-connect/1".to_owned(),
         feeds: Vec::new(),
+        token: None,
     };
     let now = ended_ms.unwrap_or(run.started_ms);
     let batch: Vec<_> = rows
@@ -746,4 +853,60 @@ fn report<E: SqlEngine>(
         .collect();
     // A cell without the report definitions refuses these; the run still ends.
     let _reported = host.ingest(&batch);
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "token request scenarios")]
+mod tests {
+    use super::*;
+
+    fn config() -> ConnectionConfig {
+        serde_json::from_value(serde_json::json!({
+            "id": "shop.dev", "system": "shopify", "label": "Dev store", "connector": "shopify.dev.connector",
+            "mapping": "shopify.dev.mapping", "instance": "dev", "baseUrl": "https://dev-store.example"
+        }))
+        .expect("config")
+    }
+
+    #[test]
+    fn client_credentials_post_the_form_to_the_connection_and_need_their_secret() {
+        let payload = serde_json::json!({"auth": {"kind": "oauth2", "authId": "shop", "authorizationUrl": "/admin/oauth/authorize",
+            "tokenUrl": "/admin/oauth/access_token", "scopes": ["read_products"], "clientSecretRef": "shopify_dev_client"}});
+        let secrets = BTreeMap::from([(
+            "NORN_SECRET_SHOPIFY_DEV_CLIENT".to_owned(),
+            "id 1:s&ecret".to_owned(),
+        )]);
+        let request = client_credentials(&payload, &secrets, &config())
+            .expect("planned")
+            .expect("a token request");
+        assert_eq!(
+            request.url,
+            "https://dev-store.example/admin/oauth/access_token"
+        );
+        assert_eq!(
+            request.body.as_deref(),
+            Some("grant_type=client_credentials&client_id=id%201&client_secret=s%26ecret")
+        );
+        assert!(client_credentials(&payload, &BTreeMap::new(), &config()).is_err());
+        let absolute = serde_json::json!({"auth": {"kind": "oauth2", "tokenUrl": "https://elsewhere.example/token", "clientSecretRef": "shopify_dev_client"}});
+        assert!(client_credentials(&absolute, &secrets, &config()).is_err());
+        assert_eq!(
+            client_credentials(
+                &serde_json::json!({"auth": {"kind": "none"}}),
+                &secrets,
+                &config()
+            ),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn base_urls_are_https_or_private_http() {
+        assert!(allowed_base("https://erp.example"));
+        assert!(allowed_base("http://erp-sandbox:8000"));
+        assert!(allowed_base("http://127.0.0.1:8069"));
+        assert!(!allowed_base("http://erp.example"));
+        assert!(!allowed_base("https://user@erp.example"));
+        assert!(!allowed_base("ftp://erp"));
+    }
 }

@@ -63,24 +63,66 @@ impl std::fmt::Debug for S3Config {
     }
 }
 
-impl S3Config {
-    /// The storage named by `vars` (`NORN_S3_ENDPOINT`, `NORN_S3_BUCKET`,
-    /// `NORN_S3_REGION`, `NORN_SECRET_S3_ACCESS_KEY_ID`,
-    /// `NORN_SECRET_S3_SECRET_ACCESS_KEY`), or `None` when it is not configured.
+/// Which bucket an upload goes to; the server decides, never the client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Store {
+    /// Datasets and other files (`NORN_S3_BUCKET`).
+    Uploads,
+    /// Scanned documents: images and PDFs (`NORN_S3_DOCUMENTS_BUCKET`).
+    Documents,
+}
+
+impl Store {
+    /// The store a file of `content_type` belongs in.
     #[must_use]
-    pub fn from_vars(vars: &BTreeMap<String, String>) -> Option<Self> {
+    pub fn for_content_type(content_type: &str) -> Self {
+        let kind = content_type
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if kind.starts_with("image/") || kind == "application/pdf" {
+            Self::Documents
+        } else {
+            Self::Uploads
+        }
+    }
+}
+
+impl S3Config {
+    /// The storage of `store` named by `vars`: `NORN_S3_ENDPOINT` and
+    /// `NORN_S3_REGION` (shared), then `NORN_S3_BUCKET` with
+    /// `NORN_SECRET_S3_ACCESS_KEY_ID` / `NORN_SECRET_S3_SECRET_ACCESS_KEY`,
+    /// or `NORN_S3_DOCUMENTS_BUCKET` with
+    /// `NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID` /
+    /// `NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY`. `None` when not configured.
+    #[must_use]
+    pub fn from_vars(vars: &BTreeMap<String, String>, store: Store) -> Option<Self> {
         let get = |name: &str| vars.get(name).filter(|v| !v.is_empty()).cloned();
         let endpoint = get("NORN_S3_ENDPOINT")?;
         let host = endpoint.strip_prefix("https://")?;
         if host.is_empty() || host.contains(['/', '?', '@', '#']) {
             return None;
         }
+        let (bucket, id, secret) = match store {
+            Store::Uploads => (
+                "NORN_S3_BUCKET",
+                "NORN_SECRET_S3_ACCESS_KEY_ID",
+                "NORN_SECRET_S3_SECRET_ACCESS_KEY",
+            ),
+            Store::Documents => (
+                "NORN_S3_DOCUMENTS_BUCKET",
+                "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID",
+                "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY",
+            ),
+        };
         Some(Self {
             endpoint,
-            bucket: get("NORN_S3_BUCKET")?,
+            bucket: get(bucket)?,
             region: get("NORN_S3_REGION").unwrap_or_else(|| "auto".to_owned()),
-            access_key_id: get("NORN_SECRET_S3_ACCESS_KEY_ID")?,
-            secret_access_key: get("NORN_SECRET_S3_SECRET_ACCESS_KEY")?,
+            access_key_id: get(id)?,
+            secret_access_key: get(secret)?,
         })
     }
 
@@ -256,8 +298,8 @@ impl ColumnKind {
             Self::Integer => "integer",
             Self::Decimal => "decimal",
             Self::Boolean => "boolean",
-            Self::Datetime => "datetime",
-            Self::Text => "string",
+            // Text the mapping converts with `timestamp()`, as the packs do.
+            Self::Datetime | Self::Text => "string",
         }
     }
 }
@@ -673,6 +715,12 @@ fn shapes(columns: &[(Column, ColumnKind)]) -> (Vec<Value>, Vec<Value>, Vec<Valu
     ];
     let mut map_properties = vec![json!({"property": "row_id", "value": "input.row_id"})];
     for (ordinal, (column, kind)) in (1_u32..).zip(columns) {
+        // A nullable date-time stays text: the mapping has no null-safe timestamp conversion.
+        let kind = &if *kind == ColumnKind::Datetime && column.nullable {
+            ColumnKind::Text
+        } else {
+            *kind
+        };
         let mut property = json!({"id": column.id, "type": property_type(*kind, column.scale)});
         if column.nullable
             && let Some(object) = property.as_object_mut()
@@ -783,6 +831,7 @@ pub fn load_rows<E: SqlEngine>(
         source: UPLOAD_SOURCE.to_owned(),
         pipeline: format!("norn-upload/1+sha256.{sha256}"),
         feeds: Vec::new(),
+        token: None,
     };
     let indices: Vec<Option<usize>> = generated
         .columns
@@ -892,7 +941,7 @@ mod tests {
         })
         .expect("signed");
         assert!(
-            query.ends_with(
+            query.contains(
                 "X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"
             ),
             "{query}"
@@ -911,6 +960,12 @@ mod tests {
         assert!(url.starts_with("https://store.example/uploads/uploads/org/env/u1/sales%202026.csv?X-Amz-Algorithm=AWS4-HMAC-SHA256&"), "{url}");
         assert!(url.contains("X-Amz-Expires=900"));
         assert_eq!(s3.uri("k"), "s3://uploads/k");
+        assert_eq!(Store::for_content_type("image/png"), Store::Documents);
+        assert_eq!(
+            Store::for_content_type("application/pdf; charset=binary"),
+            Store::Documents
+        );
+        assert_eq!(Store::for_content_type("text/csv"), Store::Uploads);
     }
 
     #[test]

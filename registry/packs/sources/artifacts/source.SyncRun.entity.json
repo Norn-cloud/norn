@@ -63,7 +63,7 @@
           }
         },
         {
-          "id": "actor",
+          "id": "run_by",
           "type": {
             "kind": "text"
           }
@@ -81,8 +81,7 @@
           },
           "id": "ended_at",
           "type": {
-            "kind": "ref",
-            "name": "iso8601.timestamp"
+            "kind": "text"
           }
         },
         {

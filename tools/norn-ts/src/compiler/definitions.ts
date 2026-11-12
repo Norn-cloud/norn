@@ -1380,7 +1380,9 @@ class DefinitionCompiler {
     }
     const cursor = members.get("cursor"), deadLetter = members.get("deadLetterPolicy"), poll = members.get("poll"), pull = members.get("pull")
     if (pull) {
-      const m = this.closedRecord(pull, ["source", "pipeline", "feeds"], ["source", "pipeline", "feeds"])
+      const m = this.closedRecord(pull, ["source", "pipeline", "feeds", "token"], ["source", "pipeline", "feeds"])
+      const token = m.get("token")
+      if (token) this.closedRecord(token, ["header", "prefix"], ["header"])
       for (const feed of this.list(m.get("feeds")!)) {
         const f = this.closedRecord(feed, ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"], ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"])
         this.closedRecord(f.get("request")!, ["method", "path", "query", "headers", "body"], ["method", "path"])

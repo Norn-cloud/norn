@@ -46,6 +46,8 @@ export interface PullProfile {
   readonly source: string
   readonly pipeline: string
   readonly feeds: ReadonlyArray<PullFeed>
+  /** Where an oauth2 (client credentials) access token is sent. */
+  readonly token?: { readonly header: string; readonly prefix?: string }
 }
 
 export interface ConnectorSpec {

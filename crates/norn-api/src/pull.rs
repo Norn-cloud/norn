@@ -60,6 +60,21 @@ pub struct PullProfile {
     pub pipeline: String,
     /// One feed per source-schema dataset, pulled in this order.
     pub feeds: Vec<Feed>,
+    /// Where an `OAuth2` access token goes, for a connector whose auth is
+    /// `oauth2` (client credentials).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<TokenPlacement>,
+}
+
+/// The header an `OAuth2` access token is sent in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TokenPlacement {
+    /// The header name, e.g. `Authorization`.
+    pub header: String,
+    /// Text before the token, e.g. `Bearer `.
+    #[serde(default)]
+    pub prefix: String,
 }
 
 /// One dataset's feed.
@@ -139,17 +154,36 @@ pub enum Paging {
     /// Rows after `(version, id)`, ordered by them; a short page ends the feed.
     Keyset {
         /// Rows per page.
+        #[serde(deserialize_with = "whole")]
         size: u32,
     },
     /// A server cursor over rows at or after the stored version.
     Cursor {
         /// Rows per page.
+        #[serde(deserialize_with = "whole")]
         size: u32,
         /// Pointer to the next cursor in a response.
         next_cursor_path: String,
         /// Pointer to the boolean that says another page exists.
         has_next_path: String,
     },
+}
+
+/// A whole number however a JSON reader spelled it (`100` or `100.0`).
+fn whole<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    value
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|n| {
+                    n.fract().abs() < f64::EPSILON && (0.0..=f64::from(u32::MAX)).contains(n)
+                })
+                .and_then(|n| format!("{n}").parse().ok())
+        })
+        .ok_or_else(|| serde::de::Error::custom("expected a whole number"))
 }
 
 impl Paging {

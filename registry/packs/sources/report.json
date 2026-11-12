@@ -10,7 +10,7 @@
   },
   "sync_run": {
     "id": "erpnext.sandbox/1794484800000", "connection_id": "erpnext.sandbox", "trigger": "schedule",
-    "actor": "connection:erpnext.sandbox", "started_at": "2026-11-12T12:00:00.000Z", "ended_at": "2026-11-12T12:00:04.250Z",
+    "run_by": "connection:erpnext.sandbox", "started_at": "2026-11-12T12:00:00.000Z", "ended_at": "2026-11-12T12:00:04.250Z",
     "outcome": "partial", "watermark_from": "{}", "watermark_to": "{\"Item\":{\"version\":\"2026-11-12 11:58:01.000000\",\"id\":\"GOLD\"}}",
     "rows_read": 511, "rows_landed": 510, "rows_quarantined": 1, "quarantine_reasons": "mapping.runtime.invalid_record=1",
     "error_code": null, "error_message": null

@@ -96,8 +96,7 @@
           },
           "id": "last_sync_ended_at",
           "type": {
-            "kind": "ref",
-            "name": "iso8601.timestamp"
+            "kind": "text"
           }
         },
         {

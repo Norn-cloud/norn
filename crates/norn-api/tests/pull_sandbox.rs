@@ -366,16 +366,21 @@ fn sources() -> Sources {
 }
 
 /// Run one claimed sync of `id` against the recordings: each feed's first
-/// request gets its recorded page, later ones an empty page.
+/// request gets its recorded page (none when `replay` is false, as a source
+/// with nothing new after the watermark answers), later ones an empty page.
 fn sync(
     host: &DevHost<norn_cell::engine::NativeEngine>,
     sources: &mut Sources,
     id: &str,
-    system: &str,
+    (system, replay): (&str, bool),
     now_ms: u64,
 ) -> (norn_api::sources::RunSummary, Vec<HttpRequest>) {
     let profile = profile(system);
-    let mut pages = recorded(system);
+    let mut pages = if replay {
+        recorded(system)
+    } else {
+        BTreeMap::new()
+    };
     let mut sent = Vec::new();
     let mut step = sources.step(host, id, None, now_ms);
     loop {
@@ -428,7 +433,7 @@ fn a_manual_sync_lands_rows_and_reports_the_connection_as_objects() {
         &host,
         &mut sources,
         "erpnext.sandbox",
-        "erpnext",
+        ("erpnext", true),
         1_794_484_800_000,
     );
     assert_eq!(summary.outcome, "ok", "{summary:#?}");
@@ -473,7 +478,7 @@ fn a_manual_sync_lands_rows_and_reports_the_connection_as_objects() {
         .expect("read")
         .expect("the run object");
     assert_eq!(
-        run.get("actor").and_then(RuntimeValue::as_str),
+        run.get("run_by").and_then(RuntimeValue::as_str),
         Some("user:owner@demo")
     );
     assert_eq!(
@@ -493,7 +498,7 @@ fn a_manual_sync_lands_rows_and_reports_the_connection_as_objects() {
         &host,
         &mut sources,
         "erpnext.sandbox",
-        "erpnext",
+        ("erpnext", false),
         1_794_484_900_000,
     );
     assert_eq!(again.outcome, "ok");
@@ -524,14 +529,14 @@ fn the_schedule_claims_each_due_connection_once_as_its_own_principal() {
             &second[..second.find('.').expect("dotted")],
         ),
     ] {
-        let (summary, _) = sync(&host, &mut sources, id, system, t0);
+        let (summary, _) = sync(&host, &mut sources, id, (system, true), t0);
         assert_eq!(summary.outcome, "ok", "{summary:#?}");
         let run = host
             .host_object("source.SyncRun", &summary.run)
             .expect("read")
             .expect("run");
         assert_eq!(
-            run.get("actor").and_then(RuntimeValue::as_str),
+            run.get("run_by").and_then(RuntimeValue::as_str),
             Some(format!("connection:{id}").as_str())
         );
         assert_eq!(

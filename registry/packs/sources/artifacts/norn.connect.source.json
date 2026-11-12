@@ -11,6 +11,99 @@
       "name": "norn-pull",
       "version": "1"
     },
+    "codeSets": [
+      {
+        "dataset": "connection",
+        "field": "auth",
+        "id": "connection_auth",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "api_key"
+          },
+          {
+            "value": "client_credentials"
+          },
+          {
+            "value": "presigned_upload"
+          }
+        ]
+      },
+      {
+        "dataset": "connection",
+        "field": "status",
+        "id": "connection_status",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "syncing"
+          },
+          {
+            "value": "ok"
+          },
+          {
+            "value": "partial"
+          },
+          {
+            "value": "failed"
+          }
+        ]
+      },
+      {
+        "dataset": "connection",
+        "field": "last_trigger",
+        "id": "connection_trigger",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "schedule"
+          },
+          {
+            "value": "manual"
+          },
+          {
+            "value": "upload"
+          }
+        ]
+      },
+      {
+        "dataset": "sync_run",
+        "field": "trigger",
+        "id": "run_trigger",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "schedule"
+          },
+          {
+            "value": "manual"
+          },
+          {
+            "value": "upload"
+          }
+        ]
+      },
+      {
+        "dataset": "sync_run",
+        "field": "outcome",
+        "id": "run_outcome",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "running"
+          },
+          {
+            "value": "ok"
+          },
+          {
+            "value": "partial"
+          },
+          {
+            "value": "failed"
+          }
+        ]
+      }
+    ],
     "constraints": [
       {
         "dataset": "connection",
@@ -118,7 +211,7 @@
         "required": true,
         "typeCandidate": {
           "origin": "declared",
-          "type": "datetime"
+          "type": "string"
         }
       },
       {
@@ -129,7 +222,7 @@
         "required": false,
         "typeCandidate": {
           "origin": "declared",
-          "type": "datetime"
+          "type": "string"
         }
       },
       {
@@ -288,7 +381,7 @@
       },
       {
         "dataset": "sync_run",
-        "name": "actor",
+        "name": "run_by",
         "nativeType": "text",
         "ordinal": 3,
         "required": true,
@@ -305,7 +398,7 @@
         "required": true,
         "typeCandidate": {
           "origin": "declared",
-          "type": "datetime"
+          "type": "string"
         }
       },
       {
@@ -316,7 +409,7 @@
         "required": false,
         "typeCandidate": {
           "origin": "declared",
-          "type": "datetime"
+          "type": "string"
         }
       },
       {
@@ -422,7 +515,7 @@
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-12T00:00:00Z",
     "rawMetadata": {
-      "sha256": "b13999f2a32856777214f172501f668a9800c70304188a01c6f79f8a0a2f6f3c",
+      "sha256": "d35c28b304e8f7be251f1b8201f023a5dddb04bdf393774ab3309c28b6b9fecd",
       "uri": "registry/packs/sources/report.json"
     },
     "source": {

@@ -5,7 +5,8 @@ import { Norn } from "@norn/authoring"
 // report of each dataset, as the cell writes it. The cell's own sync
 // reports each run as an observation of the `norn-connect` source, and this
 // mapping lands it as typed objects, so Studio reads connections, freshness
-// and quarantine counts through the ordinary object routes. Times are what
+// and quarantine counts through the ordinary object routes. An end time is
+// RFC 3339 text, null while a run is still going. Times are what
 // the cell's clock read; nothing here implies a fresher view than the last
 // completed run.
 
@@ -24,7 +25,7 @@ export const Connection = Norn.type({
     auth: Schema.Literals(["api_key", "client_credentials", "presigned_upload"]),
     status: Schema.Literals(["syncing", "ok", "partial", "failed"]),
     last_sync_started_at: Norn.ref("iso8601.timestamp"),
-    last_sync_ended_at: Schema.NullOr(Norn.ref("iso8601.timestamp")),
+    last_sync_ended_at: Schema.NullOr(Schema.String),
     last_trigger: Schema.Literals(["schedule", "manual", "upload"]),
     watermark: Schema.String,
     rows_read: Schema.Int,
@@ -46,9 +47,9 @@ export const SyncRun = Norn.type({
     id: Schema.String,
     connection_id: Schema.String,
     trigger: Schema.Literals(["schedule", "manual", "upload"]),
-    actor: Schema.String,
+    run_by: Schema.String,
     started_at: Norn.ref("iso8601.timestamp"),
-    ended_at: Schema.NullOr(Norn.ref("iso8601.timestamp")),
+    ended_at: Schema.NullOr(Schema.String),
     outcome: Schema.Literals(["running", "ok", "partial", "failed"]),
     watermark_from: Schema.String,
     watermark_to: Schema.String,
@@ -72,7 +73,7 @@ export const RunSource = Norn.sourceSchema({
   source: {system: "norn-connect", instance: "cell", version: "norn-connect/1"},
   observedAt: "2026-11-12T00:00:00Z",
   adapter: {name: "norn-pull", version: "1"},
-  rawMetadata: {uri: "registry/packs/sources/report.json", sha256: "b13999f2a32856777214f172501f668a9800c70304188a01c6f79f8a0a2f6f3c"},
+  rawMetadata: {uri: "registry/packs/sources/report.json", sha256: "d35c28b304e8f7be251f1b8201f023a5dddb04bdf393774ab3309c28b6b9fecd"},
   datasets: [
     {id: "connection", nativeName: "Connection state after a sync run", kind: "document"},
     {id: "sync_run", nativeName: "Sync run report", kind: "document"}
@@ -84,8 +85,8 @@ export const RunSource = Norn.sourceSchema({
     {dataset: "connection", name: "target", ordinal: 3, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "connection", name: "auth", ordinal: 4, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "connection", name: "status", ordinal: 5, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
-    {dataset: "connection", name: "last_sync_started_at", ordinal: 6, nativeType: "rfc3339", typeCandidate: {type: "datetime", origin: "declared"}, required: true},
-    {dataset: "connection", name: "last_sync_ended_at", ordinal: 7, nativeType: "rfc3339", typeCandidate: {type: "datetime", origin: "declared"}, required: false},
+    {dataset: "connection", name: "last_sync_started_at", ordinal: 6, nativeType: "rfc3339", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "connection", name: "last_sync_ended_at", ordinal: 7, nativeType: "rfc3339", typeCandidate: {type: "string", origin: "declared"}, required: false},
     {dataset: "connection", name: "last_trigger", ordinal: 8, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "connection", name: "watermark", ordinal: 9, nativeType: "json", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "connection", name: "rows_read", ordinal: 10, nativeType: "count", typeCandidate: {type: "integer", origin: "declared"}, required: true},
@@ -100,9 +101,9 @@ export const RunSource = Norn.sourceSchema({
     {dataset: "sync_run", name: "id", ordinal: 0, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "sync_run", name: "connection_id", ordinal: 1, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "sync_run", name: "trigger", ordinal: 2, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
-    {dataset: "sync_run", name: "actor", ordinal: 3, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
-    {dataset: "sync_run", name: "started_at", ordinal: 4, nativeType: "rfc3339", typeCandidate: {type: "datetime", origin: "declared"}, required: true},
-    {dataset: "sync_run", name: "ended_at", ordinal: 5, nativeType: "rfc3339", typeCandidate: {type: "datetime", origin: "declared"}, required: false},
+    {dataset: "sync_run", name: "run_by", ordinal: 3, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "sync_run", name: "started_at", ordinal: 4, nativeType: "rfc3339", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "sync_run", name: "ended_at", ordinal: 5, nativeType: "rfc3339", typeCandidate: {type: "string", origin: "declared"}, required: false},
     {dataset: "sync_run", name: "outcome", ordinal: 6, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "sync_run", name: "watermark_from", ordinal: 7, nativeType: "json", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "sync_run", name: "watermark_to", ordinal: 8, nativeType: "json", typeCandidate: {type: "string", origin: "declared"}, required: true},
@@ -112,6 +113,13 @@ export const RunSource = Norn.sourceSchema({
     {dataset: "sync_run", name: "quarantine_reasons", ordinal: 12, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "sync_run", name: "error_code", ordinal: 13, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: false},
     {dataset: "sync_run", name: "error_message", ordinal: 14, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: false}
+  ],
+  codeSets: [
+    {id: "connection_auth", dataset: "connection", field: "auth", origin: "declared", values: [{value: "api_key"}, {value: "client_credentials"}, {value: "presigned_upload"}]},
+    {id: "connection_status", dataset: "connection", field: "status", origin: "declared", values: [{value: "syncing"}, {value: "ok"}, {value: "partial"}, {value: "failed"}]},
+    {id: "connection_trigger", dataset: "connection", field: "last_trigger", origin: "declared", values: [{value: "schedule"}, {value: "manual"}, {value: "upload"}]},
+    {id: "run_trigger", dataset: "sync_run", field: "trigger", origin: "declared", values: [{value: "schedule"}, {value: "manual"}, {value: "upload"}]},
+    {id: "run_outcome", dataset: "sync_run", field: "outcome", origin: "declared", values: [{value: "running"}, {value: "ok"}, {value: "partial"}, {value: "failed"}]}
   ],
   constraints: [
     {id: "connection_id", kind: "primary_key", dataset: "connection", fields: ["id"], origin: "declared"},
@@ -123,7 +131,7 @@ export const RunMapping = Norn.mapping({
   id: "norn.connect.mapping",
   title: "Sync reports to connections and runs",
   version: "0.1.0",
-  source: {schemaId: "norn.connect.source", version: "0.1.0", sha256: "bf3e24044948782b5030ea5ed67eb1fcc92c7d7fe9d198678c9b5f5da57cb017"},
+  source: {schemaId: "norn.connect.source", version: "0.1.0", sha256: "77e210d14cdde9ecfc6844d4a41c23270f55227df4c4257db17788a94b704ae9"},
   sourceContract: {kind: "generic"},
   interfaces: [Synced],
   maps: [
@@ -137,7 +145,7 @@ export const RunMapping = Norn.mapping({
         {property: "id", value: "input.id"}, {property: "system", value: "input.system"}, {property: "label", value: "input.label"},
         {property: "target", value: "input.target"}, {property: "auth", value: "input.auth"}, {property: "status", value: "input.status"},
         {property: "last_sync_started_at", value: "timestamp(input.last_sync_started_at)"},
-        {property: "last_sync_ended_at", value: "input.last_sync_ended_at == null ? null : timestamp(input.last_sync_ended_at)"},
+        {property: "last_sync_ended_at", value: "input.last_sync_ended_at"},
         {property: "last_trigger", value: "input.last_trigger"}, {property: "watermark", value: "input.watermark"},
         {property: "rows_read", value: "input.rows_read"}, {property: "rows_landed", value: "input.rows_landed"},
         {property: "rows_quarantined", value: "input.rows_quarantined"}, {property: "quarantine_reasons", value: "input.quarantine_reasons"},
@@ -154,9 +162,9 @@ export const RunMapping = Norn.mapping({
       sourceRecord: "'norn-connect/cell/sync_run/' + input.id",
       properties: [
         {property: "id", value: "input.id"}, {property: "connection_id", value: "input.connection_id"},
-        {property: "trigger", value: "input.trigger"}, {property: "actor", value: "input.actor"},
+        {property: "trigger", value: "input.trigger"}, {property: "run_by", value: "input.run_by"},
         {property: "started_at", value: "timestamp(input.started_at)"},
-        {property: "ended_at", value: "input.ended_at == null ? null : timestamp(input.ended_at)"},
+        {property: "ended_at", value: "input.ended_at"},
         {property: "outcome", value: "input.outcome"}, {property: "watermark_from", value: "input.watermark_from"},
         {property: "watermark_to", value: "input.watermark_to"}, {property: "rows_read", value: "input.rows_read"},
         {property: "rows_landed", value: "input.rows_landed"}, {property: "rows_quarantined", value: "input.rows_quarantined"},
