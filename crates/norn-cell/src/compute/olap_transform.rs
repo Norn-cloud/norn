@@ -1,4 +1,4 @@
-//! VIEW-ENGINE-1: an admitted transform lowered to embedded DuckDB over the
+//! VIEW-ENGINE-1: an admitted transform lowered to embedded `DuckDB` over the
 //! same authorized snapshot the exact interpreter reads.
 //!
 //! Each input alias becomes one typed table of exactly the rows the reader
@@ -38,7 +38,7 @@ fn unsupported<T>() -> Result<T, CellError> {
 }
 
 impl<E: SqlEngine> CellStore<E> {
-    /// VIEW-ENGINE-1: evaluate an admitted transform in embedded DuckDB over
+    /// VIEW-ENGINE-1: evaluate an admitted transform in embedded `DuckDB` over
     /// the authorized snapshot [`Self::evaluate_transform`] reads; the
     /// envelope differs only in its engine label.
     ///
@@ -64,7 +64,7 @@ impl<E: SqlEngine> CellStore<E> {
     }
 }
 
-/// How a column is held in DuckDB.
+/// How a column is held in `DuckDB`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Text,

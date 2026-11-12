@@ -8,7 +8,7 @@ pub mod ivm;
 pub mod lineage;
 #[cfg(feature = "duckdb")]
 mod olap;
-/// VIEW-ENGINE-1: admitted transforms lowered to embedded DuckDB.
+/// VIEW-ENGINE-1: admitted transforms lowered to embedded `DuckDB`.
 #[cfg(feature = "duckdb")]
 mod olap_transform;
 /// Governed native restatement generations.

@@ -1,7 +1,7 @@
 //! VIEW-ENGINE-1: the bounded row-expression subset another engine can lower.
 //!
 //! A transform's admitted ZEN expressions run in the exact interpreter as
-//! written. An engine that lowers a plan (DuckDB) needs their structure, but
+//! written. An engine that lowers a plan (`DuckDB`) needs their structure, but
 //! no `zen-*` type may cross this crate's boundary, so this module projects
 //! the parsed AST onto a small Norn-owned tree: literals, `root.<column>`
 //! reads, `+ - *`, comparisons, `and`/`or`/`not`, `??` and `?:`. Anything
