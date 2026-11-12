@@ -40,6 +40,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Norn-Snapshot", "c42")
             self.send_header("Norn-Withheld-Rows", "1")
+        elif url.path == "/v1/objects/lab.Plain:export":
+            # A host without the engine reads the path as an object route.
+            body = b'{"code":"request.invalid","explanation":"unknown query parameter columns"}'
+            self.send_response(400)
+        elif url.path == "/v1/objects/lab.Secret:export":
+            body = b'{"code":"scope.denied"}'
+            self.send_response(403)
         else:
             body = b'{"code":"not_found"}'
             self.send_response(404)
@@ -60,7 +67,9 @@ class Export(unittest.TestCase):
         Handler.seen.clear()
 
     def tearDown(self):
+        self.cell.client.get_httpx_client().close()
         self.server.shutdown()
+        self.server.server_close()
 
     def test_parquet_rows_keep_nulls_and_carry_the_snapshot(self):
         frame = self.cell.export("lab.Sample", ["x", "y"])
@@ -73,6 +82,12 @@ class Export(unittest.TestCase):
 
     def test_no_engine_means_fall_back(self):
         self.assertIsNone(self.cell.export("lab.Other", ["x"]))
+        self.assertIsNone(self.cell.export("lab.Plain", ["x"]))
+
+    def test_a_refused_caller_is_not_a_fall_back(self):
+        from norn_regression.cell import Refused
+        with self.assertRaisesRegex(Refused, "403"):
+            self.cell.export("lab.Secret", ["x"])
 
 
 if __name__ == "__main__":

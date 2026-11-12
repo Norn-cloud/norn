@@ -67,14 +67,16 @@ class Cell:
         """The columns through the cell's analytical engine (`:export`, Parquet): every row the
         caller may read, nulls kept, `id` and `version` included. The answer's snapshot
         (`Norn-Snapshot`) is in `frame.attrs["snapshot"]`. None when the host has no such
-        engine (404 or 501), so the caller falls back to the paged object route."""
+        engine, so the caller falls back to the paged object route: 404 or 501, or 400 or
+        405 from a host that reads `{type}:export` as an object route. A refusal of the
+        caller's authority (403) is not a fallback: it raises."""
         import io
 
         answer = self.client.get_httpx_client().get(
             f"/v1/objects/{object_type}:export",
             params={"columns": ",".join(columns), "format": "parquet", "orgId": self.org_id, "environmentId": self.environment_id},
         )
-        if answer.status_code in (404, 501):
+        if answer.status_code in (400, 404, 405, 501):
             return None
         if answer.status_code != 200:
             raise Refused(f"exporting {object_type} ({answer.status_code}): {answer.text}")

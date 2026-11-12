@@ -82,7 +82,7 @@ export type CatalogRead =
 
 export type CallResult =
   | { readonly kind: "receipt"; readonly receipt: ActionReceipt }
-  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[] }
+  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string }
   | { readonly kind: "no-cell" }
   | { readonly kind: "unavailable" }
 
@@ -91,19 +91,20 @@ export const ACTIONS_UNAVAILABLE = "This cell doesn't take actions from Studio y
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 const defaultFetch: Fetch = (input, init) => fetch(input, init)
 
-interface Refusal { readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[] }
+interface Refusal { readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string }
 
 function refusalOf(text: string): Refusal | null {
   let body: unknown
   try { body = JSON.parse(text) } catch { return null }
-  const { code, message, diagnostics } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown }
+  const { code, message, diagnostics, explanation } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown; explanation?: unknown }
   if (typeof code !== "string") return null
   // The cell's refusal@2 places a finding at `span.pointer`; a bare `pointer` is read too.
   const list = Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: { pointer?: unknown } | null }) => ({
     code: String(d.code ?? ""), message: String(d.message ?? ""),
     pointer: typeof d.span?.pointer === "string" ? d.span.pointer : typeof d.pointer === "string" ? d.pointer : null,
   })) : []
-  return { code, message: typeof message === "string" ? message : code, diagnostics: list }
+  // The cell's own explanation names what refused the call (a law and its statement, say); it is shown as sent.
+  return { code, message: typeof message === "string" ? message : code, diagnostics: list, ...typeof explanation === "string" ? { explanation } : {} }
 }
 
 async function scoped(fetcher: Fetch) {

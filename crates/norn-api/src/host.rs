@@ -155,7 +155,8 @@ impl<E: SqlEngine> DevHost<E> {
     ) -> Result<InstalledDefinitionSet, Refusal> {
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
-        cell.install_definitions(candidate_model, input, expected_version)
+        let installed = cell
+            .install_definitions(candidate_model, input, expected_version)
             .map_err(|error| {
                 if let CellError::DefinitionVersionConflict { expected, actual } = &error {
                     return Refusal::new(
@@ -174,6 +175,16 @@ impl<E: SqlEngine> DevHost<E> {
                     );
                 }
                 Refusal::host(error)
-            })
+            })?;
+        self.model_changed(&cell);
+        Ok(installed)
+    }
+
+    /// Tell the authorizer the model changed, under the write epoch the
+    /// caller holds, with the cell it just installed into.
+    pub(crate) fn model_changed(&self, cell: &ActionCell<E>) {
+        let types: Vec<norn_ir::ObjectTypeDef> =
+            cell.store().model().object_types().cloned().collect();
+        self.authorizer.model_changed(&types);
     }
 }

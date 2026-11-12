@@ -18,6 +18,7 @@ TAGS = {
     "crate::object_profile": "objects",
     "crate::object_review": "objects",
     "crate::mcp": "mcp",
+    "crate::run_routes": "runs",
 }
 src, dst = sys.argv[1], sys.argv[2]
 doc = json.load(open(src))

@@ -1882,7 +1882,7 @@
     "/v1/objects/{type}:profile": {
       "get": {
         "tags": [
-          "crate::object_profile"
+          "crate::object_routes"
         ],
         "summary": "HOST-READ-5: profile the caller's authorized snapshot of `object_type`.",
         "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an engine that\ncannot prove one snapshot (503), a commit while the snapshot was read\n(409 `object.snapshot_moved`, `retryable`), or a host failure.",
@@ -2587,6 +2587,229 @@
           },
           "422": {
             "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/runs": {
+      "post": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`POST /v1/runs`: start a run of an installed flow.",
+        "description": "# Errors\nMissing or foreign scope or a denied caller (one opaque 403), an invalid\nbody, an unknown or retired flow (`run.flow_not_found`), a run id already\nstarted for another flow (`run.exists`), a refused start turn\n(`run.start_refused`, `run.flow_inadmissible`, or the kernel's own code),\na concurrent change (`run.start_conflict`), or a host failure.",
+        "operationId": "start_run",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A retry with the same run id and flow: the existing run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The run started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such installed flow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run id is taken, or the cell changed while the run started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The flow refused to start.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/runs/{id}": {
+      "get": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`GET /v1/runs/{id}`.",
+        "description": "# Errors\nMissing or foreign scope; `run.not_found` for an absent or unreadable run.",
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The run id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run is visible to the caller.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27409,6 +27632,238 @@
         },
         "additionalProperties": false
       },
+      "RunDocument": {
+        "type": "object",
+        "description": "One run, as the routes return it.",
+        "required": [
+          "id",
+          "generation",
+          "flow",
+          "objectType",
+          "version",
+          "createdAtMs",
+          "createdCommitSeq",
+          "updatedAtMs",
+          "updatedCommitSeq",
+          "terminal",
+          "steps"
+        ],
+        "properties": {
+          "createdAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start time (logical milliseconds).",
+            "minimum": 0
+          },
+          "createdCommitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The starting commit.",
+            "minimum": 0
+          },
+          "flow": {
+            "$ref": "#/components/schemas/RunFlow",
+            "description": "The flow it runs."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its generation.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The run's object type."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its lifecycle state; `null` once the run object is deleted."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunStep"
+            },
+            "description": "The steps the run reached, in order."
+          },
+          "terminal": {
+            "type": "boolean",
+            "description": "The run has ended and will not change."
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last write time (logical milliseconds).",
+            "minimum": 0
+          },
+          "updatedCommitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The last commit that wrote the run object.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run object's version.",
+            "minimum": 0
+          }
+        }
+      },
+      "RunFlow": {
+        "type": "object",
+        "description": "The flow a run executes.",
+        "required": [
+          "id",
+          "ruleId",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The flow's definition id."
+          },
+          "ruleId": {
+            "type": "string",
+            "description": "The flow's `decide` rule artifact id (`<id>.flow.rule`)."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The flow's display title, when it has one."
+          },
+          "version": {
+            "type": "string",
+            "description": "The rule version the run is pinned to."
+          }
+        }
+      },
+      "RunStep": {
+        "type": "object",
+        "description": "One step of a run's timeline.",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "receipts"
+        ],
+        "properties": {
+          "endedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the run left it.",
+            "minimum": 0
+          },
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunStepError",
+                "description": "Why it failed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "The flow's step id (`succeed` or `fail` for the run's end)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RunStepKind",
+            "description": "What the step is."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The step's display label from the flow, when it has one."
+          },
+          "receipts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepReceipt"
+            },
+            "description": "The step's receipts the caller may see; none are disclosed yet."
+          },
+          "startedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the run reached it (logical milliseconds).",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStepStatus",
+            "description": "Where it stands."
+          },
+          "waitingOn": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StepWait",
+                "description": "What a waiting step waits on."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RunStepError": {
+        "type": "object",
+        "description": "Why a step or run failed.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The failed lifecycle state."
+          },
+          "message": {
+            "type": "string",
+            "description": "Display words."
+          }
+        }
+      },
+      "RunStepKind": {
+        "type": "string",
+        "description": "What a step is.",
+        "enum": [
+          "perform",
+          "decide",
+          "wait",
+          "succeed",
+          "fail"
+        ]
+      },
+      "RunStepStatus": {
+        "type": "string",
+        "description": "Where a step stands.",
+        "enum": [
+          "running",
+          "waiting",
+          "done",
+          "failed"
+        ]
+      },
       "SignoffDocument": {
         "type": "object",
         "description": "A recorded sign-off: every field set by the host.",
@@ -27447,6 +27902,82 @@
           }
         },
         "additionalProperties": false
+      },
+      "StartRunRequest": {
+        "type": "object",
+        "description": "`POST /v1/runs` body.",
+        "required": [
+          "flow",
+          "runId"
+        ],
+        "properties": {
+          "flow": {
+            "type": "string",
+            "description": "The installed flow's definition id (`flow.id`); its rule is\n`<flow>.flow.rule`."
+          },
+          "runId": {
+            "type": "string",
+            "description": "The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry\nwith the same id and flow returns the existing run."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StepReceipt": {
+        "type": "object",
+        "description": "One receipt behind a step, as the caller may see it.",
+        "required": [
+          "kind",
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit.",
+            "minimum": 0
+          },
+          "executor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who acted, in display words, never an id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StepReceiptKind",
+            "description": "What it records."
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt hash, or its keyed handle (D53)."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was recorded (logical milliseconds).",
+            "minimum": 0
+          }
+        }
+      },
+      "StepReceiptKind": {
+        "type": "string",
+        "description": "What a step receipt records.",
+        "enum": [
+          "function",
+          "decision",
+          "commit"
+        ]
+      },
+      "StepWait": {
+        "type": "string",
+        "description": "What a waiting step waits on.",
+        "enum": [
+          "decision",
+          "executor",
+          "timer"
+        ]
       }
     },
     "securitySchemes": {
