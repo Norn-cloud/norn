@@ -964,7 +964,7 @@ fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
 
 /// The committed end state OBS-PAGE-EQUIV compares: every canonical object
 /// with its version, values and source lineage; links; link claims; the
-/// ledger's events in order; and the pending (quarantined) source rows.
+/// ledger's events; and the pending (quarantined) source rows.
 /// Page rows themselves are delivery framing and are left out.
 fn end_state(cell: &Cell) -> Vec<String> {
     let reader = cell.store().read();
@@ -1010,9 +1010,17 @@ fn end_state(cell: &Cell) -> Vec<String> {
     for claim in reader.observed_link_claims().expect("claims") {
         state.push(format!("claim {claim:?}"));
     }
-    for entry in reader.ledger(0).expect("ledger") {
-        state.push(format!("event {:?}", entry.event));
-    }
+    // Events as a multiset: a page commit appends its records' object events
+    // in page order and then the page's link-claim events, where one by one
+    // interleaves them per record; order inside a commit is commit framing.
+    let mut events: Vec<String> = reader
+        .ledger(0)
+        .expect("ledger")
+        .into_iter()
+        .map(|entry| format!("event {:?}", entry.event))
+        .collect();
+    events.sort();
+    state.extend(events);
     for pending in reader.pending_observations().expect("pending") {
         if !pending.observation_id.starts_with("mapping-page:") {
             state.push(format!("pending {}", pending.observation_id));
