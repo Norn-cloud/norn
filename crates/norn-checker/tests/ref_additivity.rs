@@ -10,6 +10,8 @@
 //! time property; the stock does not. The law's three refusals are checked
 //! over every pair of declared classes (exhaustive over the four non-ratio
 //! classes, which is the whole finite space the refinement rule ranges over).
+//! METRIC-UNIT-PARTITION-1 is checked over every free/grouped/eq/ne choice for
+//! each of a quantity's two unit sources.
 
 use std::collections::BTreeSet;
 
@@ -17,7 +19,7 @@ use norn_checker::metric::derive::derive_metric_space;
 use norn_checker::object_types::codes as object_codes;
 use norn_checker::property_types::codes as property_codes;
 use norn_checker::{EntityArtifactSetContext, check_artifact_set_entity_model};
-use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, LawRoot};
+use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, LawRoot, QuestionIR};
 use serde_json::{Value, json};
 
 const CLASSES: [&str; 4] = ["undeclared", "additive", "semi_additive", "non_additive"];
@@ -194,4 +196,155 @@ fn an_inline_requirement_still_needs_the_same_additivity() {
     event["payload"]["interface"]["properties"][1]["type"] = json!({"kind": "decimal", "scale": 6});
     artifacts[1] = serde_json::from_value(event).expect("envelope");
     assert!(errors(&artifacts).contains(object_codes::INTERFACE_PROPERTY_TYPE_MISMATCH));
+}
+
+// ----- METRIC-UNIT-PARTITION-1 ---------------------------------------------------
+
+/// A flow whose unit is stored beside it, in `unit` or (for money) `currency`.
+fn flow(quantity: &Value, required: &Value) -> Vec<ArtifactEnvelope> {
+    let mut artifacts = model(
+        "undeclared",
+        quantity,
+        &reference("demo.quantity", "undeclared"),
+    );
+    let mut event: Value = serde_json::to_value(&artifacts[1]).expect("wire");
+    event["payload"]["interface"]["properties"][1]["type"] = required.clone();
+    artifacts[1] = serde_json::from_value(event).expect("envelope");
+    let mut delivery: Value = serde_json::to_value(&artifacts[2]).expect("wire");
+    let properties = delivery["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("properties");
+    properties.extend([
+        json!({"id": "unit", "type": {"kind": "ref", "name": "demo.code"}, "constraints": {"nullable": true}}),
+        json!({"id": "currency", "type": {"kind": "ref", "name": "demo.code"}, "constraints": {"nullable": true}}),
+        json!({"id": "weight", "type": {"kind": "decimal", "scale": 3}}),
+    ]);
+    artifacts[2] = serde_json::from_value(delivery).expect("envelope");
+    artifacts
+}
+
+fn partitioned(sources: &[&str]) -> Value {
+    json!({"kind": "ref", "name": "demo.quantity", "additivity": {"kind": "additive"}, "unitSource": sources})
+}
+
+fn space(artifacts: &[ArtifactEnvelope]) -> norn_checker::metric::derive::MetricSpace {
+    derive_metric_space(
+        artifacts,
+        &BTreeSet::new(),
+        &LawRoot::Entity("demo.Delivery".to_owned()),
+    )
+    .expect("derived space")
+}
+
+/// A question over the derived Delivery quantity sum: weekly, plus each
+/// source path either free, grouped, `eq`-filtered or `ne`-filtered.
+fn question(space: &norn_checker::metric::derive::MetricSpace, shape: [&str; 2]) -> QuestionIR {
+    let metric = space
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("quantity"))
+        .expect("quantity sum");
+    let mut dimensions = vec![json!({"path": {"property": "occurred_at"}, "grain": "week"})];
+    let mut filters = Vec::new();
+    for (source, how) in ["unit", "currency"].into_iter().zip(shape) {
+        let value = if source == "unit" {
+            json!("g")
+        } else {
+            Value::Null
+        };
+        match how {
+            "grouped" => dimensions.push(json!({"path": {"property": source}})),
+            "eq" | "ne" => {
+                filters
+                    .push(json!({"path": {"property": source}, "operator": how, "value": value}));
+            }
+            _ => {}
+        }
+    }
+    serde_json::from_value(json!({
+        "irVersion": "0.1", "name": "demo.delivered", "objectSet": "demo.Delivery",
+        "aggregate": [{"metric": metric.definition.name}], "groupBy": dimensions, "filter": filters,
+        "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-10-26T00:00:00Z"},
+        "freshness": {"kind": "live", "maxAgeMs": 5000},
+    }))
+    .expect("question")
+}
+
+#[test]
+fn a_quantity_with_a_stored_unit_aggregates_only_with_every_source_grouped_or_fixed() {
+    let artifacts = flow(
+        &partitioned(&["unit", "currency"]),
+        &reference("demo.quantity", "undeclared"),
+    );
+    assert_eq!(errors(&artifacts), BTreeSet::new());
+    let space = space(&artifacts);
+    let metric = space
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("quantity"))
+        .expect("quantity sum");
+    let paths: Vec<_> = metric
+        .unit_partition
+        .iter()
+        .map(|path| path.property.as_str())
+        .collect();
+    assert_eq!(paths, ["unit", "currency"]);
+    let ways = ["free", "grouped", "eq", "ne"];
+    for unit in ways {
+        for currency in ways {
+            let refused = space
+                .admit(&question(&space, [unit, currency]), 100)
+                .err()
+                .unwrap_or_default()
+                .iter()
+                .any(|finding| finding.code.as_str() == norn_checker::metric::codes::MIXED_UNIT);
+            let partitioned = [unit, currency]
+                .iter()
+                .all(|how| matches!(*how, "grouped" | "eq"));
+            assert_eq!(refused, !partitioned, "unit {unit}, currency {currency}");
+        }
+    }
+    space
+        .admit(&question(&space, ["eq", "eq"]), 100)
+        .expect("a weekly sum with both sources fixed lowers to the exact engine");
+}
+
+#[test]
+fn a_unit_source_names_other_stored_code_properties_and_members_keep_it() {
+    let refused = |quantity: Value, required: Value| {
+        errors(&flow(&quantity, &required)).contains(property_codes::INVALID_UNIT_SOURCE)
+    };
+    let free = reference("demo.quantity", "undeclared");
+    assert!(refused(partitioned(&["quantity"]), free.clone()), "itself");
+    assert!(refused(partitioned(&["missing"]), free.clone()), "missing");
+    assert!(refused(partitioned(&["weight"]), free.clone()), "a decimal");
+    assert!(
+        refused(partitioned(&["unit", "unit"]), free.clone()),
+        "repeated"
+    );
+    assert!(
+        refused(
+            json!({"kind": "ref", "name": "demo.code", "unitSource": ["unit"]}),
+            free.clone()
+        ),
+        "on text"
+    );
+    assert!(
+        refused(
+            json!({"kind": "decimal", "scale": 6, "unit": {"system": "ucum", "code": "g"}, "unitSource": ["unit"]}),
+            free
+        ),
+        "with a static unit"
+    );
+    // A member keeps a source its ref requirement declares, and may add one.
+    let required =
+        json!({"kind": "ref", "name": "demo.quantity", "unitSource": ["unit", "currency"]});
+    assert!(
+        errors(&flow(&reference("demo.quantity", "additive"), &required))
+            .contains(object_codes::INTERFACE_PROPERTY_TYPE_MISMATCH)
+    );
+    assert_eq!(
+        errors(&flow(&partitioned(&["unit", "currency"]), &required)),
+        BTreeSet::new()
+    );
 }

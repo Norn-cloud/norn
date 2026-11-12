@@ -1564,6 +1564,10 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "metric.validation.mixed_unit",
+    "fix": "Add each unit-source property of the measure to the question's grouping, or filter it with eq to one value (eq null included); while the engine admits one grouping dimension, filter: for example unit eq \"g\" and currency eq null."
+  },
+  {
     "code": "metric.validation.ontology_projection",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
@@ -2026,6 +2030,10 @@
   {
     "code": "property_type.validation.invalid_unit",
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_unit_source",
+    "fix": "Name distinct sibling properties that hold the unit as codes (text, enum or a code type), on a decimal with no static unit, currencySource or perUnit, and keep any unit source the referenced or overridden type declares."
   },
   {
     "code": "property_type.validation.inverted_range",
