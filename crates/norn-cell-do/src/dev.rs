@@ -49,6 +49,7 @@ use serde_json::{Value, json};
 
 mod admit;
 mod http;
+mod load;
 mod policy;
 
 use policy::{DevPrincipals, DevQuestions, LocalDeveloper};
@@ -74,6 +75,10 @@ pub struct DevArgs {
     /// Print one JSON event per line instead of the human view.
     #[arg(long)]
     json: bool,
+    /// A recorded source snapshot to load through the cell's own mapping
+    /// path when the cell opens (repeatable). See `dev/load.rs`.
+    #[arg(long = "load", value_name = "SNAPSHOT")]
+    load: Vec<PathBuf>,
     /// The compile worker command (program and arguments); `norn dev` in the
     /// authoring CLI supplies it.
     #[arg(last = true, required = true)]
@@ -229,11 +234,23 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         environment_id: manifest.scope.environment_id.clone(),
     };
     let cell_path = cell_path(&root, &manifest.cell)?;
-    let serving: http::Serving = Arc::new(RwLock::new(reopen(
-        &cell_path,
-        &scope,
-        &manifest.dev.actor,
-    )?));
+    let loads = args
+        .load
+        .iter()
+        .map(|path| {
+            path.canonicalize().map_err(|error| {
+                Failure::setup("norn.dev.load_missing", format!("{}: {error}", path.display()))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (reopened, loaded) = reopen(&cell_path, &scope, &manifest.dev.actor, &loads)?;
+    if let Some(loaded) = loaded {
+        out.emit(
+            &json!({ "event": "loaded", "files": loaded.files }),
+            &format!("· loaded {} recorded snapshot(s)", loaded.files.len()),
+        );
+    }
+    let serving: http::Serving = Arc::new(RwLock::new(reopened));
     let listener =
         TcpListener::bind((ip, args.port.unwrap_or(manifest.dev.port))).map_err(|error| {
             if error.kind() == std::io::ErrorKind::AddrInUse {
@@ -265,6 +282,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         std::thread::spawn(move || http::serve(&listener, &serving, &principals, &questions));
     }
     let session = Session {
+        loads: &loads,
         root: &root,
         manifest: &manifest,
         scope: &scope,
@@ -387,6 +405,7 @@ fn spawn_worker(command: &[String], root: &Path) -> Result<Receiver<Value>, Fail
 }
 
 struct Session<'a> {
+    loads: &'a [PathBuf],
     root: &'a Path,
     manifest: &'a Manifest,
     scope: &'a CellScope,
@@ -612,6 +631,14 @@ impl Session<'_> {
             &self.scope.key(),
         )
         .map_err(|error| refused(error.to_string()))?;
+        let store = if self.loads.is_empty() {
+            store
+        } else {
+            let (store, loaded) = load::load(store, &self.scope.key(), self.loads)
+                .map_err(|message| json!({ "code": "norn.dev.load_refused", "severity": "error", "message": message }))?;
+            eprintln!("{}", json!({ "event": "loaded", "files": loaded.files }));
+            store
+        };
         let host =
             DevHost::from_store(store, self.scope.clone(), |command| command.payload.clone())
                 .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
@@ -641,11 +668,16 @@ fn active(serving: &http::Serving) -> Result<Option<InstalledDefinitionSet>, Str
 /// HOST-REOPEN-1: an existing cell is reopened at its active revision with
 /// the model rebuilt from its retained set; nothing is written. A missing
 /// or empty file waits for the first admitted revision.
+#[allow(
+    clippy::type_complexity,
+    reason = "the reopened host and what the load did, if anything"
+)]
 fn reopen(
     path: &Path,
     scope: &CellScope,
     actor: &str,
-) -> Result<Option<DevHost<NativeEngine>>, Failure> {
+    loads: &[PathBuf],
+) -> Result<(Option<DevHost<NativeEngine>>, Option<load::Loaded>), Failure> {
     let unreadable = |error: String| {
         Failure::setup(
             "norn.cell.unreadable",
@@ -653,26 +685,33 @@ fn reopen(
         )
     };
     if !path.exists() {
-        return Ok(None);
+        return Ok((None, None));
     }
     let engine = NativeEngine::open(path, StoreOptions::default())
         .map_err(|error| unreadable(error.to_string()))?;
     let Some(active) = CellStore::read_active_definitions(&engine)
         .map_err(|error| unreadable(error.to_string()))?
     else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let model = admit::retained_envelopes(&active.canonical_set)
         .and_then(|artifacts| admit::model_of(&artifacts))
         .map_err(unreadable)?;
     let store =
         CellStore::from_engine(engine, model).map_err(|error| unreadable(error.to_string()))?;
+    let (store, loaded) = if loads.is_empty() {
+        (store, None)
+    } else {
+        let (store, loaded) = load::load(store, &scope.key(), loads)
+            .map_err(|message| Failure::setup("norn.dev.load_refused", message))?;
+        (store, Some(loaded))
+    };
     let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
         .map_err(|refusal| Failure::setup("norn.cell.scope_mismatch", refusal.message))?
         .with_authorizer(LocalDeveloper {
             actor: actor.to_owned(),
         });
-    Ok(Some(host))
+    Ok((Some(host), loaded))
 }
 
 /// One running session per project: `.norn/dev.lock` is held exclusively

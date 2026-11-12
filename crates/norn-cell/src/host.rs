@@ -136,6 +136,14 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &self.store
     }
 
+    /// Give the store back, for a host that runs this cell's event profile
+    /// on a store it then serves through another (for example, mapping
+    /// recorded observations before serving actions).
+    #[must_use]
+    pub fn into_store(self) -> CellStore<S> {
+        self.store
+    }
+
     /// Capture pinned mapping evidence while the cell owns its store.
     ///
     /// # Errors
