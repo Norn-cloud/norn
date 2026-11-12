@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
 import { systemName } from "./lib/catalog.ts"
+import { watermarkText } from "./lib/format.ts"
 import { UploadCsv } from "./upload-csv.tsx"
 
 /** The platform sources pack's connection type: one record per connected system or upload. */
@@ -57,10 +58,18 @@ function SyncNow({ id }: { readonly id: string }) {
  * connected system or upload): what each reads, when it last synced, how far, and what landed
  * or was held back. Sync now asks the cell; the cell decides and reports the run.
  */
+/** How long the connections read may take before the panel says the cell did not answer. */
+const READ_DEADLINE_MS = 20_000
+
+/** What a failed read says: the deadline in words, or the cell's own refusal. */
+const failure = (error: Error) => error.name === "TimeoutError" || error.name === "AbortError"
+  ? `The cell did not answer within ${READ_DEADLINE_MS / 1000} seconds.`
+  : error.message
+
 export function SourceConnections() {
   const connections = useQuery({
     queryKey: ["source-connections"],
-    queryFn: () => cellRead<Page>(`/v1/objects/${CONNECTION_TYPE}?limit=200`, "Source connections are"),
+    queryFn: () => cellRead<Page>(`/v1/objects/${CONNECTION_TYPE}?limit=200`, "Source connections are", { signal: AbortSignal.timeout(READ_DEADLINE_MS) }),
     retry: false,
     // While a sync runs, read again until it lands.
     refetchInterval: (query) => query.state.data?.document.records.some(({ values }) => values.status === "syncing") ? 3000 : false,
@@ -71,7 +80,12 @@ export function SourceConnections() {
       {connections.isPending && <p className="px-4 py-3 text-sm text-muted-foreground">Reading connections…</p>}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
         ? <Well><EmptyState icon={Cable} title="No connections">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</EmptyState></Well>
-        : <p role="alert" className="px-4 py-3 text-sm text-destructive">{connections.error.message}</p>)}
+        : (
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <p role="alert" className="text-sm text-destructive">The connections could not be read. {failure(connections.error)}</p>
+            <Button type="button" size="sm" variant="outline" disabled={connections.isFetching} onClick={() => void connections.refetch()}><RefreshCw />Read again</Button>
+          </div>
+        ))}
       {connections.data && (connections.data.document.records.length === 0
         ? <Well><EmptyState icon={Cable} title="No connections">No system is connected to this cell yet.</EmptyState></Well>
         : <div className="p-1"><TableCard><Table>
@@ -91,7 +105,7 @@ export function SourceConnections() {
                     {values.last_error_code && <div className="max-w-56 pt-1 text-xs text-destructive" title={values.last_error_message ?? undefined}><span className="font-mono">{values.last_error_code}</span>{values.last_error_message ? `: ${values.last_error_message}` : ""}</div>}
                   </TableCell>
                   <TableCell className="text-sm">{values.status === "syncing" ? <>started {values.last_sync_started_at}</> : values.last_sync_ended_at ?? "—"}</TableCell>
-                  <TableCell className="max-w-48 truncate font-mono text-xs" title={values.watermark ?? "The source's own modified-since mark after the last sync"}>{values.watermark ?? "—"}</TableCell>
+                  <TableCell className="max-w-48 truncate font-mono text-xs" title={values.watermark ?? "The source's own modified-since mark after the last sync"}>{watermarkText(values.watermark)}</TableCell>
                   <TableCell className="text-right tabular-nums">{count(read, index, "rows_read", values.rows_read)}</TableCell>
                   <TableCell className="text-right tabular-nums">{count(read, index, "rows_landed", values.rows_landed)}</TableCell>
                   <TableCell className="text-right tabular-nums" title={values.quarantine_reasons ?? undefined}>{count(read, index, "rows_quarantined", values.rows_quarantined)}{values.quarantine_reasons ? <div className="font-mono text-xs text-muted-foreground">{values.quarantine_reasons}</div> : null}</TableCell>

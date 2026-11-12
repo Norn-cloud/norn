@@ -55,11 +55,21 @@ pub(crate) fn members(observed: &RuntimeValue) -> Result<Vec<String>, CellError>
         .collect()
 }
 
+/// What capturing a page recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedPage {
+    /// The page rows (one delivery each), in order, with whether each was
+    /// newly captured.
+    pub pages: Vec<(String, bool)>,
+    /// Each record's own inbox row, in page order: a `mapping-bundle:` row is
+    /// a member of one of `pages`; a conflict or identity finding is not.
+    pub records: Vec<String>,
+}
+
 impl<E: SqlEngine> CellStore<E> {
     /// Capture a page of raw source records read from one dataset. Framing
     /// (record count, payload bytes, a repeated record identity) refuses the
-    /// whole page before anything is captured. Returns the page rows, in
-    /// order, with whether each was newly captured.
+    /// whole page before anything is captured.
     ///
     /// # Errors
     /// Framing refusals, invalid pins, or the durable inbox failure.
@@ -67,7 +77,7 @@ impl<E: SqlEngine> CellStore<E> {
         &mut self,
         raws: &[Observed<RuntimeValue>],
         input: &MappingInput,
-    ) -> Result<Vec<(String, bool)>, CellError> {
+    ) -> Result<CapturedPage, CellError> {
         if raws.is_empty() || raws.len() > MAX_PAGE_RECORDS {
             return Err(CellError::OutOfRange("mapping page records"));
         }
@@ -95,8 +105,10 @@ impl<E: SqlEngine> CellStore<E> {
         self.conn.transaction(|| {
             let mut runs: Vec<(Vec<String>, BTreeSet<FactKey>, &Observed<RuntimeValue>)> =
                 Vec::new();
+            let mut records = Vec::with_capacity(raws.len());
             for raw in raws {
                 let (id, _new) = self.capture_mapping_bundle(raw, input)?;
+                records.push(id.clone());
                 if !id.starts_with("mapping-bundle:") {
                     // Conflict and identity findings stay pending, as one by one.
                     continue;
@@ -134,7 +146,7 @@ impl<E: SqlEngine> CellStore<E> {
                 )?;
                 pages.push((id, inserted));
             }
-            Ok(pages)
+            Ok(CapturedPage { pages, records })
         })
     }
 }

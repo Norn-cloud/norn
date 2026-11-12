@@ -641,7 +641,7 @@ pub struct PendingCommand {
 /// so queue selection skips parked rows without loading them. A string
 /// comparison is false for a non-string or missing member, exactly as
 /// [`norn_builtins::parks`] reads it; [`is_parked`] still re-checks each row.
-const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IS 'norn.decision' AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
+const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IN ('norn.decision', 'norn.action') AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
 
 /// PARKED-1: whether `command` waits outside the FIFO perform queue.
 #[must_use]
@@ -1170,6 +1170,10 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
         Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
     pub(crate) mapping_plans:
         Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
+    pub(crate) verified_receipts: Option<&'a std::cell::RefCell<crate::history::VerifiedReceipts>>,
+    /// The receipt cache belongs to one read-only pass inside a transaction:
+    /// nothing writes while it lives, so it holds without a read revision.
+    pub(crate) verified_receipts_transaction: bool,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1249,7 +1253,27 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             source_disputes: None,
             mapping_plans: None,
             source_disputes_transaction: false,
+            verified_receipts: None,
+            verified_receipts_transaction: false,
         }
+    }
+
+    /// A receipt cache for one read-only pass inside a transaction.
+    pub(crate) const fn with_transaction_verified_receipts(
+        mut self,
+        receipts: &'a std::cell::RefCell<crate::history::VerifiedReceipts>,
+    ) -> Self {
+        self.verified_receipts = Some(receipts);
+        self.verified_receipts_transaction = true;
+        self
+    }
+
+    pub(crate) const fn with_verified_receipts(
+        mut self,
+        receipts: &'a std::cell::RefCell<crate::history::VerifiedReceipts>,
+    ) -> Self {
+        self.verified_receipts = Some(receipts);
+        self
     }
 
     /// Writer-owned preimages support internal event validation, never evidence export.

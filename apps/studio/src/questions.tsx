@@ -49,8 +49,17 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
     <Panel icon={Sigma} label={<span>{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> by {metric.timeProperty.replaceAll("_", " ")}</span>}</span>}
       action={<span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span>}>
       <Well className="space-y-3 p-4">
-        {profile.isError && <p className="text-sm text-muted-foreground">{profile.error.message}</p>}
-        {profile.data && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
+        {profile.isPending && <p className="text-sm text-muted-foreground">Reading {conceptTitle(metric.objectType).toLowerCase()} records…</p>}
+        {profile.isError && <p className="text-sm text-muted-foreground">{profile.error.message || "The cell did not say what it holds for this type."}</p>}
+        {profile.data && profile.data.document.rows === 0 && (
+          <EmptyState icon={Sigma} title={profile.data.document.withheldRows + profile.data.document.quarantinedRows === 0 ? "No records yet" : "No records to add up"}>
+            {profile.data.document.withheldRows + profile.data.document.quarantinedRows === 0
+              ? <>Nothing has been loaded for {conceptTitle(metric.objectType).toLowerCase()}, so there is nothing to add up.</>
+              : <>{[profile.data.document.withheldRows > 0 && `${profile.data.document.withheldRows} withheld from you`, profile.data.document.quarantinedRows > 0 && `${profile.data.document.quarantinedRows} held in quarantine`].filter(Boolean).join(", ")}; none you can read is left to add up.</>}
+            <span className="block pt-1 text-meta">Checked with the cell at {new Date(profile.dataUpdatedAt).toLocaleTimeString(undefined, { timeStyle: "short" })}.</span>
+          </EmptyState>
+        )}
+        {profile.data && profile.data.document.rows > 0 && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
         {window && <>
           <p className="text-meta text-muted-foreground">Per {window.grain}, {window.start.slice(0, 10)} to {window.end.slice(0, 10)}: every date its records carry.</p>
           {(metric.unitPartition?.length ?? 0) > 0 && <p className="text-meta text-muted-foreground">The cell adds these up only within one {metric.unitPartition?.map((path) => path.replaceAll("_", " ")).join(" and ")}: choose one of each.</p>}

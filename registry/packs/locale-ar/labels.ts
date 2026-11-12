@@ -39,7 +39,7 @@ export const ArabicLabels = Norn.labels({
       label: { ar: "رصيد مخزون" }, localizedDescription: { ar: "رصيد مقسَّم حسب المالك والموقع" },
       properties: {
         resource_code: { ar: "كود المورد" }, quantity, unit, currency, valuation_method: { ar: "طريقة التقييم" },
-        location: { ar: "المخزن" }, quantity_basis: { ar: "أساس الكمية" }, stock_cost: { ar: "تكلفة المخزون" }, cost_currency: { ar: "عملة التكلفة" },
+        observed_at: { ar: "وقت الرصد" }, location: { ar: "المخزن" }, quantity_basis: { ar: "أساس الكمية" }, stock_cost: { ar: "تكلفة المخزون" }, cost_currency: { ar: "عملة التكلفة" },
       },
       values: {
         valuation_method: valuation,

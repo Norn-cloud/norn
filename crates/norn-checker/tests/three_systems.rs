@@ -506,9 +506,10 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
 }
 
 /// METRIC-ADDITIVITY-REF-1 over canon: the flows derive exactly one sum each over
-/// their own time property; stocks (`Holding`) derive nothing, and the amounts
-/// without a time grain of their own (`Posting`, `SettlementObservation`) derive nothing.
-/// Each flow sum carries its unit partition (`unit`, `currency`).
+/// their own time property, and the stock (`Holding`) derives only its as-of
+/// snapshots over `observed_at` (METRIC-SNAPSHOT-ASOF-1). The amounts without a
+/// time grain of their own (`Posting`, `SettlementObservation`) derive nothing.
+/// Each quantity carries its unit partition (`unit`, `currency`).
 #[test]
 fn three_systems_derive_exactly_the_canon_flow_sums() {
     let space = norn_checker::metric::derive::derive_metric_space(
@@ -517,7 +518,7 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         &norn_ir::LawRoot::Entity("canon.Delivery".to_owned()),
     )
     .unwrap_or_else(|d| panic!("{d:#?}"));
-    let derived: BTreeSet<(String, String, String)> = space
+    let derived: BTreeSet<(String, String, String, bool)> = space
         .candidates()
         .iter()
         .map(|candidate| {
@@ -538,14 +539,32 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
                 .property
                 .as_str()
                 .to_owned();
-            (model, params.expr.clone().expect("a measure"), time)
+            let snapshot = matches!(
+                candidate.definition.norn.additivity,
+                norn_ir::metric::MetricAdditivity::SemiAdditive { .. }
+            );
+            (
+                model,
+                params.expr.clone().expect("a measure"),
+                time,
+                snapshot,
+            )
         })
         .collect();
     let expected = [
-        ("canon.Delivery", "quantity", "occurred_at"),
-        ("canon.OrderLine", "quantity", "due_at"),
+        ("canon.Delivery", "quantity", "occurred_at", false),
+        ("canon.OrderLine", "quantity", "due_at", false),
+        ("canon.Holding", "quantity", "observed_at", true),
+        ("canon.Holding", "stock_cost", "observed_at", true),
     ]
-    .map(|(model, measure, time)| (model.to_owned(), measure.to_owned(), time.to_owned()));
+    .map(|(model, measure, time, snapshot)| {
+        (
+            model.to_owned(),
+            measure.to_owned(),
+            time.to_owned(),
+            snapshot,
+        )
+    });
     assert_eq!(derived, BTreeSet::from(expected));
     // METRIC-UNIT-PARTITION-1: each sum names where its unit is stored.
     for candidate in space.candidates() {
@@ -554,11 +573,12 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
             .iter()
             .map(|path| path.property.as_str())
             .collect();
-        assert_eq!(
-            partition,
-            ["unit", "currency"],
-            "{}",
-            candidate.definition.name
-        );
+        let expected: &[&str] =
+            if candidate.definition.type_params.expr.as_deref() == Some("quantity") {
+                &["unit", "currency"]
+            } else {
+                &[]
+            };
+        assert_eq!(partition, expected, "{}", candidate.definition.name);
     }
 }

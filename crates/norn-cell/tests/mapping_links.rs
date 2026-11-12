@@ -1171,7 +1171,7 @@ proptest::proptest! {
                 let ids = paged
                     .inject_mapping_page(&raws, &page[0].1)
                     .expect("page capture");
-                for (id, _) in ids {
+                for (id, _) in ids.pages {
                     paged.process_mapping_page(&id).expect("page");
                 }
             }
@@ -1218,7 +1218,11 @@ async fn obs_page_commits_export_and_restore_with_their_members() {
         }
     }
     for (input, raws) in &pages {
-        for (id, _) in cell.inject_mapping_page(raws, input).expect("capture") {
+        for (id, _) in cell
+            .inject_mapping_page(raws, input)
+            .expect("capture")
+            .pages
+        {
             cell.process_mapping_page(&id).expect("page");
         }
     }

@@ -97,6 +97,8 @@ function Rows({ rows }: { readonly rows: readonly Bucket[] }) {
 
 /** One answer drawn as the tile's declared view. Every label is the server's text; positions only place marks. */
 export function DrawnAnswer({ view, rows, name }: { readonly view: View; readonly rows: readonly Bucket[]; readonly name: string }) {
+  // No buckets is said in words, whatever the view: never an empty table, number or chart.
+  if (rows.length === 0) return <EmptyState icon={viewIcon(view)}>{chartEmpty(rows)}</EmptyState>
   if (view.kind === "table") return <Rows rows={rows} />
   if (view.kind === "number") {
     const [only] = rows

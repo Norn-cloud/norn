@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useView, type View } from "@/lib/view"
-import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
+import { catalogOf, cellOwned, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { transport } from "./lib/transport.ts"
 import { LawsPanel } from "./laws.tsx"
 import { SourceConnections } from "./source-connections.tsx"
@@ -37,12 +37,14 @@ export const RECORDED_HINT = "Documents the engine produced, replayed exactly. N
 function Systems({ catalog }: { readonly catalog: Catalog }) {
   const concepts = catalog.concepts.filter(({ definition }) => definition === "object type")
   const relationships = concepts.reduce((total, { relationships }) => total + relationships.length, 0)
+  const outside = catalog.systems.filter((system) => !cellOwned(system))
+  const own = catalog.systems.filter(cellOwned)
   return (
     <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
       <Panel icon={Database} label="Connected systems">
         <Well className="divide-y">
-          {catalog.systems.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
-          {catalog.systems.map((system) => (
+          {outside.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
+          {outside.map((system) => (
             <div key={system.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
               <span className="min-w-0">
                 <span className="font-medium">{system.name}</span>
@@ -54,6 +56,11 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
             </div>
           ))}
         </Well>
+        {own.length > 0 && (
+          <p className="px-1 pt-2 text-meta text-muted-foreground">
+            Kept by Norn: {own.map((system) => `${system.datasets.length} kinds of record about its own syncs (${system.feeds.length} object types)`).join("; ")}. Not a connected system.
+          </p>
+        )}
       </Panel>
       <ArrowRight aria-hidden className="mx-auto size-5 self-center text-muted-foreground max-md:rotate-90" />
       <KpiTile icon={Shapes} label="One business model" value={concepts.length}

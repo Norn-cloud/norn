@@ -7,6 +7,7 @@
     "cost_currency": "USD",
     "currency": null,
     "location": "north",
+    "observed_at": "2026-11-01T00:00:00Z",
     "quantity": 200,
     "quantity_basis": "available",
     "resource_code": "GOLD",
