@@ -26147,6 +26147,15 @@
               "type": "string"
             }
           },
+          "nullCounts": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "description": "Per operand, in `totals` order: how many members' measured value was\nnull. A null is skipped by the sum, never read as 0. Absent when no\nvalue was null, and when the bucket is suppressed."
+          },
           "suppressed": {
             "type": "boolean",
             "description": "DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket\nhas fewer members than the server's declared minimum, so `totals` is\nempty and `value` null; membership stays. Absent when false."

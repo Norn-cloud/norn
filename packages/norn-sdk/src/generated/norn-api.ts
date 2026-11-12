@@ -9623,6 +9623,12 @@ export interface components {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
             /**
+             * @description Per operand, in `totals` order: how many members' measured value was
+             *     null. A null is skipped by the sum, never read as 0. Absent when no
+             *     value was null, and when the bucket is suppressed.
+             */
+            nullCounts?: number[];
+            /**
              * @description DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket
              *     has fewer members than the server's declared minimum, so `totals` is
              *     empty and `value` null; membership stays. Absent when false.
