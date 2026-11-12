@@ -17,6 +17,8 @@ import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
+import { useMode } from "./lib/live-transport.ts"
+import { LinkedRecords } from "./linked-records.tsx"
 import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
 import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { liveAccess } from "./lib/live.ts"
@@ -103,7 +105,9 @@ export function ObjectPage() {
           </TabsContent>
           <TabsContent value="access" className="pt-4">
             <Panel icon={KeyRound} label="Access"><Well>
-              <Empty icon={KeyRound} action={<Button asChild variant="outline" size="sm"><Link to="/status">See what is live</Link></Button>}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>
+              {data.object.origin === "live"
+                ? <Empty icon={KeyRound} action={null}>The cell decided this read for your account; it does not publish the decision and its policy for one record yet.</Empty>
+                : <Empty icon={KeyRound} action={<Button asChild variant="outline" size="sm"><Link to="/status">See what is live</Link></Button>}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>}
             </Well></Panel>
           </TabsContent>
         </Tabs>
@@ -126,6 +130,8 @@ function Empty({ icon: Icon, action, children }: { readonly icon: LucideIcon; re
 }
 
 function Relations({ concept, id, links, concepts }: { readonly concept: Concept; readonly id: string; readonly links: LinkPage; readonly concepts: readonly Concept[] }) {
+  // A connected cell's linking records are read in full, fact by fact.
+  const live = useMode().data?.kind === "live"
   return (
     <Panel icon={Link2} label="Related records"><Well className="p-3">
       {concept.relationships.length === 0 && incomingOf(concept, concepts).length === 0 && links.items.length === 0
@@ -149,7 +155,9 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
                 <span className="text-muted-foreground">{from.title} records ({relationship.id.replaceAll("_", " ")}) ← </span>
                 {edges.length === 0
                   ? <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none stored yet"}</span>
-                  : edges.map((edge) => <Link key={`${edge.sourceType}/${edge.source}`} to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.source}</Link>)}
+                  : live
+                    ? <div className="pt-2"><LinkedRecords from={from} ids={edges.map(({ source }) => source)} /></div>
+                    : edges.map((edge) => <Link key={`${edge.sourceType}/${edge.source}`} to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.source}</Link>)}
               </li>
             )
           })}
