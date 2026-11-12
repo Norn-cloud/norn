@@ -1,0 +1,2 @@
+# The client generator (MIT), pinned; requirements.txt holds the hashes.
+openapi-python-client==0.30.0
