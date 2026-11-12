@@ -963,7 +963,10 @@ impl<'a> Checker<'a> {
                 match &filter.value {
                     norn_ir::RuntimeValue::String(code) => currency_code(code),
                     norn_ir::RuntimeValue::Null => nullable,
-                    _ => false,
+                    norn_ir::RuntimeValue::Bool(_)
+                    | norn_ir::RuntimeValue::Number(_)
+                    | norn_ir::RuntimeValue::Array(_)
+                    | norn_ir::RuntimeValue::Object(_) => false,
                 }
             } else {
                 property
