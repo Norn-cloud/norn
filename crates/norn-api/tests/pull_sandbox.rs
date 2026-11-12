@@ -72,7 +72,10 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
 }
 
 fn host() -> DevHost<norn_cell::engine::NativeEngine> {
-    let artifacts = artifacts();
+    host_with(artifacts())
+}
+
+fn host_with(artifacts: Vec<ArtifactEnvelope>) -> DevHost<norn_cell::engine::NativeEngine> {
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()
         .cloned()
@@ -803,7 +806,7 @@ fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
         completed_at: "2026-11-12T12:00:05Z".into(),
     };
     assert_eq!(kept_upload(&host, &kept.upload_id).expect("read"), None);
-    keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept");
+    assert!(keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept"));
     let mut read = kept_upload(&host, &kept.upload_id)
         .expect("read")
         .expect("the record");
@@ -816,13 +819,13 @@ fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
         column.scale = 0;
     }
     assert_eq!(read, expected);
-    keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept again");
+    assert!(keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept again"));
     let replaced = KeptUpload {
         sha256: sha256_hex(b"other bytes"),
         size: 11,
         ..kept.clone()
     };
-    keep_upload(&host, &replaced, EXTRACTED_AT_MS + 1).expect("next version");
+    assert!(keep_upload(&host, &replaced, EXTRACTED_AT_MS + 1).expect("next version"));
     assert_eq!(
         kept_upload(&host, &kept.upload_id)
             .expect("read")
@@ -831,6 +834,22 @@ fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
         replaced.sha256
     );
     assert_eq!(kept_upload(&host, "u00.ffff").expect("read"), None);
+
+    // A cell whose definitions predate source.Upload keeps nothing, says so,
+    // and reads no record; it never fails the upload for it.
+    let older = host_with(
+        artifacts()
+            .into_iter()
+            .filter(|a| {
+                !matches!(
+                    a.artifact_id.as_str(),
+                    "source.Upload.entity" | "norn.connect.source" | "norn.connect.mapping"
+                )
+            })
+            .collect(),
+    );
+    assert!(!keep_upload(&older, &kept, EXTRACTED_AT_MS).expect("not kept"));
+    assert_eq!(kept_upload(&older, &kept.upload_id).expect("read"), None);
 }
 
 /// SYNC-LEASE-1: a claimed run the host stops stepping (its fetch loop died)

@@ -1004,14 +1004,22 @@ pub fn kept_upload_key(upload_id: &str) -> String {
 
 /// Keep `upload` in the cell (UPLOAD-RECORD-1). The same bytes kept again
 /// are already kept; new bytes for the same upload are its next version.
+/// `Ok(false)`: the cell's definitions predate `source.Upload`, so nothing is
+/// kept and the upload lives only as long as this host instance.
 ///
 /// # Errors
-/// The cell has no `source.Upload` definitions, or refused the record.
+/// The cell refused the record, or the write failed.
 pub fn keep_upload<E: SqlEngine>(
     host: &DevHost<E>,
     upload: &KeptUpload,
     now_ms: u64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    if !host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(false);
+    }
     let key = kept_upload_key(&upload.upload_id);
     let columns = serde_json::to_string(&upload.columns).map_err(|e| e.to_string())?;
     let store = match upload.store {
@@ -1049,7 +1057,7 @@ pub fn keep_upload<E: SqlEngine>(
         .ingest(&[(raw, input)])
         .map_err(|refusal| refusal.message)?;
     match ingested.first().map(|i| &i.outcome) {
-        Some(MappingOutcome::Landed | MappingOutcome::AlreadyLanded) => Ok(()),
+        Some(MappingOutcome::Landed | MappingOutcome::AlreadyLanded) => Ok(true),
         Some(MappingOutcome::Quarantined(reasons)) => Err(format!(
             "the cell refused the upload record: {}",
             reasons.join(", ")
@@ -1066,6 +1074,12 @@ pub fn kept_upload<E: SqlEngine>(
     host: &DevHost<E>,
     upload_id: &str,
 ) -> Result<Option<KeptUpload>, String> {
+    if !host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(None);
+    }
     let Some(object) = host
         .host_object(UPLOAD_TYPE, &kept_upload_key(upload_id))
         .map_err(|refusal| refusal.message)?

@@ -187,6 +187,19 @@ impl<E: SqlEngine> DevHost<E> {
         result.map(|()| out).map_err(Refusal::host)
     }
 
+    /// Whether the cell's active model declares the object type `name`.
+    /// # Errors
+    /// Poisoned synchronization refuses closed.
+    pub fn serves_object_type(&self, name: &str) -> Result<bool, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        Ok(cell
+            .store()
+            .model()
+            .object_types()
+            .any(|declared| declared.name.as_str() == name))
+    }
+
     /// One artifact of the active definitions, as its JSON envelope. For the
     /// trusted host process (a source sync reading its connector); no route
     /// reaches it.
