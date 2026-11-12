@@ -1,5 +1,5 @@
 {
-  "sha256": "f8999b5cb74e69432a02791726185808b22b255c5879c1f450aa8997cce5c02d",
+  "sha256": "dc8146337464c9d9a1285e87e3115eb67af44c94959ba540c12b0cfe2aea2a4d",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -44,7 +44,6 @@
     "crates/norn-ir/src/marking.rs",
     "crates/norn-ir/src/members.rs",
     "crates/norn-ir/src/metric.rs",
-    "crates/norn-ir/src/model.rs",
     "crates/norn-ir/src/osi.rs",
     "crates/norn-ir/src/posting.rs",
     "crates/norn-ir/src/provenance.rs",
@@ -58,13 +57,14 @@
     "crates/norn-ir/src/setting.rs",
     "crates/norn-ir/src/source_schema.rs",
     "crates/norn-ir/src/technical_view.rs",
-    "crates/norn-ir/src/trust.rs",
     "crates/norn-ir/src/verification.rs",
     "crates/norn-ir/src/view.rs",
     "crates/norn-ir/src/widget.rs",
     "crates/norn-ir/src/widget_ux.rs",
     "crates/norn-ir/tests/mapping_ir.rs",
-    "crates/norn-ir/tests/typed_payload_roots_schema.rs"
+    "crates/norn-ir/tests/typed_payload_roots_schema.rs",
+    "crates/norn-ir/src/model.rs",
+    "crates/norn-ir/src/trust.rs"
   ],
   "rights_evidence": [
     {

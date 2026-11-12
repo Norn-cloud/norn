@@ -12480,6 +12480,91 @@
         "navigationItemIds"
       ]
     },
+    "WidgetBehavior": {
+      "description": "Accessibility behaviours a node requires, named as UI SDK's behaviour\nprimitives (`@ui-sdk/core`). They say what the control must do for\nkeyboard, focus and assistive technology, never how it looks.",
+      "oneOf": [
+        {
+          "description": "Focus is contained while open and restored on close.",
+          "type": "string",
+          "const": "focus_scope"
+        },
+        {
+          "description": "Arrow keys move focus among items; one tab stop.",
+          "type": "string",
+          "const": "roving_focus"
+        },
+        {
+          "description": "Typing moves to the first matching item.",
+          "type": "string",
+          "const": "typeahead"
+        },
+        {
+          "description": "Items can be selected and the selection is announced.",
+          "type": "string",
+          "const": "selection"
+        },
+        {
+          "description": "Opens anchored to its invoker.",
+          "type": "string",
+          "const": "popup"
+        },
+        {
+          "description": "Escape and outside press dismiss it.",
+          "type": "string",
+          "const": "dismiss"
+        },
+        {
+          "description": "Items can be reordered or moved with pointer and keyboard.",
+          "type": "string",
+          "const": "drag_and_drop"
+        },
+        {
+          "description": "Changes are announced politely.",
+          "type": "string",
+          "const": "live_region"
+        }
+      ]
+    },
+    "WidgetCallOutcome": {
+      "description": "Every way a call or read the page awaits can end.",
+      "oneOf": [
+        {
+          "description": "The server committed the call or answered the read.",
+          "type": "string",
+          "const": "accepted"
+        },
+        {
+          "description": "The server refused with a coded refusal.",
+          "type": "string",
+          "const": "refused"
+        },
+        {
+          "description": "The call waits for an approval decision (HTTP 202, APPROVAL-1).",
+          "type": "string",
+          "const": "pending_approval"
+        },
+        {
+          "description": "The read's answer or snapshot moved under it (HTTP 409\n`core.projection.answer_moved`, `object.snapshot_moved`).",
+          "type": "string",
+          "const": "answer_moved"
+        },
+        {
+          "description": "No answer arrived from the server (network failure, 5xx without a\ncoded refusal, route not served).",
+          "type": "string",
+          "const": "network_failure"
+        },
+        {
+          "description": "The state's declared deadline passed first.",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The page cancelled the call.",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
     "WidgetComponent": {
       "description": "Supported page components.",
       "oneOf": [
@@ -13617,6 +13702,401 @@
         "dashboard"
       ]
     },
+    "WidgetMachine": {
+      "description": "A page's interaction statechart (UI-MACHINE-1).\n\nClient state is the typed `fields` record, changed only by the `assign`\nof a transition that a declared event fires. Effects are closed: call a\ndeclared action binding, read a declared data binding, call a declared\nhost operation, cancel the awaited call, or navigate. The machine grants\nno authority: the server decides every call and read it names.",
+      "type": "object",
+      "properties": {
+        "events": {
+          "description": "Declared events and where each comes from.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetMachineEvent"
+          }
+        },
+        "fields": {
+          "description": "Typed client-state fields.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetMachineField"
+          }
+        },
+        "initialStateId": {
+          "description": "State the page opens in; it must have the `idle` role.",
+          "type": "string"
+        },
+        "machineVersion": {
+          "description": "Version of the machine contract.",
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "states": {
+          "description": "Declared states.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetMachineState"
+          }
+        },
+        "transitions": {
+          "description": "Declared transitions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetMachineTransition"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "machineVersion",
+        "initialStateId",
+        "fields",
+        "events",
+        "states",
+        "transitions"
+      ]
+    },
+    "WidgetMachineCall": {
+      "description": "A server call or read named by a pending state or an effect.",
+      "oneOf": [
+        {
+          "description": "Call the declared action binding.",
+          "type": "object",
+          "properties": {
+            "bindingId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "action"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "bindingId"
+          ]
+        },
+        {
+          "description": "Read the declared data binding.",
+          "type": "object",
+          "properties": {
+            "bindingId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "read"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "bindingId"
+          ]
+        },
+        {
+          "description": "Call a host operation by its `OpenAPI` operation id.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "operation"
+            },
+            "operationId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operationId"
+          ]
+        }
+      ]
+    },
+    "WidgetMachineEffect": {
+      "description": "Closed transition effects.",
+      "oneOf": [
+        {
+          "description": "Start the call or read; its outcome arrives as an `outcome` event.",
+          "type": "object",
+          "properties": {
+            "call": {
+              "$ref": "#/$defs/WidgetMachineCall"
+            },
+            "input": {
+              "description": "Request members, each a ZEN expression over `input.fields` and\n`input.event`. An action binding maps its own inputs and takes none.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ZenExpression"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "start"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "call"
+          ]
+        },
+        {
+          "description": "Cancel the awaited call; its outcome arrives as `cancelled`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cancel"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Navigate to a declared navigation item.",
+          "type": "object",
+          "properties": {
+            "itemId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "navigate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "itemId"
+          ]
+        }
+      ]
+    },
+    "WidgetMachineEvent": {
+      "description": "One declared event.",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "description": "Stable event id.",
+          "type": "string"
+        },
+        "payload": {
+          "description": "Typed payload members carried by a user or subscription event.\nOutcome events carry the fixed payload of their outcome.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetMachineField"
+          }
+        },
+        "source": {
+          "description": "Where the event comes from.",
+          "$ref": "#/$defs/WidgetMachineEventSource"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "eventId",
+        "source"
+      ]
+    },
+    "WidgetMachineEventSource": {
+      "description": "Closed event sources. Every source is an input: a person, the server, a\nsubscription, or a deadline the machine itself declared.",
+      "oneOf": [
+        {
+          "description": "The page was opened by the host.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "page_opened"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A person used the control at `node_id` in this page's tree.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "user"
+            },
+            "nodeId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "nodeId"
+          ]
+        },
+        {
+          "description": "The server answered the call or read the current state awaits.",
+          "type": "object",
+          "properties": {
+            "category": {
+              "description": "For `refused` only: the refusal category matched. Omitted, it\nmatches every category.",
+              "$ref": "#/$defs/WidgetRefusalCategory"
+            },
+            "kind": {
+              "type": "string",
+              "const": "outcome"
+            },
+            "outcome": {
+              "$ref": "#/$defs/WidgetCallOutcome"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "outcome"
+          ]
+        },
+        {
+          "description": "A subscribed data binding delivered a new snapshot.",
+          "type": "object",
+          "properties": {
+            "bindingId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "subscription"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "bindingId"
+          ]
+        },
+        {
+          "description": "Fires `after_ms` after the source state of its transition is entered.",
+          "type": "object",
+          "properties": {
+            "afterMs": {
+              "$ref": "#/$defs/WholeNumber"
+            },
+            "kind": {
+              "type": "string",
+              "const": "timer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "afterMs"
+          ]
+        }
+      ]
+    },
+    "WidgetMachineField": {
+      "description": "One typed client-state field, or one typed member of an event payload.",
+      "type": "object",
+      "properties": {
+        "fieldId": {
+          "description": "Stable field id, unique within its record.",
+          "type": "string"
+        },
+        "initial": {
+          "description": "Initial value of a state field. Required fields need one; payload\nmembers never carry one.",
+          "$ref": "#/$defs/JsonValue"
+        },
+        "required": {
+          "description": "Whether the value is always present (otherwise it may be null).",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "Scalar type.",
+          "$ref": "#/$defs/WidgetValueType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fieldId",
+        "type",
+        "required"
+      ]
+    },
+    "WidgetMachineState": {
+      "description": "One declared state.",
+      "type": "object",
+      "properties": {
+        "awaits": {
+          "description": "The call or read a `pending` state waits for.",
+          "$ref": "#/$defs/WidgetMachineCall"
+        },
+        "deadlineMs": {
+          "description": "Deadline of a `pending` state; when it passes the runtime cancels the\ncall and raises the `timeout` outcome.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "role": {
+          "description": "Role of the state.",
+          "$ref": "#/$defs/WidgetStateRole"
+        },
+        "stateId": {
+          "description": "Stable state id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "stateId",
+        "role"
+      ]
+    },
+    "WidgetMachineTransition": {
+      "description": "One declared transition.",
+      "type": "object",
+      "properties": {
+        "assign": {
+          "description": "New field values, each a ZEN expression over `input.fields` and\n`input.event`, typed as the field.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        },
+        "effects": {
+          "description": "Effects run when the transition fires, in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetMachineEffect"
+          }
+        },
+        "from": {
+          "description": "Source state.",
+          "type": "string"
+        },
+        "guard": {
+          "description": "Boolean ZEN guard over `input.fields` and `input.event`. A guarded\ntransition refines; it never counts as covering an outcome.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "on": {
+          "description": "Triggering event.",
+          "type": "string"
+        },
+        "target": {
+          "description": "Target state.",
+          "type": "string"
+        },
+        "transitionId": {
+          "description": "Stable transition id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "transitionId",
+        "from",
+        "on",
+        "target"
+      ]
+    },
     "WidgetNativeProjection": {
       "description": "Host-native projections available to Widget UX.",
       "oneOf": [
@@ -13754,6 +14234,13 @@
       "description": "One node in the page component tree.",
       "type": "object",
       "properties": {
+        "behaviors": {
+          "description": "Accessibility behaviours this node requires (UI-VIEW-1).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetBehavior"
+          }
+        },
         "children": {
           "description": "Child components in presentation order.",
           "type": "array",
@@ -13956,6 +14443,10 @@
             "$ref": "#/$defs/WidgetContextParam"
           }
         },
+        "machine": {
+          "description": "Declared interaction statechart of this page (UI-MACHINE-1). The\nrenderer executes only this machine; the checker proves it has no\nabsorbing non-terminal state and that every pending state handles\nevery server outcome.",
+          "$ref": "#/$defs/WidgetMachine"
+        },
         "name": {
           "description": "Human-readable page name.",
           "type": "string"
@@ -13967,6 +14458,10 @@
         "root": {
           "description": "Root of the page component tree.",
           "$ref": "#/$defs/WidgetNode"
+        },
+        "view": {
+          "description": "What this page is in the UI ontology (UI-VIEW-1): a semantic view\nkind bound to the domain concept it presents. Renderer-neutral.",
+          "$ref": "#/$defs/WidgetView"
         }
       },
       "additionalProperties": false,
@@ -14158,6 +14653,46 @@
         }
       ]
     },
+    "WidgetRefusalCategory": {
+      "description": "Refusal categories, as the server's `norn/refusal@2` documents them.",
+      "oneOf": [
+        {
+          "description": "The target is not visible to the caller.",
+          "type": "string",
+          "const": "visibility"
+        },
+        {
+          "description": "The caller lacks permission.",
+          "type": "string",
+          "const": "permission"
+        },
+        {
+          "description": "A precondition or law refused the call.",
+          "type": "string",
+          "const": "precondition"
+        },
+        {
+          "description": "The call conflicts with current state.",
+          "type": "string",
+          "const": "conflict"
+        },
+        {
+          "description": "The input is invalid.",
+          "type": "string",
+          "const": "invalid"
+        },
+        {
+          "description": "A limit was reached.",
+          "type": "string",
+          "const": "limit"
+        },
+        {
+          "description": "The server failed internally.",
+          "type": "string",
+          "const": "internal"
+        }
+      ]
+    },
     "WidgetRenderer": {
       "description": "Projection renderers.",
       "type": "string",
@@ -14343,6 +14878,31 @@
           "description": "Descending.",
           "type": "string",
           "const": "desc"
+        }
+      ]
+    },
+    "WidgetStateRole": {
+      "description": "The role of a state. Roles drive the checker's laws.",
+      "oneOf": [
+        {
+          "description": "Waiting for a person or a subscription.",
+          "type": "string",
+          "const": "idle"
+        },
+        {
+          "description": "Waiting for the server to answer the call or read in `awaits`.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "Showing a failure the person can recover from.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "Done; the page has nothing left to do. No transition leaves it.",
+          "type": "string",
+          "const": "terminal"
         }
       ]
     },
@@ -14538,6 +15098,70 @@
         "onConflict"
       ]
     },
+    "WidgetView": {
+      "description": "A page's place in the UI ontology (UI-VIEW-1).\n\nA view is a semantic, typed UI concept, never a visual one. Its four\ncontracts are the page's typed data bindings (data), its `machine`\n(interaction), the `behaviors` on its nodes (accessibility), and the\ncapability catalog derived by [`WidgetUx::renderer_capabilities`]\n(what a renderer must implement to draw it). Renderers are compile\ntargets of this contract; swapping one never touches the page.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Semantic kind of the view.",
+          "$ref": "#/$defs/WidgetViewKind"
+        },
+        "subject": {
+          "description": "The domain concept the view presents.",
+          "$ref": "#/$defs/WidgetViewSubject"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "subject"
+      ]
+    },
+    "WidgetViewKind": {
+      "description": "Closed semantic view kinds.",
+      "oneOf": [
+        {
+          "description": "Many objects of one type.",
+          "type": "string",
+          "const": "collection"
+        },
+        {
+          "description": "One object.",
+          "type": "string",
+          "const": "record"
+        },
+        {
+          "description": "Input to one action.",
+          "type": "string",
+          "const": "form"
+        },
+        {
+          "description": "The answer to one question or transform.",
+          "type": "string",
+          "const": "question"
+        },
+        {
+          "description": "A dashboard definition's tiles.",
+          "type": "string",
+          "const": "dashboard"
+        },
+        {
+          "description": "One run of a flow, step by step.",
+          "type": "string",
+          "const": "run"
+        },
+        {
+          "description": "Decisions waiting on the viewer.",
+          "type": "string",
+          "const": "decision_inbox"
+        },
+        {
+          "description": "Where one object's values came from.",
+          "type": "string",
+          "const": "lineage"
+        }
+      ]
+    },
     "WidgetViewState": {
       "description": "One render state of a widget.",
       "type": "object",
@@ -14566,6 +15190,133 @@
         "ready",
         "error",
         "preview"
+      ]
+    },
+    "WidgetViewSubject": {
+      "description": "The domain concept a view presents.",
+      "oneOf": [
+        {
+          "description": "An object type (entity artifact).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_type"
+            },
+            "object": {
+              "$ref": "#/$defs/ArtifactRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "object"
+          ]
+        },
+        {
+          "description": "An action artifact.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "action"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "action"
+          ]
+        },
+        {
+          "description": "A retained question definition.",
+          "type": "object",
+          "properties": {
+            "definitionId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "question"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "definitionId"
+          ]
+        },
+        {
+          "description": "A transform.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transform"
+            },
+            "transformId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "transformId"
+          ]
+        },
+        {
+          "description": "A retained dashboard definition.",
+          "type": "object",
+          "properties": {
+            "definitionId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "dashboard"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "definitionId"
+          ]
+        },
+        {
+          "description": "A retained flow definition.",
+          "type": "object",
+          "properties": {
+            "definitionId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "flow"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "definitionId"
+          ]
+        },
+        {
+          "description": "The viewer's decisions.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "decisions"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
       ]
     },
     "WriteChange": {
