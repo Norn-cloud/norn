@@ -335,11 +335,35 @@ const UNDOCUMENTED: &[server::Route] = &[
     server::Route::Access,
 ];
 
+/// The route's path template with every `{parameter}` filled by `x`.
+fn concrete(template: &str) -> String {
+    let mut path = String::new();
+    let mut parameter = false;
+    for character in template.chars() {
+        match character {
+            '{' => {
+                parameter = true;
+                path.push('x');
+            }
+            '}' => parameter = false,
+            _ if parameter => {}
+            other => path.push(other),
+        }
+    }
+    path
+}
+
 /// The generated document describes exactly what the host serves: every
-/// route is documented or named above, and the document names no route the
-/// host does not serve.
+/// route is documented or named above, the document names no route the host
+/// does not serve, and each route's method is the one the router accepts.
 #[test]
 fn every_served_route_is_documented_or_named_as_undocumented() {
+    // `Route::index` is an exhaustive match, so every variant has a position;
+    // each position holds its own variant, so none is left out of `ALL`.
+    for (position, route) in server::Route::ALL.iter().enumerate() {
+        assert_eq!(route.index(), position, "{route:?}");
+    }
+
     let document: Value =
         serde_json::from_str(&norn_api::openapi::openapi_json().unwrap()).unwrap();
     let documented: std::collections::BTreeSet<(String, String)> = document["paths"]
@@ -349,12 +373,15 @@ fn every_served_route_is_documented_or_named_as_undocumented() {
         .flat_map(|(path, item)| {
             item.as_object()
                 .unwrap()
-                .iter()
-                .filter(|(_, operation)| operation.get("operationId").is_some())
-                .map(move |(method, _)| (method.to_uppercase(), path.clone()))
+                .keys()
+                .filter(|method| {
+                    matches!(method.as_str(), "get" | "post" | "put" | "patch" | "delete")
+                })
+                .map(move |method| (method.to_uppercase(), path.clone()))
         })
         .collect();
-    let served: std::collections::BTreeSet<(String, String)> = server::Route::all()
+    let served: std::collections::BTreeSet<(String, String)> = server::Route::ALL
+        .iter()
         .filter(|route| !UNDOCUMENTED.contains(route))
         .map(|route| {
             let (method, template) = route.signature();
@@ -363,29 +390,37 @@ fn every_served_route_is_documented_or_named_as_undocumented() {
         .collect();
     assert_eq!(documented, served);
 
-    // Each template names its own route, so the list and the router agree.
-    for route in server::Route::all() {
-        let (_, template) = route.signature();
-        let mut path = String::new();
-        let mut parameter = false;
-        for character in template.chars() {
-            match character {
-                '{' => {
-                    parameter = true;
-                    path.push('x');
-                }
-                '}' => parameter = false,
-                _ if parameter => {}
-                other => path.push(other),
-            }
-        }
+    let demo = host(NativeEngine::open_in_memory().unwrap());
+    for route in server::Route::ALL {
+        let (method, template) = route.signature();
+        let path = concrete(template);
+        // Each template names its own route, so the list and the router agree.
         assert_eq!(server::Route::of(&path), Some(route), "{template}");
+        if UNDOCUMENTED.contains(&route) {
+            continue;
+        }
+        // The router serves the route on its method, and only on it.
+        let served = call(&demo, method, &path, SCOPE, VIEWER);
+        let code: Value = serde_json::from_str(&served.body).unwrap();
+        assert!(
+            served.status != 405 && code["code"] != "route.not_found",
+            "{method} {template}: {} {}",
+            served.status,
+            served.body
+        );
+        let other = if method == "GET" { "POST" } else { "GET" };
+        let refused = call(&demo, other, &path, SCOPE, VIEWER);
+        assert_eq!(refused.status, 405, "{other} {template}: {}", refused.body);
     }
 
     // A path the list does not name is not served, and neither is the one
     // route this dispatch leaves to the published host's entry point.
-    let demo = host(NativeEngine::open_in_memory().unwrap());
-    for path in ["/v1/nothing", "/v1/access", "/v1/objects"] {
+    for path in [
+        "/v1/nothing",
+        "/v1/access",
+        "/v1/objects",
+        "/v1/objects/x/x/history",
+    ] {
         let (status, body) = get(&demo, path, SCOPE, VIEWER);
         assert_eq!(
             (status, body["code"].as_str()),

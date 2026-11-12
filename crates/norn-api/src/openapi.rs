@@ -173,3 +173,54 @@ mod security_contract_tests {
         assert!(seen >= 15, "the document lists its operations: {seen}");
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "generated schema correspondence")]
+mod free_form_contract_tests {
+    use serde_json::Value;
+
+    /// Every object schema says what members it has: `properties`, or
+    /// `additionalProperties` for free-form members, or a composition. A bare
+    /// `object` generates as an object with no members (`Record<string,
+    /// never>` in TypeScript), which no reader can use.
+    #[test]
+    fn no_object_schema_is_bare() {
+        fn walk(node: &Value, at: &str, bare: &mut Vec<String>) {
+            match node {
+                Value::Object(members) => {
+                    let object = match members.get("type") {
+                        Some(Value::String(kind)) => kind == "object",
+                        Some(Value::Array(kinds)) => kinds.iter().any(|kind| kind == "object"),
+                        _ => false,
+                    };
+                    let described = [
+                        "properties",
+                        "additionalProperties",
+                        "oneOf",
+                        "anyOf",
+                        "allOf",
+                        "$ref",
+                    ]
+                    .iter()
+                    .any(|key| members.contains_key(*key));
+                    if object && !described {
+                        bare.push(at.to_owned());
+                    }
+                    for (key, child) in members {
+                        walk(child, &format!("{at}/{key}"), bare);
+                    }
+                }
+                Value::Array(items) => {
+                    for (index, child) in items.iter().enumerate() {
+                        walk(child, &format!("{at}/{index}"), bare);
+                    }
+                }
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+            }
+        }
+        let document: Value = serde_json::from_str(&super::openapi_json().unwrap()).unwrap();
+        let mut bare = Vec::new();
+        walk(&document, "#", &mut bare);
+        assert!(bare.is_empty(), "bare object schemas: {bare:#?}");
+    }
+}

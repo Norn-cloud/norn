@@ -110,36 +110,49 @@ pub enum Route {
 }
 
 impl Route {
-    /// The first route of [`Route::all`].
-    pub const FIRST: Self = Self::Access;
+    /// Every route, once, in declaration order.
+    pub const ALL: [Self; 16] = [
+        Self::Access,
+        Self::Action,
+        Self::DefinitionsCatalog,
+        Self::DefinitionsAdmit,
+        Self::DefinitionsInstall,
+        Self::DefinitionsList,
+        Self::Definition,
+        Self::DefinitionRetire,
+        Self::Objects,
+        Self::Object,
+        Self::ObjectLinks,
+        Self::ObjectLineage,
+        Self::QuestionAnswer,
+        Self::QuestionTrace,
+        Self::QuestionsEvaluate,
+        Self::QuestionsTrace,
+    ];
 
-    /// The route after this one. The match is exhaustive, so a new variant
-    /// does not compile until it is placed in the list.
+    /// This route's position in [`Route::ALL`]. The match is exhaustive, so a
+    /// new variant does not compile until it has a position; a test checks
+    /// that every position is filled, so it cannot be left out of the list.
     #[must_use]
-    pub const fn next(self) -> Option<Self> {
-        Some(match self {
-            Self::Access => Self::Action,
-            Self::Action => Self::DefinitionsCatalog,
-            Self::DefinitionsCatalog => Self::DefinitionsAdmit,
-            Self::DefinitionsAdmit => Self::DefinitionsInstall,
-            Self::DefinitionsInstall => Self::DefinitionsList,
-            Self::DefinitionsList => Self::Definition,
-            Self::Definition => Self::DefinitionRetire,
-            Self::DefinitionRetire => Self::Objects,
-            Self::Objects => Self::Object,
-            Self::Object => Self::ObjectLinks,
-            Self::ObjectLinks => Self::ObjectLineage,
-            Self::ObjectLineage => Self::QuestionAnswer,
-            Self::QuestionAnswer => Self::QuestionTrace,
-            Self::QuestionTrace => Self::QuestionsEvaluate,
-            Self::QuestionsEvaluate => Self::QuestionsTrace,
-            Self::QuestionsTrace => return None,
-        })
-    }
-
-    /// Every route, once.
-    pub fn all() -> impl Iterator<Item = Self> {
-        std::iter::successors(Some(Self::FIRST), |route| route.next())
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Access => 0,
+            Self::Action => 1,
+            Self::DefinitionsCatalog => 2,
+            Self::DefinitionsAdmit => 3,
+            Self::DefinitionsInstall => 4,
+            Self::DefinitionsList => 5,
+            Self::Definition => 6,
+            Self::DefinitionRetire => 7,
+            Self::Objects => 8,
+            Self::Object => 9,
+            Self::ObjectLinks => 10,
+            Self::ObjectLineage => 11,
+            Self::QuestionAnswer => 12,
+            Self::QuestionTrace => 13,
+            Self::QuestionsEvaluate => 14,
+            Self::QuestionsTrace => 15,
+        }
     }
 
     /// The method the route accepts and its path template, as the `OpenAPI`
@@ -197,7 +210,8 @@ impl Route {
                 (None, _) => Self::Objects,
                 (Some(_), None) => Self::Object,
                 (Some(_), Some("links")) => Self::ObjectLinks,
-                (Some(_), Some(_)) => Self::ObjectLineage,
+                (Some(_), Some("lineage")) => Self::ObjectLineage,
+                (Some(_), Some(_)) => return None,
             });
         }
         path.strip_prefix("/v1/actions/")

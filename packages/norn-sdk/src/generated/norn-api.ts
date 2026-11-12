@@ -44,7 +44,7 @@ export interface paths {
          * @description # Errors
          *     Missing/mismatched scope, denied actor, absent version or host failure.
          */
-        get: operations["get_defs"];
+        get: operations["get_definitions_catalog"];
         put?: never;
         post?: never;
         delete?: never;
@@ -183,7 +183,7 @@ export interface paths {
          *     `object.snapshot_moved`), a sort or filter over more visible rows than one scan
          *     (413), or a host failure.
          */
-        get: operations["get_object_query"];
+        get: operations["query_objects"];
         put?: never;
         post?: never;
         delete?: never;
@@ -208,7 +208,7 @@ export interface paths {
          *     As [`get_object`], and a commit between the row read and the closing
          *     snapshot check, withheld or not (409 `object.snapshot_moved`, `retryable`).
          */
-        get: operations["get_queried_object"];
+        get: operations["get_object"];
         put?: never;
         post?: never;
         delete?: never;
@@ -413,7 +413,9 @@ export interface components {
             /** @description The `lineageRef` handle that answer returned. */
             lineageRef: string;
             /** @description The same `QuestionIR` the answer was evaluated from. */
-            question: Record<string, never>;
+            question: {
+                [key: string]: unknown;
+            };
         };
         /** @description `POST /v1/definitions:admit`. */
         AdmitDefinitionRequest: {
@@ -422,7 +424,9 @@ export interface components {
             /** @description `dashboard`, `question`, `agent` or `binding`. */
             kind: string;
             /** @description The kind's payload. */
-            payload: Record<string, never>;
+            payload: {
+                [key: string]: unknown;
+            };
         };
         /** @description The admission decision. */
         AdmitDefinitionResponse: {
@@ -448,7 +452,9 @@ export interface components {
             /** @description `active` or `retired`. */
             lifecycle: string;
             /** @description The admitted payload, as canonical JSON. */
-            payload: Record<string, never>;
+            payload: {
+                [key: string]: unknown;
+            };
             /** @description The commit that installed this version. */
             receipt: components["schemas"]["DefinitionReceipt"];
             /**
@@ -520,11 +526,10 @@ export interface components {
         };
         /** @description `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer. */
         EvaluateRequest: {
-            /**
-             * @description The `QuestionIR` to admit against the cell's declared metrics. It is
-             *     evaluated once and never installed.
-             */
-            question: Record<string, never>;
+            /** @description The `QuestionIR` to admit against the cell's declared metrics. It is evaluated once and never installed. */
+            question: {
+                [key: string]: unknown;
+            };
         };
         /** @description What a flow's install, read and list report. */
         FlowSummary: {
@@ -551,7 +556,9 @@ export interface components {
             /** @description `dashboard`, `question`, `agent` or `binding`. */
             kind: string;
             /** @description The kind's payload. */
-            payload: Record<string, never>;
+            payload: {
+                [key: string]: unknown;
+            };
             signoff?: components["schemas"]["SignoffRequest"] | null;
         };
         /** @description An installed (or retired) version. */
@@ -681,8 +688,10 @@ export interface components {
         NornActionObjectTypeName: string;
         /** @description The sort and filter a page actually applied. */
         NornAppliedQuery: {
-            /** @description The applied filter, normalized; null without one. */
-            filter: Record<string, never> | null;
+            /** @description The applied filter, normalized (`{"all":[clause, ...]}`); null without one. */
+            filter: {
+                [key: string]: unknown;
+            } | null;
             /** @description The applied sort keys, before the id tie-break; empty means scan order. */
             sort: components["schemas"]["NornSortKey"][];
         };
@@ -1037,24 +1046,31 @@ export interface components {
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
         /** @description An admitted document; source and receipt travel as exact JSON text. */
         NornDefinitionsCatalog: {
-            /** @description Always true. */
-            admitted: boolean;
-            /** @description Admitted semantic documents, preserving exact numeric values. */
-            artifacts: Record<string, never>[];
+            /**
+             * @description Always `true`: this route serves only an admitted revision. The member is kept because readers of this route already rely on its shape.
+             * @enum {boolean}
+             */
+            admitted: true;
+            /** @description Every admitted artifact of the revision, in one unpaged array: references between artifacts resolve only against the whole set, so the set is not split. Its size is the installed set's; this read applies no count bound of its own. */
+            artifacts: {
+                [key: string]: unknown;
+            }[];
             /** @description Read-only base artifact identities. */
             baseArtifactIds: string[];
-            /** @description Finding text is not retained; the original receipt carries its digest. */
-            diagnostics: Record<string, never> | null;
+            /** @description Always null: finding text is not retained with a revision; `receipt` carries the admission's digest. Kept for the shape readers already rely on. */
+            diagnostics: null;
             layout: components["schemas"]["LayoutSidecar"];
-            /** @description Not retained; null rather than a new check at read time. */
-            layoutDiagnostics: Record<string, never> | null;
+            /** @description Always null: layout diagnostics are not retained with a revision, and this read does not re-run the checker. Kept for the shape readers already rely on. */
+            layoutDiagnostics: null;
             /**
              * Format: int64
              * @description Editor sidecar revision.
              */
             layoutRevision: number;
-            /** @description Original checker receipt, without host reinterpretation. */
-            receipt: Record<string, never>;
+            /** @description The original checker receipt, without host reinterpretation. */
+            receipt: {
+                [key: string]: unknown;
+            };
             /** @description Original receipt digest. */
             receiptSha256: string;
             /** @description Selected registry releases. */
@@ -9228,8 +9244,10 @@ export interface components {
             objectType: string;
             /** @description The tenant scope. */
             scope: string;
-            /** @description Every stored property by property id; null when the row is withheld. */
-            values: Record<string, never> | null;
+            /** @description Every stored property by property id; decimals are exact JSON number tokens. Null when the row is withheld. */
+            values: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Format: int64
              * @description The owner version; null when the row is withheld.
@@ -9379,10 +9397,15 @@ export interface components {
         };
         /** @description Current or authenticated historical answer, matching the native service envelope. */
         NornQuestionAnswer: components["schemas"]["NornQueryResult"] | components["schemas"]["NornHistoricalQuestionResult"];
+        /**
+         * @description A sort direction.
+         * @enum {string}
+         */
+        NornSortDirection: "asc" | "desc";
         /** @description One applied sort key. */
         NornSortKey: {
-            /** @description `asc` or `desc`. */
-            direction: string;
+            /** @description The sort direction. */
+            direction: components["schemas"]["NornSortDirection"];
             /** @description The property sorted on. */
             property: string;
         };
@@ -9604,7 +9627,7 @@ export interface operations {
             };
         };
     };
-    get_defs: {
+    get_definitions_catalog: {
         parameters: {
             query: {
                 /** @description Required organization. */
@@ -9629,7 +9652,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornDefinitionsCatalog"];
                 };
             };
-            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a version that does not parse. */
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a version that does not parse. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -9647,8 +9670,17 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the requested version was never installed (`defs.version_not_found`). */
+            /** @description The request was refused (`defs.version_not_found`): the requested version was never installed, or no version was asked for and nothing is installed yet. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`defs.receipt_context_unavailable`): this host cannot resolve the retained admission context (the receipt's external base, limit profile or checker version). */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10038,7 +10070,7 @@ export interface operations {
             };
         };
     };
-    get_object_query: {
+    query_objects: {
         parameters: {
             query: {
                 /** @description Organization (required). */
@@ -10073,7 +10105,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                /** @description The object type (concept) name; percent-escapes are decoded. */
                 type: string;
             };
             cookie?: never;
@@ -10089,7 +10121,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornObjectQueryPage"];
                 };
             };
-            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a value that does not parse. `query.invalid` lists every violation with a pointer; `query.cursor_invalid` is a cursor that does not continue this query for this caller. */
+            /** @description The request was refused as invalid. `request.invalid`: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. `query.invalid`: the limit, sort, filter or cursor does not hold, with every violation as a diagnostic and a pointer into the request; a cursor that does not continue this query for this caller is the diagnostic `query.cursor_invalid`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -10116,7 +10148,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the cell committed since the cursor was issued (`object.snapshot_moved`, retryable from the first page). */
+            /** @description The request was refused (`object.snapshot_moved`, retryable from the first page): the cell committed while the page was read, between two scan batches of a first page or since the cursor was issued; a page is never assembled from two snapshots. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10125,7 +10157,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: a sort or filter over more visible rows than one scan reads (`object.scan_bound_exceeded`); page without sort or filter instead. */
+            /** @description The request was refused (`object.scan_bound_exceeded`): a sort or filter would read more than 10,000 visible rows in one scan; page without sort or filter instead, which streams by id. */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -10143,9 +10175,18 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
         };
     };
-    get_queried_object: {
+    get_object: {
         parameters: {
             query: {
                 /** @description Organization (required). */
@@ -10155,9 +10196,9 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                /** @description The object type (concept) name; percent-escapes are decoded. */
                 type: string;
-                /** @description The object identity; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                /** @description The object identity; percent-escapes are decoded. */
                 id: string;
             };
             cookie?: never;
@@ -10173,7 +10214,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornQueriedRecord"];
                 };
             };
-            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8. */
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -10191,7 +10232,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the object is absent, quarantined or not readable by this principal; these are not told apart. */
+            /** @description The request was refused (`object.not_found`): the object is absent, quarantined or not readable by this principal; these are not told apart. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10200,7 +10241,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the cell committed while the read ran (`object.snapshot_moved`, retryable); a page is never assembled from two snapshots. */
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed while the read ran; a response is never assembled from two snapshots. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10211,6 +10252,15 @@ export interface operations {
             };
             /** @description The request was refused: host failure. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10230,9 +10280,9 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                /** @description The object type (concept) name; percent-escapes are decoded. */
                 type: string;
-                /** @description The object identity; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                /** @description The object identity; percent-escapes are decoded. */
                 id: string;
             };
             cookie?: never;
@@ -10248,7 +10298,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornInstanceSourceProvenance"];
                 };
             };
-            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8. */
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -10266,7 +10316,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the object is absent, quarantined, withheld or source-withheld, or has no retained source bundle (for example, an object created by an action rather than a mapping); these are not told apart. */
+            /** @description The request was refused (`object.not_found`): the object is absent, quarantined, withheld or source-withheld, or has no retained source bundle (for example, an object created by an action rather than a mapping); these are not told apart. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10275,7 +10325,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the cell committed between the row and provenance reads (`object.snapshot_moved`, retryable). */
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed between the row and provenance reads. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10286,6 +10336,15 @@ export interface operations {
             };
             /** @description The request was refused: host failure. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10316,9 +10375,9 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                /** @description The object type (concept) name; percent-escapes are decoded. */
                 type: string;
-                /** @description The object identity; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                /** @description The object identity; percent-escapes are decoded. */
                 id: string;
             };
             cookie?: never;
@@ -10334,7 +10393,7 @@ export interface operations {
                     "application/json": components["schemas"]["NornObjectLinkPage"];
                 };
             };
-            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a value that does not parse. `query.invalid` lists every violation with a pointer; `query.cursor_invalid` is a cursor that does not continue this query for this caller. */
+            /** @description The request was refused as invalid. `request.invalid`: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. `query.invalid`: the direction, link, limit or cursor does not hold, with every violation as a diagnostic and a pointer into the request; a cursor that does not continue this query for this caller is the diagnostic `query.cursor_invalid`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -10352,7 +10411,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the object is absent, quarantined or not readable by this principal; these are not told apart. */
+            /** @description The request was refused (`object.not_found`): the object is absent, quarantined or not readable by this principal; these are not told apart. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10361,7 +10420,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the cell committed while the read ran (`object.snapshot_moved`, retryable); a page is never assembled from two snapshots. */
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed while the read ran; a response is never assembled from two snapshots. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10370,7 +10429,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: more visible links than one scan reads (`object.scan_bound_exceeded`). */
+            /** @description The request was refused (`object.scan_bound_exceeded`): more than 10,000 visible links touch the object, more than one scan reads. */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -10381,6 +10440,15 @@ export interface operations {
             };
             /** @description The request was refused: host failure. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
