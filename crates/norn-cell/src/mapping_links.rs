@@ -641,6 +641,14 @@ mod tests {
                 params![position, &id, &observed],
             )
             .expect("consumed bundle");
+        // Consumption records the bundle's claim endpoints in the same write.
+        store
+            .conn
+            .execute(
+                &crate::system::claim_endpoints_of("i.\"observation_id\" = ?1"),
+                params![&id],
+            )
+            .expect("claim endpoints");
     }
 
     #[test]
