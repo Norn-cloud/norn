@@ -359,16 +359,6 @@ impl<'a> ResolvedType<'a> {
         }
         &[]
     }
-
-    /// The resolved local base with the chain's effective aggregation
-    /// contract, so every consumer reads a `ref`'s use-site declarations
-    /// exactly as it reads inline ones. `None` off a local base.
-    pub(crate) fn effective_base(&self) -> Option<Cow<'a, PropertyType>> {
-        let TypeResolution::Base(base) = self.resolution else {
-            return None;
-        };
-        Some(with_contract(base, self.additivity(), self.unit_source()))
-    }
 }
 
 /// `base` carrying `additivity` (a numeric kind) and `unit_source` (a
