@@ -416,7 +416,7 @@ impl<E: SqlEngine> Tenant<E> {
                     engine,
                     &self.scope,
                     &self.base,
-                    admitted,
+                    &admitted,
                     request.now.saturating_mul(1000),
                 )?;
                 let serving =

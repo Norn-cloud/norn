@@ -427,10 +427,10 @@ pub fn provision_cell<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
     base: &TrustedBase,
-    admitted: AdmittedSet,
+    admitted: &AdmittedSet,
     now_ms: u64,
 ) -> Result<(CellStore<E>, ProvisionReceipt), Refusal> {
-    let input = install_input(&admitted, now_ms);
+    let input = install_input(admitted, now_ms);
     // Every provisioned cell can serve governed actions: the kernel's own
     // receipt and owned-row types are part of its model from the start.
     let model = crate::action_admission::prepare_action_model(&admitted.model)?;

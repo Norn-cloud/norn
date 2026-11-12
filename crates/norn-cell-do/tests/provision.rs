@@ -580,7 +580,7 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
         let admitted = provision::admit_submission(&trusted, &body).unwrap();
         let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
         let refusal =
-            provision::provision_cell(engine, &scope, &trusted, admitted, (NOW + 5) * 1000)
+            provision::provision_cell(engine, &scope, &trusted, &admitted, (NOW + 5) * 1000)
                 .map(|(_, receipt)| receipt)
                 .expect_err("a cell is provisioned once");
         assert_eq!(refusal.code, provision::codes::PROVISION_CONFLICT);
