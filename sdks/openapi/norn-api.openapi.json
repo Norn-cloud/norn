@@ -16452,6 +16452,10 @@
           "name"
         ],
         "properties": {
+          "additivity": {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivity",
+            "description": "METRIC-ADDITIVITY-REF-1: the aggregation contract at this use\nsite. It may only refine a referenced type that declares none, and\napplies only when the ref resolves to an integer or decimal."
+          },
           "kind": {
             "type": "string",
             "enum": [

@@ -6222,6 +6222,12 @@ export interface components {
         };
         /** @description The shared property type (local or registry) with this name. */
         NornIrPropertyTypeOneOf11: {
+            /**
+             * @description METRIC-ADDITIVITY-REF-1: the aggregation contract at this use
+             *     site. It may only refine a referenced type that declares none, and
+             *     applies only when the ref resolves to an integer or decimal.
+             */
+            additivity?: components["schemas"]["NornIrPropertyAdditivity"];
             /** @enum {string} */
             kind: "ref";
             /** @description The referenced [`PropertyTypeDef`] name. */

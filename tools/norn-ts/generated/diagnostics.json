@@ -3193,6 +3193,14 @@
       "no_fix": null
     },
     {
+      "code": "object_type.validation.additivity_not_refined",
+      "tier": "T3",
+      "severity": "error",
+      "message": "property {property} declares an additivity other than the one {owner} requires; a member may add additivity where the referenced type declares none, never change a declared one",
+      "fix": "Declare the same additivity the requirement or overridden property declares, or none; declare a different one only where the requirement declares none.",
+      "no_fix": null
+    },
+    {
       "code": "object_type.validation.computed_key_component",
       "tier": "T2",
       "severity": "error",
@@ -4047,6 +4055,22 @@
       "message": "{lower} is greater than {upper}",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "property_type.validation.ref_additivity_conflict",
+      "tier": "T2",
+      "severity": "error",
+      "message": "ref {name} declares {declared} additivity, but the type it references declares {referenced}; a use site may only add additivity to a type that declares none",
+      "fix": "Remove the use-site additivity so the referenced type's declaration applies, or reference a type that declares none and state the additivity here.",
+      "no_fix": null
+    },
+    {
+      "code": "property_type.validation.ref_additivity_not_numeric",
+      "tier": "T2",
+      "severity": "error",
+      "message": "ref {name} resolves to a {kind} type; only an integer or decimal declares additivity",
+      "fix": "Remove additivity from this ref, or reference an integer or decimal property type; additivity describes how numbers aggregate.",
+      "no_fix": null
     },
     {
       "code": "property_type.validation.ref_cycle",
