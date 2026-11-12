@@ -28,10 +28,14 @@ function Widget() {
     void bridge.connect().then(applyTheme).catch(() => applyTheme({}))
     return bridge.on("ui/notifications/host-context-changed", (params) => applyTheme(params as HostContext))
   }, [])
-  // The host sizes the frame to the content.
+  // The host sizes the frame to the content: the rendered root, never the viewport (which only grows).
   useLayoutEffect(() => {
-    const observer = new ResizeObserver(() => bridge.reportSize(document.documentElement.scrollWidth, document.documentElement.scrollHeight))
-    observer.observe(document.body)
+    const root = document.getElementById("root")
+    if (root === null) return
+    const report = () => { const box = root.getBoundingClientRect(); bridge.reportSize(box.width, box.height) }
+    const observer = new ResizeObserver(report)
+    observer.observe(root)
+    report()
     return () => observer.disconnect()
   }, [])
   // Studio links open in a new tab through the host, never inside the sandbox.
