@@ -117,7 +117,7 @@ fn each_capability_is_granted_only_where_the_policy_grants_it() {
         assert_eq!(
             gate(
                 &host,
-                &access("viewer@demo", capability, &scope),
+                &access("admin@demo", capability, &scope),
                 capability
             ),
             None
@@ -147,7 +147,7 @@ fn a_mapping_that_asks_for_another_capability_or_action_is_denied() {
     let population = access("guest@demo", ReadCapability::Population, &scope);
     assert_eq!(gate(&host, &population, ReadCapability::Values), Some(403));
     assert_eq!(gate(&host, &population, ReadCapability::Sources), Some(403));
-    let mut other = access("viewer@demo", ReadCapability::Values, &scope);
+    let mut other = access("admin@demo", ReadCapability::Values, &scope);
     other.action_id = "norn.reveal".into();
     assert_eq!(gate(&host, &other, ReadCapability::Values), Some(403));
 }
@@ -160,7 +160,7 @@ fn foreign_scope_and_undeclared_types_are_denied_with_one_document() {
         org_id: "org_other".into(),
         environment_id: "dev".into(),
     };
-    let request = access("viewer@demo", ReadCapability::Values, &foreign);
+    let request = access("admin@demo", ReadCapability::Values, &foreign);
     let denied = |access: &AccessRequest| {
         host.as_caller(&access.principal.subject_id);
         host.read_access(
@@ -175,16 +175,16 @@ fn foreign_scope_and_undeclared_types_are_denied_with_one_document() {
     };
     let baseline = denied(&access("stranger@demo", ReadCapability::Values, &scope)).unwrap();
     assert_eq!(denied(&request).as_deref(), Some(baseline.as_str()));
-    let mut undeclared = access("viewer@demo", ReadCapability::Values, &scope);
+    let mut undeclared = access("admin@demo", ReadCapability::Values, &scope);
     undeclared.resource.object_type = "canon.Undeclared".into();
     assert_eq!(denied(&undeclared).as_deref(), Some(baseline.as_str()));
     // A request naming a foreign cell in its explicit scope is denied too.
-    host.as_caller("viewer@demo");
+    host.as_caller("admin@demo");
     let mismatched = host.read_access(
         &explicit(&foreign),
         &ReadRequest {
             capability: ReadCapability::Values,
-            access: &access("viewer@demo", ReadCapability::Values, &scope),
+            access: &access("admin@demo", ReadCapability::Values, &scope),
         },
     );
     assert_eq!(
@@ -234,8 +234,8 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
                 .map(|r| r.status),
             Some(403)
         );
-        // The recorded caller is viewer@demo; a request for another subject is not theirs.
-        host.as_caller("viewer@demo");
+        // The recorded caller is admin@demo; a request for another subject is not theirs.
+        host.as_caller("admin@demo");
         let request = ReadRequest {
             capability,
             access: &access("guest@demo", capability, &scope),
@@ -315,7 +315,7 @@ fn the_grant_table_is_pinned_exactly() {
 fn a_service_request_does_not_borrow_a_user_grant() {
     let host = host();
     let scope = host.scope().clone();
-    let mut request = access("viewer@demo", ReadCapability::Values, &scope);
+    let mut request = access("admin@demo", ReadCapability::Values, &scope);
     request.principal.actor_kind = ActorKind::Service;
     assert_eq!(gate(&host, &request, ReadCapability::Values), Some(403));
 }
@@ -334,7 +334,7 @@ fn a_request_s_caller_is_forgotten_when_the_request_ends() {
             method: "GET",
             path,
             query: "orgId=org_demo&environmentId=dev",
-            authorization: Some("Bearer fixture:viewer@demo"),
+            authorization: Some("Bearer fixture:admin@demo"),
             now: 0,
             body: "",
         };
@@ -343,7 +343,7 @@ fn a_request_s_caller_is_forgotten_when_the_request_ends() {
             host.slot.current().is_none(),
             "{path}: the caller outlived its request"
         );
-        let after = access("viewer@demo", ReadCapability::Values, &scope);
+        let after = access("admin@demo", ReadCapability::Values, &scope);
         let denied = host.read_access(
             &explicit(&scope),
             &ReadRequest {
