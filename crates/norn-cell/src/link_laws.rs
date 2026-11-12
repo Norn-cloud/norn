@@ -92,9 +92,5 @@ impl<S: SqlEngine> LinkTargets for PinnedLinks<'_, '_, S> {
 /// The target versions a finding's outcome pinned (empty for a law that read
 /// no link, or whose links had no target).
 pub(crate) fn pinned_links(finding: &norn_ir::DataQualityFinding) -> BTreeMap<String, FactRef> {
-    if let norn_ir::DataQualityOutcome::Linked { links, .. } = &finding.outcome {
-        links.clone()
-    } else {
-        BTreeMap::new()
-    }
+    finding.links.clone()
 }

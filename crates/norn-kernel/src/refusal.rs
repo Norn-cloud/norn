@@ -401,17 +401,6 @@ fn invariant_reason(
     outcome: &norn_ir::DataQualityOutcome,
 ) -> RefusalReason {
     let outcome = match outcome {
-        norn_ir::DataQualityOutcome::Linked { outcome, .. } => match **outcome {
-            norn_ir::DataQualityOutcome::NotSatisfied => "not_satisfied",
-            norn_ir::DataQualityOutcome::NonBoolean { .. } => "non_boolean",
-            norn_ir::DataQualityOutcome::EvaluationFailed { .. } => "evaluation_failed",
-            norn_ir::DataQualityOutcome::Linked { .. }
-            | norn_ir::DataQualityOutcome::ObservedOutOfBand { .. }
-            | norn_ir::DataQualityOutcome::InvalidTemporalObservation { .. }
-            | norn_ir::DataQualityOutcome::IdentityProjectionIsolation { .. } => {
-                "unsupported_outcome"
-            }
-        },
         norn_ir::DataQualityOutcome::NotSatisfied => "not_satisfied",
         norn_ir::DataQualityOutcome::NonBoolean { .. } => "non_boolean",
         norn_ir::DataQualityOutcome::EvaluationFailed { .. } => "evaluation_failed",

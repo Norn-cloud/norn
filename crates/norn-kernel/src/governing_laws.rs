@@ -581,14 +581,6 @@ pub fn evaluate_linked(
             },
         };
         if let Err(outcome) = result {
-            let outcome = if pinned.is_empty() {
-                outcome
-            } else {
-                DataQualityOutcome::Linked {
-                    links: pinned.clone(),
-                    outcome: Box::new(outcome),
-                }
-            };
             let mut failure = law_failure(artifact, &law, outcome, invariant_failure)?;
             failure.links = pinned;
             failures.push(failure);
