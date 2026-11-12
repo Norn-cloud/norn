@@ -74,7 +74,7 @@ export const Source = Norn.sourceSchema({
   id: "docs.scans.source", title: "Synthetic scanned documents, as extracted", version: "0.1.0",
   source: { system: "synthetic-scans", instance: "demo", version: "scans-v1" },
   observedAt: "2026-11-12T00:00:00Z", adapter: { name: "norn-extractor", version: "0.1.0" },
-  rawMetadata: { uri: "evidence://documents/scans-contract-v1", sha256: "0000000000000000000000000000000000000000000000000000000000000000" },
+  rawMetadata: { uri: "evidence://documents/scans-contract-v1", sha256: "53cc7b7cd97151d9e4d5bca9275cd5c00c9e8e8b572e43d65a3c2c13784c21a4" },
   datasets: [
     { id: "Scanned Document", nativeName: "Extracted document", kind: "document" },
     { id: "Document Line", nativeName: "Extracted printed line", kind: "child_document" },
@@ -205,7 +205,7 @@ export const CorrectScannedDocument = Norn.action({
   derive: [{ field: "corrected_by", inputRequired: false,
     expression: Norn.expression(Schema.Struct({ actor: Schema.Struct({ subjectId: Schema.String }) }), context => context.actor.subjectId, { root: "context" }) }],
   preconditions: [Norn.expression(Schema.Struct({ input: CorrectionInput }), x => x.input.correction_reason !== "" && x.input.correction_evidence !== "")],
-  writes: [{ type: ScannedDocument, change: "modified" }],
+  writes: [{ type: ScannedDocument, change: "modified" }, { type: ScannedDocument, change: "created" }],
   effect: { kind: "upsert_input_object", type: ScannedDocument, objectIdField: "id", writeMode: { kind: "upsert" } },
 })
 

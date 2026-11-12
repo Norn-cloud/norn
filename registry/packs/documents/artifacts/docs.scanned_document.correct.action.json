@@ -105,6 +105,10 @@
       {
         "change": "modified",
         "entityKind": "docs.ScannedDocument"
+      },
+      {
+        "change": "created",
+        "entityKind": "docs.ScannedDocument"
       }
     ]
   },

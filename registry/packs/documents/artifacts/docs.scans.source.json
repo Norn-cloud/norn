@@ -520,7 +520,7 @@
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-12T00:00:00Z",
     "rawMetadata": {
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sha256": "53cc7b7cd97151d9e4d5bca9275cd5c00c9e8e8b572e43d65a3c2c13784c21a4",
       "uri": "evidence://documents/scans-contract-v1"
     },
     "source": {
