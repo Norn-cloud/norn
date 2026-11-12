@@ -355,12 +355,28 @@ fn the_compiled_in_builtins_are_registered() {
 #[test]
 fn a_tenant_cell_lists_and_answers_its_derived_metrics() {
     let directory = tempfile::tempdir().unwrap();
-    let mut cell = provisioned(&directory.path().join("q.sqlite"), &with_policy(&["admin"]));
+    // One concept with additive amounts at a timestamp derives metrics.
+    let sale = json!({
+        "irVersion": "0.1", "artifactId": "shop.Sale.entity", "kind": "entity",
+        "namespace": "shop", "name": "Sale", "version": "0.1.0", "lifecycle": "active",
+        "scope": { "orgId": "org_a", "environmentId": "prod" },
+        "dependencies": [], "provenance": { "source": "system", "sourcePath": "tests/tenant_actions.rs" },
+        "payload": { "entityVersion": "2.0", "objectType": { "name": "shop.Sale", "properties": [
+            { "id": "amount", "type": { "kind": "decimal", "scale": 2, "additivity": { "kind": "additive" } } },
+            { "id": "occurred_at", "type": { "kind": "timestamp", "timezone": "utc" } }
+        ] } }
+    });
+    let mut cell = provisioned(&directory.path().join("q.sqlite"), &[sale]);
     let listed = cell.call("GET", "/v1/questions:metrics", Some(&user("admin")), "");
     assert_eq!(listed.status, 200, "{}", listed.body);
     let listed: Value = serde_json::from_str(&listed.body).unwrap();
     let metrics = listed["metrics"].as_array().unwrap();
-    assert!(!metrics.is_empty(), "{listed}");
+    assert!(
+        metrics
+            .iter()
+            .any(|metric| metric["objectType"] == "shop.Sale" && metric["expression"] == "amount"),
+        "{listed}"
+    );
     let anonymous = cell.call("GET", "/v1/questions:metrics", None, "");
     assert_eq!(anonymous.status, 403, "{}", anonymous.body);
 }
