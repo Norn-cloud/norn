@@ -6435,7 +6435,7 @@ export interface components {
         };
         /** @description Currency binding; the amount itself remains an ontology decimal property. */
         NornIrMetricCurrency: {
-            /** @description Required when summing a source whose currency is not a singleton enum. */
+            /** @description Converts the amounts to one target currency. Without it, amounts whose currency is not a single code aggregate per currency (METRIC-UNIT-PARTITION-1). */
             conversion?: components["schemas"]["NornIrCurrencyConversion"];
             /** @description ISO 4217 registry property or a closed currency-code enum. */
             property: components["schemas"]["NornIrDimensionPath"];

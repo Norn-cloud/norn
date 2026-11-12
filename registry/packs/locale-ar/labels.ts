@@ -1,7 +1,9 @@
 import { Norn } from "@norn/authoring"
+import { ISO_4217 } from "../canon/records.ts"
 
 // Egyptian business Arabic for the core and canon model the three-systems demo installs: every canon
-// type and the core interfaces it builds on, with every property and enum value of each.
+// type and the core interfaces it builds on, with every property and enum value of each. An ISO 4217
+// currency code is its own label.
 // Not labelled here: `core.Conversion`, `core.Exchange`, `core.Process`, `core.analytics.*` and
 // `norn.ObservedLinkClaim`, which are outside the set this pack is admitted with. The pack declares
 // no `requiredLocales`, so the coverage lint does not list them.
@@ -11,6 +13,7 @@ const quantity = { ar: "الكمية" }, unit = { ar: "الوحدة" }, currency
 const commitmentStatus = { requested: { ar: "مطلوب" }, promised: { ar: "موعود به" }, fulfilled: { ar: "منفَّذ" }, cancelled: { ar: "ملغى" }, breached: { ar: "مُخلّ به" } }
 const valuation = { fifo: { ar: "الوارد أولًا يُصرف أولًا" }, moving_average: { ar: "المتوسط المتحرك" } }
 const settlementKind = { payment: { ar: "دفعة" }, refund: { ar: "استرداد" } }
+const currencyCodes = Object.fromEntries(ISO_4217.map((code) => [code, { ar: code }]))
 const catalogProperties = { id: { ar: "المعرّف" }, code: { ar: "الكود" }, label: { ar: "الاسم" } }
 const eventAction = { transfer_ownership: { ar: "نقل الملكية" }, transfer_custody: { ar: "نقل الحيازة" }, consume: { ar: "استهلاك" }, produce: { ar: "إنتاج" } }
 
@@ -33,7 +36,7 @@ export const ArabicLabels = Norn.labels({
     "core.LedgerEffect": { label: { ar: "أثر في الدفتر" }, properties: { account_code: { ar: "كود الحساب" }, amount, currency } },
     "core.Resource": { label: { ar: "مورد" }, properties: { resource_code: { ar: "كود المورد" }, quantity, unit, currency, valuation_method: { ar: "طريقة التقييم" } }, values: { valuation_method: valuation } },
     "canon.Catalog": { label: { ar: "كتالوج" }, localizedDescription: { ar: "بيانات وصفية للكتالوج، وليست مخزونًا" }, properties: catalogProperties },
-    "canon.Settlement": { label: { ar: "تسوية" }, localizedDescription: { ar: "دليل تسوية مُبلَّغ عنه" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind } },
+    "canon.Settlement": { label: { ar: "تسوية" }, localizedDescription: { ar: "دليل تسوية مُبلَّغ عنه" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind, currency: currencyCodes } },
     "canon.Item": { label: { ar: "صنف" }, properties: catalogProperties },
     "canon.Holding": {
       label: { ar: "رصيد مخزون" }, localizedDescription: { ar: "رصيد مقسَّم حسب المالك والموقع" },
@@ -56,7 +59,7 @@ export const ArabicLabels = Norn.labels({
       properties: { id: { ar: "المعرّف" }, label: { ar: "الاسم" }, valuation_method: { ar: "طريقة التقييم" } },
       values: { valuation_method: valuation },
     },
-    "canon.SettlementObservation": { label: { ar: "تسوية مرصودة" }, localizedDescription: { ar: "تسوية مرصودة من المصدر" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind } },
+    "canon.SettlementObservation": { label: { ar: "تسوية مرصودة" }, localizedDescription: { ar: "تسوية مرصودة من المصدر" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind, currency: currencyCodes } },
   },
   actions: {
     "canon.valuation_policy.set": { label: { ar: "تحديد سياسة تقييم المخزون" }, localizedDescription: { ar: "إنشاء سياسة تقييم مخزون أو تحديثها." } },

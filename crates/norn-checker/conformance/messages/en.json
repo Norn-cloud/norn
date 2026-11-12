@@ -1200,7 +1200,7 @@
       "message": "The time axis must be a single-valued date or timestamp."
     },
     "metric.validation.mixed_currency": {
-      "message": "Summing multiple currencies requires an explicit conversion."
+      "message": "Amounts in several currencies aggregate only per currency: group by the currency property, fix it with an eq filter, or convert explicitly."
     },
     "metric.validation.mixed_unit": {
       "message": "METRIC-UNIT-PARTITION-1: the measure's unit is stored in sibling properties; group by each of them or fix each with an eq filter, so no aggregate mixes units."

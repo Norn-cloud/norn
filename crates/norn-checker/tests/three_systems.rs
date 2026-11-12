@@ -578,6 +578,8 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         let expected: &[&str] = match candidate.definition.type_params.expr.as_deref() {
             Some("quantity") => &["unit", "currency"],
             Some("amount") => &["currency"],
+            // A stock's cost is held per its currency source.
+            Some("stock_cost") => &["cost_currency"],
             _ => &[],
         };
         assert_eq!(partition, expected, "{}", candidate.definition.name);

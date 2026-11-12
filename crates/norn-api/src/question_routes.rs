@@ -852,6 +852,17 @@ pub struct NornMetricSummary {
     /// `eq` filter (`eq null` included): its unit sources, such as `unit` and
     /// `currency`. Empty when its values share one unit.
     pub unit_partition: Vec<String>,
+    /// How its values aggregate: `additive` sums over every axis, time
+    /// included; `semi_additive` sums across the others and takes its
+    /// `aggregate` (`first`, `last`, `min` or `max`) along `over` (`time`), as a
+    /// stock's end-of-period value does; `non_additive` is recomputed for each
+    /// bucket.
+    #[schema(schema_with = metric_additivity_schema)]
+    pub additivity: norn_ir::metric::MetricAdditivity,
+}
+
+fn metric_additivity_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("NornIrMetricAdditivity")
 }
 
 /// The metrics ad-hoc questions may name, among those the caller may read.
@@ -906,6 +917,7 @@ pub fn list_metrics<E: SqlEngine>(
                 numerator: definition.type_params.numerator.clone(),
                 denominator: definition.type_params.denominator.clone(),
                 unit_partition: runtime.unit_partition(&definition.name),
+                additivity: definition.norn.additivity.clone(),
             }
         })
         .collect();

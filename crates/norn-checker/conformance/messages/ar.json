@@ -1599,7 +1599,7 @@
       "review": "needs_review"
     },
     "metric.validation.mixed_currency": {
-      "message": "جمع عدة عملات يتطلب تحويلًا صريحًا.",
+      "message": "تُجمَّع المبالغ بعدة عملات لكل عملة فقط: جمّع حسب خاصية العملة، أو ثبّتها بمرشح eq، أو حوّلها صراحةً.",
       "review": "needs_review"
     },
     "metric.validation.mixed_unit": {
