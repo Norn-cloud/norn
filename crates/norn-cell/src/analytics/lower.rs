@@ -46,11 +46,15 @@ pub(crate) fn column_kind(property: &EffectiveProperty) -> Option<ColumnKind> {
 fn point_laws(property: &EffectiveProperty) -> Vec<PointLaw> {
     let mut laws = Vec::new();
     if let EffectiveKind::Base(PropertyType::Enum { values }) = &property.kind {
-        laws.push(PointLaw::OneOf(values.iter().map(|v| v.value.clone()).collect()));
+        laws.push(PointLaw::OneOf(
+            values.iter().map(|v| v.value.clone()).collect(),
+        ));
     }
     for constraints in &property.constraints {
         let decimal = |literal: &norn_ir::DecimalLiteral| {
-            norn_ir::Decimal::parse(literal.as_str()).map(|d| d.canonical()).ok()
+            norn_ir::Decimal::parse(literal.as_str())
+                .map(|d| d.canonical())
+                .ok()
         };
         match constraints.min.as_ref().map(decimal) {
             Some(Some(min)) => laws.push(PointLaw::Min(min)),

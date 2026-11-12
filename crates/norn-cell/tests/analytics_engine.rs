@@ -531,19 +531,24 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
     // Declared pointwise laws quarantine the rows that break them.
     let mut lawful = load_request(&plan, "load-laws", sha256.clone());
     for column in &mut lawful.table.columns {
-        match column.id.as_str() {
-            "metal" => column.laws = vec![norn_cell::analytics::PointLaw::OneOf(vec!["gold".into()])],
-            "input" => column.laws = vec![norn_cell::analytics::PointLaw::Min("1.6".into())],
-            _ => {}
+        if column.id == "metal" {
+            column.laws = vec![norn_cell::analytics::PointLaw::OneOf(vec!["gold".into()])];
+        } else if column.id == "input" {
+            column.laws = vec![norn_cell::analytics::PointLaw::Min("1.6".into())];
         }
     }
-    let laws = engine.load(&lawful, file.path()).expect("loaded under laws");
+    let laws = engine
+        .load(&lawful, file.path())
+        .expect("loaded under laws");
     assert_eq!(laws.rows, 1, "{laws:?}");
     assert_eq!(laws.reasons.get("bulk.below_min"), Some(&1), "{laws:?}");
     let mut unchecked = load_request(&plan, "load-unchecked", sha256.clone());
     unchecked.table.columns[0].laws = vec![norn_cell::analytics::PointLaw::Unchecked];
     assert_eq!(
-        engine.load(&unchecked, file.path()).expect_err("an unchecked law").code,
+        engine
+            .load(&unchecked, file.path())
+            .expect_err("an unchecked law")
+            .code,
         "bulk.unsupported_law"
     );
     let mut changed = load_request(&plan, "load-2", sha256);

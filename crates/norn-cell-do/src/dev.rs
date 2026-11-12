@@ -280,13 +280,19 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
     // D102: a build with `duckdb` answers questions and profiles on the
     // project's own analytics engine, under `.norn/analytics`.
     #[cfg(feature = "duckdb")]
-    let engine = norn_cell::analytics::engine::Engine::new(norn_cell::analytics::engine::Settings {
-        root: root.join(".norn/analytics"),
-        memory_limit: "1GB".to_owned(),
-        threads: 2,
-    })
-    .map(crate::olap::InProcess)
-    .map_err(|error| Failure::setup("norn.dev.io", format!("cannot open the analytics engine: {error}")))?;
+    let engine =
+        norn_cell::analytics::engine::Engine::new(norn_cell::analytics::engine::Settings {
+            root: root.join(".norn/analytics"),
+            memory_limit: "1GB".to_owned(),
+            threads: 2,
+        })
+        .map(crate::olap::InProcess)
+        .map_err(|error| {
+            Failure::setup(
+                "norn.dev.io",
+                format!("cannot open the analytics engine: {error}"),
+            )
+        })?;
     {
         let serving = Arc::clone(&serving);
         std::thread::spawn(move || {

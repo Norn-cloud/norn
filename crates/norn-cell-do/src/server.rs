@@ -1123,109 +1123,117 @@ pub fn analytics<E: SqlEngine>(
     uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
     request: &Request<'_>,
 ) -> Option<Response> {
-    let Request {
-        method,
-        path,
-        query,
-        authorization,
-        now,
-        body,
-    } = *request;
     let leaf = |suffix: &str| {
-        path.strip_prefix("/v1/objects/")
+        request
+            .path
+            .strip_prefix("/v1/objects/")
             .and_then(|rest| rest.strip_suffix(suffix))
             .filter(|kind| !kind.is_empty() && !kind.contains('/'))
     };
-    let export = leaf(":export");
-    let profile = leaf(":profile");
-    if export.is_none() && profile.is_none() && path != "/v1/datasets:load" {
+    let (export, profile) = (leaf(":export"), leaf(":profile"));
+    if export.is_none() && profile.is_none() && request.path != "/v1/datasets:load" {
         return None;
     }
-    let decode = |kind: &str| {
-        percent_encoding::percent_decode_str(kind)
-            .decode_utf8()
-            .map(std::borrow::Cow::into_owned)
-            .map_err(|_bad| Refusal::invalid("the type is not UTF-8"))
-    };
     let _request = RequestScope::new(principals);
-    let actor = principals.resolve(authorization, now);
+    let actor = principals.resolve(request.authorization, request.now);
     let actor = actor.as_deref();
-    let result = match (method, export.or(profile), uploads) {
-        ("GET", Some(kind), _) if profile.is_some() => parse(query, &["orgId", "environmentId"])
-            .and_then(|fields| {
-                let scope = ScopeQuery {
-                    org_id: fields.get("orgId").cloned(),
-                    environment_id: fields.get("environmentId").cloned(),
-                };
-                norn_api::analytics_routes::profile_objects(
-                    host,
-                    &scope,
-                    actor,
-                    &decode(kind)?,
-                    &CellObjectAccess,
-                    transport,
-                )
-            })
-            .and_then(|document| document_json(&document)),
-        ("GET", Some(kind), _) => parse(query, &["orgId", "environmentId", "columns", "format"])
-            .and_then(|mut fields| {
-                let query = norn_api::analytics_routes::ExportQuery {
-                    org_id: fields.remove("orgId"),
-                    environment_id: fields.remove("environmentId"),
-                    columns: fields.remove("columns").unwrap_or_default(),
-                    format: fields.remove("format"),
-                };
-                norn_api::analytics_routes::export_objects(
-                    host,
-                    &query,
-                    actor,
-                    &decode(kind)?,
-                    &CellObjectAccess,
-                    transport,
-                )
-            })
-            .map(|()| String::new()),
-        ("POST", None, Some(uploads)) => {
-            parse(query, &["orgId", "environmentId"]).and_then(|fields| {
-                let scope = ScopeQuery {
-                    org_id: fields.get("orgId").cloned(),
-                    environment_id: fields.get("environmentId").cloned(),
-                };
-                norn_api::analytics_routes::load_dataset(
-                    host,
-                    &scope,
-                    actor,
-                    body,
-                    uploads,
-                    transport,
-                    now.saturating_mul(1000),
-                )
-                .and_then(|document| document_json(&document))
-            })
-        }
-        ("POST", None, None) => Err(Refusal::new(
+    let result = match (request.method, export, profile, uploads) {
+        ("GET", None, Some(kind), _) => engine_profile(host, actor, transport, kind, request.query),
+        ("GET", Some(kind), None, _) => engine_export(host, actor, transport, kind, request.query),
+        ("POST", None, None, Some(uploads)) => engine_load(host, actor, transport, uploads, request),
+        ("POST", None, None, None) => Err(Refusal::new(
             StatusCode::NOT_IMPLEMENTED,
             "dataset.uploads_unconfigured",
             "this host has no object store for uploads",
             "configure the host's upload bucket to load datasets",
         )),
-        (_, _, _) => Err(Refusal::new(
+        _ => Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
             "route.method_not_allowed",
             "the route does not accept this method",
-            "an export takes GET; a load takes POST",
+            "a profile or an export takes GET; a load takes POST",
         )),
     };
-    Some(match result {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
-            body,
-        },
-        Err(refused) => Response {
-            status: refused.status,
-            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
-        },
+    Some(respond(result))
+}
+
+fn decoded(kind: &str) -> Result<String, Refusal> {
+    percent_encoding::percent_decode_str(kind)
+        .decode_utf8()
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|_bad| Refusal::invalid("the type is not UTF-8"))
+}
+
+fn scope_of(query: &str) -> Result<ScopeQuery, Refusal> {
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    Ok(ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
     })
+}
+
+fn engine_profile<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    kind: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let scope = scope_of(query)?;
+    let profile = norn_api::analytics_routes::profile_objects(
+        host,
+        &scope,
+        actor,
+        &decoded(kind)?,
+        &CellObjectAccess,
+        transport,
+    )?;
+    document_json(&profile)
+}
+
+fn engine_export<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    kind: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let mut fields = parse(query, &["orgId", "environmentId", "columns", "format"])?;
+    let query = norn_api::analytics_routes::ExportQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        columns: fields.remove("columns").unwrap_or_default(),
+        format: fields.remove("format"),
+    };
+    norn_api::analytics_routes::export_objects(
+        host,
+        &query,
+        actor,
+        &decoded(kind)?,
+        &CellObjectAccess,
+        transport,
+    )?;
+    Ok(String::new())
+}
+
+fn engine_load<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    uploads: &dyn norn_api::analytics_routes::Uploads,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    let scope = scope_of(request.query)?;
+    let loaded = norn_api::analytics_routes::load_dataset(
+        host,
+        &scope,
+        actor,
+        request.body,
+        uploads,
+        transport,
+        request.now.saturating_mul(1000),
+    )?;
+    document_json(&loaded)
 }
 
 pub(crate) fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {

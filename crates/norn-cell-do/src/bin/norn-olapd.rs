@@ -12,9 +12,8 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::FAILURE
         };
     }
-    let outcome = norn_cell_do::olapd::Config::from_env().and_then(|config| {
-        norn_cell_do::olapd::run(config).map_err(|error| error.to_string())
-    });
+    let outcome = norn_cell_do::olapd::Config::from_env()
+        .and_then(|config| norn_cell_do::olapd::run(config).map_err(|error| error.to_string()));
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {

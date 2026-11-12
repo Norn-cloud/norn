@@ -603,8 +603,10 @@ pub fn bin_ranks(n: u64) -> Vec<(u64, u64)> {
 /// Every rank a profile of `n` sorted values reads.
 #[must_use]
 pub fn profile_ranks(n: u64) -> std::collections::BTreeSet<u64> {
-    let mut ranks: std::collections::BTreeSet<u64> =
-        PROFILE_QUANTILES.iter().map(|p| nearest_rank(*p, n)).collect();
+    let mut ranks: std::collections::BTreeSet<u64> = PROFILE_QUANTILES
+        .iter()
+        .map(|p| nearest_rank(*p, n))
+        .collect();
     for (first, last) in bin_ranks(n) {
         ranks.insert(first);
         ranks.insert(last);

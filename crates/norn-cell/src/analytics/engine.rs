@@ -361,7 +361,8 @@ impl Engine {
                 .iter()
                 .map(|id| profile_column(conn, &scope, id, rows))
                 .collect::<Outcome<_>>()?;
-            let quarantined = u64::try_from(scope.excluded_present(conn)?.len()).unwrap_or(u64::MAX);
+            let quarantined =
+                u64::try_from(scope.excluded_present(conn)?.len()).unwrap_or(u64::MAX);
             Ok(ProfileResponse {
                 rows,
                 quarantined,
@@ -1412,7 +1413,10 @@ fn law_sql(column: &Column, i: usize) -> Outcome<String> {
                     .ok()
                     .filter(|d| d.canonical() == *bound)
                     .ok_or_else(|| {
-                        refusal("bulk.unsupported_law", "a bound that is not a canonical decimal")
+                        refusal(
+                            "bulk.unsupported_law",
+                            "a bound that is not a canonical decimal",
+                        )
                     })?;
                 let (op, code) = if matches!(law, super::PointLaw::Min(_)) {
                     ("<", "bulk.below_min")
@@ -1430,7 +1434,10 @@ fn law_sql(column: &Column, i: usize) -> Outcome<String> {
             super::PointLaw::Unchecked => {
                 return Err(refusal(
                     "bulk.unsupported_law",
-                    format!("{} declares a constraint the engine does not check", column.id),
+                    format!(
+                        "{} declares a constraint the engine does not check",
+                        column.id
+                    ),
                 ));
             }
         });
@@ -1635,15 +1642,22 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
     let column = scope.column(id)?.clone();
     let c = ident(id);
     let temporal = matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date);
-    let numeric = matches!(column.kind, ColumnKind::Integer | ColumnKind::Decimal { .. });
+    let numeric = matches!(
+        column.kind,
+        ColumnKind::Integer | ColumnKind::Decimal { .. }
+    );
     let counts = Frag::fmt(
-        &format!("SELECT count({c}), count(DISTINCT {c}) FROM {} WHERE {{}}", scope.table),
+        &format!(
+            "SELECT count({c}), count(DISTINCT {c}) FROM {} WHERE {{}}",
+            scope.table
+        ),
         &[&scope.population],
     );
     let mut statement = db(conn.prepare(&counts.text))?;
-    let (count, distinct): (u64, u64) = db(statement.query_row(params_from_iter(counts.params), |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    }))?;
+    let (count, distinct): (u64, u64) = db(statement
+        .query_row(params_from_iter(counts.params), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        }))?;
     let mut ranks = BTreeMap::new();
     if (numeric || temporal) && count > 0 {
         let wanted = Frag::join(
@@ -1656,7 +1670,10 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
         let (t, n) = if temporal {
             (derived(id, "t"), derived(id, "n"))
         } else {
-            ("CAST(NULL AS BIGINT)".to_owned(), "CAST(NULL AS INTEGER)".to_owned())
+            (
+                "CAST(NULL AS BIGINT)".to_owned(),
+                "CAST(NULL AS INTEGER)".to_owned(),
+            )
         };
         // Temporal values are ordered by their text, as the exact profile orders them.
         let sql = Frag::fmt(
@@ -1667,11 +1684,19 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
             &[&scope.population, &wanted],
         );
         let mut statement = db(conn.prepare(&sql.text))?;
-        let found: Vec<(u64, Option<Value>)> = db(db(statement.query_map(params_from_iter(sql.params), |row| {
-            Ok((row.get::<_, u64>(0)?, present(column.kind, row.get(1)?, row.get(2)?, row.get(3)?)))
-        }))?
-        .collect::<Result<_, _>>())?;
-        ranks.extend(found.into_iter().filter_map(|(rank, value)| value.map(|v| (rank, v))));
+        let found: Vec<(u64, Option<Value>)> =
+            db(db(statement.query_map(params_from_iter(sql.params), |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    present(column.kind, row.get(1)?, row.get(2)?, row.get(3)?),
+                ))
+            }))?
+            .collect::<Result<_, _>>())?;
+        ranks.extend(
+            found
+                .into_iter()
+                .filter_map(|(rank, value)| value.map(|v| (rank, v))),
+        );
     }
     let labels = if temporal && count > 0 {
         Some(temporal_labels(conn, scope, &c)?)
@@ -1680,7 +1705,9 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
     };
     let outliers = match column.kind {
         ColumnKind::Integer if count > 0 => outliers(conn, scope, &c, 0, &ranks, count)?,
-        ColumnKind::Decimal { scale } if count > 0 => outliers(conn, scope, &c, scale, &ranks, count)?,
+        ColumnKind::Decimal { scale } if count > 0 => {
+            outliers(conn, scope, &c, scale, &ranks, count)?
+        }
         ColumnKind::Integer
         | ColumnKind::Decimal { .. }
         | ColumnKind::Text
@@ -1702,7 +1729,11 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
 
 /// Day labels (the text's first 10 characters) when there are at most
 /// [`super::PROFILE_DAY_BINS`], else month labels (the first 7).
-fn temporal_labels(conn: &Connection, scope: &Scope, c: &str) -> Outcome<(String, Vec<(String, u64)>)> {
+fn temporal_labels(
+    conn: &Connection,
+    scope: &Scope,
+    c: &str,
+) -> Outcome<(String, Vec<(String, u64)>)> {
     let read = |width: u32| -> Outcome<Vec<(String, u64)>> {
         let sql = Frag::fmt(
             &format!(
@@ -1743,7 +1774,8 @@ fn outliers(
         return Ok(None);
     };
     let fences = q3.checked_sub(q1).and_then(|iqr| {
-        let span = (1..super::PROFILE_OUTLIER_K).try_fold(iqr, |total, _| total.checked_add(iqr))?;
+        let span =
+            (1..super::PROFILE_OUTLIER_K).try_fold(iqr, |total, _| total.checked_add(iqr))?;
         Some((q1.checked_sub(span)?, q3.checked_add(span)?))
     });
     let Some((lower, upper)) = fences else {
@@ -1752,7 +1784,10 @@ fn outliers(
     let (lower, upper) = (lower.canonical(), upper.canonical());
     // Fences of declared-scale quartiles keep that scale; wider than the
     // column's storage they cannot be compared exactly, so none is reported.
-    if [&lower, &upper].iter().any(|fence| norn_ir::Decimal::parse(fence).map_or(true, |d| d.scale() > scale)) {
+    if [&lower, &upper]
+        .iter()
+        .any(|fence| norn_ir::Decimal::parse(fence).map_or(true, |d| d.scale() > scale))
+    {
         return Ok(None);
     }
     let typed = format!("CAST(? AS DECIMAL(38,{scale}))");
@@ -1783,10 +1818,16 @@ fn outliers(
         ],
     );
     let mut statement = db(conn.prepare(&examples_sql.text))?;
-    let examples: Vec<(String, String)> = db(db(statement.query_map(params_from_iter(examples_sql.params), |row| {
-        let value: String = row.get(1)?;
-        Ok((row.get::<_, String>(0)?, norn_ir::Decimal::parse(&value).map_or(value, |d| d.canonical())))
-    }))?
+    let examples: Vec<(String, String)> = db(db(statement.query_map(
+        params_from_iter(examples_sql.params),
+        |row| {
+            let value: String = row.get(1)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                norn_ir::Decimal::parse(&value).map_or(value, |d| d.canonical()),
+            ))
+        },
+    ))?
     .collect::<Result<_, _>>())?;
     Ok(Some(super::OutlierSummary {
         lower,

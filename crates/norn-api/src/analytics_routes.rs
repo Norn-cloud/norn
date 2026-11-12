@@ -585,14 +585,7 @@ pub fn profile_objects<E: SqlEngine>(
     access: &dyn ObjectAccess,
     transport: &dyn Transport,
 ) -> Result<crate::object_profile::NornObjectProfile, Refusal> {
-    use crate::object_profile::{
-        NornBin, NornHistogram, NornObjectProfile, NornOutlier, NornOutliers,
-        NornPropertyProfile, NornQuantile, kind_of,
-    };
-    use norn_cell::analytics::{
-        PROFILE_OUTLIER_K, PROFILE_QUANTILES, ProfileRequest, ProfileResponse, Value, bin_ranks,
-        nearest_rank, runtime_value,
-    };
+    use norn_cell::analytics::{ProfileRequest, ProfileResponse};
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();
@@ -620,90 +613,19 @@ pub fn profile_objects<E: SqlEngine>(
         return Err(engine_failure(refused(&answer.body)));
     }
     let profile: ProfileResponse = decode(&answer.body).map_err(engine_failure)?;
-    let value = |v: &Value| runtime_value(v).map_err(Refusal::host);
-    let mut properties = Vec::with_capacity(declared.len());
-    for (property, declared_type) in &declared {
-        let kind = kind_of(declared_type.as_ref());
-        let column = profile.columns.iter().find(|c| &c.column == property).filter(|_| values);
-        let mut out = NornPropertyProfile {
-            property: property.clone(),
-            kind: kind.to_owned(),
-            count: column.map_or(0, |c| c.count),
-            nulls: column.map_or(if values { profile.rows } else { 0 }, |c| c.nulls),
-            distinct: column.map_or(0, |c| c.distinct),
-            min: None,
-            max: None,
-            quantiles: Vec::new(),
-            histogram: None,
-            outliers: None,
-        };
-        if let Some(column) = column.filter(|c| c.count > 0 && (kind == "numeric" || kind == "temporal")) {
-            let n = column.count;
-            let at = |rank: u64| column.ranks.get(&rank).map(value).transpose();
-            out.min = at(1)?;
-            out.max = at(n)?;
-            for percent in PROFILE_QUANTILES {
-                if let Some(v) = at(nearest_rank(percent, n))? {
-                    out.quantiles.push(NornQuantile { percent, value: v });
-                }
-            }
-            if kind == "numeric" {
-                let mut bins = Vec::new();
-                for (first, last) in bin_ranks(n) {
-                    if let (Some(lower), Some(upper)) = (at(first)?, at(last)?) {
-                        bins.push(NornBin {
-                            lower,
-                            upper,
-                            count: last.saturating_sub(first).saturating_add(1),
-                        });
-                    }
-                }
-                out.histogram = Some(NornHistogram {
-                    kind: "equal_population".into(),
-                    bins,
-                });
-                if let (Some(found), Some(q1), Some(q3)) = (
-                    &column.outliers,
-                    at(nearest_rank(25, n))?,
-                    at(nearest_rank(75, n))?,
-                ) {
-                    let number = |text: &str| {
-                        norn_ir::Decimal::parse(text)
-                            .map(norn_ir::RuntimeValue::Number)
-                            .map_err(Refusal::host)
-                    };
-                    out.outliers = Some(NornOutliers {
-                        method: "tukey_far_out".into(),
-                        k: PROFILE_OUTLIER_K.to_string(),
-                        q1,
-                        q3,
-                        lower_fence: number(&found.lower)?,
-                        upper_fence: number(&found.upper)?,
-                        count: found.count,
-                        examples: found
-                            .examples
-                            .iter()
-                            .map(|(id, v)| Ok(NornOutlier { id: id.clone(), value: number(v)? }))
-                            .collect::<Result<_, Refusal>>()?,
-                    });
-                }
-            } else if let Some((kind, labels)) = &column.labels {
-                out.histogram = Some(NornHistogram {
-                    kind: kind.clone(),
-                    bins: labels
-                        .iter()
-                        .map(|(label, rows)| NornBin {
-                            lower: norn_ir::RuntimeValue::String(label.clone()),
-                            upper: norn_ir::RuntimeValue::String(label.clone()),
-                            count: *rows,
-                        })
-                        .collect(),
-                });
-            }
-        }
-        properties.push(out);
-    }
-    Ok(NornObjectProfile {
+    let properties = declared
+        .iter()
+        .map(|(property, declared_type)| {
+            let column = profile
+                .columns
+                .iter()
+                .find(|c| &c.column == property)
+                .filter(|_| values);
+            let rows = if values { profile.rows } else { 0 };
+            property_profile(property, declared_type.as_ref(), column, rows)
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(crate::object_profile::NornObjectProfile {
         object_type: object_type.to_owned(),
         rows: if values { profile.rows } else { 0 },
         withheld_rows: if values { 0 } else { profile.rows },
@@ -712,5 +634,117 @@ pub fn profile_objects<E: SqlEngine>(
         scan_limit: profile.rows,
         engine: "duckdb".into(),
         properties,
+    })
+}
+
+/// One property's profile from the engine's sorted values: a property
+/// without a column (computed) counts every row as null.
+fn property_profile(
+    property: &str,
+    declared: Option<&norn_ir::PropertyType>,
+    column: Option<&norn_cell::analytics::ColumnProfile>,
+    rows: u64,
+) -> Result<crate::object_profile::NornPropertyProfile, Refusal> {
+    use crate::object_profile::{NornBin, NornHistogram, NornPropertyProfile, NornQuantile, kind_of};
+    use norn_cell::analytics::{PROFILE_QUANTILES, bin_ranks, nearest_rank, runtime_value};
+    let kind = kind_of(declared);
+    let mut out = NornPropertyProfile {
+        property: property.to_owned(),
+        kind: kind.to_owned(),
+        count: column.map_or(0, |c| c.count),
+        nulls: column.map_or(rows, |c| c.nulls),
+        distinct: column.map_or(0, |c| c.distinct),
+        min: None,
+        max: None,
+        quantiles: Vec::new(),
+        histogram: None,
+        outliers: None,
+    };
+    let Some(column) = column.filter(|c| c.count > 0 && (kind == "numeric" || kind == "temporal"))
+    else {
+        return Ok(out);
+    };
+    let n = column.count;
+    let at = |rank: u64| {
+        column
+            .ranks
+            .get(&rank)
+            .map(|v| runtime_value(v).map_err(Refusal::host))
+            .transpose()
+    };
+    out.min = at(1)?;
+    out.max = at(n)?;
+    for percent in PROFILE_QUANTILES {
+        if let Some(value) = at(nearest_rank(percent, n))? {
+            out.quantiles.push(NornQuantile { percent, value });
+        }
+    }
+    if kind == "numeric" {
+        let mut bins = Vec::new();
+        for (first, last) in bin_ranks(n) {
+            if let (Some(lower), Some(upper)) = (at(first)?, at(last)?) {
+                bins.push(NornBin {
+                    lower,
+                    upper,
+                    count: last.saturating_sub(first).saturating_add(1),
+                });
+            }
+        }
+        out.histogram = Some(NornHistogram {
+            kind: "equal_population".into(),
+            bins,
+        });
+        if let (Some(found), Some(q1), Some(q3)) = (
+            &column.outliers,
+            at(nearest_rank(25, n))?,
+            at(nearest_rank(75, n))?,
+        ) {
+            out.outliers = Some(outliers_of(found, q1, q3)?);
+        }
+    } else if let Some((kind, labels)) = &column.labels {
+        out.histogram = Some(NornHistogram {
+            kind: kind.clone(),
+            bins: labels
+                .iter()
+                .map(|(label, rows)| NornBin {
+                    lower: norn_ir::RuntimeValue::String(label.clone()),
+                    upper: norn_ir::RuntimeValue::String(label.clone()),
+                    count: *rows,
+                })
+                .collect(),
+        });
+    }
+    Ok(out)
+}
+
+fn outliers_of(
+    found: &norn_cell::analytics::OutlierSummary,
+    q1: norn_ir::RuntimeValue,
+    q3: norn_ir::RuntimeValue,
+) -> Result<crate::object_profile::NornOutliers, Refusal> {
+    use crate::object_profile::{NornOutlier, NornOutliers};
+    let number = |text: &str| {
+        norn_ir::Decimal::parse(text)
+            .map(norn_ir::RuntimeValue::Number)
+            .map_err(Refusal::host)
+    };
+    Ok(NornOutliers {
+        method: "tukey_far_out".into(),
+        k: norn_cell::analytics::PROFILE_OUTLIER_K.to_string(),
+        q1,
+        q3,
+        lower_fence: number(&found.lower)?,
+        upper_fence: number(&found.upper)?,
+        count: found.count,
+        examples: found
+            .examples
+            .iter()
+            .map(|(id, value)| {
+                Ok(NornOutlier {
+                    id: id.clone(),
+                    value: number(value)?,
+                })
+            })
+            .collect::<Result<_, Refusal>>()?,
     })
 }
