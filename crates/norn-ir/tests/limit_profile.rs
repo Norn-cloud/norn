@@ -110,14 +110,8 @@ fn norn_limits_v1_canonical_bytes_match_golden_file() {
 fn question_limits_are_additive_and_hashed_when_declared() {
     let v1 = ResourceLimitProfile::norn_limits_v1();
     assert_eq!(v1.question, None);
-    assert!(
-        serde_json::to_value(&v1)
-            .unwrap()
-            .get("question")
-            .is_none()
-    );
+    assert!(serde_json::to_value(&v1).unwrap().get("question").is_none());
     assert_eq!(v1.question_limits(), QuestionLimits::DEFAULT);
-    assert!(QuestionLimits::DEFAULT.max_scanned_records >= 100_000);
     assert!(QuestionLimits::DEFAULT.max_scanned_records > v1.slice.max_records);
     let golden = include_bytes!("golden/norn.limits.v1.canonical.json");
     assert_eq!(

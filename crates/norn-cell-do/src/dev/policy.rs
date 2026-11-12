@@ -377,9 +377,7 @@ mod tests {
         // The trace of a bucket reaches the objects that contributed to it.
         let (bucket, _) = rows
             .iter()
-            .find(|(_, row)| {
-                row["totals"][0].to_string().starts_with("15.5")
-            })
+            .find(|(_, row)| row["totals"][0].to_string().starts_with("15.5"))
             .unwrap();
         let (status, trace) = call(
             &host,

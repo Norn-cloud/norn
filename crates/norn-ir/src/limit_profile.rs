@@ -101,6 +101,9 @@ impl QuestionLimits {
 /// [`QuestionLimits::DEFAULT`]'s scan bound.
 const QUESTION_MAX_SCANNED_RECORDS: u32 = 1_000_000;
 
+// The ruling's floor: an analytical question scans at least 100,000 records.
+const _: () = assert!(QUESTION_MAX_SCANNED_RECORDS >= 100_000);
+
 /// Budget for one warm `decide` (§1 row 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
