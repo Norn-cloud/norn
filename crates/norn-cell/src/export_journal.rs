@@ -191,7 +191,10 @@ pub(crate) fn record<E: SqlEngine>(
         None => String::new(),
     };
 
-    let reader = StoreReader::new(engine, model);
+    // Every event of this commit proves its facts against this commit's
+    // receipt: one read-only pass, so the receipt is verified once.
+    let receipts = std::cell::RefCell::default();
+    let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
     let entries: Vec<_> = reader
         .ledger(receipt.body.first_event_seq)?
         .into_iter()

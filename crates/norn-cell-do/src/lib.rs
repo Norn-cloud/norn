@@ -40,6 +40,7 @@ pub mod olapd;
 pub mod policy;
 pub mod principal;
 pub mod questions;
+pub mod recorded;
 mod runs;
 pub mod seed;
 pub mod server;

@@ -703,3 +703,77 @@ fn configuration_refuses_the_cells_own_instance_and_a_public_http_base() {
     assert!(refused(one("sandbox", "http://erp.example.test")).contains("base URL"));
     assert!(Sources::new(&one("sandbox", "https://erp.example.test"), BTreeMap::new()).is_ok());
 }
+
+/// The scanned-document extractor as a pull source: its recorded page
+/// (`POST /extractions`) pulls through `docs.scans.connector` into Scanned
+/// Document rows carrying exactly the fields `docs.scans.source` declares,
+/// lines and evidence nested, and a later sync asks for rows after the
+/// recorded (version, id).
+#[test]
+fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
+    let connector = artifact("registry/packs/documents-pull/artifacts/docs.scans.connector.json");
+    let payload = serde_json::to_value(connector.payload.to_json_value()).expect("payload");
+    let profile = PullProfile::from_connector(&payload)
+        .expect("valid profile")
+        .expect("a pull profile");
+    assert_eq!(profile.source, "synthetic-scans");
+    let schema = artifact("registry/packs/documents/artifacts/docs.scans.source.json");
+    let schema = serde_json::to_value(schema.payload.to_json_value()).expect("schema");
+    assert_eq!(schema["source"]["system"], "synthetic-scans");
+    let declared: BTreeSet<&str> = schema["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .filter(|f| f["dataset"] == "Scanned Document")
+        .map(|f| f["name"].as_str().expect("name"))
+        .collect();
+    let feed = &profile.feeds[0];
+    assert_eq!(
+        feed.fields
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        declared
+    );
+
+    let page = std::fs::read(root().join("fixtures/connectors/scans/extractions.page.json"))
+        .expect("recorded page");
+    let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
+    let first = pull.next_request().expect("a first request");
+    assert_eq!(
+        (first.method, first.path.as_str()),
+        ("POST", "/extractions")
+    );
+    let body: Value = serde_json::from_str(first.body.as_deref().expect("a body")).expect("JSON");
+    assert_eq!(body, json!({"after": ["", ""], "limit": 100}));
+    let rows = pull
+        .accept(200, &page)
+        .expect("a page in the declared shape");
+    assert_eq!(rows.len(), 10);
+    let nested = |row: &norn_api::pull::Row, field: &str| {
+        row.payload
+            .get(field)
+            .and_then(RuntimeValue::as_array)
+            .map_or_else(
+                || panic!("{} has no {field} array", row.source_id),
+                Vec::len,
+            )
+    };
+    for row in &rows {
+        assert_eq!(row.dataset, "Scanned Document");
+        assert!(row.source_id.starts_with("SCAN-"), "{}", row.source_id);
+    }
+    // Lines and evidence stay nested arrays (a report may print no lines).
+    assert!(rows.iter().map(|r| nested(r, "lines")).sum::<usize>() > 0);
+    assert!(rows.iter().all(|r| nested(r, "evidence") > 0));
+    // A short page ends the feed; the next sync resumes after its last row.
+    assert!(pull.next_request().is_none());
+    let mut resumed = Pull::new(profile, pull.watermarks().clone(), Limits::default());
+    let next = resumed.next_request().expect("a resumed request");
+    let body: Value = serde_json::from_str(next.body.as_deref().expect("a body")).expect("JSON");
+    let last = rows.last().expect("rows");
+    assert_eq!(
+        body,
+        json!({"after": [last.version, last.source_id], "limit": 100})
+    );
+}

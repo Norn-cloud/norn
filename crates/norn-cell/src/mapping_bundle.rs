@@ -284,7 +284,24 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             bytes.extend_from_slice(&u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
             bytes.extend_from_slice(part);
         };
-        field(serde_json::to_string(installed)?.as_bytes());
+        // The large canonical set as its bytes, unescaped; every other field
+        // through the struct's own serialization (a new field either joins
+        // through `..` or fails to compile here until it is listed).
+        field(installed.canonical_set.as_bytes());
+        let mut rest = serde_json::to_value(crate::InstalledDefinitionSet {
+            canonical_set: String::new(),
+            registry: installed.registry.clone(),
+            receipt_sha256: installed.receipt_sha256.clone(),
+            admission_receipt: installed.admission_receipt.clone(),
+            model_hash: installed.model_hash.clone(),
+            ddl_hash: installed.ddl_hash.clone(),
+            layout: installed.layout.clone(),
+            ..*installed
+        })?;
+        if let Some(object) = rest.as_object_mut() {
+            object.remove("canonicalSet");
+        }
+        field(serde_json::to_string(&rest)?.as_bytes());
         let seq = crate::read::to_i64(installed.commit_seq, "commit_seq")?;
         let journal: Option<(String, String)> = self.conn.query_optional(
             r#"SELECT "hash", "record" FROM "_norn_export_journal" WHERE "commit_seq" = ?1"#,

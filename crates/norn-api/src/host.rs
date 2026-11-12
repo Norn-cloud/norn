@@ -362,31 +362,22 @@ fn ingest_page<E: SqlEngine>(
         }
         other => other?,
     };
-    let start = out.len();
-    for (id, _new) in &captured {
-        for (member, outcome) in cell.process_mapping_page(id)?.unwrap_or_default() {
-            out.push(Ingested {
-                observation_id: member,
-                outcome,
-            });
-        }
+    // Each member this page consumed has its outcome; any other record (a
+    // conflict or identity finding, or a row consumed before) answers as it
+    // does one by one. One outcome per row, in row order.
+    let mut outcomes = std::collections::BTreeMap::new();
+    for (id, _new) in &captured.pages {
+        outcomes.extend(cell.process_mapping_page(id)?.unwrap_or_default());
     }
-    if out.len().saturating_sub(start) < page.len() {
-        let reported: std::collections::BTreeSet<String> = out
-            .iter()
-            .skip(start)
-            .map(|i| i.observation_id.clone())
-            .collect();
-        for raw in page {
-            let (id, _new) = cell.inject_mapping_bundle(raw, input)?;
-            if !reported.contains(&id) {
-                let outcome = cell.process_mapping_outcome(&id)?;
-                out.push(Ingested {
-                    observation_id: id,
-                    outcome,
-                });
-            }
-        }
+    for id in captured.records {
+        let outcome = match outcomes.remove(&id) {
+            Some(outcome) => outcome,
+            None => cell.process_mapping_outcome(&id)?,
+        };
+        out.push(Ingested {
+            observation_id: id,
+            outcome,
+        });
     }
     Ok(())
 }
