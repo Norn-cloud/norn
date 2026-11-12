@@ -315,7 +315,15 @@ fn lower_sum(
     }
     let time_link = match metric.time_dimension.links.as_slice() {
         [] => None,
-        [link] => Some(linked_time(catalog, object_type.as_str(), link, &metric.time_dimension.property).ok_or_else(refuse)?),
+        [link] => Some(
+            linked_time(
+                catalog,
+                object_type.as_str(),
+                link,
+                &metric.time_dimension.property,
+            )
+            .ok_or_else(refuse)?,
+        ),
         _ => return Err(refuse()),
     };
     Ok(KeyedSum {

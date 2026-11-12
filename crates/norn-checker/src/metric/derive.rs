@@ -191,12 +191,7 @@ pub fn derive_metric_space(
         }
         for time_path in &times {
             let sources = evidence.get(name).cloned().unwrap_or_default();
-            candidates.extend(candidates_at_time(
-                object,
-                &dimensions,
-                &sources,
-                time_path,
-            ));
+            candidates.extend(candidates_at_time(object, &dimensions, &sources, time_path));
             if candidates.len() > 16_384 {
                 return Err(vec![crate::property_types::error(
                     codes::COMPLEXITY_LIMIT,

@@ -73,8 +73,10 @@ pub fn project_linked(
             Linked::Excluded
         });
     };
-    Ok(project_row(plan, row, Some((link, target)))?
-        .map_or(Linked::Excluded, Linked::Contribution))
+    Ok(
+        project_row(plan, row, Some((link, target)))?
+            .map_or(Linked::Excluded, Linked::Contribution),
+    )
 }
 
 fn project_row(

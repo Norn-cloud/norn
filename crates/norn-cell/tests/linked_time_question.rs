@@ -17,9 +17,7 @@ use norn_cell::compute::QueryContext;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, Model};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::metric::derive::derive_metric_space;
-use norn_ir::{
-    ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V,
-};
+use norn_ir::{ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V};
 use serde_json::json;
 
 const WORLD: &str = "synthetic-ledger";
@@ -81,7 +79,9 @@ fn fixture() -> (CellStore, QuestionPlan) {
         "freshness": {"kind": "live", "maxAgeMs": 5000},
     }))
     .expect("question");
-    let plan = space.admit(&question, 100).expect("admitted linked question");
+    let plan = space
+        .admit(&question, 100)
+        .expect("admitted linked question");
     assert!(plan.time_link().is_some());
     let model = Model::from_definitions(&types(), &[]).expect("model");
     (CellStore::open_in_memory(model).expect("cell"), plan)
@@ -96,12 +96,20 @@ fn put(object_type: &str, key: &str, values: BTreeMap<String, V>) -> FactWriteRo
 }
 
 fn event(key: &str, at: &str) -> FactWriteRow {
-    put("demo.Event", key, BTreeMap::from([("occurred_at".into(), V::from(at))]))
+    put(
+        "demo.Event",
+        key,
+        BTreeMap::from([("occurred_at".into(), V::from(at))]),
+    )
 }
 
 fn entry(key: &str, amount: i64) -> FactWriteRow {
     let amount = V::from(Decimal::parse(&amount.to_string()).expect("exact amount"));
-    put("demo.Entry", key, BTreeMap::from([("amount".into(), amount)]))
+    put(
+        "demo.Entry",
+        key,
+        BTreeMap::from([("amount".into(), amount)]),
+    )
 }
 
 fn link(entry: &str, event: &str) -> LinkChange {
@@ -172,7 +180,12 @@ fn an_entry_takes_its_events_time_and_one_without_an_event_is_counted_never_buck
             entry("x4", 7),
             entry("x5", 3),
         ],
-        vec![link("x1", "e1"), link("x2", "e1"), link("x3", "e2"), link("x5", "e3")],
+        vec![
+            link("x1", "e1"),
+            link("x2", "e1"),
+            link("x3", "e2"),
+            link("x5", "e3"),
+        ],
     );
     let weeks = |pairs: &[(&str, &str)]| {
         pairs
@@ -183,12 +196,21 @@ fn an_entry_takes_its_events_time_and_one_without_an_event_is_counted_never_buck
     assert_eq!(
         answer(&store, &plan),
         (
-            weeks(&[("2026-07-06", "30"), ("2026-07-13", "5"), ("2026-07-20", "3")]),
+            weeks(&[
+                ("2026-07-06", "30"),
+                ("2026-07-13", "5"),
+                ("2026-07-20", "3")
+            ]),
             1
         )
     );
     // METRIC-LINK-MOVES: correcting e2's time moves x3 into the first week.
-    commit(&mut store, 2, vec![event("e2", "2026-07-08T00:00:00Z")], Vec::new());
+    commit(
+        &mut store,
+        2,
+        vec![event("e2", "2026-07-08T00:00:00Z")],
+        Vec::new(),
+    );
     assert_eq!(
         answer(&store, &plan),
         (weeks(&[("2026-07-06", "35"), ("2026-07-20", "3")]), 1)

@@ -224,7 +224,6 @@ pub struct QueryResult {
     pub unlinked: u64,
 }
 
-
 #[derive(Serialize)]
 struct FindingEvidence<'a> {
     #[serde(flatten)]
